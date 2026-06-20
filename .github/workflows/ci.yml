@@ -215,7 +215,7 @@ jobs:
             libsecret-1-dev \
             libxss1 \
             libgbm1 \
-            libasound2 \
+            libasound2t64 \
             librsvg2-bin \
             rpm \
             fakeroot \

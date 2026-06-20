@@ -58,5 +58,6 @@
   },
   "dmg": {
     "artifactName": "${name}-${version}.${ext}"
-  }
+  },
+  "publish": "never"
 }
