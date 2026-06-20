@@ -28,8 +28,8 @@ jobs:
     name: Test (Lint & Build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -54,14 +54,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag_created: ${{ steps.push.outputs.tag_created }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Determine version
         id: version
-        shell: bash
         run: |
           set -e
 
@@ -89,7 +89,9 @@ jobs:
           fi
 
           # Auto-detect: find latest tag + scan commits
-          LATEST_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          # Use `|| true` before pipe to head to prevent `set -e` killing on grep no-match
+          LATEST_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          LATEST_TAG=$(echo "$LATEST_TAG" | head -1)
 
           if [ -z "$LATEST_TAG" ]; then
             echo "::notice::No existing version tag found, defaulting to v0.1.0"
@@ -138,7 +140,7 @@ jobs:
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Show version (dry run)
-        if: inputs.dry_run == true
+        if: inputs.dry_run
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           if [ -z "$VERSION" ]; then
@@ -149,19 +151,21 @@ jobs:
           echo "Dry run complete. Nothing was published."
 
       - name: Create and push tag
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false && steps.version.outputs.version != ''
+        id: push
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && steps.version.outputs.version != ''
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$VERSION"
           git push origin "$VERSION"
+          echo "tag_created=true" >> $GITHUB_OUTPUT
           echo "::notice::Tag $VERSION created and pushed."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: No new commits
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false && steps.version.outputs.version == ''
+        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && steps.version.outputs.version == ''
         run: |
           echo "::warning::No new commits since the latest tag. Push new commits first."
 
@@ -174,7 +178,8 @@ jobs:
     if: |
       success() &&
       needs.auto-tag.outputs.version != '' &&
-      (github.event_name != 'workflow_dispatch' || inputs.dry_run == false)
+      !needs.auto-tag.outputs.tag_created &&
+      !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -194,8 +199,8 @@ jobs:
             output-path: release/*.AppImage
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -232,7 +237,7 @@ jobs:
         run: npm run dist:linux
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact-name }}
           path: ${{ matrix.output-path }}
@@ -248,7 +253,7 @@ jobs:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
 
