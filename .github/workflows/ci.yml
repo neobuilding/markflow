@@ -191,7 +191,7 @@ jobs:
           - os: windows-latest
             target: win
             artifact-name: markflow-windows
-            output-path: release/win-unpacked/**
+            output-path: release/*
           - os: ubuntu-latest
             target: linux
             artifact-name: markflow-linux
@@ -249,8 +249,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.output-path }}
-          retention-days: 1
+          path: release
+          if-no-files-found: error
+          retention-days: 7
 
   # ═══════════════════════════════════════════════════════════════
   #  Release — GitHub Release (release triggers only)
@@ -273,7 +274,7 @@ jobs:
           name: ${{ needs.auto-tag.outputs.version }}
           tag_name: ${{ needs.auto-tag.outputs.version }}
           files: |
-            artifacts/markflow-macos/*.dmg
-            artifacts/markflow-windows/*.zip
-            artifacts/markflow-linux/*.AppImage
+            artifacts/markflow-macos/*
+            artifacts/markflow-windows/*
+            artifacts/markflow-linux/*
           generate_release_notes: true

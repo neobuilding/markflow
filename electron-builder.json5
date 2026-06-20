@@ -42,7 +42,8 @@
         "target": "zip",
         "arch": ["x64"]
       }
-    ]
+    ],
+    "artifactName": "${name}-${version}-${os}.${ext}"
   },
   "linux": {
     "target": [
