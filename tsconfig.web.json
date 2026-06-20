@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx"],
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo-renderer.json",
+    "jsx": "react-jsx",
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "types": [],
+    "moduleResolution": "Bundler"
+  }
+}

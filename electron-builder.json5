@@ -1,0 +1,50 @@
+{
+  "appId": "com.markflow.app",
+  "productName": "MarkFlow",
+  "directories": {
+    "buildResources": "resources",
+    "output": "release"
+  },
+  "files": [
+    "dist-electron/**/*",
+    "dist/renderer/**/*",
+    "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,caches,lock}",
+    "!.eslintrc.{js,yml,yaml}",
+    "!.prettier*",
+    "!.editorconfig",
+    "!*.{spec,test}.{js,ts}",
+    "!**/{.DS_Store,Thumbs.db,desktop.ini}",
+    "!**/node_modules/.bin"
+  ],
+  "asarUnpack": [
+    "node_modules/better-sqlite3/**"
+  ],
+  "mac": {
+    "entitlementsInherit": "resources/entitlements.mac.plist",
+    "extendInfo": {
+      "NSCameraUsageDescription": "Application requests access to the device's camera.",
+      "NSMicrophoneUsageDescription": "Application requests access to the device's microphone.",
+      "NSDocumentsFolderUsageDescription": "Application requests access to the user's Documents folder.",
+      "NSDownloadsFolderUsageDescription": "Application requests access to the user's Downloads folder."
+    },
+    "notarize": false,
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      }
+    ]
+  },
+  "win": {
+    "executableName": "MarkFlow",
+    "target": [
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "dmg": {
+    "artifactName": "${name}-${version}.${ext}"
+  }
+}
