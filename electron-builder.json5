@@ -39,7 +39,19 @@
     "executableName": "MarkFlow",
     "target": [
       {
-        "target": "portable",
+        "target": "zip",
+        "arch": ["x64"]
+      },
+      {
+        "target": "dir",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "linux": {
+    "target": [
+      {
+        "target": "AppImage",
         "arch": ["x64"]
       }
     ]
