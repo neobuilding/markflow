@@ -178,7 +178,6 @@ jobs:
     if: |
       success() &&
       needs.auto-tag.outputs.version != '' &&
-      !needs.auto-tag.outputs.tag_created &&
       !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     runs-on: ${{ matrix.os }}
     strategy:
