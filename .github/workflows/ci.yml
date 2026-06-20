@@ -250,6 +250,7 @@ jobs:
         with:
           name: ${{ matrix.artifact-name }}
           path: ${{ matrix.output-path }}
+          retention-days: 1
 
   # ═══════════════════════════════════════════════════════════════
   #  Release — GitHub Release (release triggers only)
@@ -271,5 +272,8 @@ jobs:
         with:
           name: ${{ needs.auto-tag.outputs.version }}
           tag_name: ${{ needs.auto-tag.outputs.version }}
-          files: artifacts/**/*
+          files: |
+            artifacts/markflow-macos/*.dmg
+            artifacts/markflow-windows/*.zip
+            artifacts/markflow-linux/*.AppImage
           generate_release_notes: true
