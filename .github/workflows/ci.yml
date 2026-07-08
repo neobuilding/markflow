@@ -224,6 +224,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Inject release version into package.json
+        run: |
+          VERSION="${{ needs.auto-tag.outputs.version }}"
+          VERSION="${VERSION#v}"
+          npm version --no-git-tag-version --no-commit "$VERSION"
+          echo "::notice::Building with version $VERSION"
+
       - name: Build renderer
         run: npm run build
 
@@ -268,13 +275,46 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create Release
+      # Remove any stale release left by a previous failed run so that the
+      # upload step always starts from a clean state. Without this, re-runs
+      # would find pre-existing assets and hit the "update-a-release-asset"
+      # 404 on draft releases (the bug this fix works around). The git tag
+      # itself is preserved — only the release object is deleted.
+      - name: Delete stale release (if any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.auto-tag.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::Deleting stale release for $TAG"
+            gh release delete "$TAG" --yes
+          else
+            echo "::notice::No existing release for $TAG"
+          fi
+
+      # Keep the release as a DRAFT during upload. If the upload fails, the
+      # run aborts and we are left with an unpublished draft instead of a
+      # broken public release.
+      - name: Create Release (draft)
         uses: softprops/action-gh-release@v3
         with:
           name: ${{ needs.auto-tag.outputs.version }}
           tag_name: ${{ needs.auto-tag.outputs.version }}
+          draft: true
+          prerelease: false
           files: |
             artifacts/markflow-macos/*
             artifacts/markflow-windows/*
             artifacts/markflow-linux/*
+            !**/builder-debug.yml
           generate_release_notes: true
+
+      # Only publish (un-draft) once every asset uploaded successfully.
+      - name: Publish Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.auto-tag.outputs.version }}"
+          gh release edit "$TAG" --draft=false
+          echo "::notice::Released $TAG"
