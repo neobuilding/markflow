@@ -5,6 +5,13 @@
     "buildResources": "resources",
     "output": "release"
   },
+  "fileAssociations": [
+    { "ext": "md", "name": "Markdown Document", "role": "Editor" },
+    { "ext": "markdown", "name": "Markdown Document", "role": "Editor" },
+    { "ext": "mdx", "name": "Markdown Document", "role": "Editor" },
+    { "ext": "mdtxt", "name": "Markdown Document", "role": "Editor" },
+    { "ext": "mdtext", "name": "Markdown Document", "role": "Editor" }
+  ],
   "files": [
     "dist-electron/**/*",
     "dist/renderer/**/*",

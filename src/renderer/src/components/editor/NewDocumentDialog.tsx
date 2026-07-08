@@ -7,7 +7,7 @@ import { Input } from '../ui/input'
 import { Button } from '../ui/button'
 
 export function NewDocumentDialog(): React.ReactElement {
-  const { newDocOpen, setNewDocOpen, setActiveDocumentId } = useUIStore()
+  const { newDocOpen, setNewDocOpen, setActiveDocumentId, setEditable } = useUIStore()
   const [title, setTitle] = useState('')
   const createMut = useCreateDocument()
 
@@ -15,6 +15,7 @@ export function NewDocumentDialog(): React.ReactElement {
     const t = title.trim() || 'Untitled'
     const doc = await createMut.mutateAsync({ title: t })
     setActiveDocumentId(doc.id)
+    setEditable(true) // 新建文档默认可编辑
     setTitle('')
     setNewDocOpen(false)
   }

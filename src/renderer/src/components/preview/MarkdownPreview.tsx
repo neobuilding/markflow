@@ -142,6 +142,33 @@ async function renderMermaidInDOM(container: HTMLElement): Promise<void> {
   }
 }
 
+// ─── Image Error Handling ──────────────────────────────────────────
+//
+// Markdown 里引用的外部图片（https://…）可能因离线/证书/网络问题加载失败。
+// 这类失败是浏览器网络层行为，我们无法用 try/catch 拦截、也无法阻止浏览器
+// 输出 "Failed to load resource" 这条原生日志。但我们可以在渲染后给 <img>
+// 绑定 error 处理，把破图优雅降级为占位符，避免 UI 破损、避免异常向外抛。
+function enhanceImages(container: HTMLElement): void {
+  const imgs = container.querySelectorAll('img')
+  imgs.forEach((img) => {
+    const handleError = () => {
+      if (img.parentElement?.contains(img) === false) return // 已替换，避免重复
+      const placeholder = document.createElement('span')
+      placeholder.className = 'img-error-placeholder'
+      placeholder.textContent = img.alt
+        ? `⚠ 图片加载失败：${img.alt}`
+        : '⚠ 图片加载失败'
+      placeholder.style.cssText =
+        'display:inline-block;padding:4px 8px;margin:4px 0;border:1px dashed var(--color-border);' +
+        'border-radius:6px;color:var(--color-text-tertiary);font-size:12px;background:var(--color-surface-overlay);'
+      img.replaceWith(placeholder)
+    }
+    img.addEventListener('error', handleError, { once: true })
+    // 同步场景：图片在监听器绑定前就已失败（如缓存命中失败）
+    if (img.complete && img.naturalWidth === 0) handleError()
+  })
+}
+
 // ─── Component ─────────────────────────────────────────────────────
 
 interface MarkdownPreviewProps {
@@ -176,13 +203,14 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     }
   }, [content])
 
-  // Mermaid diagrams: post-process in DOM
+  // Mermaid diagrams + image error fallback: post-process in DOM
   useEffect(() => {
     const container = previewRef.current
     if (!container || isRenderingMermaid.current) return
     const timer = setTimeout(async () => {
       isRenderingMermaid.current = true
       try {
+        enhanceImages(container)
         await renderMermaidInDOM(container)
       } finally {
         isRenderingMermaid.current = false

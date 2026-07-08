@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { FileText, Star, Plus, Search, MoreHorizontal, Trash2, StarOff, FolderOpen, GripVertical } from 'lucide-react'
-import { cn, formatDate } from '../../lib/utils'
+import { FileText, Star, Plus, Search, MoreHorizontal, Trash2, StarOff, FolderOpen, Folder, X, GripVertical } from 'lucide-react'
+import { cn, formatDate, isInFolder } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
   useDocuments,
@@ -8,7 +8,8 @@ import {
   useDeleteDocument,
   useToggleStar,
   useCreateDocument,
-  useImportDocuments
+  useOpenPaths,
+  useOpenFolder
 } from '../../hooks/useDocuments'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -24,54 +25,49 @@ import type { Document } from '../../types'
 type Section = 'all' | 'starred'
 
 export function Sidebar(): React.ReactElement | null {
-  const { sidebarOpen, activeDocumentId, setActiveDocumentId, setSearchOpen } = useUIStore()
+  const {
+    sidebarOpen,
+    activeDocumentId,
+    setActiveDocumentId,
+    setSearchOpen,
+    activeFolder,
+    closeWorkspace
+  } = useUIStore()
   const [activeSection, setActiveSection] = useState<Section>('all')
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    // Restore saved width or default to 240
-    const saved = localStorage.getItem('markflow-sidebar-width')
-    return saved ? Math.max(180, Math.min(480, Number(saved))) : 240
-  })
+  const [sidebarWidth, setSidebarWidth] = useState(240)
   const isResizing = useRef(false)
 
   const { data: allDocs = [], isLoading: loadingAll } = useDocuments()
   const { data: starredDocs = [], isLoading: loadingStarred } = useStarredDocuments()
 
   const docs = activeSection === 'starred' ? starredDocs : allDocs
+  // 仅展示“当前文件夹”内的文档（无打开文件夹时为空，由欢迎页接管）
+  const folderDocs = activeFolder ? docs.filter((d) => isInFolder(d.filePath, activeFolder)) : []
   const loading = activeSection === 'starred' ? loadingStarred : loadingAll
 
   const deleteMut = useDeleteDocument()
   const starMut = useToggleStar()
   const createMut = useCreateDocument()
-  const importMut = useImportDocuments()
+  const openPathsMut = useOpenPaths()
+  const openFolderMut = useOpenFolder()
 
   const handleImportFile = useCallback(async () => {
     const filePaths = await window.api.dialog.openFiles()
     if (filePaths.length === 0) return
-    const imported = await importMut.mutateAsync(filePaths)
-    if (imported.length > 0) {
-      setActiveDocumentId(imported[0].id)
-    }
-  }, [importMut, setActiveDocumentId])
+    openPathsMut.mutate(filePaths)
+  }, [openPathsMut])
 
   const handleImportFolder = useCallback(async () => {
-    const filePaths = await window.api.dialog.openFolder()
-    if (filePaths.length === 0) return
-    const imported = await importMut.mutateAsync(filePaths)
-    if (imported.length > 0) {
-      setActiveDocumentId(imported[0].id)
-    }
-  }, [importMut, setActiveDocumentId])
+    const folderPath = await window.api.dialog.openFolderPath()
+    if (!folderPath) return
+    openFolderMut.mutate(folderPath)
+  }, [openFolderMut])
 
   const handleCreate = useCallback(async () => {
     const doc = await createMut.mutateAsync({ title: 'Untitled' })
     setActiveDocumentId(doc.id)
+    useUIStore.getState().setEditable(true) // 新建文档默认可编辑
   }, [createMut, setActiveDocumentId])
-
-  useEffect(() => {
-    if (allDocs.length > 0 && !activeDocumentId) {
-      setActiveDocumentId(allDocs[0].id)
-    }
-  }, [allDocs.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sidebar resize drag handlers
   useEffect(() => {
@@ -84,7 +80,6 @@ export function Sidebar(): React.ReactElement | null {
     const handleMouseUp = () => {
       if (!isResizing.current) return
       isResizing.current = false
-      localStorage.setItem('markflow-sidebar-width', String(sidebarWidth))
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
@@ -104,6 +99,10 @@ export function Sidebar(): React.ReactElement | null {
   }, [])
 
   if (!sidebarOpen) return null
+
+  const folderName = activeFolder
+    ? activeFolder.split(/[\\/]/).filter(Boolean).pop() ?? activeFolder
+    : ''
 
   return (
     <aside
@@ -140,12 +139,25 @@ export function Sidebar(): React.ReactElement | null {
                   variant="ghost"
                   size="icon"
                   onClick={handleImportFile}
-                  disabled={importMut.isPending}
+                  disabled={openPathsMut.isPending}
                 >
                   <FolderOpen size={13} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Open File... (⌘O)</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleImportFolder}
+                  disabled={openFolderMut.isPending}
+                >
+                  <Folder size={13} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Open Folder... (⌘⇧O)</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -159,43 +171,80 @@ export function Sidebar(): React.ReactElement | null {
         </div>
       </div>
 
-      {/* Section tabs */}
-      <div className="flex items-center gap-1 px-2 py-1.5">
-        {(['all', 'starred'] as Section[]).map((s) => (
-          <button
-            key={s}
-            onClick={() => setActiveSection(s)}
-            className={cn(
-              'flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors capitalize',
-              activeSection === s
-                ? 'bg-[var(--color-surface-overlay)] text-[var(--color-text-primary)]'
-                : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
-            )}
-          >
-            {s === 'all' ? <FileText size={11} /> : <Star size={11} />}
-            {s === 'all' ? 'All Notes' : 'Starred'}
-          </button>
-        ))}
-      </div>
+      {/* Current folder bar */}
+      {activeFolder && (
+        <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--color-border)] shrink-0">
+          <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
+          <span className="text-2xs text-[var(--color-text-tertiary)] truncate flex-1" title={activeFolder}>
+            {folderName}
+          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={() => {
+                  if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and close the workspace?')) return
+                  closeWorkspace()
+                }}
+              >
+                <X size={12} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Close (⌘W)</TooltipContent>
+          </Tooltip>
+        </div>
+      )}
 
-      {/* Document list */}
+      {/* Section tabs (only when a folder is open) */}
+      {activeFolder && (
+        <div className="flex items-center gap-1 px-2 py-1.5">
+          {(['all', 'starred'] as Section[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setActiveSection(s)}
+              className={cn(
+                'flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors capitalize',
+                activeSection === s
+                  ? 'bg-[var(--color-surface-overlay)] text-[var(--color-text-primary)]'
+                  : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
+              )}
+            >
+              {s === 'all' ? <FileText size={11} /> : <Star size={11} />}
+              {s === 'all' ? 'All' : 'Starred'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Document list / welcome */}
       <div className="flex-1 overflow-y-auto">
-        {loading ? (
+        {!activeFolder ? (
+          <WelcomeState
+            onOpenFile={handleImportFile}
+            onOpenFolder={handleImportFolder}
+            onCreate={handleCreate}
+          />
+        ) : loading ? (
           <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">Loading…</div>
-        ) : docs.length === 0 ? (
+        ) : folderDocs.length === 0 ? (
           <EmptyState section={activeSection} onCreate={handleCreate} />
         ) : (
           <ul className="py-1">
-            {docs.map((doc) => (
+            {folderDocs.map((doc) => (
               <DocItem
                 key={doc.id}
                 doc={doc}
                 isActive={doc.id === activeDocumentId}
-                onSelect={() => setActiveDocumentId(doc.id)}
+                onSelect={() => {
+                  if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and switch files?')) return
+                  setActiveDocumentId(doc.id)
+                }}
                 onDelete={() => {
                   deleteMut.mutate(doc.id)
                   if (activeDocumentId === doc.id) {
-                    const next = docs.find((d) => d.id !== doc.id)
+                    const next = folderDocs.find((d) => d.id !== doc.id)
                     setActiveDocumentId(next?.id ?? null)
                   }
                 }}
@@ -218,12 +267,39 @@ export function Sidebar(): React.ReactElement | null {
   )
 }
 
+function WelcomeState({
+  onOpenFile,
+  onOpenFolder,
+  onCreate
+}: {
+  onOpenFile: () => void
+  onOpenFolder: () => void
+  onCreate: () => void
+}) {
+  return (
+    <div className="px-4 py-8 text-center">
+      <div className="w-12 h-12 rounded-xl bg-[var(--color-accent-muted)] flex items-center justify-center mx-auto mb-3">
+        <FileText size={22} className="text-accent" />
+      </div>
+      <p className="text-sm font-medium text-[var(--color-text-primary)] mb-1">No folder open</p>
+      <p className="text-xs text-[var(--color-text-tertiary)] mb-4">
+        Open a file or folder to start reading.
+      </p>
+      <div className="flex flex-col gap-2">
+        <Button variant="accent" size="sm" onClick={onOpenFile}>Open File…</Button>
+        <Button variant="outline" size="sm" onClick={onOpenFolder}>Open Folder…</Button>
+        <Button variant="ghost" size="sm" onClick={onCreate}>New Document</Button>
+      </div>
+    </div>
+  )
+}
+
 function EmptyState({ section, onCreate }: { section: Section; onCreate: () => void }) {
   return (
     <div className="px-3 py-8 text-center">
       <FileText size={24} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" />
       <p className="text-xs text-[var(--color-text-tertiary)]">
-        {section === 'starred' ? 'No starred documents' : 'No documents yet'}
+        {section === 'starred' ? 'No starred documents' : 'No documents in this folder'}
       </p>
       {section === 'all' && (
         <button onClick={onCreate} className="mt-2 text-xs text-accent hover:underline">

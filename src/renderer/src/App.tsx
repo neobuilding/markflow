@@ -1,16 +1,17 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef } from 'react'
 import { useUIStore } from './store/ui'
-import { useImportDocuments } from './hooks/useDocuments'
+import { useOpenPaths } from './hooks/useDocuments'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { EditorPane } from './components/editor/EditorPane'
+import { StatusBar } from './components/editor/StatusBar'
 import { CommandPalette } from './components/editor/CommandPalette'
 import { NewDocumentDialog } from './components/editor/NewDocumentDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 
 export default function App(): React.ReactElement {
-  const { setNewDocOpen, toggleSidebar, setActiveDocumentId, theme } = useUIStore()
-  const importMut = useImportDocuments()
-  const hasAutoFitted = useRef(false)
+  const { setNewDocOpen, toggleSidebar, theme, closeWorkspace } = useUIStore()
+  const openPathsMut = useOpenPaths()
+  const openPathsMutRef = useRef(openPathsMut)
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -31,80 +32,77 @@ export default function App(): React.ReactElement {
     if (!window.api) return
     const removeNew = window.api.onMenuEvent('new-document', () => setNewDocOpen(true))
     const removeSidebar = window.api.onMenuEvent('toggle-sidebar', () => toggleSidebar())
-    const removeFit = window.api.onMenuEvent('fit-to-content', () => {
-      fitWindowToContent()
-    })
     const removeOpen = window.api.onMenuEvent('open-files', (data) => {
-      const filePaths = Array.isArray(data) ? data : (data ? [data as string] : [])
-      if (filePaths.length === 0) return
-      importMut.mutate(filePaths, {
-        onSuccess: (imported) => {
-          if (imported.length > 0) {
-            setActiveDocumentId(imported[0].id)
-          }
-        }
-      })
+      const paths = Array.isArray(data) ? data : (data ? [data as string] : [])
+      if (paths.length === 0) return
+      openPathsMut.mutate(paths)
     })
-    return () => { removeNew(); removeSidebar(); removeOpen(); removeFit() }
-  }, [setNewDocOpen, toggleSidebar, setActiveDocumentId, importMut])
+    const removeClose = window.api.onMenuEvent('close-workspace', () => {
+      if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and close the workspace?')) return
+      closeWorkspace()
+    })
+    const removeOpenPaths = window.api.onOpenPaths((paths) => {
+      if (paths && paths.length > 0) openPathsMut.mutate(paths)
+    })
+    return () => { removeNew(); removeSidebar(); removeOpen(); removeClose(); removeOpenPaths() }
+  }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace])
 
-  // Auto-fit window to content once, on first document load.
-  // After that, user can trigger via View menu → Fit Window to Content.
-  const { activeDocumentId } = useUIStore()
+  // 启动时拉取命令行 / 文件关联传入的路径并打开
   useEffect(() => {
-    if (!activeDocumentId || hasAutoFitted.current) return
-    hasAutoFitted.current = true
-    // Wait for DOM to settle (preview needs to render first)
-    const timer = setTimeout(() => fitWindowToContent(), 800)
-    return () => clearTimeout(timer)
-  }, [activeDocumentId])
+    openPathsMutRef.current = openPathsMut
+  }, [openPathsMut])
+
+  // 把 editable（只读/编辑）状态同步给主进程，用于启用/禁用原生菜单的 Save / Save As
+  useEffect(() => {
+    if (!window.api?.menu?.setEditable) return
+    const send = (editable: boolean) => window.api.menu.setEditable(editable)
+    send(useUIStore.getState().editable)
+    const unsub = useUIStore.subscribe((state, prev) => {
+      if (state.editable !== prev.editable) send(state.editable)
+    })
+    return () => unsub()
+  }, [])
+
+  useEffect(() => {
+    if (!window.api?.app?.getInitialPaths) return
+    window.api.app.getInitialPaths()
+      .then((paths: string[]) => {
+        if (paths && paths.length > 0) openPathsMutRef.current.mutate(paths)
+      })
+      .catch(() => {})
+  }, [])
+
+  // 拖拽文件/文件夹到窗口内打开（跨平台）
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault()
+    }
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    const paths = Array.from(e.dataTransfer.files)
+      .map((f) => (f as unknown as { path?: string }).path)
+      .filter((p): p is string => typeof p === 'string' && p.length > 0)
+    if (paths.length > 0) openPathsMutRef.current.mutate(paths)
+  }, [])
 
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="flex h-screen overflow-hidden bg-[var(--color-bg)]">
-        <Sidebar />
-        <EditorPane />
+      <div
+        className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg)]"
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        <div className="flex flex-1 min-h-0">
+          <Sidebar />
+          <EditorPane />
+        </div>
+        <StatusBar />
         <CommandPalette />
         <NewDocumentDialog />
       </div>
     </TooltipProvider>
   )
-}
-
-/**
- * Measure the rendered document content and ask the main process to
- * resize the window so the content fits (clamped to screen work area).
- */
-function fitWindowToContent(): void {
-  if (!window.api?.window?.fitToContent) return
-  // Find the preview/editor content element — use scrollWidth/scrollHeight
-  // of the scrollable container to capture full content size.
-  const previewEl = document.querySelector('.markdown-preview') as HTMLElement | null
-  const editorEl = document.querySelector('.editor-content') as HTMLElement | null
-
-  // Prefer preview (it's the rendered form); fall back to editor.
-  const contentEl = previewEl || editorEl
-  if (!contentEl) return
-
-  // scrollWidth/Height give the full content size including overflow.
-  // But for "fit width", we want the natural content width without scrollbar.
-  // Use the widest child's offsetWidth as a proxy.
-  const containerEl = contentEl.parentElement  // the overflow-auto div
-  let contentWidth = contentEl.scrollWidth
-  let contentHeight = contentEl.scrollHeight
-
-  // For width, try to measure the widest block element (more accurate than scrollWidth
-  // which includes scrollbar gutter).
-  const blocks = contentEl.querySelectorAll('h1,h2,h3,p,pre,table,ul,ol,blockquote,img,.katex-display')
-  for (const b of Array.from(blocks)) {
-    const w = (b as HTMLElement).offsetWidth
-    if (w > contentWidth) contentWidth = w
-  }
-
-  // Cap content height to screen height — we don't want a 10000px window
-  // for a 500-line document. Use ~80% of viewport as a sensible max.
-  const maxH = Math.floor(window.screen.availHeight * 0.9)
-  contentHeight = Math.min(contentHeight, maxH)
-
-  window.api.window.fitToContent(contentWidth, contentHeight)
 }

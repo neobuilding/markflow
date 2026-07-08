@@ -16,10 +16,14 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 
 - **Linear-inspired UI** — Clean, minimal, keyboard-first design
 - **Split-pane editing** — Editor + live preview side by side, with draggable divider
+- **Folder-aware sidebar** — Open a single file and the whole containing folder loads automatically; open a folder to browse all its Markdown files
+- **Read-only by default** — Files open in read-only mode to prevent accidental edits; toggle to Edit mode anytime
+- **Close workspace** — One-click close of the current file and folder, returning to an empty state
+- **Open anywhere** — Launch via command line, drag-and-drop a file/folder onto the window, or set MarkFlow as the default app for `.md` files
+- **Empty on launch** — No previous file/folder is restored; the app always starts fresh
 - **Full-text search** — SQLite FTS5 powered, instant results with highlighted snippets
-- **Auto-save** — Debounced writes to both SQLite and Markdown files
+- **Manual save** — No auto-save: use **Save** (⌘/Ctrl+S), **Save As…** (⌘/Ctrl+⇧+S), and **Reload from Disk** (⌘/Ctrl+⇧+R) from the toolbar or File menu
 - **Starred documents** — Bookmark important notes for quick access
-- **Import external files** — Open single `.md` files or batch import entire folders
 - **KaTeX math formulas** — Support for inline `$...$` and block `$$...$$` LaTeX formulas
 - **Mermaid diagrams** — Render flowcharts, sequence diagrams, and more from ` ```mermaid ` code blocks
 - **Dark/Light theme** — Automatic system theme detection with manual toggle
@@ -112,9 +116,12 @@ markflow/
 | `Ctrl/Cmd + K` | Search documents |
 | `Ctrl/Cmd + \` | Toggle sidebar |
 | `Ctrl/Cmd + Shift + P` | Toggle preview mode (edit/preview/split) |
+| `Ctrl/Cmd + W` | Close workspace (close current file & folder) |
 | `Ctrl/Cmd + O` | Open external `.md` file |
-| `Ctrl/Cmd + Shift + O` | Import folder (batch import `.md` files) |
-| `Ctrl/Cmd + S` | Save (auto-save is always on) |
+| `Ctrl/Cmd + Shift + O` | Open folder (batch import `.md` files) |
+| `Ctrl/Cmd + S` | Save (manual; no auto-save) |
+| `Ctrl/Cmd + Shift + S` | Save As… |
+| `Ctrl/Cmd + Shift + R` | Reload from Disk (load latest file content) |
 
 ## 🛠️ Tech Stack
 

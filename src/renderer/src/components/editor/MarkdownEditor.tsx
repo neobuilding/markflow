@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useMemo } from 'react'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
-import { EditorState } from '@codemirror/state'
+import { EditorState, Compartment } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
@@ -12,12 +12,14 @@ interface MarkdownEditorProps {
   content: string
   onChange: (content: string) => void
   autoFocus?: boolean
+  editable?: boolean
 }
 
-export function MarkdownEditor({ content, onChange, autoFocus }: MarkdownEditorProps): React.ReactElement {
+export function MarkdownEditor({ content, onChange, autoFocus, editable = true }: MarkdownEditorProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const isInternalChange = useRef(false)
+  const editableCompartment = useRef(new Compartment())
 
   const debouncedOnChange = useMemo(
     () => debounce((val: string) => onChange(val), 400),
@@ -30,6 +32,11 @@ export function MarkdownEditor({ content, onChange, autoFocus }: MarkdownEditorP
     const startState = EditorState.create({
       doc: content,
       extensions: [
+        // 只读模式：禁止编辑与输入（可被 editable 变化动态重配置）
+        editableCompartment.current.of([
+          EditorState.readOnly.of(!editable),
+          EditorView.editable.of(editable)
+        ]),
         history(),
         highlightActiveLine(),
         keymap.of([
@@ -89,6 +96,7 @@ export function MarkdownEditor({ content, onChange, autoFocus }: MarkdownEditorP
 
     // Handle toolbar insert events
     const handleInsert = (e: Event) => {
+      if (!editable) return // 只读模式下忽略格式化插入
       const { before, after } = (e as CustomEvent<{ before: string; after: string }>).detail
       const v = viewRef.current
       if (!v) return
@@ -111,6 +119,18 @@ export function MarkdownEditor({ content, onChange, autoFocus }: MarkdownEditorP
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 切换只读 / 编辑模式时，动态重配置编辑器（不重建实例，保留光标与滚动）
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: editableCompartment.current.reconfigure([
+        EditorState.readOnly.of(!editable),
+        EditorView.editable.of(editable)
+      ])
+    })
+  }, [editable])
 
   // Sync external content changes (e.g., doc switch)
   useEffect(() => {

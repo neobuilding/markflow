@@ -1,45 +1,49 @@
-# Contributing to MarkFlow
+# MarkFlow
+aaa
+<p align="center">
+  <img src="resources/icon.png" alt="MarkFlow Logo" width="128" height="128">
+</p>
 
-Thank you for your interest in contributing to MarkFlow! This document provides guidelines and instructions for contributing.
+<p align="center">
+  <a href="https://github.com/yourusername/markflow/releases"><img src="https://img.shields.io/github/v/release/yourusername/markflow?include_prereleases&style=flat-square" alt="GitHub release"></a>
+  <a href="https://github.com/yourusername/markflow/actions"><img src="https://img.shields.io/github/actions/workflow/status/yourusername/markflow/ci.yml?style=flat-square" alt="CI Status"></a>
+  <a href="https://github.com/yourusername/markflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/yourusername/markflow?style=flat-square" alt="License"></a>
+</p>
 
-## Code of Conduct
+A cross-platform Markdown editor with **Linear-style UI**, built with Electron + React 18 + TypeScript.
 
-Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+## ✨ Features
 
-## How Can I Contribute?
+- **Linear-inspired UI** — Clean, minimal, keyboard-first design
+- **Split-pane editing** — Editor + live preview side by side, with draggable divider
+- **Folder-aware sidebar** — Open a single file and the whole containing folder loads automatically; open a folder to browse all its Markdown files
+- **Read-only by default** — Files open in read-only mode to prevent accidental edits; toggle to Edit mode anytime
+- **Close workspace** — One-click close of the current file and folder, returning to an empty state
+- **Open anywhere** — Launch via command line, drag-and-drop a file/folder onto the window, or set MarkFlow as the default app for `.md` files
+- **Empty on launch** — No previous file/folder is restored; the app always starts fresh
+- **Full-text search** — SQLite FTS5 powered, instant results with highlighted snippets
+- **Auto-save** — Debounced writes to both SQLite and Markdown files (in Edit mode)
+- **Starred documents** — Bookmark important notes for quick access
+- **KaTeX math formulas** — Support for inline `$...$` and block `$$...$$` LaTeX formulas
+- **Mermaid diagrams** — Render flowcharts, sequence diagrams, and more from ` ```mermaid ` code blocks
+- **Dark/Light theme** — Automatic system theme detection with manual toggle
+- **Window size memory** — Remembers window position and size across sessions
 
-### Reporting Bugs
+## 📸 Screenshots
 
-- Use the [GitHub Issues](https://github.com/yourusername/markflow/issues) page
-- Check if the bug has already been reported
-- Include: OS version, MarkFlow version, steps to reproduce, expected vs actual behavior
+> *Add screenshots here: editor view, split view, dark mode, search palette...*
 
-### Suggesting Enhancements
-
-- Use the [GitHub Issues](https://github.com/yourusername/markflow/issues) page
-- Describe the feature and why it would be useful
-- Include mockups or examples if applicable
-
-### Pull Requests
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Development Setup
+## 🚀 Quick Start
 
 ### Prerequisites
 
 - Node.js >= 18
 - npm >= 9
-- Git
 
-### Local Development
+### Development
 
 ```bash
-# Clone your fork
+# Clone the repository
 git clone https://github.com/yourusername/markflow.git
 cd markflow
 
@@ -50,114 +54,139 @@ npm install
 npm run dev
 ```
 
-### Project Structure
-
-```
-electron/
-  main/          # Electron main process (Node.js)
-  preload/       # Preload script (contextBridge)
-src/renderer/   # React renderer process
-  src/
-    components/   # UI components
-    hooks/        # TanStack Query hooks
-    store/        # Zustand stores
-    lib/          # Utilities
-    types/        # TypeScript types
-```
-
-### Key Technologies
-
-- **Electron 30** — Desktop shell
-- **React 18 + TypeScript** — UI
-- **Vite 5** — Build tool
-- **Tailwind CSS 3.4** — Styling
-- **Radix UI** — Accessible UI primitives
-- **Zustand** — UI state management
-- **TanStack Query v5** — IPC state management
-- **better-sqlite3 + FTS5** — Data storage
-- **CodeMirror 6** — Markdown editor
-- **KaTeX** — Math formula rendering
-- **Mermaid.js** — Diagram rendering
-
-## Coding Guidelines
-
-### TypeScript
-
-- Use TypeScript strict mode
-- Define prop types for all components
-- Avoid `any` type
-
-### React
-
-- Use functional components with hooks
-- Keep components small and focused
-- Use `React.memo` for performance-critical components
-
-### Styling
-
-- Use Tailwind CSS utility classes
-- Use `cn()` utility for conditional classes
-- Follow Linear-style design (clean, minimal, keyboard-first)
-
-### State Management
-
-- **Zustand** — UI state (sidebar open/closed, theme, view mode, etc.)
-- **TanStack Query** — Server state (IPC calls to main process)
-
-### IPC Communication
-
-- Always use `window.api` (contextBridge) for renderer-to-main communication
-- Never use `ipcRenderer` directly in renderer process
-- Define all IPC methods in `electron/preload/index.ts`
-
-## Testing
+### Build & Package
 
 ```bash
-# Run tests (when available)
-npm test
-
-# Run linting
-npm run lint
-
-# Run type checking
-npm run type-check
-```
-
-## Building & Packaging
-
-```bash
-# Build for current platform
+# Build for current platform (auto-detect)
 npm run dist
 
 # Build for specific platforms
-npm run dist:mac
-npm run dist:win
-npm run dist:linux
+npm run dist:mac      # macOS (.dmg)
+npm run dist:win      # Windows (unpacked dir, no installer needed)
+npm run dist:linux    # Linux (.AppImage, .deb, .rpm)
 ```
 
-## Commit Messages
+The packaged application will be in the `release/win-unpacked/` directory. Zip this folder for distribution — users just extract and run `MarkFlow.exe`, no installation required.
 
-Follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+> **Windows build note**: `npm run dist:win` automatically runs a pre-build script (`scripts/prepare-win-codesign.ps1`) that downloads and extracts only the Windows code-signing tools, skipping macOS symbolic links that fail on non-administrator Windows accounts. No manual setup needed — just run `npm run dist:win` and it works.
+>
+> If you encounter the error `Cannot create symbolic link`, either:
+> - Run the build again (the script should have pre-cached correctly), or
+> - Enable Windows **Developer Mode** (Settings → System → Developer options), or
+> - Run your terminal as Administrator.
+
+### Download Pre-built Binaries
+
+Visit the [Releases](https://github.com/yourusername/markflow/releases) page to download pre-built binaries for macOS, Windows, and Linux.
+
+## 📁 Project Structure
 
 ```
-feat: add dark mode toggle
-fix: correct KaTeX rendering for matrices
-docs: update README with packaging instructions
-refactor: simplify IPC handler logic
-test: add unit tests for document hooks
+markflow/
+├── electron/
+│   ├── main/              # Electron main process
+│   │   ├── db/           # SQLite database & migrations
+│   │   ├── ipc/          # IPC handlers (documents, search)
+│   │   └── index.ts      # Main process entry
+│   └── preload/          # Preload script (contextBridge)
+├── src/renderer/
+│   └── src/
+│       ├── components/
+│       │   ├── editor/   # Editor pane, CodeMirror, command palette
+│       │   ├── preview/  # Markdown preview (KaTeX, Mermaid)
+│       │   ├── sidebar/  # Document list, search
+│       │   └── ui/       # Base UI components (Radix UI)
+│       ├── hooks/         # TanStack Query hooks
+│       ├── store/         # Zustand stores
+│       ├── lib/           # Utilities
+│       └── types/        # TypeScript types
+├── resources/            # App icons, entitlements, etc.
+├── release/              # Built applications (gitignored)
+├── package.json
+├── electron-builder.json5
+├── vite.config.ts
+└── tsconfig.json
 ```
 
-## Release Process
+## ⌨️ Keyboard Shortcuts
 
-1. Update version in `package.json`
-2. Update `CHANGELOG.md`
-3. Create a [GitHub Release](https://github.com/yourusername/markflow/releases/new)
-4. GitHub Actions will automatically build and attach binaries
+| Shortcut | Action |
+|---|---|
+| `Ctrl/Cmd + N` | New document |
+| `Ctrl/Cmd + K` | Search documents |
+| `Ctrl/Cmd + \` | Toggle sidebar |
+| `Ctrl/Cmd + Shift + P` | Toggle preview mode (edit/preview/split) |
+| `Ctrl/Cmd + W` | Close workspace (close current file & folder) |
+| `Ctrl/Cmd + O` | Open external `.md` file |
+| `Ctrl/Cmd + Shift + O` | Open folder (batch import `.md` files) |
+| `Ctrl/Cmd + S` | Save (auto-save is always on in Edit mode) |
 
-## Questions?
+## 🛠️ Tech Stack
 
-Feel free to open an issue with the `question` label.
+| Layer | Technology |
+|---|---|
+| Build | Vite 5 + vite-plugin-electron |
+| Desktop | Electron 30 |
+| Frontend | React 18 + TypeScript (strict) + Tailwind CSS 3.4 |
+| UI Components | Radix UI primitives (shadcn/ui style) |
+| State | Zustand (UI) + TanStack Query v5 (IPC) |
+| Storage | better-sqlite3 + FTS5 + Markdown file dual-write |
+| Editor | CodeMirror 6 with Markdown syntax highlighting |
+| Math | KaTeX (LaTeX formula rendering) |
+| Diagrams | Mermaid.js |
+| Packaging | electron-builder |
+
+## 📦 Packaging Configuration
+
+The project uses `electron-builder` for cross-platform packaging:
+
+- **macOS**: `.dmg` (x64 + arm64 universal)
+- **Windows**: Unpacked directory (x64, green software — extract and run, no installer)
+- **Linux**: `.AppImage`, `.deb`, `.rpm`
+
+Configuration is in `electron-builder.json5`. Key settings:
+
+- `appId`: `com.markflow.app`
+- `productName`: `MarkFlow`
+- `asar`: enabled (with `better-sqlite3` unpacked for native module loading)
+- `entitlements`: `resources/entitlements.mac.plist` (macOS sandbox permissions)
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before getting started.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 🐛 Bug Reports
+
+Please use the [GitHub Issues](https://github.com/yourusername/markflow/issues) page to report bugs. Include:
+
+- Your operating system and version
+- MarkFlow version (see `Help > About`)
+- Steps to reproduce the bug
+- Expected vs actual behavior
+- Screenshots (if applicable)
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [Electron](https://electronjs.org/) - Cross-platform desktop apps with web technologies
+- [React](https://react.dev/) - UI library
+- [CodeMirror](https://codemirror.net/) - In-browser code editor
+- [KaTeX](https://katex.org/) - Fast math typesetting
+- [Mermaid](https://mermaid.js.org/) - JavaScript diagramming and charting
+- [Radix UI](https://www.radix-ui.com/) - Unstyled, accessible UI primitives
+- [Linear](https://linear.app/) - UI design inspiration
 
 ---
 
-Thank you for contributing to MarkFlow! 🚀
+<p align="center">
+  Built with ❤️ by the MarkFlow Team
+</p>

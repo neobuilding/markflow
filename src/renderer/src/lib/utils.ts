@@ -32,3 +32,18 @@ export function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
     timer = setTimeout(() => fn(...args), delay)
   }
 }
+
+// 返回文件路径的目录部分（跨平台，统一正斜杠）
+export function dirName(filePath: string): string {
+  const norm = filePath.replace(/\\/g, '/')
+  const idx = norm.lastIndexOf('/')
+  return idx <= 0 ? '' : norm.slice(0, idx)
+}
+
+// 判断某个文件的目录是否位于 folder 内（含 folder 自身），大小写不敏感（Windows）
+export function isInFolder(filePath: string, folder: string): boolean {
+  if (!folder) return false
+  const f = folder.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
+  const d = dirName(filePath).replace(/\\/g, '/').toLowerCase()
+  return d === f || d.startsWith(f + '/')
+}
