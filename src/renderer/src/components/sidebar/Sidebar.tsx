@@ -1,12 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { FileText, Star, Plus, Search, MoreHorizontal, Trash2, StarOff, FolderOpen, Folder, X, GripVertical } from 'lucide-react'
-import { cn, formatDate, isInFolder } from '../../lib/utils'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FileText, Plus, Search, MoreHorizontal, Trash2, FolderOpen, Folder, ChevronRight, X, GripVertical } from 'lucide-react'
+import { cn, formatDate, isInFolder, buildFileTree, type FileTreeNode } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
   useDocuments,
-  useStarredDocuments,
   useDeleteDocument,
-  useToggleStar,
   useCreateDocument,
   useOpenPaths,
   useOpenFolder
@@ -22,8 +20,6 @@ import {
 } from '../ui/dropdown-menu'
 import type { Document } from '../../types'
 
-type Section = 'all' | 'starred'
-
 export function Sidebar(): React.ReactElement | null {
   const {
     sidebarOpen,
@@ -33,20 +29,21 @@ export function Sidebar(): React.ReactElement | null {
     activeFolder,
     closeWorkspace
   } = useUIStore()
-  const [activeSection, setActiveSection] = useState<Section>('all')
   const [sidebarWidth, setSidebarWidth] = useState(240)
   const isResizing = useRef(false)
 
-  const { data: allDocs = [], isLoading: loadingAll } = useDocuments()
-  const { data: starredDocs = [], isLoading: loadingStarred } = useStarredDocuments()
+  const { data: allDocs = [], isLoading: loading } = useDocuments()
 
-  const docs = activeSection === 'starred' ? starredDocs : allDocs
   // 仅展示“当前文件夹”内的文档（无打开文件夹时为空，由欢迎页接管）
-  const folderDocs = activeFolder ? docs.filter((d) => isInFolder(d.filePath, activeFolder)) : []
-  const loading = activeSection === 'starred' ? loadingStarred : loadingAll
+  const folderDocs = activeFolder ? allDocs.filter((d) => isInFolder(d.filePath, activeFolder)) : []
+
+  // 将当前文件夹内的文档构建成“文件夹 + 文件”嵌套树，支持子文件夹结构
+  const tree = useMemo(
+    () => (activeFolder ? buildFileTree(folderDocs, activeFolder) : []),
+    [folderDocs, activeFolder]
+  )
 
   const deleteMut = useDeleteDocument()
-  const starMut = useToggleStar()
   const createMut = useCreateDocument()
   const openPathsMut = useOpenPaths()
   const openFolderMut = useOpenFolder()
@@ -68,6 +65,24 @@ export function Sidebar(): React.ReactElement | null {
     setActiveDocumentId(doc.id)
     useUIStore.getState().setEditable(true) // 新建文档默认可编辑
   }, [createMut, setActiveDocumentId])
+
+  // 文档选中 / 删除 / 星标 / 详情：供文档树（含子文件夹）复用
+  const handleSelectDoc = useCallback((doc: Document) => {
+    if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and switch files?')) return
+    setActiveDocumentId(doc.id)
+  }, [setActiveDocumentId])
+
+  const handleDeleteDoc = useCallback((doc: Document) => {
+    deleteMut.mutate(doc.id)
+    if (activeDocumentId === doc.id) {
+      const next = folderDocs.find((d) => d.id !== doc.id)
+      setActiveDocumentId(next?.id ?? null)
+    }
+  }, [deleteMut, activeDocumentId, folderDocs])
+
+  const handleDetailsDoc = useCallback((doc: Document) => {
+    useUIStore.getState().setFileDetailsId(doc.id)
+  }, [])
 
   // Sidebar resize drag handlers
   useEffect(() => {
@@ -197,27 +212,6 @@ export function Sidebar(): React.ReactElement | null {
         </div>
       )}
 
-      {/* Section tabs (only when a folder is open) */}
-      {activeFolder && (
-        <div className="flex items-center gap-1 px-2 py-1.5">
-          {(['all', 'starred'] as Section[]).map((s) => (
-            <button
-              key={s}
-              onClick={() => setActiveSection(s)}
-              className={cn(
-                'flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors capitalize',
-                activeSection === s
-                  ? 'bg-[var(--color-surface-overlay)] text-[var(--color-text-primary)]'
-                  : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
-              )}
-            >
-              {s === 'all' ? <FileText size={11} /> : <Star size={11} />}
-              {s === 'all' ? 'All' : 'Starred'}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Document list / welcome */}
       <div className="flex-1 overflow-y-auto">
         {!activeFolder ? (
@@ -229,26 +223,18 @@ export function Sidebar(): React.ReactElement | null {
         ) : loading ? (
           <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">Loading…</div>
         ) : folderDocs.length === 0 ? (
-          <EmptyState section={activeSection} onCreate={handleCreate} />
+          <EmptyState onCreate={handleCreate} />
         ) : (
           <ul className="py-1">
-            {folderDocs.map((doc) => (
-              <DocItem
-                key={doc.id}
-                doc={doc}
-                isActive={doc.id === activeDocumentId}
-                onSelect={() => {
-                  if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and switch files?')) return
-                  setActiveDocumentId(doc.id)
-                }}
-                onDelete={() => {
-                  deleteMut.mutate(doc.id)
-                  if (activeDocumentId === doc.id) {
-                    const next = folderDocs.find((d) => d.id !== doc.id)
-                    setActiveDocumentId(next?.id ?? null)
-                  }
-                }}
-                onToggleStar={() => starMut.mutate(doc.id)}
+            {tree.map((node) => (
+              <TreeRow
+                key={node.path}
+                node={node}
+                depth={0}
+                activeId={activeDocumentId}
+                onSelectDoc={handleSelectDoc}
+                onDeleteDoc={handleDeleteDoc}
+                onDetailsDoc={handleDetailsDoc}
               />
             ))}
           </ul>
@@ -294,18 +280,16 @@ function WelcomeState({
   )
 }
 
-function EmptyState({ section, onCreate }: { section: Section; onCreate: () => void }) {
+function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="px-3 py-8 text-center">
       <FileText size={24} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" />
       <p className="text-xs text-[var(--color-text-tertiary)]">
-        {section === 'starred' ? 'No starred documents' : 'No documents in this folder'}
+        No documents in this folder
       </p>
-      {section === 'all' && (
-        <button onClick={onCreate} className="mt-2 text-xs text-accent hover:underline">
-          Create your first document
-        </button>
-      )}
+      <button onClick={onCreate} className="mt-2 text-xs text-accent hover:underline">
+        Create your first document
+      </button>
     </div>
   )
 }
@@ -315,10 +299,13 @@ interface DocItemProps {
   isActive: boolean
   onSelect: () => void
   onDelete: () => void
-  onToggleStar: () => void
+  onDetails: () => void
+  depth?: number
 }
 
-function DocItem({ doc, isActive, onSelect, onDelete, onToggleStar }: DocItemProps) {
+function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: DocItemProps) {
+  // 受控的右下角菜单：既可通过三个点按钮打开，也可通过右键整行打开
+  const [menuOpen, setMenuOpen] = useState(false)
   return (
     <li
       className={cn(
@@ -327,7 +314,13 @@ function DocItem({ doc, isActive, onSelect, onDelete, onToggleStar }: DocItemPro
           ? 'bg-[var(--color-accent-muted)] text-[var(--color-text-primary)]'
           : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-secondary)]'
       )}
+      style={{ paddingLeft: depth * 12 + 12 }}
       onClick={onSelect}
+      onContextMenu={(e) => {
+        // 右键打开与三个点菜单一致的上下文菜单，并屏蔽浏览器原生菜单
+        e.preventDefault()
+        setMenuOpen(true)
+      }}
     >
       <FileText
         size={13}
@@ -336,7 +329,6 @@ function DocItem({ doc, isActive, onSelect, onDelete, onToggleStar }: DocItemPro
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1">
           <span className="text-sm font-medium truncate text-[var(--color-text-primary)]">{doc.title}</span>
-          {doc.isStarred && <Star size={10} className="shrink-0 text-amber-500 fill-amber-500" />}
         </div>
         <div className="flex items-center gap-1.5 mt-0.5">
           <span className="text-2xs text-[var(--color-text-tertiary)]">{formatDate(doc.updatedAt)}</span>
@@ -349,7 +341,7 @@ function DocItem({ doc, isActive, onSelect, onDelete, onToggleStar }: DocItemPro
         </div>
       </div>
 
-      <DropdownMenu>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <button
             className={cn(
@@ -362,8 +354,8 @@ function DocItem({ doc, isActive, onSelect, onDelete, onToggleStar }: DocItemPro
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onToggleStar() }}>
-            {doc.isStarred ? <><StarOff size={13} /> Unstar</> : <><Star size={13} /> Star</>}
+          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDetails() }}>
+            <FileText size={13} /> Details
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem destructive onClick={(e) => { e.stopPropagation(); onDelete() }}>
@@ -372,5 +364,79 @@ function DocItem({ doc, isActive, onSelect, onDelete, onToggleStar }: DocItemPro
         </DropdownMenuContent>
       </DropdownMenu>
     </li>
+  )
+}
+
+interface TreeRowProps {
+  node: FileTreeNode
+  depth: number
+  activeId: string | null
+  onSelectDoc: (doc: Document) => void
+  onDeleteDoc: (doc: Document) => void
+  onDetailsDoc: (doc: Document) => void
+}
+
+// 递归渲染文档树：文件夹可折叠，文件复用 DocItem。
+function TreeRow({
+  node,
+  depth,
+  activeId,
+  onSelectDoc,
+  onDeleteDoc,
+  onDetailsDoc
+}: TreeRowProps) {
+  if (node.isFolder) {
+    const [open, setOpen] = useState(true)
+    return (
+      <li>
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-1.5 w-full px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-overlay)] transition-colors truncate"
+          style={{ paddingLeft: depth * 12 + 12 }}
+        >
+          <ChevronRight
+            size={13}
+            className={cn(
+              'shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+              open && 'rotate-90'
+            )}
+          />
+          {open ? (
+            <FolderOpen size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
+          ) : (
+            <Folder size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
+          )}
+          <span className="truncate">{node.name}</span>
+        </button>
+        {open && (
+          <ul>
+            {node.children.map((child) => (
+              <TreeRow
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                activeId={activeId}
+                onSelectDoc={onSelectDoc}
+                onDeleteDoc={onDeleteDoc}
+                onDetailsDoc={onDetailsDoc}
+              />
+            ))}
+          </ul>
+        )}
+      </li>
+    )
+  }
+
+  const doc = node.doc
+  if (!doc) return null
+  return (
+    <DocItem
+      doc={doc}
+      isActive={doc.id === activeId}
+      depth={depth}
+      onSelect={() => onSelectDoc(doc)}
+      onDelete={() => onDeleteDoc(doc)}
+      onDetails={() => onDetailsDoc(doc)}
+    />
   )
 }

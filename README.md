@@ -16,6 +16,10 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 
 - **Linear-inspired UI** — Clean, minimal, keyboard-first design
 - **Split-pane editing** — Editor + live preview side by side, with draggable divider
+- **Synchronized scrolling** — In split view the source and preview panes scroll in lockstep (by scroll ratio, so it works regardless of content length)
+- **Nested folder sidebar** — Open a folder and browse all its Markdown files in a collapsible subfolder tree
+- **File path breadcrumb** — The current file's path is shown above the editor (`folder / … / file.md`); click the folder icon to reveal it in your system file manager
+- **File details** — View a file's full path, size, created/modified date and word count via the toolbar info button or the document's right-click menu
 - **Folder-aware sidebar** — Open a single file and the whole containing folder loads automatically; open a folder to browse all its Markdown files
 - **Read-only by default** — Files open in read-only mode to prevent accidental edits; toggle to Edit mode anytime
 - **Close workspace** — One-click close of the current file and folder, returning to an empty state
@@ -23,7 +27,6 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 - **Empty on launch** — No previous file/folder is restored; the app always starts fresh
 - **Full-text search** — SQLite FTS5 powered, instant results with highlighted snippets
 - **Manual save** — No auto-save: use **Save** (⌘/Ctrl+S), **Save As…** (⌘/Ctrl+⇧+S), and **Reload from Disk** (⌘/Ctrl+⇧+R) from the toolbar or File menu
-- **Starred documents** — Bookmark important notes for quick access
 - **KaTeX math formulas** — Support for inline `$...$` and block `$$...$$` LaTeX formulas
 - **Mermaid diagrams** — Render flowcharts, sequence diagrams, and more from ` ```mermaid ` code blocks
 - **Dark/Light theme** — Automatic system theme detection with manual toggle
@@ -122,6 +125,7 @@ markflow/
 | `Ctrl/Cmd + S` | Save (manual; no auto-save) |
 | `Ctrl/Cmd + Shift + S` | Save As… |
 | `Ctrl/Cmd + Shift + R` | Reload from Disk (load latest file content) |
+| `Ctrl/Cmd + I` | File details (path, size, modified date) |
 
 ## 🛠️ Tech Stack
 

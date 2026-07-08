@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
 import {
-  Edit3, Eye, Columns, Star, Hash, Bold, Italic, Code, Link, List, CheckSquare, PanelLeft,
-  GripVertical, PenLine, Lock, X, FolderOpen, Folder, Save, SaveAll, RotateCcw
+  Edit3, Eye, Columns, Hash, Bold, Italic, Code, Link, List, CheckSquare, PanelLeft,
+  GripVertical, PenLine, Lock, X, FolderOpen, Folder, Save, SaveAll, RotateCcw, Info
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
-  useDocument, useUpdateDocument, useToggleStar, useOpenPaths, useOpenFolder,
+  useDocument, useUpdateDocument, useOpenPaths, useOpenFolder,
   useSaveDocumentAs, useReloadDocument
 } from '../../hooks/useDocuments'
 import { MarkdownEditor } from './MarkdownEditor'
@@ -26,8 +26,6 @@ export function EditorPane(): React.ReactElement {
   const updateMut = useUpdateDocument()
   const saveAsMut = useSaveDocumentAs()
   const reloadMut = useReloadDocument()
-  const starMut = useToggleStar()
-
   const openPathsMut = useOpenPaths()
   const openFolderMut = useOpenFolder()
 
@@ -269,6 +267,19 @@ export function EditorPane(): React.ReactElement {
             <TooltipContent>Reload from Disk (⌘⇧R)</TooltipContent>
           </Tooltip>
 
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => doc && useUIStore.getState().setFileDetailsId(doc.id)}
+              >
+                <Info size={13} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>File details (⌘I)</TooltipContent>
+          </Tooltip>
+
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
         </>
       )}
@@ -430,15 +441,6 @@ export function EditorPane(): React.ReactElement {
 
             {/* Save / Save As / Reload 已移至左侧文件操作区（见 CommonToolbar） */}
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={() => starMut.mutate(doc.id)}>
-                  <Star size={13} className={doc.isStarred ? 'text-amber-500 fill-amber-500' : ''} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{doc.isStarred ? 'Unstar' : 'Star'}</TooltipContent>
-            </Tooltip>
-
             {/* View mode */}
             <div className="flex items-center rounded border border-[var(--color-border)] overflow-hidden ml-1">
               {([
@@ -465,6 +467,38 @@ export function EditorPane(): React.ReactElement {
               ))}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* 文件路径 breadcrumb：以「文件夹 / 文件名」形式展示当前文件路径 */}
+      <div className="flex items-center gap-1 px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 text-xs overflow-hidden">
+        <button
+          onClick={() => doc.filePath && window.api.app.showInFolder(doc.filePath)}
+          className="shrink-0 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
+          title="Show in folder"
+        >
+          <FolderOpen size={12} />
+        </button>
+        <div
+          className="flex items-center gap-0.5 min-w-0 overflow-hidden text-[var(--color-text-tertiary)]"
+          title={doc.filePath}
+        >
+          {doc.filePath.replace(/\\/g, '/').split('/').filter(Boolean).map((seg: string, i: number, arr: string[]) => {
+            const isLast = i === arr.length - 1
+            return (
+              <span key={i} className="flex items-center gap-0.5 min-w-0">
+                <span
+                  className={cn(
+                    'truncate',
+                    isLast ? 'text-[var(--color-text-primary)] font-medium' : 'hover:text-[var(--color-text-secondary)]'
+                  )}
+                >
+                  {seg}
+                </span>
+                {!isLast && <span className="text-[var(--color-border-strong)] shrink-0">/</span>}
+              </span>
+            )
+          })}
         </div>
       </div>
 

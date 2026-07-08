@@ -12,13 +12,12 @@ const api = {
     update: (id: string, updates: { title?: string; content?: string }) =>
       ipcRenderer.invoke('documents:update', id, updates),
     delete: (id: string) => ipcRenderer.invoke('documents:delete', id),
-    toggleStar: (id: string) => ipcRenderer.invoke('documents:toggle-star', id),
     import: (filePath: string) => ipcRenderer.invoke('documents:import', filePath),
     importMany: (filePaths: string[]) => ipcRenderer.invoke('documents:import-many', filePaths),
-    starred: () => ipcRenderer.invoke('documents:starred'),
     saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) =>
       ipcRenderer.invoke('documents:save-as', id, filePath, params),
     reload: (id: string) => ipcRenderer.invoke('documents:reload', id),
+    stat: (filePath: string) => ipcRenderer.invoke('documents:stat', filePath),
     watch: (id: string) => ipcRenderer.invoke('documents:watch', id),
     unwatch: (id: string) => ipcRenderer.invoke('documents:unwatch', id),
   },
@@ -33,6 +32,7 @@ const api = {
     getTheme: () => ipcRenderer.invoke('app:get-theme'),
     setTheme: (theme: 'light' | 'dark' | 'system') => ipcRenderer.invoke('app:set-theme', theme),
     getInitialPaths: () => ipcRenderer.invoke('app:get-initial-paths'),
+    showInFolder: (filePath: string) => ipcRenderer.invoke('app:show-in-folder', filePath),
   },
 
   // Files: resolve a list of file/folder paths into markdown files + directories
@@ -59,6 +59,7 @@ const api = {
   // so the native menu can enable/disable Save & Save As accordingly.
   menu: {
     setEditable: (editable: boolean) => ipcRenderer.send('menu:set-editable', editable),
+    setHasDocument: (has: boolean) => ipcRenderer.send('menu:set-has-document', has),
   },
 
   // Menu event listeners
@@ -72,7 +73,8 @@ const api = {
       | 'toggle-preview'
       | 'open-folder'
       | 'open-files'
-      | 'close-workspace',
+      | 'close-workspace'
+      | 'file-details',
     callback: (data?: string | string[]) => void
   ) => {
     const handler = (_: Electron.IpcRendererEvent, data?: string | string[]) => callback(data)

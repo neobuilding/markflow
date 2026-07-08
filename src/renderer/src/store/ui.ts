@@ -60,6 +60,10 @@ interface UIState {
   externalChange: { id: string; filePath: string } | null
   setExternalChange: (change: { id: string; filePath: string } | null) => void
   clearExternalChange: () => void
+
+  // 文件详情对话框：展示当前文档的路径 / 大小 / 修改日期等（null 表示关闭）
+  fileDetailsId: string | null
+  setFileDetailsId: (id: string | null) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -108,5 +112,8 @@ export const useUIStore = create<UIState>((set) => ({
 
   externalChange: null,
   setExternalChange: (externalChange) => set({ externalChange }),
-  clearExternalChange: () => set({ externalChange: null })
+  clearExternalChange: () => set({ externalChange: null }),
+
+  fileDetailsId: null,
+  setFileDetailsId: (id) => set({ fileDetailsId: id })
 }))

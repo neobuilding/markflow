@@ -23,7 +23,6 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 - **Empty on launch** — No previous file/folder is restored; the app always starts fresh
 - **Full-text search** — SQLite FTS5 powered, instant results with highlighted snippets
 - **Auto-save** — Debounced writes to both SQLite and Markdown files (in Edit mode)
-- **Starred documents** — Bookmark important notes for quick access
 - **KaTeX math formulas** — Support for inline `$...$` and block `$$...$$` LaTeX formulas
 - **Mermaid diagrams** — Render flowcharts, sequence diagrams, and more from ` ```mermaid ` code blocks
 - **Dark/Light theme** — Automatic system theme detection with manual toggle

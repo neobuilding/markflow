@@ -284,9 +284,18 @@ function setupMenu(): void {
           click: () => mainWindow?.webContents.send('menu:save-as'),
         },
         {
+          id: 'reload',
           label: 'Reload from Disk',
           accelerator: 'CmdOrCtrl+Shift+R',
+          enabled: false, // 无打开文件时禁用，由渲染层同步状态启用
           click: () => mainWindow?.webContents.send('menu:reload'),
+        },
+        {
+          id: 'file-details',
+          label: 'File Details…',
+          accelerator: 'CmdOrCtrl+I',
+          enabled: false, // 无打开文件时禁用，由渲染层同步状态启用
+          click: () => mainWindow?.webContents.send('menu:file-details'),
         },
         { type: 'separator' },
         {
@@ -365,6 +374,17 @@ ipcMain.on('menu:set-editable', (_event, editable: boolean) => {
   const saveAsItem = appMenu.getMenuItemById('save-as')
   if (saveItem) saveItem.enabled = editable
   if (saveAsItem) saveAsItem.enabled = editable
+  // 重新设置菜单以应用 enabled 变化（菜单项对象需重新挂载才刷新 UI）
+  Menu.setApplicationMenu(appMenu)
+})
+
+// 渲染层同步“是否有打开文件”的状态：无文件时禁用 Reload / File Details。
+ipcMain.on('menu:set-has-document', (_event, has: boolean) => {
+  if (!appMenu) return
+  const reloadItem = appMenu.getMenuItemById('reload')
+  const detailsItem = appMenu.getMenuItemById('file-details')
+  if (reloadItem) reloadItem.enabled = has
+  if (detailsItem) detailsItem.enabled = has
   // 重新设置菜单以应用 enabled 变化（菜单项对象需重新挂载才刷新 UI）
   Menu.setApplicationMenu(appMenu)
 })
@@ -498,6 +518,15 @@ if (!shouldStart) {
   ipcMain.handle('app:get-initial-paths', () => {
     const paths = pendingInitialPaths.splice(0, pendingInitialPaths.length)
     return paths
+  })
+
+  // 在系统文件管理器中定位并高亮指定文件
+  ipcMain.handle('app:show-in-folder', (_event, filePath: string) => {
+    try {
+      shell.showItemInFolder(filePath)
+    } catch {
+      // 忽略：文件可能不存在或无权限
+    }
   })
 
   // ─── Window control ────────────────────────────────────────────

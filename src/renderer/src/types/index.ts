@@ -5,7 +5,6 @@ export interface Document {
   filePath: string
   content: string
   wordCount: number
-  isStarred: boolean
   isArchived: boolean
   createdAt: number
   updatedAt: number

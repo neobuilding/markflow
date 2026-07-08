@@ -7,6 +7,7 @@ import { languages } from '@codemirror/language-data'
 import { searchKeymap } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
 import { debounce } from '../../lib/utils'
+import { scrollSync } from '../../lib/scrollSync'
 
 interface MarkdownEditorProps {
   content: string
@@ -87,6 +88,9 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
 
     viewRef.current = view
 
+    // 注册到同步滚动控制器：源码窗格作为 "editor" 一侧
+    scrollSync.register('editor', view.scrollDOM)
+
     if (autoFocus) {
       view.focus()
       view.dispatch({
@@ -114,6 +118,7 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
 
     return () => {
       document.removeEventListener('markdown:insert', handleInsert)
+      scrollSync.unregister('editor')
       view.destroy()
       viewRef.current = null
     }

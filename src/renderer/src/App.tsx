@@ -6,6 +6,7 @@ import { EditorPane } from './components/editor/EditorPane'
 import { StatusBar } from './components/editor/StatusBar'
 import { CommandPalette } from './components/editor/CommandPalette'
 import { NewDocumentDialog } from './components/editor/NewDocumentDialog'
+import { FileDetailsDialog } from './components/editor/FileDetailsDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 
 export default function App(): React.ReactElement {
@@ -41,10 +42,14 @@ export default function App(): React.ReactElement {
       if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and close the workspace?')) return
       closeWorkspace()
     })
+    const removeFileDetails = window.api.onMenuEvent('file-details', () => {
+      const id = useUIStore.getState().activeDocumentId
+      if (id) useUIStore.getState().setFileDetailsId(id)
+    })
     const removeOpenPaths = window.api.onOpenPaths((paths) => {
       if (paths && paths.length > 0) openPathsMut.mutate(paths)
     })
-    return () => { removeNew(); removeSidebar(); removeOpen(); removeClose(); removeOpenPaths() }
+    return () => { removeNew(); removeSidebar(); removeOpen(); removeClose(); removeOpenPaths(); removeFileDetails() }
   }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace])
 
   // 启动时拉取命令行 / 文件关联传入的路径并打开
@@ -59,6 +64,17 @@ export default function App(): React.ReactElement {
     send(useUIStore.getState().editable)
     const unsub = useUIStore.subscribe((state, prev) => {
       if (state.editable !== prev.editable) send(state.editable)
+    })
+    return () => unsub()
+  }, [])
+
+  // 把“是否有打开文件”的状态同步给主进程，用于启用/禁用原生菜单的 Reload / File Details
+  useEffect(() => {
+    if (!window.api?.menu?.setHasDocument) return
+    const send = (has: boolean) => window.api.menu.setHasDocument(has)
+    send(!!useUIStore.getState().activeDocumentId)
+    const unsub = useUIStore.subscribe((state, prev) => {
+      if (state.activeDocumentId !== prev.activeDocumentId) send(!!state.activeDocumentId)
     })
     return () => unsub()
   }, [])
@@ -102,6 +118,7 @@ export default function App(): React.ReactElement {
         <StatusBar />
         <CommandPalette />
         <NewDocumentDialog />
+        <FileDetailsDialog />
       </div>
     </TooltipProvider>
   )

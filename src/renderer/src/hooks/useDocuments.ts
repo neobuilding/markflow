@@ -22,14 +22,6 @@ export function useDocument(id: string | null) {
   })
 }
 
-export function useStarredDocuments() {
-  return useQuery({
-    queryKey: [...DOCS_KEY, 'starred'],
-    queryFn: () => window.api.documents.starred(),
-    staleTime: 0
-  })
-}
-
 export function useCreateDocument() {
   const qc = useQueryClient()
   return useMutation({
@@ -101,15 +93,13 @@ export function useReloadDocument() {
   })
 }
 
-export function useToggleStar() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => window.api.documents.toggleStar(id),
-    onSuccess: (data: Document) => {
-      qc.setQueryData([...DOCS_KEY, 'detail', data.id], data)
-      qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
-      qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'starred'] })
-    }
+// 查询磁盘上文件的详情（大小 / 创建时间 / 修改时间）
+export function useFileStat(filePath: string | null | undefined) {
+  return useQuery({
+    queryKey: ['fileStat', filePath ?? ''],
+    queryFn: () => window.api.documents.stat(filePath!),
+    enabled: !!filePath,
+    staleTime: 5000
   })
 }
 

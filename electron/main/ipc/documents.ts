@@ -4,7 +4,7 @@ import { getDb } from '../db/database'
 
 let _app: App | null = null
 import { join, dirname, basename } from 'path'
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, watch } from 'fs'
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, watch, statSync } from 'fs'
 import type { FSWatcher } from 'fs'
 import { randomUUID } from 'crypto'
 
@@ -15,7 +15,6 @@ export interface DocumentRow {
   file_path: string
   content: string
   word_count: number
-  is_starred: number
   is_archived: number
   created_at: number
   updated_at: number
@@ -28,7 +27,6 @@ export interface Document {
   filePath: string
   content: string
   wordCount: number
-  isStarred: boolean
   isArchived: boolean
   createdAt: number
   updatedAt: number
@@ -42,7 +40,6 @@ function toDocument(row: DocumentRow): Document {
     filePath: row.file_path,
     content: row.content,
     wordCount: row.word_count,
-    isStarred: row.is_starred === 1,
     isArchived: row.is_archived === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -176,8 +173,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
 
       // Insert into DB
       db.prepare(`
-        INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_starred, is_archived, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+        INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
       `).run(id, title, folderPath, filePath, content, wordCount, now, now)
 
       const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
@@ -314,16 +311,6 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     return true
   })
 
-  // Toggle star
-  ipcMain.handle('documents:toggle-star', (_event, id: string) => {
-    const db = getDb()
-    db.prepare(
-      'UPDATE documents SET is_starred = CASE WHEN is_starred = 1 THEN 0 ELSE 1 END, updated_at = ? WHERE id = ?'
-    ).run(Date.now(), id)
-    const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
-    return toDocument(row)
-  })
-
   // Import markdown file from disk
   ipcMain.handle('documents:import', (_event, filePath: string) => {
     const db = getDb()
@@ -350,8 +337,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     }
 
     db.prepare(`
-      INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_starred, is_archived, created_at, updated_at)
-      VALUES (?, ?, '', ?, ?, ?, 0, 0, ?, ?)
+      INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, created_at, updated_at)
+      VALUES (?, ?, '', ?, ?, ?, 0, ?, ?)
     `).run(id, title, filePath, content, wordCount, now, now)
 
     const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
@@ -366,8 +353,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     const now = Date.now()
 
     const insertStmt = db.prepare(`
-      INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_starred, is_archived, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
+      INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
     `)
     const selectByPath = db.prepare('SELECT * FROM documents WHERE file_path = ?')
     const selectById = db.prepare('SELECT * FROM documents WHERE id = ?')
@@ -406,12 +393,18 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     return results
   })
 
-  // Get starred documents
-  ipcMain.handle('documents:starred', () => {
-    const db = getDb()
-    const rows = db
-      .prepare('SELECT * FROM documents WHERE is_starred = 1 AND is_archived = 0 ORDER BY updated_at DESC')
-      .all() as DocumentRow[]
-    return rows.map(toDocument)
+  // 文件详情：返回磁盘上的大小 / 创建时间 / 修改时间（用于详情对话框）
+  ipcMain.handle('documents:stat', (_event, filePath: string) => {
+    try {
+      const st = statSync(filePath)
+      return {
+        exists: true,
+        size: st.size,
+        createdAt: st.birthtimeMs,
+        updatedAt: st.mtimeMs
+      }
+    } catch {
+      return { exists: false }
+    }
   })
 }

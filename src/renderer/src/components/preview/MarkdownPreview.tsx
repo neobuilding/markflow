@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect } from 'react'
 import { marked } from 'marked'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import { scrollSync } from '../../lib/scrollSync'
 
 // Configure marked
 marked.setOptions({
@@ -177,6 +178,7 @@ interface MarkdownPreviewProps {
 
 export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactElement {
   const previewRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const isRenderingMermaid = useRef(false)
 
   const html = useMemo(() => {
@@ -219,8 +221,16 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     return () => clearTimeout(timer)
   }, [html])
 
+  // 注册到同步滚动控制器：预览窗格作为 "preview" 一侧
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    scrollSync.register('preview', el)
+    return () => scrollSync.unregister('preview')
+  }, [])
+
   return (
-    <div className="h-full overflow-auto w-full" style={{ background: 'var(--color-surface)' }}>
+    <div ref={scrollRef} className="h-full overflow-auto w-full" style={{ background: 'var(--color-surface)' }}>
       <div
         ref={previewRef}
         className="markdown-preview px-6 py-6 w-full"
