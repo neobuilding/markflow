@@ -271,6 +271,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # `gh` resolves the target repository from the local git context (or the
+      # GH_REPO / GITHUB_REPOSITORY env vars). Without a checkout, `gh release …`
+      # fails with "fatal: not a git repository". Checking out fixes every `gh`
+      # call in this job (stale-release delete + publish).
+      - uses: actions/checkout@v6
+
       - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
