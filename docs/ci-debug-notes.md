@@ -197,6 +197,139 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 | `package.json` → `scripts.dist:win` | `powershell -ExecutionPolicy Bypass -File scripts/prepare-win-codesign.ps1 && npm run build && electron-builder --win` |
 | `electron-builder.json5` → `win` | Windows 打包配置；如需真签名需补 `certificateFile` / `certificatePassword` |
 
+## 8. Release 阶段失败：builder-debug.yml / Draft / 404 与版本号
+
+### 8.1 现象（一次真实的发版失败）
+
+触发 `v0.2.0` tag 后 Release 阶段报错，三处异常：
+
+1. **产物文件名版本号错误**：所有文件被命名为 `1.0.0`（而非正确的 `v0.2.0`）。
+2. **Release 停留在 Draft**：内容只生成了一部分，未正式发布。
+3. **报错 `Not Found`**：
+   ```
+   error updating release asset metadata for builder-debug.yml: HttpError: Not Found
+   ✅ Uploaded builder-debug.yml
+   Error: Not Found - https://docs.github.com/rest/releases/assets#update-a-release-asset
+   ```
+
+### 8.2 根因分析（关键认知）
+
+**版本号错误**：CI 构建前没有把 `package.json` 的 `version`（写死为 `1.0.0`）更新为 tag 版本，electron-builder 按 `package.json` 版本命名产物。
+
+**404 的真正原因（重要，易误解）**：
+
+- `softprops/action-gh-release` 在上传 `builder-debug.yml` 后，会主动对该 asset 发起一次
+  `PATCH /repos/{owner}/{repo}/releases/assets/{id}`（"update release asset metadata"）。
+- **GitHub 的这个 PATCH 接口，对 Draft Release 下的 asset 调用会返回 404**。
+- 因此失败的充要条件是「**action 对 builder-debug.yml 发 PATCH**」+「**Release 此时是 Draft**」，**二者缺一不可**。
+- 它与"asset 是否已经存在/是否有旧草稿"无关——首次运行即使没有任何旧草稿也会 404（实测即如此）。
+- `builder-debug.yml` 是 electron-builder 生成的**内部调试文件**，action 只对它走了"上传后 PATCH 元数据"分支，其余 6 个产物走普通上传分支，所以只有它报错、其他 6 个成功。这是稳定可复现的行为，排除该文件即可消除触发点。
+- 旧草稿残留导致的「已存在 asset → 走更新分支 → 404」是**另一种**复现路径（重跑时），此时**所有**已存在文件都会 404，而不仅是 builder-debug.yml。
+
+**Draft 残骸**：PATCH 404 让整个 Release step 中断，Release 从未完成发布 → 残留为 Draft。
+
+### 8.3 修复措施（已写入 ci.yml）
+
+| 改动 | 位置 | 作用 |
+|------|------|------|
+| 注入版本号 | `build` job：`Inject release version into package.json` | `npm version --no-git-tag-version --no-commit <ver>` 覆盖 `package.json`，使产物名正确 |
+| `shell: bash` | 同上 step | Windows runner 默认 shell 是 PowerShell，不认 `VAR="x"` 语法；强制 bash 跨平台一致 |
+| 排除调试文件 | `release` job `files:` 末尾加 `!**/builder-debug.yml` | 该文件永不进 Release，彻底消除 PATCH 触发点 |
+| 删旧草稿 | `release` job：`Delete stale release (if any)`（`gh release delete`） | 重跑前清掉上次失败残留的 Draft，避免已存在 asset 触发 404；只删 Release 对象，**保留 git tag** |
+| Draft 安全网 | `Create Release` 设 `draft: true` | 上传期间保持草稿，失败只留草稿不污染用户 |
+| 显式发布 | `Publish Release` step：`gh release edit <tag> --draft=false`，`if: success()` | 仅在全部 asset 上传成功后把草稿翻为已发布 |
+| 仓库上下文 | `release` job 开头加 `actions/checkout@v6` | 提供 `.git`，让 `gh release view/edit/delete` 能解析目标仓库；否则报 `not a git repository`（见第 9 节） |
+
+> 保留 Draft + 显式发布 是用户明确要求的"防半成品"设计：以前默认 `draft: false` 时 action 会自动发布，无需该步；改为 `draft: true` 后 action 永不自动发布，必须加这一步。
+
+### 8.4 关键经验
+
+1. **矩阵 job 的每个 step 都会按组合数重复执行**。`build` 是 `mac/win/linux` 三平台矩阵，所以"注入版本号"会跑 3 次——这是正常的。原因是三个分支在互不相通的独立虚拟机上各自 `checkout`，没有共享文件系统，不存在"跑在所有分支之前"的内部步骤。要"只注入一次"必须提升为独立的无矩阵 `prep` job，并用 artifact 把改好的 `package.json` 传下去（增加复杂度，对当前项目收益不大，故保留 3 次）。
+
+2. **bash 语法 step 在 Windows runner 上必须显式 `shell: bash`**。否则 `VAR="value"` 被 PowerShell 当成命令名报 `not recognized`。`release` job 只在 `ubuntu-latest` 跑（默认 bash），无需加。
+
+3. **不要在 `test` job 里引用 `needs.auto-tag.outputs.version` 并做版本注入**。`test` job 没有 `needs: auto-tag`，在非发版触发（push 到 main、开 PR）时该输出为空，会导致 `npm version ""` 报错、CI 全红。`test` job 只构建 web 渲染层（Vite），不调用 electron-builder，注入版本对它无意义。
+
+4. **`builder-debug.yml` 不是"必须上传"的文件**，它是调试产物，从 Release 文件清单排除即可，不影响可分发包。
+
+5. **手动收尾**：若之前已有失败的 Draft Release 残留在 GitHub 上，需先到 Releases 页面手动删除，否则重跑时其内已存在的 asset 仍会触发 404（见 8.2 第二种复现路径）。
+
+### 8.5 当前 Release 流程时序
+
+```
+auto-tag  → 算出 version（如 v0.4.0）
+  ↓
+build（矩阵 ×3 平台，各自）：
+   注入 package.json 版本 → npm ci → vite build → electron-builder 打包
+   上传 artifact
+  ↓
+release：
+   checkout 仓库（提供 .git，供 gh 解析目标仓库）
+   → 下载 artifacts
+   → 删旧草稿（若有）
+   → 以 Draft 创建 Release，上传 6 个产物（排除 builder-debug.yml）
+   → 仅当全部成功：gh release edit --draft=false 发布
+```
+
+## 9. Release 阶段失败：release job 缺少 checkout 导致 `gh` 报 "not a git repository"
+
+### 9.1 现象（一次真实的发版失败）
+
+`Publish Release` step 报错退出（以 `v0.5.0` 为例）：
+
+```
+Run TAG="v0.5.0"
+  gh release edit "$TAG" --draft=false
+failed to run git: fatal: not a git repository (or any of the parent directories): .git
+Error: Process completed with exit code 1.
+```
+
+### 9.2 根因
+
+`release` job 里**没有 `checkout` 步骤**，工作目录中不存在 `.git`。`gh release edit/view/delete` 这类命令需要先解析"当前命令针对哪个 GitHub 仓库"，`gh` 的解析顺序是：
+
+1. `GH_REPO` 环境变量；
+2. 当前目录的 git remote（即 `.git`）；
+3. 在 GitHub Actions 中还会回退读取 `GITHUB_REPOSITORY` 环境变量。
+
+本项目 `release` job 既没设 `GH_REPO`，也没 checkout，于是 `gh` 退回到调用 `git` 来定位仓库，而此时没有 `.git`，直接抛 `fatal: not a git repository`。
+
+### 9.3 隐藏的同源 bug（为什么只有 Publish 暴露报错）
+
+同一 `release` job 的 **"Delete stale release (if any)"** 步骤内部同样调用了 `gh release view`（以及 `gh release delete`），同样会触发这个 git 报错。但它被包在 `if gh release view "$TAG" >/dev/null 2>&1; then ... else ...` 里——`gh` 的失败被 `if` 捕获，错误输出被静默吞掉，流程走入 `else` 分支误判为"没有已存在的 release"。
+
+所以：两个 `gh` 调用其实都中招了，**只是 Publish 那一步的 `gh` 失败未被 `if` 包裹、直接以非零退出码中断了 job**，才让问题显现。只修 Publish 不改 Delete 的话，重跑时旧草稿不会被清掉（见 8.2 第二条复现路径），依然可能 404。
+
+### 9.4 修复（已写入 ci.yml）
+
+在 `release` job 的最开头加一个 `actions/checkout@v6`：
+
+```yaml
+    steps:
+      # `gh` resolves the target repository from the local git context ...
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+```
+
+checkout 后会生成 `.git`，`gh` 即可通过 git remote 正确解析仓库，Delete stale release 与 Publish Release 两步都恢复正常。
+
+可选加固：若不想为本 job 拉取整个仓库，也可不 checkout，而是显式设置仓库上下文：
+
+```yaml
+    env:
+      GH_REPO: ${{ github.repository }}
+```
+
+`gh` 读到 `GH_REPO` 后不会再调用 `git`，同样能修好。本项目选择 checkout 方案，更通用、与 `gh` 版本无关。
+
+### 9.5 关键经验
+
+1. **任何需要仓库上下文的 `gh` 命令，job 里要么 `checkout`、要么显式声明 `GH_REPO`/`GITHUB_REPOSITORY`**。`gh release …`、`gh pr …`、`gh issue …` 这类都依赖仓库定位。
+2. **`release` job 本身不需要源码编译**，但它用 `gh` CLI，所以仍需要 git 上下文（checkout 或 GH_REPO），不能因为它"只上传 artifact"就省掉 checkout。
+3. **被 `if` 包裹的命令失败会被吞掉**，可能掩盖真实问题（如本例的 Delete stale release 误判）。排查 `gh`/`git` 报错时，注意哪些命令被 `if`/管道吞了退出码，必要时先临时去掉 `if` 跑一次看真实报错。
+
 ## 文件清单
 
 | 文件 | 说明 |
