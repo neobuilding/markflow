@@ -225,6 +225,7 @@ jobs:
         run: npm ci
 
       - name: Inject release version into package.json
+        shell: bash
         run: |
           VERSION="${{ needs.auto-tag.outputs.version }}"
           VERSION="${VERSION#v}"
