@@ -29,13 +29,12 @@ jobs:
             - run: npm run typecheck
             - run: npm run build
 
-    # 追加决策 0.3：PR 三平台打包验证——只在 PR 时跑，验证 electron-builder
+    # 追加决策 0.3：三平台打包验证——在 PR 与 push 到 main 时都跑，验证 electron-builder
     # 能在三平台成功出包，提前暴露 Windows/macOS 平台坑；不上传、不发布。
-    # Public repo 下 macOS 等 runner 免费（§11.2 #4），默认每个 PR 都验证。
+    # Public repo 下 macOS 等 runner 免费（§11.2 #4），默认每次都验证。
     build-check:
         name: Build check (${{ matrix.os }})
         needs: test
-        if: github.event_name == 'pull_request'
         runs-on: ${{ matrix.os }}
         env:
             CSC_IDENTITY_AUTOMATION: false # 与发版一致：mac 不走签名/公证自动化（原 ci.yml:241）
