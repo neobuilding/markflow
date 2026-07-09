@@ -282,19 +282,25 @@ jobs:
         with:
           path: artifacts
 
-      # Remove any stale release left by a previous failed run so that the
-      # upload step always starts from a clean state. Without this, re-runs
-      # would find pre-existing assets and hit the "update-a-release-asset"
-      # 404 on draft releases (the bug this fix works around). The git tag
-      # itself is preserved — only the release object is deleted.
+      # Remove any stale release left by a previous failed run so the upload
+      # step always starts from a clean slate. If a release for this tag
+      # already exists (draft or published), softprops/action-gh-release will
+      # REUSE it and try to PATCH-update its existing assets, which 404s on
+      # draft releases (see root-cause note below). We delete the release
+      # object only — the git tag is preserved.
+      # Uses `gh api` directly (not `gh release …`) because it reliably
+      # resolves both draft and published releases and is independent of the
+      # local git checkout state.
       - name: Delete stale release (if any)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ needs.auto-tag.outputs.version }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::notice::Deleting stale release for $TAG"
-            gh release delete "$TAG" --yes
+          RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id' 2>/dev/null || true)
+          if [ -n "$RELEASE_ID" ]; then
+            echo "::notice::Deleting stale release $TAG (id $RELEASE_ID)"
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+            echo "::notice::Stale release deleted"
           else
             echo "::notice::No existing release for $TAG"
           fi

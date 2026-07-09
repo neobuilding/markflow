@@ -216,17 +216,24 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 
 **版本号错误**：CI 构建前没有把 `package.json` 的 `version`（写死为 `1.0.0`）更新为 tag 版本，electron-builder 按 `package.json` 版本命名产物。
 
-**404 的真正原因（重要，易误解）**：
+**404 的真正原因（重要，易误解）**
 
-- `softprops/action-gh-release` 在上传 `builder-debug.yml` 后，会主动对该 asset 发起一次
-  `PATCH /repos/{owner}/{repo}/releases/assets/{id}`（"update release asset metadata"）。
-- **GitHub 的这个 PATCH 接口，对 Draft Release 下的 asset 调用会返回 404**。
-- 因此失败的充要条件是「**action 对 builder-debug.yml 发 PATCH**」+「**Release 此时是 Draft**」，**二者缺一不可**。
-- 它与"asset 是否已经存在/是否有旧草稿"无关——首次运行即使没有任何旧草稿也会 404（实测即如此）。
-- `builder-debug.yml` 是 electron-builder 生成的**内部调试文件**，action 只对它走了"上传后 PATCH 元数据"分支，其余 6 个产物走普通上传分支，所以只有它报错、其他 6 个成功。这是稳定可复现的行为，排除该文件即可消除触发点。
-- 旧草稿残留导致的「已存在 asset → 走更新分支 → 404」是**另一种**复现路径（重跑时），此时**所有**已存在文件都会 404，而不仅是 builder-debug.yml。
+核心机制（必须分清两条不同的触发路径）：
 
-**Draft 残骸**：PATCH 404 让整个 Release step 中断，Release 从未完成发布 → 残留为 Draft。
+> `softprops/action-gh-release` 在上传每个文件后，会按需要调用
+> `PATCH /repos/{owner}/{repo}/releases/assets/{id}`（即报错里的 `update-a-release-asset`，
+> "update release asset metadata"）。而 **GitHub 的 `updateReleaseAsset` 接口对「属于 Draft Release 的 asset」一律返回 404**——这是 API 限制：draft 态的 asset 不能通过该 PATCH 端点更新。
+
+动作会进入"PATCH 更新"分支的前提是：**该 asset 已经属于这个 release**（无论是刚上传完就补 PATCH 元数据，还是复用旧 release 后发现同名 asset 已存在）。两条触发路径如下：
+
+- **路径 A（首次运行也会，与旧草稿无关）**：`builder-debug.yml` 是 electron-builder 生成的**内部调试文件**，action 在上传它之后会**主动再发一次 PATCH 去更新它的元数据**（其余 6 个产物走普通"上传新文件"分支，不上这个 PATCH）。因为此刻 Release 是 Draft，这个 PATCH 必然 404。所以即使**从来没有旧草稿、首次运行**也会失败——实测即如此。排除该文件即可消除这个触发点。
+- **路径 B（重跑时，旧草稿导致）**：若上次失败的 run 已留下一个**含有若干 asset 的 Draft Release**，本次 action 发现这个 tag **已有 release 会复用它**（而非新建），并对其中**已存在的 asset 走"更新已有 asset"分支**发 PATCH → 因为是 Draft 下 asset，404。此时**所有**已存在的文件都会 404，而不只是 builder-debug.yml。
+
+**一句话根因**：动作对 **Draft Release 下的 asset 发 PATCH 更新**，GitHub 一律 404。路径 A 的触发点是 builder-debug.yml 被单独 PATCH；路径 B 的触发点是旧 draft 提供了"已存在的 asset"，把动作逼进 PATCH 分支。
+
+**Draft 残骸**：第一次 PATCH 404 就让整个 Release step 中断，Release 从未完成发布 → 残留为 Draft，进而成为下一次路径 B 的源头。
+
+> ⚠️ 旧说法"Draft 导致 404"是简写、不够精确：单纯"Release 是 Draft"不会让所有上传 404（另外 6 个文件首次运行都成功）。真正致命的是"**动作对 draft 下的 asset 发 PATCH**"，而 Draft 只是让那个 PATCH 返回 404 的条件。
 
 ### 8.3 修复措施（已写入 ci.yml）
 
@@ -234,8 +241,8 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 |------|------|------|
 | 注入版本号 | `build` job：`Inject release version into package.json` | `npm version --no-git-tag-version --no-commit <ver>` 覆盖 `package.json`，使产物名正确 |
 | `shell: bash` | 同上 step | Windows runner 默认 shell 是 PowerShell，不认 `VAR="x"` 语法；强制 bash 跨平台一致 |
-| 排除调试文件 | `release` job `files:` 末尾加 `!**/builder-debug.yml` | 该文件永不进 Release，彻底消除 PATCH 触发点 |
-| 删旧草稿 | `release` job：`Delete stale release (if any)`（`gh release delete`） | 重跑前清掉上次失败残留的 Draft，避免已存在 asset 触发 404；只删 Release 对象，**保留 git tag** |
+| 排除调试文件 | `release` job `files:` 末尾加 `!**/builder-debug.yml` | 该文件永不进 Release，彻底消除**路径 A** 的 PATCH 触发点 |
+| 删旧草稿 | `release` job：`Delete stale release (if any)`，改用 `gh api` REST（`GET …/releases/tags/{tag}` 取 id → `DELETE …/releases/{id}`） | 重跑前清掉上次失败残留的 Draft，避免**路径 B** 已存在 asset 触发 404。原 `gh release view/delete` 子命令对 draft 解析不可靠、实际未删除，故改用 `gh api`（不依赖 git 上下文、对 draft/published 都稳定）。只删 Release 对象，**保留 git tag** |
 | Draft 安全网 | `Create Release` 设 `draft: true` | 上传期间保持草稿，失败只留草稿不污染用户 |
 | 显式发布 | `Publish Release` step：`gh release edit <tag> --draft=false`，`if: success()` | 仅在全部 asset 上传成功后把草稿翻为已发布 |
 | 仓库上下文 | `release` job 开头加 `actions/checkout@v6` | 提供 `.git`，让 `gh release view/edit/delete` 能解析目标仓库；否则报 `not a git repository`（见第 9 节） |
@@ -252,7 +259,7 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 
 4. **`builder-debug.yml` 不是"必须上传"的文件**，它是调试产物，从 Release 文件清单排除即可，不影响可分发包。
 
-5. **手动收尾**：若之前已有失败的 Draft Release 残留在 GitHub 上，需先到 Releases 页面手动删除，否则重跑时其内已存在的 asset 仍会触发 404（见 8.2 第二种复现路径）。
+5. **删旧草稿必须可靠（路径 B 的关键）**：原 `gh release view/delete` 子命令对 draft 解析异常/返回非零，导致删除步骤被 `if` 静默跳过、旧 draft 残留继续触发 404。已改用 `gh api` 直接调 REST 接口（不依赖 git 上下文、对 draft/published 都能稳定解析）实现删除。若升级删除步骤前已残留 Draft，仍需手动到 Releases 页面删一次，之后即可自动清理。
 
 ### 8.5 当前 Release 流程时序
 
@@ -314,6 +321,8 @@ Error: Process completed with exit code 1.
 ```
 
 checkout 后会生成 `.git`，`gh` 即可通过 git remote 正确解析仓库，Delete stale release 与 Publish Release 两步都恢复正常。
+
+> 注（后续演进）：`Delete stale release` 步骤后来从 `gh release view/delete` 改为直接 `gh api` 调 REST 接口（见第 8 节），因此 9.3 描述的"git 报错被 `if` 静默吞掉"已不再发生；但 `Publish Release` 仍用 `gh release edit`，**checkout 仍是必需的**。
 
 可选加固：若不想为本 job 拉取整个仓库，也可不 checkout，而是显式设置仓库上下文：
 
