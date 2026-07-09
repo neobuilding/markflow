@@ -1,177 +1,165 @@
 name: CI
 run-name: >-
-  ${{ github.event_name == 'pull_request' && format('PR {0}', github.head_ref)
-     || github.event_name == 'workflow_dispatch' && 'CI dispatch'
-     || github.event.head_commit.message }}
+    ${{ github.event_name == 'pull_request' && format('PR {0}', github.head_ref)
+       || github.event_name == 'workflow_dispatch' && 'CI dispatch'
+       || github.event.head_commit.message }}
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+    workflow_dispatch:
 
 permissions:
-  contents: write   # 仅 auto-tag 推 tag 需要
+    contents: write # 仅 auto-tag 推 tag 需要
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
 
 jobs:
-  test:
-    name: Typecheck & Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with: { node-version: 20, cache: npm }
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
+    test:
+        name: Typecheck & Build
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+            - uses: actions/setup-node@v6
+              with: { node-version: 20, cache: npm }
+            - run: npm ci
+            - run: npm run typecheck
+            - run: npm run build
 
-  # 追加决策 0.3：PR 三平台打包验证——只在 PR 时跑，验证 electron-builder
-  # 能在三平台成功出包，提前暴露 Windows/macOS 平台坑；不上传、不发布。
-  # Public repo 下 macOS 等 runner 免费（§11.2 #4），默认每个 PR 都验证。
-  build-check:
-    name: Build check (${{ matrix.os }})
-    needs: test
-    if: github.event_name == 'pull_request'
-    runs-on: ${{ matrix.os }}
-    env:
-      CSC_IDENTITY_AUTOMATION: false   # 与发版一致：mac 不走签名/公证自动化（原 ci.yml:241）
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: macos-latest,   target: mac }
-          - { os: windows-latest, target: win }
-          - { os: ubuntu-latest,  target: linux }
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with: { node-version: 20, cache: npm }
-      # 复用 release.yml 的 Electron 缓存（Q7 / M4）
-      - name: Cache Electron binaries
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/electron
-            ~/.cache/electron-builder
-            ~/Library/Caches/electron
-            ~/Library/Caches/electron-builder
-            %LOCALAPPDATA%\electron\Cache
-            %LOCALAPPDATA%\electron-builder\Cache
-          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-electron-
-      # Linux 依赖安装（原 ci.yml:207-222 原样搬；缺失会导致 AppImage 构建失败）
-      - name: Install Linux dependencies
-        if: matrix.target == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libnss3-dev \
-            libsecret-1-dev \
-            libxss1 \
-            libgbm1 \
-            libasound2t64 \
-            librsvg2-bin \
-            rpm \
-            fakeroot \
-            libarchive-tools
-      - run: npm ci
-      - run: npm run build
-      - run: npm run dist:${{ matrix.target }}   # 仅验证能出包，不 upload-artifact
-
-  auto-tag:
-    name: Auto tag on merge to main
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    # §11.2 #6：仅本 job 需要 actions:write（Rename run 回写运行标题）；
-    # contents:write 仍需（推送 tag）。其余 job 无需这两项。
-    permissions:
-      contents: write
-      actions: write
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-        with: { fetch-depth: 0 }
-      # 版本探测逻辑移植自现有 ci.yml 并按 §0.4 适配带时间戳 tag（已去掉 manual input 分支）
-      #   - 无提交可发布 → version 留空 → 跳过建 tag（不触发 release）
-      #   - Q1 决定：chore:/docs:/style: 仍计入发布（保持原 patch 默认行为，不排除）
-      #   - 输出的 version 为**纯净 X.Y.Z（不带 v）**，供下方 Create tag 拼成 vX.Y.Z-<buildtime>；
-      #   - 无可发布提交 → 输出空 → 后续步骤跳过建 tag（不触发 release）。
-      - name: Determine version
-        id: version
-        run: |
-          set -e
-          # 1) 收集所有版本 tag（兼容带/不带 -<buildtime> 后缀；§0.4：正则不再锚定行尾数字）
-          TAGS=$(git tag | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$' || true)
-          if [ -z "$TAGS" ]; then
-            echo "::notice::No existing version tag; defaulting to 0.1.0"
-            echo "version=0.1.0" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # 2) 去掉 -<buildtime> 后缀（${t%%-*}），按 semver 取最大 base 版本（如 v0.4.0）
-          BASE=$(for t in $TAGS; do echo "${t%%-*}"; done | sort -V | tail -1)
-          echo "::notice::Latest base version: $BASE"
-
-          # 3) 该 base 版本可能对应多个时间戳 tag，取「创建时间最新」的实际 tag 引用来划定提交范围
-          LATEST_TAG=$(git tag --sort=-creatordate | grep -E "^${BASE}(-.*)?$" | head -1)
-          echo "::notice::Latest tag ref: $LATEST_TAG"
-
-          # 4) 扫描该 tag 到 HEAD 的提交；无提交 → 输出空、跳过建 tag
-          COMMITS=$(git log "${LATEST_TAG}..HEAD" --oneline --format="%s")
-          if [ -z "$COMMITS" ]; then
-            echo "::warning::No new commits since $LATEST_TAG. Nothing to release."
-            echo "version=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::group::Commits since $LATEST_TAG"; echo "$COMMITS"; echo "::endgroup::"
-
-          # 5) 按 conventional commits 决定 bump（BREAKING/! → major；feat → minor；否则 patch）
-          CURRENT="${BASE#v}"
-          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-          MINOR=$(echo "$CURRENT" | cut -d. -f2)
-          PATCH=$(echo "$CURRENT" | cut -d. -f3)
-          BUMP="patch"
-          if echo "$COMMITS" | grep -qE '^BREAKING CHANGE|^[a-z]+!:'; then
-            BUMP="major"
-          elif echo "$COMMITS" | grep -qE '^feat(\([a-z-]+\))?:'; then
-            BUMP="minor"
-          fi
-          if [ "$BUMP" = "major" ]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          elif [ "$BUMP" = "minor" ]; then MINOR=$((MINOR + 1)); PATCH=0
-          else PATCH=$((PATCH + 1)); fi
-
-          echo "::notice::Bump=$BUMP → ${MAJOR}.${MINOR}.${PATCH}"
-          echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
-      - name: Create and push tag
-        id: create
-        # §0.4：tag 格式改为 vX.Y.Z-<buildtime>（buildtime = UTC ISO8601 紧凑，无冒号）
-        if: steps.version.outputs.version != ''
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          BUILDTIME="$(date -u +%Y%m%dT%H%M%SZ)"
-          TAG="v${VERSION}-${BUILDTIME}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" && git push origin "$TAG"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"   # 供下方「Rename run」回写运行标题
+    # 追加决策 0.3：PR 三平台打包验证——只在 PR 时跑，验证 electron-builder
+    # 能在三平台成功出包，提前暴露 Windows/macOS 平台坑；不上传、不发布。
+    # Public repo 下 macOS 等 runner 免费（§11.2 #4），默认每个 PR 都验证。
+    build-check:
+        name: Build check (${{ matrix.os }})
+        needs: test
+        if: github.event_name == 'pull_request'
+        runs-on: ${{ matrix.os }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            CSC_IDENTITY_AUTOMATION: false # 与发版一致：mac 不走签名/公证自动化（原 ci.yml:241）
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - { os: macos-latest, target: mac }
+                    - { os: windows-latest, target: win }
+                    - { os: ubuntu-latest, target: linux }
+        steps:
+            - uses: actions/checkout@v6
+            - uses: actions/setup-node@v6
+              with: { node-version: 20, cache: npm }
+            # 复用 release.yml 的 Electron 缓存（Q7 / M4）
+            - name: Cache Electron binaries
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cache/electron
+                      ~/.cache/electron-builder
+                      ~/Library/Caches/electron
+                      ~/Library/Caches/electron-builder
+                      %LOCALAPPDATA%\electron\Cache
+                      %LOCALAPPDATA%\electron-builder\Cache
+                  key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+                  restore-keys: |
+                      ${{ runner.os }}-electron-
+            # Linux 依赖安装（原 ci.yml:207-222 原样搬；缺失会导致 AppImage 构建失败）
+            - name: Install Linux dependencies
+              if: matrix.target == 'linux'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y \
+                    libgtk-3-dev \
+                    libwebkit2gtk-4.1-dev \
+                    libnss3-dev \
+                    libsecret-1-dev \
+                    libxss1 \
+                    libgbm1 \
+                    libasound2t64 \
+                    librsvg2-bin \
+                    rpm \
+                    fakeroot \
+                    libarchive-tools
+            - run: npm ci
+            - run: npm run build
+            - run: npm run dist:${{ matrix.target }} # 仅验证能出包，不 upload-artifact
 
-      # §4.6：auto-tag 在 run 开始后才算出带时间戳的 tag，run-name 此刻已固定，
-      # 故用 REST API 回写本次运行标题，使 Actions 列表直接显示版本号。
-      - name: Rename run with tag
-        if: steps.version.outputs.version != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            -f "name=Release ${{ steps.create.outputs.tag }}"
+    auto-tag:
+        name: Auto tag on merge to main
+        needs: test
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        # contents:write 用于推送 tag；其余 job 无需这两项权限。
+        permissions:
+            contents: write
+        outputs:
+            version: ${{ steps.version.outputs.version }}
+        steps:
+            - uses: actions/checkout@v6
+              with: { fetch-depth: 0 }
+            # 版本探测逻辑移植自现有 ci.yml 并按 §0.4 适配带时间戳 tag（已去掉 manual input 分支）
+            #   - 无提交可发布 → version 留空 → 跳过建 tag（不触发 release）
+            #   - Q1 决定：chore:/docs:/style: 仍计入发布（保持原 patch 默认行为，不排除）
+            #   - 输出的 version 为**纯净 X.Y.Z（不带 v）**，供下方 Create tag 拼成 vX.Y.Z-<buildtime>；
+            #   - 无可发布提交 → 输出空 → 后续步骤跳过建 tag（不触发 release）。
+            - name: Determine version
+              id: version
+              run: |
+                  set -e
+                  # 1) 收集所有版本 tag（兼容带/不带 -<buildtime> 后缀；§0.4：正则不再锚定行尾数字）
+                  TAGS=$(git tag | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$' || true)
+                  if [ -z "$TAGS" ]; then
+                    echo "::notice::No existing version tag; defaulting to 0.1.0"
+                    echo "version=0.1.0" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+
+                  # 2) 去掉 -<buildtime> 后缀（${t%%-*}），按 semver 取最大 base 版本（如 v0.4.0）
+                  BASE=$(for t in $TAGS; do echo "${t%%-*}"; done | sort -V | tail -1)
+                  echo "::notice::Latest base version: $BASE"
+
+                  # 3) 该 base 版本可能对应多个时间戳 tag，取「创建时间最新」的实际 tag 引用来划定提交范围
+                  LATEST_TAG=$(git tag --sort=-creatordate | grep -E "^${BASE}(-.*)?$" | head -1)
+                  echo "::notice::Latest tag ref: $LATEST_TAG"
+
+                  # 4) 扫描该 tag 到 HEAD 的提交；无提交 → 输出空、跳过建 tag
+                  COMMITS=$(git log "${LATEST_TAG}..HEAD" --oneline --format="%s")
+                  if [ -z "$COMMITS" ]; then
+                    echo "::warning::No new commits since $LATEST_TAG. Nothing to release."
+                    echo "version=" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+                  echo "::group::Commits since $LATEST_TAG"; echo "$COMMITS"; echo "::endgroup::"
+
+                  # 5) 按 conventional commits 决定 bump（BREAKING/! → major；feat → minor；否则 patch）
+                  CURRENT="${BASE#v}"
+                  MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+                  MINOR=$(echo "$CURRENT" | cut -d. -f2)
+                  PATCH=$(echo "$CURRENT" | cut -d. -f3)
+                  BUMP="patch"
+                  if echo "$COMMITS" | grep -qE '^BREAKING CHANGE|^[a-z]+!:'; then
+                    BUMP="major"
+                  elif echo "$COMMITS" | grep -qE '^feat(\([a-z-]+\))?:'; then
+                    BUMP="minor"
+                  fi
+                  if [ "$BUMP" = "major" ]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+                  elif [ "$BUMP" = "minor" ]; then MINOR=$((MINOR + 1)); PATCH=0
+                  else PATCH=$((PATCH + 1)); fi
+
+                  echo "::notice::Bump=$BUMP → ${MAJOR}.${MINOR}.${PATCH}"
+                  echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
+            - name: Create and push tag
+              id: create
+              # §0.4：tag 格式改为 vX.Y.Z-<buildtime>（buildtime = UTC ISO8601 紧凑，无冒号）
+              if: steps.version.outputs.version != ''
+              run: |
+                  VERSION="${{ steps.version.outputs.version }}"
+                  BUILDTIME="$(date -u +%Y%m%dT%H%M%SZ)"
+                  TAG="v${VERSION}-${BUILDTIME}"
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git tag "$TAG" && git push origin "$TAG"
+                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"   # 供下方「Rename run」回写运行标题
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
