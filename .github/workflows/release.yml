@@ -60,7 +60,7 @@ jobs:
               with:
                   ref: ${{ inputs.tag || github.ref }} # dispatch 时 checkout 指定 tag
             - uses: actions/setup-node@v6
-              with: { node-version: 20, cache: npm }
+              with: { node-version: 24, cache: npm }
 
             # Q7 决定：缓存 Electron / electron-builder 下载物，加速构建
             - name: Cache Electron binaries
@@ -140,13 +140,30 @@ jobs:
             - name: Remove builder-debug.yml from artifacts
               run: find artifacts -name 'builder-debug.yml' -delete
 
+            # 删除三个平台的「unpacked」中间解包目录：mac-universal / win-unpacked / linux-unpacked。
+            # 它们只是 electron-builder 的临时解包产物，真正的发布物是 dmg / zip / AppImage。
+            # 若不删除会同时引发两个问题：
+            #   ① Generate SHA256SUMS 里 `sha256sum platform/*` 会把目录展开进去 → 「Is a directory」失败；
+            #   ② 这些目录会被一起上传到 release，导致 SHA256SUMS 与发布的产物不一致。
+            # ⚠️ 必须在生成 SHA256SUMS 与上传之前删除。
+            - name: Remove intermediate unpacked dirs from artifacts
+              run: |
+                  find artifacts -type d \( \
+                    -name 'mac-universal' -o \
+                    -name 'win-unpacked' -o \
+                    -name 'linux-unpacked' \) -prune -exec rm -rf {} +
+
             # Q9 决定：生成 SHA256SUMS 校验文件（在删除 builder-debug.yml 之后，只覆盖真正发布的产物）
             - name: Generate SHA256SUMS
               run: |
                   cd artifacts
-                  # 故意不加 `2>/dev/null || true`：缺失产物应让本步失败、暴露问题
-                  # （needs:build + if-no-files-found:error 已保证三个平台产物齐全）。
-                  sha256sum markflow-macos/* markflow-windows/* markflow-linux/* > SHA256SUMS
+                  # 只校验普通文件（-type f），排除可能残留的目录，避免 `sha256sum: Is a directory` 失败。
+                  # 配合上方已删除 builder-debug.yml 与 unpacked 目录，SHA256SUMS 仅覆盖真正发布的产物。
+                  # sort -z 保证产物排序稳定，xargs -0 安全处理含空格/特殊字符的文件名。
+                  # 故意保留缺失产物时本步失败（needs:build + if-no-files-found:error 已保证产物齐全）。
+                  find markflow-macos markflow-windows markflow-linux -maxdepth 1 -type f -print0 \
+                    | sort -z \
+                    | xargs -0 sha256sum > SHA256SUMS
                   cat SHA256SUMS
 
             - name: Create Release (draft)

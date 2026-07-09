@@ -1,51 +1,51 @@
 name: CodeQL Security Scan
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    # 每周一 03:30 UTC 全量重扫：补齐两次 push 间新披露的规则/漏洞
-    - cron: '30 3 * * 1'
-  workflow_dispatch:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+    schedule:
+        # 每周一 03:30 UTC 全量重扫：补齐两次 push 间新披露的规则/漏洞
+        - cron: "30 3 * * 1"
+    workflow_dispatch:
 
 # 最小权限：code scanning 只需读源码 + 回写告警
 permissions:
-  contents: read
-  security-events: write
-  # actions: read  # 私有仓库需保留；公开仓库可省略
+    contents: read
+    security-events: write
+    # actions: read  # 私有仓库需保留；公开仓库可省略
 
 jobs:
-  analyze:
-    name: Analyze (javascript-typescript)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0   # 完整历史，利于更准确的数据流分析
+    analyze:
+        name: Analyze (javascript-typescript)
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0 # 完整历史，利于更准确的数据流分析
 
-      # 安装依赖可让 CodeQL 更好地解析第三方库类型/导入
-      # （JS/TS 为解释型语言，不装依赖也能抽取源码，但装了更准）
-      - name: Setup Node and install deps
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
+            # 安装依赖可让 CodeQL 更好地解析第三方库类型/导入
+            # （JS/TS 为解释型语言，不装依赖也能抽取源码，但装了更准）
+            - name: Setup Node and install deps
+              uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: npm
+            - run: npm ci
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript-typescript
-          config-file: ./.github/codeql/codeql-config.yml
+            - name: Initialize CodeQL
+              uses: github/codeql-action/init@v3
+              with:
+                  languages: javascript-typescript
+                  config-file: ./.github/codeql/codeql-config.yml
 
-      # JS/TS 为解释型语言，autobuild 非必需；保留以覆盖需编译的边界情况
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+            # JS/TS 为解释型语言，autobuild 非必需；保留以覆盖需编译的边界情况
+            - name: Autobuild
+              uses: github/codeql-action/autobuild@v3
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "javascript-typescript"
+            - name: Perform CodeQL Analysis
+              uses: github/codeql-action/analyze@v3
+              with:
+                  category: "javascript-typescript"
