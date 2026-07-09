@@ -261,6 +261,8 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 
 5. **删旧草稿必须可靠（路径 B 的关键）**：原 `gh release view/delete` 子命令对 draft 解析异常/返回非零，导致删除步骤被 `if` 静默跳过、旧 draft 残留继续触发 404。已改用 `gh api` 直接调 REST 接口（不依赖 git 上下文、对 draft/published 都能稳定解析）实现删除。若升级删除步骤前已残留 Draft，仍需手动到 Releases 页面删一次，之后即可自动清理。
 
+6. **`gh api` 404 时会把错误 JSON 打到 stdout，`|| true` 会把它当成结果**：`RELEASE_ID=$(gh api ".../releases/tags/${TAG}" --jq '.id' 2>/dev/null || true)`——当 tag 没有对应 release 时，`gh api` 以非零退出**并把 `{"message":"Not Found",...}` 写到 stdout**，被 `RELEASE_ID` 捕获。此时 `[ -n "$RELEASE_ID" ]` 误判为"存在"，接着拿这段 JSON 当 id 去 `DELETE .../releases/{id}`，报 `unsupported protocol scheme ""` 并让 job 失败。修法：**只把纯数字 id 视为有效**，用 `if [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then` 判断，非数字（含错误 JSON、空值）一律走"无已存在 release"分支。
+
 ### 8.5 当前 Release 流程时序
 
 ```
