@@ -296,8 +296,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ needs.auto-tag.outputs.version }}"
+          # When no release exists for the tag, `gh api` exits non-zero AND
+          # prints the 404 error JSON to stdout, which `|| true` would capture
+          # into RELEASE_ID. So only treat a purely-numeric value as a real id.
           RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id' 2>/dev/null || true)
-          if [ -n "$RELEASE_ID" ]; then
+          if [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
             echo "::notice::Deleting stale release $TAG (id $RELEASE_ID)"
             gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
             echo "::notice::Stale release deleted"
