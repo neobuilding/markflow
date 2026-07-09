@@ -22,7 +22,7 @@ jobs:
         name: Typecheck & Build
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
             - uses: actions/setup-node@v6
               with: { node-version: 20, cache: npm }
             - run: npm ci
@@ -47,7 +47,7 @@ jobs:
                     - { os: windows-latest, target: win }
                     - { os: ubuntu-latest, target: linux }
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
             - uses: actions/setup-node@v6
               with: { node-version: 20, cache: npm }
             # 复用 release.yml 的 Electron 缓存（Q7 / M4）
@@ -96,7 +96,7 @@ jobs:
         outputs:
             version: ${{ steps.version.outputs.version }}
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v7
               with: { fetch-depth: 0 }
             # 版本探测逻辑移植自现有 ci.yml 并按 §0.4 适配带时间戳 tag（已去掉 manual input 分支）
             #   - 无提交可发布 → version 留空 → 跳过建 tag（不触发 release）
