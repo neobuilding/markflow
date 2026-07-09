@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/prepare-win-codesign.ps1 && npm run build && electron-builder --win",

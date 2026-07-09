@@ -232,7 +232,7 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 
 **正确修法**：不能靠 `files:` 取反，必须在上传前**直接从 artifacts 删除** `builder-debug.yml`（`find artifacts -name 'builder-debug.yml' -delete`），让三个 glob 扫不到它，从源头消除撞名。
 
-次要路径（仍可能存在，已由"删旧草稿"步骤兜底）：若上次失败的 run 残留了一个含有若干 asset 的 Draft Release，本次 action 会复用它、对其中已存在的 asset 发 PATCH → 404（此时所有已存在文件都会 404，不仅 builder-debug.yml）。`Delete stale release` 步骤（gh api + 纯数字校验）专门清掉这种旧草稿。
+**「旧 draft 复用」路径（实测未复现，删除步骤已移除）**：理论上若上次失败的 run 残留了一个含有若干 asset 的 Draft Release，action 可能复用它并对已存在 asset 发 PATCH → 404。但两点让这条路径在实践中不构成威胁：(1) `Delete stale release` 用的 `gh api …/releases/tags/{tag}` 对 **Draft 返回 404**（该接口不返回 draft），所以它**从来清不掉 draft**，等于空操作；(2) 实测删掉该步骤、任由旧 draft 残留，release 依然成功——因为唯一会重名的 `builder-debug.yml` 已被删除，其余文件名唯一，复用 draft 时不再触发 404。因此该步骤已被**移除**，旧 draft 仅作为无害的页面残留（手动到 Releases 页面清理即可）。
 
 **Draft 残骸**：第一次 PATCH 404 就让整个 Release step 中断，Release 从未完成发布 → 残留为 Draft，进而成为"次要路径"的源头。
 
@@ -242,13 +242,12 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 
 | 改动 | 位置 | 作用 |
 |------|------|------|
-| 注入版本号 | `build` job：`Inject release version into package.json` | `npm version --no-git-tag-version --no-commit <ver>` 覆盖 `package.json`，使产物名正确 |
+| 注入版本号 | `build` job：`Inject release version into package.json` | `npm version --no-git-tag-version --no-commit-hooks <ver>` 覆盖 `package.json`，使产物名正确 |
 | `shell: bash` | 同上 step | Windows runner 默认 shell 是 PowerShell，不认 `VAR="x"` 语法；强制 bash 跨平台一致 |
 | 删除调试文件 | `release` job 上传前加 `find artifacts -name 'builder-debug.yml' -delete` | 直接在 artifacts 中删掉该文件，让三个平台 glob 扫不到它，**从源头消除跨平台同名碰撞**（见 8.2）。注意：`files:` 里的 `!**/builder-debug.yml` 否定式**无效**（action 会警告且仍上传），不能用它来排除 |
-| 删旧草稿 | `release` job：`Delete stale release (if any)`，改用 `gh api` REST（`GET …/releases/tags/{tag}` 取 id → `DELETE …/releases/{id}`） | 重跑前清掉上次失败残留的 Draft，避免**路径 B** 已存在 asset 触发 404。原 `gh release view/delete` 子命令对 draft 解析不可靠、实际未删除，故改用 `gh api`（不依赖 git 上下文、对 draft/published 都稳定）。只删 Release 对象，**保留 git tag** |
 | Draft 安全网 | `Create Release` 设 `draft: true` | 上传期间保持草稿，失败只留草稿不污染用户 |
 | 显式发布 | `Publish Release` step：`gh release edit <tag> --draft=false`，`if: success()` | 仅在全部 asset 上传成功后把草稿翻为已发布 |
-| 仓库上下文 | `release` job 开头加 `actions/checkout@v6` | 提供 `.git`，让 `gh release view/edit/delete` 能解析目标仓库；否则报 `not a git repository`（见第 9 节） |
+| 仓库上下文 | `release` job 开头加 `actions/checkout@v6` | 提供 `.git`，供 `Publish Release` 的 `gh release edit` 解析目标仓库；否则报 `not a git repository`（见第 9 节）。注：`Delete stale release` 步骤已移除（见 8.2「旧 draft 复用」路径），checkout 现在只为发布步骤服务 |
 
 > 保留 Draft + 显式发布 是用户明确要求的"防半成品"设计：以前默认 `draft: false` 时 action 会自动发布，无需该步；改为 `draft: true` 后 action 永不自动发布，必须加这一步。
 
@@ -262,9 +261,9 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 
 4. **`builder-debug.yml` 是 electron-builder 在每个平台产物目录都生成一份的调试文件，且文件名完全相同**：它是产生"跨平台同名碰撞 → Draft 下 PATCH 404"的唯一元凶。不能靠 `files:` 的 `!**/...` 否定式排除（action 会警告且仍上传），正确做法是在上传前 `find artifacts -name 'builder-debug.yml' -delete` 直接从 artifacts 删除。删除它不影响可分发包。
 
-5. **删旧草稿必须可靠（路径 B 的关键）**：原 `gh release view/delete` 子命令对 draft 解析异常/返回非零，导致删除步骤被 `if` 静默跳过、旧 draft 残留继续触发 404。已改用 `gh api` 直接调 REST 接口（不依赖 git 上下文、对 draft/published 都能稳定解析）实现删除。若升级删除步骤前已残留 Draft，仍需手动到 Releases 页面删一次，之后即可自动清理。
+5. **`Delete stale release` 步骤已移除（它对本要清的 draft 本就是空操作）**：该步骤用 `gh api …/releases/tags/{tag}` 查 release，但**该接口对 Draft 返回 404**——所以它永远查不到、也永远删不掉「上次失败残留的 draft」，对真正要防的 draft 场景完全无效（只查得到已发布的 release）。而真正导致 404 的 `builder-debug.yml` 重名已通过删除文件解决，旧 draft 复用也不会 404（实测：删掉该步骤后残留 draft 仍在、release 照常成功）。因此该步骤已从 `ci.yml` 移除，旧 draft 仅作为无害的页面残留存在（手动到 Releases 页面清理即可）。`gh api` 的 404-JSON 陷阱见第 6 条（保留为通用教训，但当前已无对应步骤）。
 
-6. **`gh api` 404 时会把错误 JSON 打到 stdout，`|| true` 会把它当成结果**：`RELEASE_ID=$(gh api ".../releases/tags/${TAG}" --jq '.id' 2>/dev/null || true)`——当 tag 没有对应 release 时，`gh api` 以非零退出**并把 `{"message":"Not Found",...}` 写到 stdout**，被 `RELEASE_ID` 捕获。此时 `[ -n "$RELEASE_ID" ]` 误判为"存在"，接着拿这段 JSON 当 id 去 `DELETE .../releases/{id}`，报 `unsupported protocol scheme ""` 并让 job 失败。修法：**只把纯数字 id 视为有效**，用 `if [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then` 判断，非数字（含错误 JSON、空值）一律走"无已存在 release"分支。
+6. **`gh api` 404 时会把错误 JSON 打到 stdout，`|| true` 会把它当成结果**：`RELEASE_ID=$(gh api ".../releases/tags/${TAG}" --jq '.id' 2>/dev/null || true)`——当 tag 没有对应 release 时，`gh api` 以非零退出**并把 `{"message":"Not Found",...}` 写到 stdout**，被 `RELEASE_ID` 捕获。此时 `[ -n "$RELEASE_ID" ]` 误判为"存在"，接着拿这段 JSON 当 id 去 `DELETE .../releases/{id}`，报 `unsupported protocol scheme ""` 并让 job 失败。修法：**只把纯数字 id 视为有效**，用 `if [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then` 判断，非数字（含错误 JSON、空值）一律走"无已存在 release"分支。注：该 `Delete stale release` 步骤现已从 `ci.yml` 移除（见第 5 条），但此 `gh api` 404-JSON 陷阱仍是通用教训，未来写类似 REST 删除逻辑时务必牢记。
 
 ### 8.5 当前 Release 流程时序
 
@@ -276,10 +275,10 @@ build（矩阵 ×3 平台，各自）：
    上传 artifact
   ↓
 release：
-   checkout 仓库（提供 .git，供 gh 解析目标仓库）
+   checkout 仓库（提供 .git，供 Publish 的 `gh release edit` 解析目标仓库）
    → 下载 artifacts
-   → 删旧草稿（若有）
-   → 以 Draft 创建 Release，上传 6 个产物（排除 builder-debug.yml）
+   → 删除 builder-debug.yml（消除跨平台重名，见 8.2）
+   → 以 Draft 创建 Release，上传产物（无重名碰撞）
    → 仅当全部成功：gh release edit --draft=false 发布
 ```
 
@@ -308,9 +307,13 @@ Error: Process completed with exit code 1.
 
 ### 9.3 隐藏的同源 bug（为什么只有 Publish 暴露报错）
 
-同一 `release` job 的 **"Delete stale release (if any)"** 步骤内部同样调用了 `gh release view`（以及 `gh release delete`），同样会触发这个 git 报错。但它被包在 `if gh release view "$TAG" >/dev/null 2>&1; then ... else ...` 里——`gh` 的失败被 `if` 捕获，错误输出被静默吞掉，流程走入 `else` 分支误判为"没有已存在的 release"。
+### 9.3 隐藏的同源 bug（历史，现已不适用）
 
-所以：两个 `gh` 调用其实都中招了，**只是 Publish 那一步的 `gh` 失败未被 `if` 包裹、直接以非零退出码中断了 job**，才让问题显现。只修 Publish 不改 Delete 的话，重跑时旧草稿不会被清掉（见 8.2 第二条复现路径），依然可能 404。
+> 本节描述的 `Delete stale release` 步骤已从 `ci.yml` 移除（见第 8 节），故该场景不再出现。保留作为「被 `if` 包裹的 `gh` 报错会被吞掉」的通用排查教训。
+
+原先 `release` job 的 **"Delete stale release (if any)"** 步骤内部同样调用了 `gh release view`（以及 `gh release delete`），同样会触发这个 git 报错。但它被包在 `if gh release view "$TAG" >/dev/null 2>&1; then ... else ...` 里——`gh` 的失败被 `if` 捕获，错误输出被静默吞掉，流程走入 `else` 分支误判为"没有已存在的 release"。
+
+所以：两个 `gh` 调用其实都中招了，**只是 Publish 那一步的 `gh` 失败未被 `if` 包裹、直接以非零退出码中断了 job**，才让问题显现。这条「被 `if`/管道吞掉退出码会掩盖真实问题」的教训现在仍适用：排查 `gh`/`git` 报错时，注意哪些命令被 `if` 或管道吞了退出码。
 
 ### 9.4 修复（已写入 ci.yml）
 
@@ -325,9 +328,9 @@ Error: Process completed with exit code 1.
         uses: actions/download-artifact@v8
 ```
 
-checkout 后会生成 `.git`，`gh` 即可通过 git remote 正确解析仓库，Delete stale release 与 Publish Release 两步都恢复正常。
+checkout 后会生成 `.git`，`gh` 即可通过 git remote 正确解析仓库，`Publish Release`（`gh release edit`）恢复正常。
 
-> 注（后续演进）：`Delete stale release` 步骤后来从 `gh release view/delete` 改为直接 `gh api` 调 REST 接口（见第 8 节），因此 9.3 描述的"git 报错被 `if` 静默吞掉"已不再发生；但 `Publish Release` 仍用 `gh release edit`，**checkout 仍是必需的**。
+> 注（后续演进）：`Delete stale release` 步骤已**彻底移除**（见第 8 节——它对 draft 是空操作，而 `builder-debug.yml` 删除已根除此前所有 404）。`release` job 现存唯一调用 `gh` 的步骤是 `Publish Release`（`gh release edit`），**checkout 仍是为它必需**。9.3 描述的"git 报错被 `if` 静默吞掉"因删除步骤移除而不再发生。
 
 可选加固：若不想为本 job 拉取整个仓库，也可不 checkout，而是显式设置仓库上下文：
 

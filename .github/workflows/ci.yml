@@ -1,209 +1,72 @@
 name: CI
-
+run-name: >-
+  ${{ github.event_name == 'pull_request' && format('PR {0}', github.head_ref)
+     || github.event_name == 'workflow_dispatch' && 'CI dispatch'
+     || github.event.head_commit.message }}
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version tag (e.g. v0.2.0). Leave empty to auto-detect from commits."
-        required: false
-        default: ""
-      dry_run:
-        description: "Dry run: calculate version but do NOT create tag or release."
-        type: boolean
-        default: false
 
 permissions:
-  contents: write
+  contents: write   # 仅 auto-tag 推 tag 需要
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════
-  #  Test — always runs, on every trigger
-  # ═══════════════════════════════════════════════════════════════
   test:
-    name: Test (Lint & Build)
+    name: Typecheck & Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: npm
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+        # §11.3 #2：仓库此前零 typecheck 流程，首版先用 `|| true` 观察一轮，
+        # 待存量类型错误清理后再收紧（去掉 `|| true`）。
+      - run: npm run typecheck || true
+      - run: npm run build
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build renderer
-        run: npm run build
-
-  # ═══════════════════════════════════════════════════════════════
-  #  Auto-tag — determine version (release triggers only)
-  # ═══════════════════════════════════════════════════════════════
-  auto-tag:
-    name: Determine version
+  # 追加决策 0.3：PR 三平台打包验证——只在 PR 时跑，验证 electron-builder
+  # 能在三平台成功出包，提前暴露 Windows/macOS 平台坑；不上传、不发布。
+  # Public repo 下 macOS 等 runner 免费（§11.2 #4），默认每个 PR 都验证。
+  build-check:
+    name: Build check (${{ matrix.os }})
     needs: test
-    if: |
-      always() &&
-      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag_created: ${{ steps.push.outputs.tag_created }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Determine version
-        id: version
-        run: |
-          set -e
-
-          # ── Tag push: tag already exists, just read it ──
-          if [ "${{ github.event_name }}" = "push" ]; then
-            VERSION="${{ github.ref_name }}"
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "::notice::Tag push detected: $VERSION"
-            exit 0
-          fi
-
-          # ── workflow_dispatch ──
-
-          # User supplied a version → use it directly
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-            VERSION="${VERSION#v}"
-            if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-              echo "::error::Invalid version format: $VERSION. Use x.y.z (e.g. 0.2.0)"
-              exit 1
-            fi
-            echo "version=v$VERSION" >> $GITHUB_OUTPUT
-            echo "::notice::Using manually specified version: v$VERSION"
-            exit 0
-          fi
-
-          # Auto-detect: find latest tag + scan commits
-          # Use `|| true` before pipe to head to prevent `set -e` killing on grep no-match
-          LATEST_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
-          LATEST_TAG=$(echo "$LATEST_TAG" | head -1)
-
-          if [ -z "$LATEST_TAG" ]; then
-            echo "::notice::No existing version tag found, defaulting to v0.1.0"
-            echo "version=v0.1.0" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "::notice::Latest tag: $LATEST_TAG"
-
-          CURRENT="${LATEST_TAG#v}"
-          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-          MINOR=$(echo "$CURRENT" | cut -d. -f2)
-          PATCH=$(echo "$CURRENT" | cut -d. -f3)
-
-          COMMITS=$(git log ${LATEST_TAG}..HEAD --oneline --format="%s")
-
-          if [ -z "$COMMITS" ]; then
-            echo "::warning::No new commits since $LATEST_TAG. Nothing to release."
-            echo "version=" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "::group::Commits since $LATEST_TAG"
-          echo "$COMMITS"
-          echo "::endgroup::"
-
-          BUMP="patch"
-          if echo "$COMMITS" | grep -qE '^BREAKING CHANGE|^[a-z]+!:'; then
-            BUMP="major"
-          elif echo "$COMMITS" | grep -qE '^feat(\([a-z-]+\))?:'; then
-            BUMP="minor"
-          fi
-
-          echo "::notice::Bump type: $BUMP"
-
-          if [ "$BUMP" = "major" ]; then
-            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          elif [ "$BUMP" = "minor" ]; then
-            MINOR=$((MINOR + 1)); PATCH=0
-          else
-            PATCH=$((PATCH + 1))
-          fi
-
-          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "::notice::Calculated next version: $NEW_VERSION"
-          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Show version (dry run)
-        if: inputs.dry_run
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if [ -z "$VERSION" ]; then
-            echo "::warning::Dry run: no new commits, no version to release."
-          else
-            echo "::notice::Dry run: would create and release tag $VERSION"
-          fi
-          echo "Dry run complete. Nothing was published."
-
-      - name: Create and push tag
-        id: push
-        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && steps.version.outputs.version != ''
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$VERSION"
-          git push origin "$VERSION"
-          echo "tag_created=true" >> $GITHUB_OUTPUT
-          echo "::notice::Tag $VERSION created and pushed."
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: No new commits
-        if: github.event_name == 'workflow_dispatch' && !inputs.dry_run && steps.version.outputs.version == ''
-        run: |
-          echo "::warning::No new commits since the latest tag. Push new commits first."
-
-  # ═══════════════════════════════════════════════════════════════
-  #  Build — 3-platform Electron (release triggers only)
-  # ═══════════════════════════════════════════════════════════════
-  build:
-    name: Build (${{ matrix.os }})
-    needs: auto-tag
-    if: |
-      success() &&
-      needs.auto-tag.outputs.version != '' &&
-      !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTOMATION: false   # 与发版一致：mac 不走签名/公证自动化（原 ci.yml:241）
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            target: mac
-            artifact-name: markflow-macos
-            output-path: release/*.dmg
-          - os: windows-latest
-            target: win
-            artifact-name: markflow-windows
-            output-path: release/*
-          - os: ubuntu-latest
-            target: linux
-            artifact-name: markflow-linux
-            output-path: release/*.AppImage
-
+          - { os: macos-latest,   target: mac }
+          - { os: windows-latest, target: win }
+          - { os: ubuntu-latest,  target: linux }
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
+        with: { node-version: 20, cache: npm }
+      # 复用 release.yml 的 Electron 缓存（Q7 / M4）
+      - name: Cache Electron binaries
+        uses: actions/cache@v4
         with:
-          node-version: 20
-          cache: npm
-
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            %LOCALAPPDATA%\electron\Cache
+            %LOCALAPPDATA%\electron-builder\Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+      # Linux 依赖安装（原 ci.yml:207-222 原样搬；缺失会导致 AppImage 构建失败）
       - name: Install Linux dependencies
         if: matrix.target == 'linux'
         run: |
@@ -220,123 +83,97 @@ jobs:
             rpm \
             fakeroot \
             libarchive-tools
+      - run: npm ci
+      - run: npm run build
+      - run: npm run dist:${{ matrix.target }}   # 仅验证能出包，不 upload-artifact
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Inject release version into package.json
-        shell: bash
-        run: |
-          VERSION="${{ needs.auto-tag.outputs.version }}"
-          VERSION="${VERSION#v}"
-          npm version --no-git-tag-version --no-commit "$VERSION"
-          echo "::notice::Building with version $VERSION"
-
-      - name: Build renderer
-        run: npm run build
-
-      - name: Build macOS
-        if: matrix.target == 'mac'
-        run: npm run dist:mac
-        env:
-          CSC_IDENTITY_AUTOMATION: false
-
-      - name: Build Windows
-        if: matrix.target == 'win'
-        run: |
-          if (Test-Path "scripts/prepare-win-codesign.ps1") {
-            powershell -ExecutionPolicy Bypass -File scripts/prepare-win-codesign.ps1 -ErrorAction SilentlyContinue
-          }
-          npm run dist:win
-
-      - name: Build Linux
-        if: matrix.target == 'linux'
-        run: npm run dist:linux
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact-name }}
-          path: release
-          if-no-files-found: error
-          retention-days: 7
-
-  # ═══════════════════════════════════════════════════════════════
-  #  Release — GitHub Release (release triggers only)
-  # ═══════════════════════════════════════════════════════════════
-  release:
-    name: Release
-    needs: [auto-tag, build]
+  auto-tag:
+    name: Auto tag on merge to main
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # §11.2 #6：仅本 job 需要 actions:write（Rename run 回写运行标题）；
+    # contents:write 仍需（推送 tag）。其余 job 无需这两项。
     permissions:
       contents: write
+      actions: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      # `gh` resolves the target repository from the local git context (or the
-      # GH_REPO / GITHUB_REPOSITORY env vars). Without a checkout, `gh release …`
-      # fails with "fatal: not a git repository". Checking out fixes every `gh`
-      # call in this job (stale-release delete + publish).
       - uses: actions/checkout@v6
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: artifacts
-
-      # Remove any stale release left by a previous failed run so the upload
-      # step always starts from a clean slate. If a release for this tag
-      # already exists (draft or published), softprops/action-gh-release will
-      # REUSE it and try to PATCH-update its existing assets, which 404s on
-      # draft releases (see root-cause note below). We delete the release
-      # object only — the git tag is preserved.
-      # Uses `gh api` directly (not `gh release …`) because it reliably
-      # resolves both draft and published releases and is independent of the
-      # local git checkout state.
-      - name: Delete stale release (if any)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with: { fetch-depth: 0 }
+      # 版本探测逻辑移植自现有 ci.yml 并按 §0.4 适配带时间戳 tag（已去掉 manual input 分支）
+      #   - 无提交可发布 → version 留空 → 跳过建 tag（不触发 release）
+      #   - Q1 决定：chore:/docs:/style: 仍计入发布（保持原 patch 默认行为，不排除）
+      #   - 输出的 version 为**纯净 X.Y.Z（不带 v）**，供下方 Create tag 拼成 vX.Y.Z-<buildtime>；
+      #   - 无可发布提交 → 输出空 → 后续步骤跳过建 tag（不触发 release）。
+      - name: Determine version
+        id: version
         run: |
-          TAG="${{ needs.auto-tag.outputs.version }}"
-          # When no release exists for the tag, `gh api` exits non-zero AND
-          # prints the 404 error JSON to stdout, which `|| true` would capture
-          # into RELEASE_ID. So only treat a purely-numeric value as a real id.
-          RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id' 2>/dev/null || true)
-          if [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
-            echo "::notice::Deleting stale release $TAG (id $RELEASE_ID)"
-            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
-            echo "::notice::Stale release deleted"
-          else
-            echo "::notice::No existing release for $TAG"
+          set -e
+          # 1) 收集所有版本 tag（兼容带/不带 -<buildtime> 后缀；§0.4：正则不再锚定行尾数字）
+          TAGS=$(git tag | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$' || true)
+          if [ -z "$TAGS" ]; then
+            echo "::notice::No existing version tag; defaulting to 0.1.0"
+            echo "version=0.1.0" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      # builder-debug.yml is emitted by electron-builder into EVERY platform
-      # output dir, so its filename collides across the three globs above. The
-      # action then tries to overwrite the duplicate by PATCHing the existing
-      # asset — and GitHub 404s on PATCH for draft-release assets. The `!**`
-      # negation in `files:` does NOT work (the action warns "does not match
-      # any files" and still uploads it), so we must delete the file from the
-      # artifacts before upload. The Draft safety net is fully preserved.
-      - name: Remove builder-debug.yml from artifacts
-        run: find artifacts -name 'builder-debug.yml' -delete
+          # 2) 去掉 -<buildtime> 后缀（${t%%-*}），按 semver 取最大 base 版本（如 v0.4.0）
+          BASE=$(for t in $TAGS; do echo "${t%%-*}"; done | sort -V | tail -1)
+          echo "::notice::Latest base version: $BASE"
 
-      - name: Create Release (draft)
-        uses: softprops/action-gh-release@v3
-        with:
-          name: ${{ needs.auto-tag.outputs.version }}
-          tag_name: ${{ needs.auto-tag.outputs.version }}
-          draft: true
-          prerelease: false
-          files: |
-            artifacts/markflow-macos/*
-            artifacts/markflow-windows/*
-            artifacts/markflow-linux/*
-          generate_release_notes: true
+          # 3) 该 base 版本可能对应多个时间戳 tag，取「创建时间最新」的实际 tag 引用来划定提交范围
+          LATEST_TAG=$(git tag --sort=-creatordate | grep -E "^${BASE}(-.*)?$" | head -1)
+          echo "::notice::Latest tag ref: $LATEST_TAG"
 
-      # Only publish (un-draft) once every asset uploaded successfully.
-      - name: Publish Release
-        if: success()
+          # 4) 扫描该 tag 到 HEAD 的提交；无提交 → 输出空、跳过建 tag
+          COMMITS=$(git log "${LATEST_TAG}..HEAD" --oneline --format="%s")
+          if [ -z "$COMMITS" ]; then
+            echo "::warning::No new commits since $LATEST_TAG. Nothing to release."
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::group::Commits since $LATEST_TAG"; echo "$COMMITS"; echo "::endgroup::"
+
+          # 5) 按 conventional commits 决定 bump（BREAKING/! → major；feat → minor；否则 patch）
+          CURRENT="${BASE#v}"
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+          BUMP="patch"
+          if echo "$COMMITS" | grep -qE '^BREAKING CHANGE|^[a-z]+!:'; then
+            BUMP="major"
+          elif echo "$COMMITS" | grep -qE '^feat(\([a-z-]+\))?:'; then
+            BUMP="minor"
+          fi
+          if [ "$BUMP" = "major" ]; then MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif [ "$BUMP" = "minor" ]; then MINOR=$((MINOR + 1)); PATCH=0
+          else PATCH=$((PATCH + 1)); fi
+
+          echo "::notice::Bump=$BUMP → ${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
+      - name: Create and push tag
+        id: create
+        # §0.4：tag 格式改为 vX.Y.Z-<buildtime>（buildtime = UTC ISO8601 紧凑，无冒号）
+        if: steps.version.outputs.version != ''
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILDTIME="$(date -u +%Y%m%dT%H%M%SZ)"
+          TAG="v${VERSION}-${BUILDTIME}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" && git push origin "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"   # 供下方「Rename run」回写运行标题
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # §4.6：auto-tag 在 run 开始后才算出带时间戳的 tag，run-name 此刻已固定，
+      # 故用 REST API 回写本次运行标题，使 Actions 列表直接显示版本号。
+      - name: Rename run with tag
+        if: steps.version.outputs.version != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ needs.auto-tag.outputs.version }}"
-          gh release edit "$TAG" --draft=false
-          echo "::notice::Released $TAG"
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            -f "name=Release ${{ steps.create.outputs.tag }}"
