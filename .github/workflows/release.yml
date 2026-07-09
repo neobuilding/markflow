@@ -51,9 +51,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        - { os: macos-latest,  target: mac,  artifact-name: markflow-macos }
-        - { os: windows-latest, target: win,  artifact-name: markflow-windows }
-        - { os: ubuntu-latest,  target: linux, artifact-name: markflow-linux }
+        include:
+          - { os: macos-latest,  target: mac,  artifact-name: markflow-macos }
+          - { os: windows-latest, target: win,  artifact-name: markflow-windows }
+          - { os: ubuntu-latest,  target: linux, artifact-name: markflow-linux }
     steps:
       - uses: actions/checkout@v6
         with:

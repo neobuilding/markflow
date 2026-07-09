@@ -26,9 +26,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 20, cache: npm }
       - run: npm ci
-        # §11.3 #2：仓库此前零 typecheck 流程，首版先用 `|| true` 观察一轮，
-        # 待存量类型错误清理后再收紧（去掉 `|| true`）。
-      - run: npm run typecheck || true
+      - run: npm run typecheck
       - run: npm run build
 
   # 追加决策 0.3：PR 三平台打包验证——只在 PR 时跑，验证 electron-builder
