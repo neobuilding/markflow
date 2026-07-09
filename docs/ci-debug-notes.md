@@ -216,24 +216,27 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 
 **版本号错误**：CI 构建前没有把 `package.json` 的 `version`（写死为 `1.0.0`）更新为 tag 版本，electron-builder 按 `package.json` 版本命名产物。
 
-**404 的真正原因（重要，易误解）**
+**404 的真正原因（最终版，基于 v0.5.4 日志实证）**
 
-核心机制（必须分清两条不同的触发路径）：
+核心机制：`softprops/action-gh-release` 对每个要上传的文件，会先**按文件名查重**；若 release 里已有同名 asset（无论是本次已上传的、还是复用旧 release 残留的），就走"**覆盖更新**"分支，调用 `PATCH /repos/{owner}/{repo}/releases/assets/{id}`（即报错里的 `update-a-release-asset`）。而 **GitHub 的 `updateReleaseAsset` 接口对「属于 Draft Release 的 asset」一律返回 404**——这是 API 限制：draft 态的 asset 不能通过该 PATCH 端点更新。
 
-> `softprops/action-gh-release` 在上传每个文件后，会按需要调用
-> `PATCH /repos/{owner}/{repo}/releases/assets/{id}`（即报错里的 `update-a-release-asset`，
-> "update release asset metadata"）。而 **GitHub 的 `updateReleaseAsset` 接口对「属于 Draft Release 的 asset」一律返回 404**——这是 API 限制：draft 态的 asset 不能通过该 PATCH 端点更新。
+`builder-debug.yml` 为何必然中招——**跨平台同名碰撞**：
 
-动作会进入"PATCH 更新"分支的前提是：**该 asset 已经属于这个 release**（无论是刚上传完就补 PATCH 元数据，还是复用旧 release 后发现同名 asset 已存在）。两条触发路径如下：
+- electron-builder 在 macos / windows / linux **三个产物目录里各自生成一份** `builder-debug.yml`，**文件名完全相同**。
+- action 依次处理 `artifacts/markflow-macos/*`、`.../windows/*`、`.../linux/*` 三个 glob；遇到第 2、3 个 `builder-debug.yml` 时，发现同名 asset 已存在 → 走"覆盖更新" → PATCH → 因为是 Draft，404。
+- 其余产物（`*.dmg`、`*-win.zip`、`*.AppImage`、`.blockmap`）平台名各不相同，**绝不撞名**，所以全部 ✅。
+- 这就解释了为什么**只有 builder-debug.yml 报错**——它是三个目录里唯一的重复文件名。
+- **与"是否有旧草稿"无关**：v0.5.4 是全新 release（日志 `Creating new GitHub release`），没有旧草稿也照样 404。因为撞名发生在**本次上传的三个目录之间**，不依赖历史 release。
 
-- **路径 A（首次运行也会，与旧草稿无关）**：`builder-debug.yml` 是 electron-builder 生成的**内部调试文件**，action 在上传它之后会**主动再发一次 PATCH 去更新它的元数据**（其余 6 个产物走普通"上传新文件"分支，不上这个 PATCH）。因为此刻 Release 是 Draft，这个 PATCH 必然 404。所以即使**从来没有旧草稿、首次运行**也会失败——实测即如此。排除该文件即可消除这个触发点。
-- **路径 B（重跑时，旧草稿导致）**：若上次失败的 run 已留下一个**含有若干 asset 的 Draft Release**，本次 action 发现这个 tag **已有 release 会复用它**（而非新建），并对其中**已存在的 asset 走"更新已有 asset"分支**发 PATCH → 因为是 Draft 下 asset，404。此时**所有**已存在的文件都会 404，而不只是 builder-debug.yml。
+**`!**/builder-debug.yml` 否定式是无效修复（关键陷阱）**：action 对 `files:` 里的 `!**/...` 取反模式处理有缺陷——实测会警告 `Pattern '!**/builder-debug.yml' does not match any files`，且**仍然把该文件上传**。所以仅靠在 `files:` 末尾加否定式挡不住 `builder-debug.yml`，它还是会被三个 glob 扫到并上传、撞名、404。
 
-**一句话根因**：动作对 **Draft Release 下的 asset 发 PATCH 更新**，GitHub 一律 404。路径 A 的触发点是 builder-debug.yml 被单独 PATCH；路径 B 的触发点是旧 draft 提供了"已存在的 asset"，把动作逼进 PATCH 分支。
+**正确修法**：不能靠 `files:` 取反，必须在上传前**直接从 artifacts 删除** `builder-debug.yml`（`find artifacts -name 'builder-debug.yml' -delete`），让三个 glob 扫不到它，从源头消除撞名。
 
-**Draft 残骸**：第一次 PATCH 404 就让整个 Release step 中断，Release 从未完成发布 → 残留为 Draft，进而成为下一次路径 B 的源头。
+次要路径（仍可能存在，已由"删旧草稿"步骤兜底）：若上次失败的 run 残留了一个含有若干 asset 的 Draft Release，本次 action 会复用它、对其中已存在的 asset 发 PATCH → 404（此时所有已存在文件都会 404，不仅 builder-debug.yml）。`Delete stale release` 步骤（gh api + 纯数字校验）专门清掉这种旧草稿。
 
-> ⚠️ 旧说法"Draft 导致 404"是简写、不够精确：单纯"Release 是 Draft"不会让所有上传 404（另外 6 个文件首次运行都成功）。真正致命的是"**动作对 draft 下的 asset 发 PATCH**"，而 Draft 只是让那个 PATCH 返回 404 的条件。
+**Draft 残骸**：第一次 PATCH 404 就让整个 Release step 中断，Release 从未完成发布 → 残留为 Draft，进而成为"次要路径"的源头。
+
+> ⚠️ 历史误判复盘：早期曾误以为"action 上传后会主动对 builder-debug.yml 单独 PATCH 元数据"或"单纯 Draft 导致 404"。实测推翻二者——**真正触发 PATCH 的是跨平台同名碰撞**，且其他文件在 Draft 下上传完全正常。
 
 ### 8.3 修复措施（已写入 ci.yml）
 
@@ -241,7 +244,7 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 |------|------|------|
 | 注入版本号 | `build` job：`Inject release version into package.json` | `npm version --no-git-tag-version --no-commit <ver>` 覆盖 `package.json`，使产物名正确 |
 | `shell: bash` | 同上 step | Windows runner 默认 shell 是 PowerShell，不认 `VAR="x"` 语法；强制 bash 跨平台一致 |
-| 排除调试文件 | `release` job `files:` 末尾加 `!**/builder-debug.yml` | 该文件永不进 Release，彻底消除**路径 A** 的 PATCH 触发点 |
+| 删除调试文件 | `release` job 上传前加 `find artifacts -name 'builder-debug.yml' -delete` | 直接在 artifacts 中删掉该文件，让三个平台 glob 扫不到它，**从源头消除跨平台同名碰撞**（见 8.2）。注意：`files:` 里的 `!**/builder-debug.yml` 否定式**无效**（action 会警告且仍上传），不能用它来排除 |
 | 删旧草稿 | `release` job：`Delete stale release (if any)`，改用 `gh api` REST（`GET …/releases/tags/{tag}` 取 id → `DELETE …/releases/{id}`） | 重跑前清掉上次失败残留的 Draft，避免**路径 B** 已存在 asset 触发 404。原 `gh release view/delete` 子命令对 draft 解析不可靠、实际未删除，故改用 `gh api`（不依赖 git 上下文、对 draft/published 都稳定）。只删 Release 对象，**保留 git tag** |
 | Draft 安全网 | `Create Release` 设 `draft: true` | 上传期间保持草稿，失败只留草稿不污染用户 |
 | 显式发布 | `Publish Release` step：`gh release edit <tag> --draft=false`，`if: success()` | 仅在全部 asset 上传成功后把草稿翻为已发布 |
@@ -257,7 +260,7 @@ https://github.com/electron-userland/electron-builder-binaries/releases/download
 
 3. **不要在 `test` job 里引用 `needs.auto-tag.outputs.version` 并做版本注入**。`test` job 没有 `needs: auto-tag`，在非发版触发（push 到 main、开 PR）时该输出为空，会导致 `npm version ""` 报错、CI 全红。`test` job 只构建 web 渲染层（Vite），不调用 electron-builder，注入版本对它无意义。
 
-4. **`builder-debug.yml` 不是"必须上传"的文件**，它是调试产物，从 Release 文件清单排除即可，不影响可分发包。
+4. **`builder-debug.yml` 是 electron-builder 在每个平台产物目录都生成一份的调试文件，且文件名完全相同**：它是产生"跨平台同名碰撞 → Draft 下 PATCH 404"的唯一元凶。不能靠 `files:` 的 `!**/...` 否定式排除（action 会警告且仍上传），正确做法是在上传前 `find artifacts -name 'builder-debug.yml' -delete` 直接从 artifacts 删除。删除它不影响可分发包。
 
 5. **删旧草稿必须可靠（路径 B 的关键）**：原 `gh release view/delete` 子命令对 draft 解析异常/返回非零，导致删除步骤被 `if` 静默跳过、旧 draft 残留继续触发 404。已改用 `gh api` 直接调 REST 接口（不依赖 git 上下文、对 draft/published 都能稳定解析）实现删除。若升级删除步骤前已残留 Draft，仍需手动到 Releases 页面删一次，之后即可自动清理。
 

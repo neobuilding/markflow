@@ -308,9 +308,16 @@ jobs:
             echo "::notice::No existing release for $TAG"
           fi
 
-      # Keep the release as a DRAFT during upload. If the upload fails, the
-      # run aborts and we are left with an unpublished draft instead of a
-      # broken public release.
+      # builder-debug.yml is emitted by electron-builder into EVERY platform
+      # output dir, so its filename collides across the three globs above. The
+      # action then tries to overwrite the duplicate by PATCHing the existing
+      # asset — and GitHub 404s on PATCH for draft-release assets. The `!**`
+      # negation in `files:` does NOT work (the action warns "does not match
+      # any files" and still uploads it), so we must delete the file from the
+      # artifacts before upload. The Draft safety net is fully preserved.
+      - name: Remove builder-debug.yml from artifacts
+        run: find artifacts -name 'builder-debug.yml' -delete
+
       - name: Create Release (draft)
         uses: softprops/action-gh-release@v3
         with:
@@ -322,7 +329,6 @@ jobs:
             artifacts/markflow-macos/*
             artifacts/markflow-windows/*
             artifacts/markflow-linux/*
-            !**/builder-debug.yml
           generate_release_notes: true
 
       # Only publish (un-draft) once every asset uploaded successfully.
