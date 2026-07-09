@@ -46,7 +46,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "electron": "^30.5.1",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.15.3",
     "katex": "^0.17.0",
     "lucide-react": "^0.468.0",
     "marked": "^15.0.7",
