@@ -60,7 +60,7 @@ jobs:
               with:
                   ref: ${{ inputs.tag || github.ref }} # dispatch 时 checkout 指定 tag
             - uses: actions/setup-node@v6
-              with: { node-version: 24, cache: npm }
+              with: { node-version: 22, cache: npm }
 
             # Q7 决定：缓存 Electron / electron-builder 下载物，加速构建
             - name: Cache Electron binaries
