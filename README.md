@@ -44,6 +44,10 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 
 - Node.js >= 18
 - npm >= 9
+- A C++ toolchain to compile the native `better-sqlite3` module:
+  - **Windows**: **Visual Studio Build Tools** with the **“使用 C++ 的桌面开发” (Desktop development with C++)** workload (download: <https://aka.ms/vs/17/release/vs_buildtools.exe>).
+  - **macOS**: Xcode Command Line Tools (`xcode-select --install`).
+  - **Linux**: `build-essential` + `python3`.
 
 ### Development
 
@@ -79,6 +83,22 @@ The packaged application will be in the `release/win-unpacked/` directory. Zip t
 > - Run the build again (the script should have pre-cached correctly), or
 > - Enable Windows **Developer Mode** (Settings → System → Developer options), or
 > - Run your terminal as Administrator.
+>
+> **winCodeSign 缓存位置**：构建时若看到 `[winCodeSign] Cache already prepared. Skipping.`，说明代码签名工具已缓存。默认缓存目录为：
+> ```
+> %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
+> ```
+> 即 `C:\Users\<用户名>\AppData\Local\electron-builder\Cache\winCodeSign`，目录内为形如 `winCodeSign-2.x.x` 的版本文件夹。
+>
+> 查看或确认缓存目录（cmd）：
+> ```cmd
+> rem 打印缓存路径
+> echo %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
+> rem 列出已缓存的版本
+> dir "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
+> ```
+>
+> 注意：若设置过 `CSC_CACHE` 环境变量，或在 `electron-builder` 配置中指定了自定义的 `cache`/`winCodeSign` 路径，缓存位置会被覆盖。要强制重新下载，删除该目录下对应的版本文件夹即可，下次 `npm run dist:win` 会重新拉取。
 
 ### Download Pre-built Binaries
 

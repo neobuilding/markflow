@@ -50,6 +50,7 @@ export interface Api {
   }
   files: {
     resolvePaths: (paths: string[]) => Promise<{ directories: string[]; markdownFiles: string[] }>
+    getPathForFile: (file: File) => string
   }
   dialog: {
     openFiles: () => Promise<string[]>

@@ -217,6 +217,13 @@ function createWindow(): void {
     const indexPath = join(RENDERER_DIST, 'index.html')
     mainWindow.loadURL(pathToFileURL(indexPath).href)
   }
+
+  // 升级 Electron（30 → 43）后，旧的 userData（被重定向到 %TEMP%/markflow）
+  // 中可能残留了非 100% 的缩放级别，导致整体界面（含所有边距）被缩小。
+  // 每次加载完成后将缩放重置为默认级别，避免该残留 zoom 影响布局。
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow?.webContents.setZoomLevel(0)
+  })
 }
 
 // 持有应用菜单引用，便于渲染层同步 editable 状态时动态启用/禁用 Save 菜单项。

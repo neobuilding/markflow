@@ -15,11 +15,10 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
     "paths": {
-      "@renderer/*": ["src/renderer/src/*"],
-      "@main/*": ["electron/main/*"],
-      "@/*": ["src/renderer/src/*"]
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@main/*": ["./electron/main/*"],
+      "@/*": ["./src/renderer/src/*"]
     }
   },
   "include": ["src/**/*", "electron/**/*"],

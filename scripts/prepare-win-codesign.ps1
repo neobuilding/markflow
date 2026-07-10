@@ -41,11 +41,46 @@ catch {
 }
 Write-Host "[winCodeSign] Downloaded $((Get-Item $tempZip).Length) bytes."
 
-# Find 7za.exe
-$sevenZip = Join-Path $PSScriptRoot "..\node_modules\7zip-bin\win\x64\7za.exe"
-if (-not (Test-Path $sevenZip)) {
-    $sevenZip = "7za"
+# Find 7za/7z executable.
+# Preference order (most reliable first):
+#   1. node_modules/7zip-bin (bundled, no symlink issues)
+#   2. System 7-Zip install (present on GitHub windows-latest runners and many dev machines)
+#   3. 7za/7z on PATH
+$sevenZip = $null
+
+# 1) node_modules/7zip-bin
+$candidates = @(
+    (Join-Path $PSScriptRoot "..\node_modules\7zip-bin\win\x64\7za.exe"),
+    (Join-Path $PSScriptRoot "..\node_modules\7zip-bin\win\7za.exe"),
+    (Join-Path $PSScriptRoot "..\node_modules\7zip-bin\win\ia32\7za.exe")
+)
+foreach ($c in $candidates) {
+    if (Test-Path $c) { $sevenZip = $c; break }
 }
+
+# 2) System 7-Zip install
+if (-not $sevenZip) {
+    $progFiles = @(
+        "C:\Program Files\7-Zip\7z.exe",
+        "C:\Program Files (x86)\7-Zip\7z.exe"
+    )
+    foreach ($c in $progFiles) {
+        if (Test-Path $c) { $sevenZip = $c; break }
+    }
+}
+
+# 3) PATH: 7za or 7z
+if (-not $sevenZip) {
+    $cmd = Get-Command "7za.exe" -ErrorAction SilentlyContinue
+    if (-not $cmd) { $cmd = Get-Command "7z.exe" -ErrorAction SilentlyContinue }
+    if ($cmd) { $sevenZip = $cmd.Source }
+}
+
+if (-not $sevenZip) {
+    Write-Error "[winCodeSign] Could not locate a 7z/7za executable. Install the '7zip-bin' npm package (npm i -D 7zip-bin) or install 7-Zip."
+    exit 1
+}
+Write-Host "[winCodeSign] Using 7z: $sevenZip" -ForegroundColor Cyan
 
 # Extract only Windows files, skip darwin/linux (they contain symlinks)
 Write-Host "[winCodeSign] Extracting Windows-only files..."

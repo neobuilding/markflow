@@ -17,6 +17,22 @@ By participating, you agree to uphold a respectful, harassment-free environment.
 
 - Node.js >= 18
 - npm >= 9
+- A C++ toolchain (required to compile the native `better-sqlite3` module during
+  `npm install` → `electron-builder install-app-deps`):
+  - **Windows**: Install **Visual Studio Build Tools** (2019 or newer) with the
+    **“使用 C++ 的桌面开发” (Desktop development with C++)** workload. This installs
+    the MSVC toolset + Windows SDK that `node-gyp` needs. Download the VS2022
+    installer from <https://aka.ms/vs/17/release/vs_buildtools.exe>, or modify an
+    existing install via the Visual Studio Installer.
+  - **macOS / Linux**: Xcode Command Line Tools (`xcode-select --install`) /
+    `build-essential` + `python3` respectively (the CI `build-check` job already
+    covers these on Linux).
+
+> ⚠️ **Windows gotcha**: without the C++ workload, `npm install` fails at the
+> `postinstall` step with `gyp ERR! find VS … missing any VC++ toolset`. The fix is
+> installing the “Desktop development with C++” workload above — not skipping
+> `postinstall` (that would leave `better-sqlite3` with the wrong Electron ABI and
+> crash at runtime).
 
 ### Run the dev build
 
@@ -123,6 +139,22 @@ folder for distribution — users just extract and run `MarkFlow.exe`, no instal
 > - Run the build again (the script should have pre-cached correctly), or
 > - Enable Windows **Developer Mode** (Settings → System → Developer options), or
 > - Run your terminal as Administrator.
+>
+> **winCodeSign 缓存位置**：构建时若看到 `[winCodeSign] Cache already prepared. Skipping.`，说明代码签名工具已缓存。默认缓存目录为：
+> ```
+> %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
+> ```
+> 即 `C:\Users\<用户名>\AppData\Local\electron-builder\Cache\winCodeSign`，目录内为形如 `winCodeSign-2.x.x` 的版本文件夹。
+>
+> 查看或确认缓存目录（cmd）：
+> ```cmd
+> rem 打印缓存路径
+> echo %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
+> rem 列出已缓存的版本
+> dir "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
+> ```
+>
+> 注意：若设置过 `CSC_CACHE` 环境变量，或在 `electron-builder` 配置中指定了自定义的 `cache`/`winCodeSign` 路径，缓存位置会被覆盖。要强制重新下载，删除该目录下对应的版本文件夹即可，下次 `npm run dist:win` 会重新拉取。
 
 ## Submitting Changes
 
