@@ -99,7 +99,7 @@ export default function App(): React.ReactElement {
     if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     const paths = Array.from(e.dataTransfer.files)
-      .map((f) => (f as unknown as { path?: string }).path)
+      .map((f) => window.api.files.getPathForFile(f))
       .filter((p): p is string => typeof p === 'string' && p.length > 0)
     if (paths.length > 0) openPathsMutRef.current.mutate(paths)
   }, [])

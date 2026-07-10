@@ -38,6 +38,22 @@ const api = {
   // Files: resolve a list of file/folder paths into markdown files + directories
   files: {
     resolvePaths: (paths: string[]) => ipcRenderer.invoke('files:resolve-paths', paths),
+    // Electron 32+ removed the File.path property in the renderer.
+    // Use electron.webUtils.getPathForFile (official API, available in the
+    // preload context via require('electron')) to recover the real path.
+    getPathForFile: (file: File) => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const electronModule = require('electron') as any
+        if (electronModule?.webUtils?.getPathForFile) {
+          return electronModule.webUtils.getPathForFile(file)
+        }
+      } catch {
+        // ignore and fall through to the fallback below
+      }
+      // Fallback for older Electron versions (pre-32) that still expose File.path
+      return (file as any).path ?? ''
+    },
   },
 
   // Dialog: let renderer trigger native file/folder pickers

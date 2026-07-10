@@ -1,12 +1,25 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Keep using the existing JS config for custom theme (colors, fonts, animations) */
+@config "../../../../tailwind.config.cjs";
+
+/* Tailwind v4 no longer reads the `content` array from the JS config. Explicitly
+   tell the compiler where to scan for utility classes in the renderer bundle. */
+@source "../../../../src/renderer/src/**/*.{js,ts,jsx,tsx}";
+@source "../../../../index.html";
 
 /* Linear-inspired CSS Reset & Base */
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+/* NOTE: must live inside @layer base. Tailwind v4 puts utilities in
+   @layer utilities, and any UN-layered rule (even `*` with specificity 0)
+   outranks everything inside @layer — so a bare `*{padding:0}` would
+   silently zero out `.px-3` / `.p-6` etc. Wrapping it keeps utilities
+   able to override it. */
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 }
 
 :root {
@@ -52,6 +65,7 @@
 
 html, body {
   height: 100%;
+  font-size: 16px;
   font-family: var(--font-sans);
   background-color: var(--color-bg);
   color: var(--color-text-primary);
