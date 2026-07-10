@@ -17,6 +17,22 @@ By participating, you agree to uphold a respectful, harassment-free environment.
 
 - Node.js >= 18
 - npm >= 9
+- A C++ toolchain (required to compile the native `better-sqlite3` module during
+  `npm install` → `electron-builder install-app-deps`):
+  - **Windows**: Install **Visual Studio Build Tools** (2019 or newer) with the
+    **“使用 C++ 的桌面开发” (Desktop development with C++)** workload. This installs
+    the MSVC toolset + Windows SDK that `node-gyp` needs. Download the VS2022
+    installer from <https://aka.ms/vs/17/release/vs_buildtools.exe>, or modify an
+    existing install via the Visual Studio Installer.
+  - **macOS / Linux**: Xcode Command Line Tools (`xcode-select --install`) /
+    `build-essential` + `python3` respectively (the CI `build-check` job already
+    covers these on Linux).
+
+> ⚠️ **Windows gotcha**: without the C++ workload, `npm install` fails at the
+> `postinstall` step with `gyp ERR! find VS … missing any VC++ toolset`. The fix is
+> installing the “Desktop development with C++” workload above — not skipping
+> `postinstall` (that would leave `better-sqlite3` with the wrong Electron ABI and
+> crash at runtime).
 
 ### Run the dev build
 

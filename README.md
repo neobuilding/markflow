@@ -44,6 +44,10 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 
 - Node.js >= 18
 - npm >= 9
+- A C++ toolchain to compile the native `better-sqlite3` module:
+  - **Windows**: **Visual Studio Build Tools** with the **“使用 C++ 的桌面开发” (Desktop development with C++)** workload (download: <https://aka.ms/vs/17/release/vs_buildtools.exe>).
+  - **macOS**: Xcode Command Line Tools (`xcode-select --install`).
+  - **Linux**: `build-essential` + `python3`.
 
 ### Development
 
