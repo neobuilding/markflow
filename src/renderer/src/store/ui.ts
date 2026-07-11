@@ -44,6 +44,10 @@ interface UIState {
   newDocOpen: boolean
   setNewDocOpen: (open: boolean) => void
 
+  // About dialog（Help > About）
+  aboutOpen: boolean
+  setAboutOpen: (open: boolean) => void
+
   // 是否存在未保存的改动（用于“脏”标记与关闭前的确认）
   dirty: boolean
   setDirty: (dirty: boolean) => void
@@ -100,6 +104,9 @@ export const useUIStore = create<UIState>((set) => ({
 
   newDocOpen: false,
   setNewDocOpen: (open) => set({ newDocOpen: open }),
+
+  aboutOpen: false,
+  setAboutOpen: (open) => set({ aboutOpen: open }),
 
   dirty: false,
   setDirty: (dirty) => set({ dirty }),

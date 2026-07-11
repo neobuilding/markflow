@@ -1,21 +1,33 @@
-name: CI
+name: CI & Release
 run-name: >-
-    ${{ github.event_name == 'pull_request' && format('PR {0}', github.head_ref)
-       || github.event_name == 'workflow_dispatch' && 'CI dispatch'
-       || github.event.head_commit.message }}
+    ${{ github.event_name == 'workflow_dispatch' && 'CI & Release (dispatch)'
+       || github.event_name == 'pull_request' && format('PR {0}', github.head_ref)
+       || github.ref_name }}
 on:
     push:
         branches: [main]
+        tags: ['v*'] # 手动推送 v* tag 可触发「重发」：重新 build + 开新 draft
     pull_request:
         branches: [main]
     workflow_dispatch:
 
 permissions:
-    contents: write # 仅 auto-tag 推 tag 需要
+    contents: write # release 经 API 推 tag + 建 draft release 都需要
 
+# 按 ref 隔离并发；cancel-in-progress:false 保护在途 release 出包不被打断
 concurrency:
     group: ci-${{ github.ref }}
-    cancel-in-progress: true
+    cancel-in-progress: false
+
+# 版本号的唯一来源是 compute-version job：它只「算」不「打」，先跑并输出 tag 与 version；
+# build / release 都从 compute-version 的 outputs 读取，杜绝两处重复推断、保证一致。
+#   - push 到 main / dispatch  → compute-version 算出 v{ver}-{提交时间}.{短SHA}（不推送）
+#   - 推送 v* tag             → compute-version 复用已有 tag，version = tag 去 v
+#   - PR / 非 main 分支 push  → compute-version 输出为空：build 不注入（用基础版）、release 不跑
+# 「打 tag」的动作推迟到 release 阶段，通过 gh api 推送（无需 checkout），幂等可复现；
+# 同一 commit 重跑得到相同 tag（提交时间取自 committer date，稳定）。
+env:
+    CSC_IDENTITY_AUTOMATION: false # mac 不走签名/公证自动化（与历史一致）
 
 jobs:
     test:
@@ -29,27 +41,74 @@ jobs:
             - run: npm run typecheck
             - run: npm run build
 
-    # 追加决策 0.3：三平台打包验证——在 PR 与 push 到 main 时都跑，验证 electron-builder
-    # 能在三平台成功出包，提前暴露 Windows/macOS 平台坑；不上传、不发布。
-    # Public repo 下 macOS 等 runner 免费（§11.2 #4），默认每次都验证。
-    build-check:
-        name: Build check (${{ matrix.os }})
+    # 版本号的唯一来源：只「算」不「打」。不 checkout、不推 tag，纯靠 gh api 读取
+    # package.json 基础版本与提交时间，输出 tag + version 给下游。
+    #   - 推送 v* tag 时复用已有 tag（version = tag 去 v 前缀）；
+    #   - push main / dispatch 时算出滚动版 tag（见下）；
+    #   - PR 时输出为空（不推断），让 build/release 退化为纯验证。
+    # 因为不 checkout，本 job 几乎只做两次 API 调用 + 一个 echo，开销趋近于 0，
+    # 从而 build 在 test 之后可立即跟上，不再被 checkout/推送拖慢。
+    compute-version:
+        name: Compute version
         needs: test
+        runs-on: ubuntu-latest
+        outputs:
+            tag: ${{ steps.compute.outputs.tag }}
+            version: ${{ steps.compute.outputs.version }}
+        steps:
+            - name: Compute version (no checkout)
+              id: compute
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  set -e
+                  # PR：不推断版本，输出为空，让下游只做验证
+                  if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                    echo "tag=" >> "$GITHUB_OUTPUT"
+                    echo "version=" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+                  if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+                    TAG="${GITHUB_REF_NAME}"
+                    VERSION="${GITHUB_REF_NAME#v}"
+                    echo "::notice::Tag push ${TAG}; reusing existing tag."
+                  else
+                    # 基础版本取自 package.json（经 API 读取，避免 checkout）
+                    BASE=$(gh api "repos/${{ github.repository }}/contents/package.json" \
+                              --jq '.content' | base64 -d \
+                              | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+                    # 短 SHA（取完整 sha 前 7 位）
+                    SHA7="${{ github.sha }}"
+                    SHA7="${SHA7:0:7}"
+                    # 提交时间取自 committer date（稳定，保证同 commit 幂等）
+                    CTIME=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}" --jq '.commit.committer.date')
+                    BUILDTIME="$(date -u -d "$CTIME" +%Y%m%dT%H%M%SZ)"
+                    TAG="v${BASE}-${BUILDTIME}.${SHA7}"
+                    VERSION="${BASE}-${BUILDTIME}.${SHA7}"
+                  fi
+                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    # 永远运行（PR / 非 main push / main push / tag push / dispatch）：三平台 build + dist。
+    # 这是全仓库唯一一次三平台构建——PR 当验证用，main/tag push 当出包用，杜绝重复 build。
+    # 版本来自 compute-version 的输出（唯一来源）：非空才注入，空（PR）则用 package.json 基础版。
+    build:
+        name: Build (${{ matrix.os }})
+        needs: [test, compute-version]
         runs-on: ${{ matrix.os }}
-        env:
-            CSC_IDENTITY_AUTOMATION: false # 与发版一致：mac 不走签名/公证自动化（原 ci.yml:241）
         strategy:
             fail-fast: false
             matrix:
                 include:
-                    - { os: macos-latest, target: mac }
-                    - { os: windows-latest, target: win }
-                    - { os: ubuntu-latest, target: linux }
+                    - { os: macos-latest, target: mac, artifact-name: markflow-macos }
+                    - { os: windows-latest, target: win, artifact-name: markflow-windows }
+                    - { os: ubuntu-latest, target: linux, artifact-name: markflow-linux }
         steps:
             - uses: actions/checkout@v6
             - uses: actions/setup-node@v6
               with: { node-version: 22, cache: npm }
-            # 复用 release.yml 的 Electron 缓存（Q7 / M4）
+
+            # 复用 Electron / electron-builder 下载物缓存，加速构建
             - name: Cache Electron binaries
               uses: actions/cache@v6
               with:
@@ -63,7 +122,8 @@ jobs:
                   key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
                   restore-keys: |
                       ${{ runner.os }}-electron-
-            # Linux 依赖安装（原 ci.yml:207-222 原样搬；缺失会导致 AppImage 构建失败）
+
+            # Linux 依赖安装（缺失会导致 AppImage 构建失败）
             - name: Install Linux dependencies
               if: matrix.target == 'linux'
               run: |
@@ -80,51 +140,84 @@ jobs:
                     rpm \
                     fakeroot \
                     libarchive-tools
-            - run: npm ci
-            - run: npm run build
-            - run: npm run dist:${{ matrix.target }} # 仅验证能出包，不 upload-artifact
 
-    auto-tag:
-        name: Auto tag on merge to main
-        needs: test
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+            - run: npm ci
+
+            # 注入 compute-version 算出的版本（唯一来源）。
+            # 非空（main/tag/dispatch）→ app 内部「关于」与文件名都带完整滚动版；
+            # 空（PR）→ 不注入，用 package.json 基础版本号。
+            - name: Inject version from compute-version
+              if: needs.compute-version.outputs.version != ''
+              shell: bash
+              run: |
+                  npm version --no-git-tag-version --no-commit-hooks "${{ needs.compute-version.outputs.version }}"
+
+            - run: npm run build
+            - run: npm run dist:${{ matrix.target }}
+
+            # 仅 release 路径（version 非空）上传产物；PR 只验证不传（省存储）
+            - name: Upload artifact (release path only)
+              if: needs.compute-version.outputs.version != ''
+              uses: actions/upload-artifact@v7
+              with:
+                  name: ${{ matrix.artifact-name }}
+                  path: release
+                  if-no-files-found: error
+                  retention-days: 7
+
+    # 下载三平台产物 → 打 tag（经 API，幂等）→ 生成 SHA256SUMS → 建 draft release（不 publish）。
+    # 文件名已带完整版本（build 阶段注入 compute-version 的版本），无需改名；只按允许清单发布，无需删除任何文件。
+    # 「打 tag」从 compute-version 推迟到此：用 gh api 创建 git ref，无需 checkout；
+    # tag 已存在（如重跑）则跳过，避免冲突。无论 draft 是否保留，tag 都留下（可追溯）。
+    release:
+        name: Draft Release
+        needs: [build, compute-version]
+        if: needs.compute-version.outputs.tag != ''
         runs-on: ubuntu-latest
-        # contents:write 用于推送 tag；其余 job 无需这两项权限。
-        permissions:
-            contents: write
-        outputs:
-            version: ${{ steps.version.outputs.version }}
         steps:
-            - uses: actions/checkout@v6
-              with: { fetch-depth: 0 }
-            # 滚动发版：以 package.json.version 为「版本线」，CI 自动追加「提交UTC时间.短SHA」后缀
-            #   - 版本线由开发者手动在 package.json 维护（里程碑时改），平时 merge 只换后缀、不自动 bump
-            #   - 后缀 = <提交时间>.<短SHA>：可读（时间）+ 可精确追溯提交（SHA）+ 天然唯一（不撞 tag）
-            #   - 用「提交时间」而非「构建时间」：同一 commit 重跑 workflow 得到相同 tag → 幂等可复现
-            - name: Determine version
-              id: version
+            # 仅「计算版本」路径（非 tag push）才需打 tag；tag push 时 tag 已存在。
+            - name: Push tag (computed path only)
+              if: github.ref_type != 'tag'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   set -e
-                  VERSION=$(node -p "require('./package.json').version")
-                  echo "::notice::Base version from package.json: $VERSION"
-                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            - name: Create and push tag
-              id: create
-              # tag 格式：v<version>-<提交UTC时间>.<短SHA>（如 v0.4.0-20260111T120000Z.a1b2c3d）
-              run: |
-                  VERSION="${{ steps.version.outputs.version }}"
-                  # format-local + TZ=UTC 才会把提交时间真正转成 UTC；format: 会保留提交原始时区（误贴 Z）
-                  BUILDTIME="$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%dT%H%M%SZ HEAD)"
-                  SHA="$(git rev-parse --short HEAD)"
-                  TAG="v${VERSION}-${BUILDTIME}.${SHA}"
-                  # 幂等：直接查远端 tag 是否已存在（不依赖本地是否拉取了 tag），避免重复发版与 push 失败
-                  if git ls-remote --tags --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+                  TAG="${{ needs.compute-version.outputs.tag }}"
+                  # 幂等：tag 已存在则跳过
+                  if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
                     echo "::notice::Tag $TAG already exists; skipping."
                   else
-                    git config user.name "github-actions[bot]"
-                    git config user.email "github-actions[bot]@users.noreply.github.com"
-                    git tag "$TAG" && git push origin "$TAG"
+                    gh api -X POST "repos/${{ github.repository }}/git/refs" \
+                      -f "ref=refs/tags/$TAG" \
+                      -f "sha=${{ github.sha }}"
+                    echo "::notice::Pushed tag $TAG."
                   fi
-                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - uses: actions/download-artifact@v8
+              with: { path: artifacts }
+
+            # 只校验真正发布的文件类型（dmg/zip/AppImage），天然排除
+            # builder-debug.yml 与 *-unpacked 解包目录，无需手动删除。
+            # ⚠️ 若 electron-builder.json5 增删 target（如 deb/exe），需同步更新下方 globs。
+            - name: Generate SHA256SUMS
+              run: |
+                  cd artifacts
+                  find markflow-macos markflow-windows markflow-linux -maxdepth 1 -type f \( \
+                    -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' \) -print0 \
+                    | sort -z | xargs -0 sha256sum > SHA256SUMS
+                  cat SHA256SUMS
+
+            # 仅发布允许清单内的文件；draft=true 由人工决定去留，本流程不自动 publish。
+            - name: Create draft Release
+              uses: softprops/action-gh-release@v3
+              with:
+                  name: ${{ needs.compute-version.outputs.tag }}
+                  tag_name: ${{ needs.compute-version.outputs.tag }}
+                  draft: true
+                  prerelease: false
+                  files: |
+                      artifacts/markflow-macos/*.dmg
+                      artifacts/markflow-windows/*.zip
+                      artifacts/markflow-linux/*.AppImage
+                      artifacts/SHA256SUMS
+                  generate_release_notes: true

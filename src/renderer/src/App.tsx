@@ -7,6 +7,7 @@ import { StatusBar } from './components/editor/StatusBar'
 import { CommandPalette } from './components/editor/CommandPalette'
 import { NewDocumentDialog } from './components/editor/NewDocumentDialog'
 import { FileDetailsDialog } from './components/editor/FileDetailsDialog'
+import { AboutDialog } from './components/editor/AboutDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 
 export default function App(): React.ReactElement {
@@ -46,10 +47,13 @@ export default function App(): React.ReactElement {
       const id = useUIStore.getState().activeDocumentId
       if (id) useUIStore.getState().setFileDetailsId(id)
     })
+    const removeAbout = window.api.onMenuEvent('about', () => {
+      useUIStore.getState().setAboutOpen(true)
+    })
     const removeOpenPaths = window.api.onOpenPaths((paths) => {
       if (paths && paths.length > 0) openPathsMut.mutate(paths)
     })
-    return () => { removeNew(); removeSidebar(); removeOpen(); removeClose(); removeOpenPaths(); removeFileDetails() }
+    return () => { removeNew(); removeSidebar(); removeOpen(); removeClose(); removeOpenPaths(); removeFileDetails(); removeAbout() }
   }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace])
 
   // 启动时拉取命令行 / 文件关联传入的路径并打开
@@ -119,6 +123,7 @@ export default function App(): React.ReactElement {
         <CommandPalette />
         <NewDocumentDialog />
         <FileDetailsDialog />
+        <AboutDialog />
       </div>
     </TooltipProvider>
   )

@@ -6,8 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/yourusername/markflow/releases"><img src="https://img.shields.io/github/v/release/yourusername/markflow?include_prereleases&style=flat-square" alt="GitHub release"></a>
-  <a href="https://github.com/yourusername/markflow/actions/workflows/ci.yml"><img src="https://github.com/yourusername/markflow/actions/workflows/ci.yml/badge.svg" alt="CI Status"></a>
-  <a href="https://github.com/yourusername/markflow/actions/workflows/release.yml"><img src="https://github.com/yourusername/markflow/actions/workflows/release.yml/badge.svg" alt="Release Status"></a>
+  <a href="https://github.com/yourusername/markflow/actions/workflows/ci.yml"><img src="https://github.com/yourusername/markflow/actions/workflows/ci.yml/badge.svg" alt="CI &amp; Release Status"></a>
   <a href="https://github.com/yourusername/markflow/actions/workflows/codeql.yml"><img src="https://github.com/yourusername/markflow/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status"></a>
   <a href="https://github.com/yourusername/markflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/yourusername/markflow?style=flat-square" alt="License"></a>
 </p>
