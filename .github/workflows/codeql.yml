@@ -36,16 +36,16 @@ jobs:
             - run: npm ci
 
             - name: Initialize CodeQL
-              uses: github/codeql-action/init@v3
+              uses: github/codeql-action/init@v4
               with:
                   languages: javascript-typescript
                   config-file: ./.github/codeql/codeql-config.yml
 
             # JS/TS 为解释型语言，autobuild 非必需；保留以覆盖需编译的边界情况
             - name: Autobuild
-              uses: github/codeql-action/autobuild@v3
+              uses: github/codeql-action/autobuild@v4
 
             - name: Perform CodeQL Analysis
-              uses: github/codeql-action/analyze@v3
+              uses: github/codeql-action/analyze@v4
               with:
                   category: "javascript-typescript"
