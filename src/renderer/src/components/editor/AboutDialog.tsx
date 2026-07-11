@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { Info, Copy } from 'lucide-react'
+import { FileText, Copy } from 'lucide-react'
 import { useUIStore } from '../../store/ui'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from '../ui/dialog'
+import { Dialog, DialogContent, DialogClose, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
 
 export function AboutDialog(): React.ReactElement | null {
@@ -34,16 +34,23 @@ export function AboutDialog(): React.ReactElement | null {
   return (
     <Dialog open={aboutOpen} onOpenChange={(o) => { if (!o) close() }}>
       <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Info size={16} className="text-accent" />
-            About MarkFlow
-          </DialogTitle>
-        </DialogHeader>
+        {/* 屏幕阅读器可见的标题，保证对话框可访问性 */}
+        <DialogTitle className="sr-only">About MarkFlow</DialogTitle>
 
-        <div className="py-1">
-          <div className="text-2xs uppercase tracking-wide text-[var(--color-text-tertiary)]">Version</div>
-          <div className="text-sm text-[var(--color-text-primary)] font-mono mt-1 flex items-center gap-2">
+        {/* 品牌区：复用与侧边栏一致的 Logo 视觉语言（FileText + accent 方块） */}
+        <div className="flex flex-col items-center text-center pt-1">
+          <div className="w-14 h-14 rounded-2xl bg-accent flex items-center justify-center shadow-lg shadow-accent/20 mb-3">
+            <FileText size={28} className="text-white" strokeWidth={2.25} />
+          </div>
+          <h2 className="text-lg font-semibold text-[var(--color-text-primary)] leading-none">
+            MarkFlow
+          </h2>
+          <p className="text-2xs uppercase tracking-wider text-[var(--color-text-tertiary)] mt-1.5">
+            Markdown Editor
+          </p>
+
+          {/* 版本号（可复制） */}
+          <div className="mt-4 flex items-center gap-2 text-sm text-[var(--color-text-primary)] font-mono">
             {version}
             <Button variant="outline" size="sm" onClick={copyVersion} className="gap-1">
               <Copy size={12} /> {copied ? 'Copied' : 'Copy'}
@@ -51,13 +58,13 @@ export function AboutDialog(): React.ReactElement | null {
           </div>
         </div>
 
-        <p className="text-xs text-[var(--color-text-tertiary)] mt-3 leading-relaxed">
+        <p className="text-xs text-[var(--color-text-tertiary)] mt-4 leading-relaxed text-center">
           A privacy-first, local-first Markdown editor. All your data stays on your machine.
         </p>
 
-        <div className="flex items-center justify-end mt-5">
+        <div className="flex items-center justify-center mt-5">
           <DialogClose asChild>
-            <Button variant="accent" size="sm">Close</Button>
+            <Button variant="accent" size="sm" className="px-8">Close</Button>
           </DialogClose>
         </div>
       </DialogContent>

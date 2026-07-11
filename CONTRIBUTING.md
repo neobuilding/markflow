@@ -108,9 +108,9 @@ markflow/
 MarkFlow releases are **automated** via a single `ci.yml` workflow:
 
 1. Pushing to `main` (or dispatching on `main`) triggers `ci.yml`, which
-   builds for macOS / Windows / Linux, auto-tags `vX.Y.Z-<buildtime>.<sha>`
-   (base version from `package.json` + commit time + short SHA), and creates a
-   **draft** GitHub Release.
+   builds for macOS / Windows / Linux, computes a `vX.Y.Z-<buildtime>.<sha>` tag
+   (base version from `package.json` + commit time + short SHA) and, on the release
+   stage, pushes that tag and creates a **draft** GitHub Release.
 2. A maintainer reviews the draft (download the artifacts, smoke-test) and then
    **publishes or deletes** it. The git tag is left in place either way, so every
    build stays traceable.
