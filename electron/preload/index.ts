@@ -31,6 +31,7 @@ const api = {
   app: {
     getTheme: () => ipcRenderer.invoke('app:get-theme'),
     setTheme: (theme: 'light' | 'dark' | 'system') => ipcRenderer.invoke('app:set-theme', theme),
+    getVersion: () => ipcRenderer.invoke('app:get-version'),
     getInitialPaths: () => ipcRenderer.invoke('app:get-initial-paths'),
     showInFolder: (filePath: string) => ipcRenderer.invoke('app:show-in-folder', filePath),
   },

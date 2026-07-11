@@ -22,6 +22,7 @@ export type MenuEvent =
   | 'open-files'
   | 'close-workspace'
   | 'file-details'
+  | 'about'
 
 // Electron preload bridge exposed on window.api
 export interface Api {
@@ -45,6 +46,7 @@ export interface Api {
   app: {
     getTheme: () => Promise<ThemeMode>
     setTheme: (theme: ThemeMode) => Promise<void>
+    getVersion: () => Promise<string>
     getInitialPaths: () => Promise<string[]>
     showInFolder: (filePath: string) => Promise<void>
   }

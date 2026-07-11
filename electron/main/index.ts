@@ -365,6 +365,15 @@ function setupMenu(): void {
       label: 'Window',
       submenu: [{ role: 'minimize' }, { role: 'zoom' }],
     },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'About MarkFlow',
+          click: () => mainWindow?.webContents.send('menu:about'),
+        },
+      ],
+    },
   ]
 
   // Dev Tools 已合并到 View 菜单，无需独立 Dev 菜单
@@ -535,6 +544,9 @@ if (!shouldStart) {
       // 忽略：文件可能不存在或无权限
     }
   })
+
+  // 渲染层「关于」对话框获取应用版本（生产环境为注入的滚动版本号）
+  ipcMain.handle('app:get-version', () => app.getVersion())
 
   // ─── Window control ────────────────────────────────────────────
 

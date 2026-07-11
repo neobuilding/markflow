@@ -25,7 +25,7 @@ By participating, you agree to uphold a respectful, harassment-free environment.
     installer from <https://aka.ms/vs/17/release/vs_buildtools.exe>, or modify an
     existing install via the Visual Studio Installer.
   - **macOS / Linux**: Xcode Command Line Tools (`xcode-select --install`) /
-    `build-essential` + `python3` respectively (the CI `build-check` job already
+    `build-essential` + `python3` respectively (the `build` job already
     covers these on Linux).
 
 > ⚠️ **Windows gotcha**: without the C++ workload, `npm install` fails at the
@@ -95,24 +95,29 @@ markflow/
 ## Coding Conventions
 
 - **Commits**: follow [Conventional Commits](https://www.conventionalcommits.org/)
-  (`feat:`, `fix:`, `docs:`, `chore:`, `BREAKING CHANGE:` / `feat!:` …).
-  The CI derives the next **semantic version** from commit messages, so this matters.
+  (`feat:`, `fix:`, `docs:`, `chore:`, `BREAKING CHANGE:` / `feat!:` …) to keep
+  history readable. The base version in `package.json` is bumped manually at
+  milestones; the rolling release suffix is generated automatically, so commit
+  messages aren't required for versioning.
 - **Type safety**: `npm run typecheck` must pass (no new `any` without reason).
 - **Security**: every PR is scanned by **CodeQL** (`codeql.yml`). If it flags something,
   triage it rather than disabling the check.
 
 ## Release Process
 
-MarkFlow releases are **automated**:
+MarkFlow releases are **automated** via a single `ci.yml` workflow:
 
-1. Pushing to `main` triggers `ci.yml`, which computes the next semantic version
-   (from conventional commits) and creates a `vX.Y.Z-<buildtime>` tag.
-2. That tag push triggers `release.yml`, which builds for macOS / Windows / Linux
-   and publishes a GitHub Release.
-3. To **re-release an existing tag**, run `release.yml` manually via
-   `workflow_dispatch` and supply the tag.
+1. Pushing to `main` (or dispatching on `main`) triggers `ci.yml`, which
+   builds for macOS / Windows / Linux, auto-tags `vX.Y.Z-<buildtime>.<sha>`
+   (base version from `package.json` + commit time + short SHA), and creates a
+   **draft** GitHub Release.
+2. A maintainer reviews the draft (download the artifacts, smoke-test) and then
+   **publishes or deletes** it. The git tag is left in place either way, so every
+   build stays traceable.
+3. To **re-release**, dispatch `ci.yml` on `main` — it rebuilds, mints a
+   new tag, and opens a fresh draft.
 
-> ⚠️ Because every merge to `main` produces a Release, keep `main` green and
+> ⚠️ Because every merge to `main` produces a draft Release, keep `main` green and
 > land changes behind reviewed PRs.
 
 ## Building & Packaging
