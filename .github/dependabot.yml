@@ -10,12 +10,9 @@ updates:
     labels:
       - "dependencies"
     groups:
-      # 所有 minor / patch 级升级合并为一个 PR，减少分支噪音
-      npm-minor-patch:
-        update-types: ["minor", "patch"]
-      # major 级升级单独成 PR，便于重点审查破坏性变更
-      npm-major:
-        update-types: ["major"]
+      # 所有 npm 升级（major / minor / patch）合并为一个 PR，最大限度减少分支噪音
+      npm-all:
+        patterns: ["*"]
 
   # GitHub Actions 版本（原笔记第 4 节为手动升级，现自动化）
   - package-ecosystem: "github-actions"

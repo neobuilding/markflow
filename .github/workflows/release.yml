@@ -64,7 +64,7 @@ jobs:
 
             # Q7 决定：缓存 Electron / electron-builder 下载物，加速构建
             - name: Cache Electron binaries
-              uses: actions/cache@v4
+              uses: actions/cache@v6
               with:
                   path: |
                       ~/.cache/electron
@@ -99,11 +99,11 @@ jobs:
             - name: Inject version
               shell: bash
               run: |
-                  # §0.4：tag 形如 vX.Y.Z-<buildtime>，npm 版本字段只接受纯净 X.Y.Z
+                  # 滚动发版：tag 形如 vX.Y.Z-<提交时间>.<短SHA>（如 v0.4.0-20260111T120000Z.a1b2c3d）
+                  # 保留完整版本号（含后缀）注入 package.json，使 app 内部版本/文件名/可追溯性都精确到构建
                   TAG="${{ inputs.tag || github.ref_name }}"
-                  TAG="${TAG#v}"            # 去掉 v 前缀
-                  VERSION="${TAG%%-*}"      # 取首个 '-' 之前 = 纯净 X.Y.Z（去掉构建时间戳）；旧格式无 '-' 也兼容
-                  # §10 #3：npm 官方参数为 --no-commit-hooks（非 --no-commit）
+                  VERSION="${TAG#v}"        # 去掉 v 前缀，保留完整 0.4.0-20260111T120000Z.a1b2c3d
+                  # npm 官方参数为 --no-commit-hooks（非 --no-commit）
                   npm version --no-git-tag-version --no-commit-hooks "$VERSION"
             - run: npm run build
             - run: npm run dist:${{ matrix.target }}
