@@ -5,10 +5,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/yourusername/markflow/releases"><img src="https://img.shields.io/github/v/release/yourusername/markflow?include_prereleases&style=flat-square" alt="GitHub release"></a>
-  <a href="https://github.com/yourusername/markflow/actions/workflows/ci.yml"><img src="https://github.com/yourusername/markflow/actions/workflows/ci.yml/badge.svg" alt="CI &amp; Release Status"></a>
-  <a href="https://github.com/yourusername/markflow/actions/workflows/codeql.yml"><img src="https://github.com/yourusername/markflow/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status"></a>
-  <a href="https://github.com/yourusername/markflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/yourusername/markflow?style=flat-square" alt="License"></a>
+  <a href="https://github.com/neobuilding/markflow/releases"><img src="https://img.shields.io/github/v/release/neobuilding/markflow?include_prereleases&style=flat-square" alt="GitHub release"></a>
+  <a href="https://github.com/neobuilding/markflow/actions/workflows/ci.yml"><img src="https://github.com/neobuilding/markflow/actions/workflows/ci.yml/badge.svg" alt="CI &amp; Release Status"></a>
+  <a href="https://github.com/neobuilding/markflow/actions/workflows/codeql.yml"><img src="https://github.com/neobuilding/markflow/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status"></a>
+  <a href="https://github.com/neobuilding/markflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/neobuilding/markflow?style=flat-square" alt="License"></a>
 </p>
 
 A cross-platform Markdown editor with **Linear-style UI**, built with Electron + React 18 + TypeScript.
@@ -52,7 +52,7 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/markflow.git
+git clone https://github.com/neobuilding/markflow.git
 cd markflow
 
 # Install dependencies
@@ -79,17 +79,21 @@ The packaged application will be in the `release/win-unpacked/` directory. Zip t
 > **Windows build note**: `npm run dist:win` automatically runs a pre-build script (`scripts/prepare-win-codesign.ps1`) that downloads and extracts only the Windows code-signing tools, skipping macOS symbolic links that fail on non-administrator Windows accounts. No manual setup needed — just run `npm run dist:win` and it works.
 >
 > If you encounter the error `Cannot create symbolic link`, either:
+>
 > - Run the build again (the script should have pre-cached correctly), or
 > - Enable Windows **Developer Mode** (Settings → System → Developer options), or
 > - Run your terminal as Administrator.
 >
 > **winCodeSign 缓存位置**：构建时若看到 `[winCodeSign] Cache already prepared. Skipping.`，说明代码签名工具已缓存。默认缓存目录为：
+>
 > ```
 > %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
 > ```
+>
 > 即 `C:\Users\<用户名>\AppData\Local\electron-builder\Cache\winCodeSign`，目录内为形如 `winCodeSign-2.x.x` 的版本文件夹。
 >
 > 查看或确认缓存目录（cmd）：
+>
 > ```cmd
 > rem 打印缓存路径
 > echo %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
@@ -101,7 +105,7 @@ The packaged application will be in the `release/win-unpacked/` directory. Zip t
 
 ### Download Pre-built Binaries
 
-Visit the [Releases](https://github.com/yourusername/markflow/releases) page to download pre-built binaries for macOS, Windows, and Linux.
+Visit the [Releases](https://github.com/neobuilding/markflow/releases) page to download pre-built binaries for macOS, Windows, and Linux.
 
 ## 📁 Project Structure
 
@@ -135,7 +139,7 @@ markflow/
 ## ⌨️ Keyboard Shortcuts
 
 | Shortcut | Action |
-|---|---|
+| --- | --- |
 | `Ctrl/Cmd + N` | New document |
 | `Ctrl/Cmd + K` | Search documents |
 | `Ctrl/Cmd + \` | Toggle sidebar |
@@ -151,7 +155,7 @@ markflow/
 ## 🛠️ Tech Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | Build | Vite 5 + vite-plugin-electron |
 | Desktop | Electron 30 |
 | Frontend | React 18 + TypeScript (strict) + Tailwind CSS 3.4 |
@@ -190,7 +194,7 @@ Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md)
 
 ## 🐛 Bug Reports
 
-Please use the [GitHub Issues](https://github.com/yourusername/markflow/issues) page to report bugs. Include:
+Please use the [GitHub Issues](https://github.com/neobuilding/markflow/issues) page to report bugs. Include:
 
 - Your operating system and version
 - MarkFlow version (see `Help > About`)

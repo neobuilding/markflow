@@ -9,6 +9,11 @@ import { notBundle } from 'vite-plugin-electron/plugin'
 delete process.env.ELECTRON_RUN_AS_NODE
 
 export default defineConfig({
+  // Renderer is loaded from a file:// URL in production; relative paths are
+  // required for dynamic imports (e.g., Mermaid chunks) and asset URLs to
+  // resolve correctly inside the app bundle. A root-relative base would make
+  // chunks point to /assets/... on the filesystem, where they don't exist.
+  base: './',
   plugins: [
     react(),
     electron({
