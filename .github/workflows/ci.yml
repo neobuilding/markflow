@@ -157,12 +157,16 @@ jobs:
             - run: npm run dist:${{ matrix.target }}
 
             # 仅 release 路径（version 非空）上传产物；PR 只验证不传（省存储）
+            # 只上传最终发布格式（dmg/zip/AppImage），排除 unpacked 目录等中间物以大幅缩减 artifact 体积
             - name: Upload artifact (release path only)
               if: needs.compute-version.outputs.version != ''
               uses: actions/upload-artifact@v7
               with:
                   name: ${{ matrix.artifact-name }}
-                  path: release
+                  path: |
+                      release/*.dmg
+                      release/*.zip
+                      release/*.AppImage
                   if-no-files-found: error
                   retention-days: 7
 
