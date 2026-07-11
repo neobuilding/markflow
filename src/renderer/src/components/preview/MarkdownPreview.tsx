@@ -3,6 +3,7 @@ import { marked, type TokenizerAndRendererExtension } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import katex from 'katex'
 import hljs from 'highlight.js'
+import DOMPurify from 'dompurify'
 import 'katex/dist/katex.min.css'
 import 'highlight.js/styles/github.css'
 import { scrollSync } from '../../lib/scrollSync'
@@ -183,6 +184,10 @@ async function renderMarkdownWithMermaid(content: string): Promise<string> {
         startOnLoad: false,
         theme: 'default',
         securityLevel: 'loose',
+        // 用原生 SVG <text> 渲染标签，而非 <foreignObject> 里的 HTML。
+        // 否则 DOMPurify 的 SVG 净化会把 foreignObject 内的 HTML 标签连同
+        // 文字一起剥离（已在本地用 jsdom 实测验证）。
+        htmlLabels: false,
         fontFamily: 'var(--font-sans)',
       })
       mermaidInitialized = true
@@ -198,7 +203,10 @@ async function renderMarkdownWithMermaid(content: string): Promise<string> {
         const { svg } = await mermaid.default.render(id, source.trim())
         const wrapper = document.createElement('div')
         wrapper.className = 'mermaid-container flex justify-center my-4 overflow-auto'
-        wrapper.innerHTML = svg
+        // DOMPurify 净化 SVG 输出，避免 CodeQL 的 js/xss-through-dom 告警。
+        // mermaid 已配置 htmlLabels:false，输出为纯 SVG（含原生 <text>），
+        // 因此 svg profile 即可完整保留图形与文字。
+        wrapper.innerHTML = DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true } })
         pre.replaceWith(wrapper)
       } catch (err) {
         console.warn('[MarkFlow] Mermaid render error:', err)
