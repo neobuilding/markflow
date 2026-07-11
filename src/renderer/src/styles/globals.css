@@ -111,9 +111,15 @@ html, body {
 .markdown-preview h2 { font-size: 1.5rem; font-weight: 600; margin: 2rem 0 0.75rem; }
 .markdown-preview h3 { font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
 .markdown-preview h4 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+.markdown-preview h5 { font-size: 0.875rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+.markdown-preview h6 { font-size: 0.8rem; font-weight: 600; margin: 1rem 0 0.5rem; color: var(--color-text-secondary); }
 .markdown-preview p { margin: 0 0 1rem; }
-.markdown-preview ul, .markdown-preview ol { margin: 0 0 1rem 1.5rem; }
+.markdown-preview ul { margin: 0 0 1rem 1.5rem; list-style-type: disc; }
+.markdown-preview ol { margin: 0 0 1rem 1.5rem; list-style-type: decimal; }
 .markdown-preview li { margin-bottom: 0.25rem; }
+/* GFM task lists: hide the bullet next to the checkbox (GitHub-style) */
+.markdown-preview li:has(> input[type="checkbox"]) { list-style: none; }
+.markdown-preview input[type="checkbox"] { margin-right: 0.4rem; vertical-align: middle; }
 .markdown-preview blockquote {
   border-left: 3px solid var(--color-accent);
   margin: 1rem 0;
@@ -144,6 +150,12 @@ html, body {
   padding: 0;
   font-size: 0.875rem;
 }
+/* highlight.js: keep the <pre> background/padding (theme-aware); only token colors apply */
+.markdown-preview pre code.hljs {
+  background: transparent;
+  padding: 0;
+  overflow-x: visible;
+}
 .markdown-preview a { color: var(--color-accent); text-decoration: none; }
 .markdown-preview a:hover { text-decoration: underline; }
 .markdown-preview hr { border: none; border-top: 1px solid var(--color-border); margin: 2rem 0; }
@@ -154,8 +166,57 @@ html, body {
   text-align: left;
 }
 .markdown-preview th { background: var(--color-surface-overlay); font-weight: 600; }
-.markdown-preview img { max-width: 100%; border-radius: 8px; }
+.markdown-preview img { max-width: 100%; border-radius: 8px; display: inline-block; vertical-align: middle; }
 .markdown-preview mark { background: #fef08a; color: #1a1a1a; padding: 0 2px; border-radius: 2px; }
+
+/* highlight.js dark theme (GitHub Dark palette) — active only under .dark */
+.dark .hljs { color: #c9d1d9; background: transparent; }
+.dark .hljs-doctag,
+.dark .hljs-keyword,
+.dark .hljs-meta .hljs-keyword,
+.dark .hljs-template-tag,
+.dark .hljs-template-variable,
+.dark .hljs-type,
+.dark .hljs-variable.language_ { color: #ff7b72; }
+.dark .hljs-title,
+.dark .hljs-title.class_,
+.dark .hljs-title.class_.inherited__,
+.dark .hljs-title.function_ { color: #d2a8ff; }
+.dark .hljs-attr,
+.dark .hljs-attribute,
+.dark .hljs-literal,
+.dark .hljs-meta,
+.dark .hljs-number,
+.dark .hljs-operator,
+.dark .hljs-variable,
+.dark .hljs-selector-attr,
+.dark .hljs-selector-class,
+.dark .hljs-selector-id { color: #79c0ff; }
+.dark .hljs-regexp,
+.dark .hljs-string,
+.dark .hljs-meta .hljs-string { color: #a5d6ff; }
+.dark .hljs-built_in,
+.dark .hljs-symbol { color: #ffa657; }
+.dark .hljs-comment,
+.dark .hljs-code,
+.dark .hljs-formula { color: #8b949e; }
+.dark .hljs-name,
+.dark .hljs-quote,
+.dark .hljs-selector-tag,
+.dark .hljs-selector-pseudo { color: #7ee787; }
+.dark .hljs-subst { color: #c9d1d9; }
+.dark .hljs-section { color: #1f6feb; font-weight: 700; }
+.dark .hljs-bullet { color: #f2cc60; }
+.dark .hljs-emphasis { color: #c9d1d9; font-style: italic; }
+.dark .hljs-strong { color: #c9d1d9; font-weight: 700; }
+.dark .hljs-addition { color: #aff5b4; background: #033a16; }
+.dark .hljs-deletion { color: #ffdcd7; background: #67060c; }
+.dark .hljs-char.escape_,
+.dark .hljs-link,
+.dark .hljs-params,
+.dark .hljs-property,
+.dark .hljs-punctuation,
+.dark .hljs-tag { color: #c9d1d9; }
 
 /* KaTeX math rendering */
 .markdown-preview .katex {
