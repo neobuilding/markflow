@@ -36,7 +36,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v7
-            - uses: actions/setup-node@v6
+            - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
             - run: npm run typecheck
@@ -106,7 +106,7 @@ jobs:
                     - { os: ubuntu-latest, target: linux, artifact-name: markflow-linux }
         steps:
             - uses: actions/checkout@v7
-            - uses: actions/setup-node@v6
+            - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
 
             # 复用 Electron / electron-builder 下载物缓存，加速构建
