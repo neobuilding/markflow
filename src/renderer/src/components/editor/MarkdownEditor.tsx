@@ -88,8 +88,8 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
 
     viewRef.current = view
 
-    // 注册到同步滚动控制器：源码窗格作为 "editor" 一侧
-    scrollSync.register('editor', view.scrollDOM)
+    // 注册到同步滚动控制器：源码窗格作为 "editor" 一侧，提供 getView 供行号映射（§4.7）
+    scrollSync.register('editor', view.scrollDOM, { getView: () => viewRef.current })
 
     if (autoFocus) {
       view.focus()
