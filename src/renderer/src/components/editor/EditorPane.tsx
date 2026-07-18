@@ -31,7 +31,7 @@ export function EditorPane(): React.ReactElement {
 
   const {
     localContent, setLocalContent, localTitle, setLocalTitle,
-    editingTitle, setEditingTitle, handleContentChange, handleTitleSave, dirty, markSaved
+    editingTitle, setEditingTitle, handleContentChange, handleTitleSave, dirty, markSaved, toDiskFormat, getEol
   } = useLocalDocument(doc, activeDocumentId)
 
   // 保存/另存为/重新加载：用 ref 持有最新草稿，避免菜单/快捷键回调拿到旧闭包
@@ -44,11 +44,15 @@ export function EditorPane(): React.ReactElement {
     // 只读模式下禁止保存，提示用户切换到编辑模式
     if (!useUIStore.getState().editable) return
     const { localContent, localTitle } = draftRef.current
+    // 保存瞬间再读一次磁盘换行符，作为最终权威来源（不依赖异步 effect 是否完成、DB 是否干净）
+    const eol = doc?.filePath
+      ? await window.api.documents.eol(doc.filePath).catch(() => getEol())
+      : getEol()
     useUIStore.getState().setSaving(true)
     try {
       const updated = await updateMut.mutateAsync({
         id,
-        updates: { title: localTitle.trim() || 'Untitled', content: localContent }
+        updates: { title: localTitle.trim() || 'Untitled', content: toDiskFormat(localContent, eol) }
       })
       if (updated) {
         markSaved(updated.content, updated.title)
@@ -63,7 +67,7 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [updateMut, markSaved])
+  }, [updateMut, markSaved, doc?.filePath, getEol])
 
   const handleSaveAs = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -72,6 +76,10 @@ export function EditorPane(): React.ReactElement {
     if (!useUIStore.getState().editable) return
     const { localContent, localTitle } = draftRef.current
     const defaultPath = doc?.filePath || `${localTitle.trim() || 'Untitled'}.md`
+    // 另存为：以源文档磁盘换行符为风格（新文件是本文档内容的副本）
+    const eol = doc?.filePath
+      ? await window.api.documents.eol(doc.filePath).catch(() => getEol())
+      : getEol()
     let newFilePath: string | null = null
     try {
       newFilePath = await window.api.dialog.saveFile(defaultPath)
@@ -84,7 +92,7 @@ export function EditorPane(): React.ReactElement {
       const updated = await saveAsMut.mutateAsync({
         id,
         filePath: newFilePath,
-        updates: { title: localTitle.trim() || 'Untitled', content: localContent }
+        updates: { title: localTitle.trim() || 'Untitled', content: toDiskFormat(localContent, eol) }
       })
       if (updated) {
         markSaved(updated.content, updated.title)
@@ -505,7 +513,7 @@ export function EditorPane(): React.ReactElement {
       {/* Editor / Preview / Split */}
       <div ref={splitContainerRef} className="flex-1 flex min-h-0 overflow-hidden">
         {viewMode === 'edit' && (
-          <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} />
+          <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} docId={activeDocumentId} />
         )}
         {viewMode === 'preview' && (
           <MarkdownPreview content={localContent} />
@@ -513,7 +521,7 @@ export function EditorPane(): React.ReactElement {
         {viewMode === 'split' && (
           <>
             <div className="min-w-0 overflow-hidden" style={{ width: `${splitRatio * 100}%` }}>
-              <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} />
+              <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} docId={activeDocumentId} />
             </div>
             {/* Draggable divider */}
             <div

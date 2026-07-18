@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Tailwind Typography 插件：用 prose 替代手写 ~130 行 markdown 排版（§4.6） */
+@plugin "@tailwindcss/typography";
+
+/* v4 必需：dark: 跟随 App 在 <html> 上切换的 .dark class（darkMode:'class' 在 v4 无效） */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Keep using the existing JS config for custom theme (colors, fonts, animations) */
 @config "../../../../tailwind.config.cjs";
 
@@ -100,123 +106,194 @@ html, body {
   caret-color: var(--color-accent);
 }
 
-/* Markdown Preview */
+/* ─── Markdown Preview（prose 接管排版，此处仅保留最小容器，§4.6） ─── */
 .markdown-preview {
   user-select: text;
-  line-height: 1.7;
-  color: var(--color-text-primary);
   width: 100%;
 }
-.markdown-preview h1 { font-size: 2rem; font-weight: 700; margin: 0 0 1rem; line-height: 1.25; }
-.markdown-preview h2 { font-size: 1.5rem; font-weight: 600; margin: 2rem 0 0.75rem; }
-.markdown-preview h3 { font-size: 1.25rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
-.markdown-preview h4 { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
-.markdown-preview h5 { font-size: 0.875rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
-.markdown-preview h6 { font-size: 0.8rem; font-weight: 600; margin: 1rem 0 0.5rem; color: var(--color-text-secondary); }
-.markdown-preview p { margin: 0 0 1rem; }
-.markdown-preview ul { margin: 0 0 1rem 1.5rem; list-style-type: disc; }
-.markdown-preview ol { margin: 0 0 1rem 1.5rem; list-style-type: decimal; }
-.markdown-preview li { margin-bottom: 0.25rem; }
-/* GFM task lists: hide the bullet next to the checkbox (GitHub-style) */
-.markdown-preview li:has(> input[type="checkbox"]) { list-style: none; }
-.markdown-preview input[type="checkbox"] { margin-right: 0.4rem; vertical-align: middle; }
-.markdown-preview blockquote {
-  border-left: 3px solid var(--color-accent);
-  margin: 1rem 0;
-  padding: 0.5rem 1rem;
-  background: var(--color-accent-muted);
-  border-radius: 0 6px 6px 0;
-  color: var(--color-text-secondary);
+
+/* 关闭 prose 对 code/pre/katex 的误伤 */
+.prose code::before, .prose code::after { content: none; }
+.prose .katex { font-size: 1.05em; background: none; padding: 0; }
+
+/* 徽章/inline-img 横排：Tailwind Typography 默认给 .prose img 设 display:block
+   且上下 margin:2em，导致 <p align="center"> 内的 shields.io 徽章竖向堆叠、行高被撑大。
+   这里仅对「徽章式」行内图恢复 inline 并清零纵向 margin：
+     - p > a > img：徽章几乎都包在 <a> 里（shields.io / 链接图）
+     - p[align="center"] > img：居中的独立图（如 README 的 Logo）
+   刻意不命中普通段落内的独立插图（无 align、无 <a> 包裹），保留其块级排版，
+   避免把常见 `![alt](x.png)` 单独成行图误改成行内小图（回归）。 */
+.prose p > a > img,
+.prose p[align="center"] > img {
+  display: inline-block;
+  vertical-align: middle;
+  margin-top: 0;
+  margin-bottom: 0;
 }
-.markdown-preview code {
-  font-family: var(--font-mono);
-  font-size: 0.875em;
-  background: var(--color-surface-overlay);
-  padding: 0.15em 0.4em;
-  border-radius: 4px;
-  border: 1px solid var(--color-border);
-}
-.markdown-preview pre {
+
+/* 代码块背景/内边距（与旧 globals.css 等价；整体替换 .prose pre，勿并存以免双层 padding） */
+.prose pre {
   background: var(--color-surface-overlay);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 1rem;
-  overflow-x: auto;
-  margin: 1rem 0;
 }
-.markdown-preview pre code {
-  background: none;
-  border: none;
+.prose pre code {
+  background: transparent;
   padding: 0;
   font-size: 0.875rem;
 }
-/* highlight.js: keep the <pre> background/padding (theme-aware); only token colors apply */
-.markdown-preview pre code.hljs {
-  background: transparent;
-  padding: 0;
-  overflow-x: visible;
-}
-.markdown-preview a { color: var(--color-accent); text-decoration: none; }
-.markdown-preview a:hover { text-decoration: underline; }
-.markdown-preview hr { border: none; border-top: 1px solid var(--color-border); margin: 2rem 0; }
-.markdown-preview table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
-.markdown-preview th, .markdown-preview td {
-  padding: 0.5rem 0.75rem;
-  border: 1px solid var(--color-border);
-  text-align: left;
-}
-.markdown-preview th { background: var(--color-surface-overlay); font-weight: 600; }
-.markdown-preview img { max-width: 100%; border-radius: 8px; display: inline-block; vertical-align: middle; }
-.markdown-preview mark { background: #fef08a; color: #1a1a1a; padding: 0 2px; border-radius: 2px; }
 
-/* highlight.js dark theme (GitHub Dark palette) — active only under .dark */
-.dark .hljs { color: #c9d1d9; background: transparent; }
-.dark .hljs-doctag,
-.dark .hljs-keyword,
-.dark .hljs-meta .hljs-keyword,
-.dark .hljs-template-tag,
-.dark .hljs-template-variable,
-.dark .hljs-type,
-.dark .hljs-variable.language_ { color: #ff7b72; }
-.dark .hljs-title,
-.dark .hljs-title.class_,
-.dark .hljs-title.class_.inherited__,
-.dark .hljs-title.function_ { color: #d2a8ff; }
-.dark .hljs-attr,
-.dark .hljs-attribute,
-.dark .hljs-literal,
-.dark .hljs-meta,
-.dark .hljs-number,
-.dark .hljs-operator,
-.dark .hljs-variable,
-.dark .hljs-selector-attr,
-.dark .hljs-selector-class,
-.dark .hljs-selector-id { color: #79c0ff; }
-.dark .hljs-regexp,
-.dark .hljs-string,
-.dark .hljs-meta .hljs-string { color: #a5d6ff; }
-.dark .hljs-built_in,
-.dark .hljs-symbol { color: #ffa657; }
-.dark .hljs-comment,
-.dark .hljs-code,
-.dark .hljs-formula { color: #8b949e; }
-.dark .hljs-name,
-.dark .hljs-quote,
-.dark .hljs-selector-tag,
-.dark .hljs-selector-pseudo { color: #7ee787; }
-.dark .hljs-subst { color: #c9d1d9; }
-.dark .hljs-section { color: #1f6feb; font-weight: 700; }
-.dark .hljs-bullet { color: #f2cc60; }
-.dark .hljs-emphasis { color: #c9d1d9; font-style: italic; }
-.dark .hljs-strong { color: #c9d1d9; font-weight: 700; }
-.dark .hljs-addition { color: #aff5b4; background: #033a16; }
-.dark .hljs-deletion { color: #ffdcd7; background: #67060c; }
-.dark .hljs-char.escape_,
-.dark .hljs-link,
-.dark .hljs-params,
-.dark .hljs-property,
-.dark .hljs-punctuation,
-.dark .hljs-tag { color: #c9d1d9; }
+/* GFM 任务列表：Tailwind Typography 不内置勾选框样式，显式补回避免残留小圆点 */
+.prose ul:has(> li > input[type="checkbox"]) { list-style: none; padding-left: 0; }
+.prose li:has(> input[type="checkbox"]) { list-style: none; }
+.prose li > input[type="checkbox"] { margin-right: 0.4rem; vertical-align: middle; }
+
+/* prose 变量映射到项目 Linear 主题变量（避免 prose 自带灰阶跑色） */
+.prose {
+  --tw-prose-body: var(--color-text-primary);
+  --tw-prose-headings: var(--color-text-primary);
+  --tw-prose-links: var(--color-accent);
+  --tw-prose-bold: var(--color-text-primary);
+  --tw-prose-quotes: var(--color-text-secondary);
+  --tw-prose-code: var(--color-text-primary);
+  --tw-prose-pre-code: var(--color-text-primary);
+  --tw-prose-th-borders: var(--color-border);
+  --tw-prose-td-borders: var(--color-border);
+  --tw-prose-quote-borders: var(--color-accent);
+}
+.dark .prose {
+  --tw-prose-body: var(--color-text-primary);
+  --tw-prose-headings: var(--color-text-primary);
+  --tw-prose-links: var(--color-accent);
+  --tw-prose-bold: var(--color-text-primary);
+  --tw-prose-quotes: var(--color-text-secondary);
+  --tw-prose-code: var(--color-text-primary);
+  --tw-prose-pre-code: var(--color-text-primary);
+  --tw-prose-th-borders: var(--color-border);
+  --tw-prose-td-borders: var(--color-border);
+  --tw-prose-quote-borders: var(--color-accent);
+}
+
+/* highlight.js 代码块：github.css 提供浅色 token 配色（已在 main.tsx 引入）。
+   此处把 .hljs 盒子交给 prose 主题变量统一管理（背景/边框/内边距），避免双层 padding。 */
+.prose pre.hljs {
+  background: var(--color-surface-overlay);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+/* highlight.js 暗色 token 配色（github-dark 调色板，仅暗色生效） */
+html.dark .hljs {
+  color: #c9d1d9;
+  background: transparent;
+}
+html.dark .hljs-doctag,
+html.dark .hljs-keyword,
+html.dark .hljs-meta .hljs-keyword,
+html.dark .hljs-template-tag,
+html.dark .hljs-template-variable,
+html.dark .hljs-type,
+html.dark .hljs-variable.language_ {
+  color: #ff7b72;
+}
+html.dark .hljs-title,
+html.dark .hljs-title.class_,
+html.dark .hljs-title.class_.inherited__,
+html.dark .hljs-title.function_ {
+  color: #d2a8ff;
+}
+html.dark .hljs-attr,
+html.dark .hljs-attribute,
+html.dark .hljs-literal,
+html.dark .hljs-meta,
+html.dark .hljs-number,
+html.dark .hljs-operator,
+html.dark .hljs-variable,
+html.dark .hljs-selector-attr,
+html.dark .hljs-selector-class,
+html.dark .hljs-selector-id {
+  color: #79c0ff;
+}
+html.dark .hljs-regexp,
+html.dark .hljs-string,
+html.dark .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+html.dark .hljs-built_in,
+html.dark .hljs-symbol {
+  color: #ffa657;
+}
+html.dark .hljs-comment,
+html.dark .hljs-code,
+html.dark .hljs-formula {
+  color: #8b949e;
+}
+html.dark .hljs-name,
+html.dark .hljs-quote,
+html.dark .hljs-selector-tag,
+html.dark .hljs-selector-pseudo {
+  color: #7ee787;
+}
+html.dark .hljs-subst {
+  color: #c9d1d9;
+}
+html.dark .hljs-section {
+  color: #1f6feb;
+  font-weight: bold;
+}
+html.dark .hljs-bullet {
+  color: #f2cc60;
+}
+html.dark .hljs-emphasis {
+  color: #c9d1d9;
+  font-style: italic;
+}
+html.dark .hljs-strong {
+  color: #c9d1d9;
+  font-weight: bold;
+}
+html.dark .hljs-addition {
+  color: #aff5b4;
+  background-color: #033a16;
+}
+html.dark .hljs-deletion {
+  color: #ffdcd7;
+  background-color: #67060c;
+}
+
+/* ─── GitHub-style alerts（remark-github-alerts → .markdown-alert） ───
+   净化后保留 .markdown-alert / .markdown-alert-note 等 class，这里补视觉样式。
+   标题段为 alert <div> 的首个 <p>，其内 <span style="--oct-icon:..."> 用 GitHub
+   内联 SVG 作图标背景。 */
+.markdown-alert {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-surface);
+}
+.markdown-alert > :first-child { margin-top: 0; }
+.markdown-alert > :last-child { margin-bottom: 0; }
+.markdown-alert > p:first-child {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.markdown-alert > p:first-child span[style*="--oct-icon"] {
+  display: inline-block;
+  padding-left: 1.4em;
+  background-image: var(--oct-icon);
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: 1em;
+}
+.markdown-alert-note { border-left-color: #0969da; }
+.markdown-alert-tip { border-left-color: #1a7f37; }
+.markdown-alert-important { border-left-color: #8250df; }
+.markdown-alert-warning { border-left-color: #9a6700; }
+.markdown-alert-caution { border-left-color: #cf222e; }
 
 /* KaTeX math rendering */
 .markdown-preview .katex {
@@ -235,13 +312,26 @@ html, body {
   border-radius: 4px;
 }
 
-/* Mermaid diagrams */
+/* Mermaid diagrams（注入前已烘焙为原始 SVG，故直接约束 svg 尺寸防溢出） */
 .mermaid-container {
   width: 100%;
 }
 .mermaid-container svg {
   max-width: 100%;
   height: auto;
+}
+svg[id^="mermaid-"] {
+  max-width: 100%;
+  height: auto;
+}
+/* 渲染前的骨架占位：给定稳定最小高度，避免滚动同步在 mermaid SVG 就绪前
+   把块高读成 ≈0 而卡住（问题#2）。高度与常见图接近即可，渲染后由真实 SVG 接管。
+   注意：此处刻意不做闪烁动画——mermaid 已提前渲染（warmMermaidCache），SVG 通常
+   在滚动到之前就绪；若极个别情况仍见骨架，静态占位也比“快速闪烁”更易接受。 */
+.mermaid-skeleton {
+  min-height: 240px;
+  border-radius: 8px;
+  background: var(--color-surface-overlay);
 }
 
 /* CodeMirror theme overrides */

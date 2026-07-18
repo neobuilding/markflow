@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { warmupParseWorker } from './lib/parseClient'
+import 'katex/dist/katex.min.css'
+import 'highlight.js/styles/github.css'
 import './styles/globals.css'
 
 const queryClient = new QueryClient({
@@ -25,3 +28,6 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     </ErrorBoundary>
   </React.StrictMode>
 )
+
+// 预热解析 Worker（shiki 等冷启动开销），使首次打开文档时预览无需空等。
+warmupParseWorker()

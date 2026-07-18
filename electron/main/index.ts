@@ -1,12 +1,12 @@
 // electron/main/index.ts - MarkFlow main process (ESM)
-import { app, shell, BrowserWindow, ipcMain, Menu, dialog, nativeTheme, session, screen } from 'electron'
-import { join, dirname, resolve } from 'path'
+import { app, shell, BrowserWindow, ipcMain, Menu, dialog, nativeTheme, session, screen, protocol } from 'electron'
+import { join, dirname, resolve, extname, sep } from 'path'
 import { tmpdir } from 'os'
 import { pathToFileURL } from 'url'
-import { readdirSync, statSync } from 'fs'
+import { readdirSync, statSync, readFileSync, existsSync, realpathSync } from 'fs'
 import { registerDocumentHandlers } from './ipc/documents'
 import { registerSearchHandlers } from './ipc/search'
-import { initDatabase } from './db/database'
+import { initDatabase, getDb } from './db/database'
 
 // __dirname is auto-injected by vite-plugin-electron/plugin esmShim()
 
@@ -20,6 +20,23 @@ try {
 } catch {
   // 若设置失败（极少数情况），沿用默认路径
 }
+
+// ─── appdoc: 特权协议注册（必须在 app.ready 之前、置于模块顶层，C2/C3） ───
+// ① registerSchemesAsPrivileged 必须在 app.ready 之前、模块顶层调用，否则运行期抛错；
+//   bypassCSP:false 显式写出，避免削弱 CSP 兜底。
+// ② protocol.handle('appdoc', ...) 在 app.whenReady 回调内注册（见 registerAppDocProtocol）。
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'appdoc',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      bypassCSP: false,
+    },
+  },
+])
 
 // In production, app.getAppPath() returns the path to the extracted asar
 // (e.g. "D:\...\app.asar"), so joining dist-electron/dist/renderer works.
@@ -59,8 +76,8 @@ function setupCSP(): void {
       `default-src 'self' ${origin}`,
       `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${origin}`,
       "style-src 'self' 'unsafe-inline'",
-      `img-src 'self' data: blob: ${origin} https: http:`,
-      "font-src 'self' data: blob:",
+      `img-src 'self' data: ${origin} https: appdoc:`,
+      "font-src 'self' data:",
       `connect-src 'self' ${origin} ${wsOrigin}${wsIp ? ' ' + wsIp : ''}`,
     ].join('; ')
   } else {
@@ -68,8 +85,8 @@ function setupCSP(): void {
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https: http:",
-      "font-src 'self' data: blob:",
+      "img-src 'self' data: https: appdoc:",
+      "font-src 'self' data:",
       "connect-src 'self'",
     ].join('; ')
   }
@@ -93,6 +110,70 @@ function setupCSP(): void {
         'Content-Security-Policy': [policy],
       },
     })
+  })
+}
+
+// ─── appdoc: 协议处理（越权/符号链接白名单，C2 / §4.1 / §4.5） ───
+// URL 形如 appdoc://<docId>/<相对路径>。handler 据 docId 查 DB 得 file_path，
+// 算出 docBaseDir，把相对路径解析为绝对路径后做二次包含性校验，越权一律返回 403。
+const APPDOC_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.avif': 'image/avif',
+}
+
+// 二次包含性校验：递归解析符号链接后比较真实路径，确认 child 仍位于 parent 内
+// （防 ../ 穿越与符号链接逃逸，§4.5）。
+function isSubdir(parent: string, child: string): boolean {
+  const realParent = realpathSync(parent)
+  const realChild = realpathSync(child)
+  return realChild === realParent || realChild.startsWith(realParent + sep)
+}
+
+function registerAppDocProtocol(): void {
+  protocol.handle('appdoc', (request) => {
+    try {
+      const url = new URL(request.url)
+      // pathname: /<docId>/<relativePath>
+      const segments = url.pathname.replace(/^\/+/, '').split('/')
+      const docId = segments.shift()
+      const relPath = segments.join('/')
+      if (!docId || !relPath) {
+        return new Response('Not Found', { status: 404 })
+      }
+      const row = getDb()
+        .prepare('SELECT file_path FROM documents WHERE id = ?')
+        .get(docId) as { file_path: string } | undefined
+      if (!row?.file_path) {
+        return new Response('Not Found', { status: 404 })
+      }
+      const docBaseDir = dirname(row.file_path)
+      const resolved = resolve(docBaseDir, relPath)
+      // 二次包含性校验：拦截 ../ 穿越与符号链接逃逸
+      if (!isSubdir(docBaseDir, resolved)) {
+        return new Response('Forbidden', { status: 403 })
+      }
+      if (!existsSync(resolved)) {
+        return new Response('Not Found', { status: 404 })
+      }
+      const data = readFileSync(resolved)
+      const mime = APPDOC_MIME[extname(resolved).toLowerCase()] ?? 'application/octet-stream'
+      return new Response(data, {
+        headers: {
+          'Content-Type': mime,
+          // 图片不应被任何页面脚本读取，收紧 CSP
+          'Content-Security-Policy': "default-src 'none'",
+        },
+      })
+    } catch {
+      return new Response('Error', { status: 500 })
+    }
   })
 }
 
@@ -189,9 +270,11 @@ function createWindow(): void {
     backgroundColor: '#f7f7f7',
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
-      sandbox: false,
+      sandbox: true, // 安全闸门（P0）：沙箱下 preload 仍有 polyfilled require，见 §4.1 / R9
       contextIsolation: true,
       nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
     },
   })
 
@@ -443,6 +526,14 @@ if (!shouldStart) {
   setupCSP()
 
   initDatabase(app)
+
+  // appdoc: 协议处理（必须在 whenReady 内注册，② 与 registerSchemesAsPrivileged 分属两个时机）
+  registerAppDocProtocol()
+
+  // 权限拒绝：Markdown 阅读器不需要摄像头/麦克风/地理位置等权限（§4.1）
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false)
+  })
 
   registerDocumentHandlers(ipcMain, app, () => mainWindow)
   registerSearchHandlers(ipcMain)

@@ -10,18 +10,26 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/prepare-win-codesign.ps1 && npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux"
   },
   "dependencies": {
+    "@tailwindcss/typography": "^0.5.20",
     "better-sqlite3": "^12.11.1",
+    "comlink": "^4.4.2",
     "dompurify": "^3.4.12",
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",
-    "marked": "^18.0.6",
-    "marked-highlight": "^2.2.1",
+    "markdown-it": "^14.1.0",
+    "markdown-it-anchor": "^9.2.0",
+    "markdown-it-container": "^4.0.0",
+    "markdown-it-front-matter": "^0.2.4",
+    "markdown-it-github-alerts": "^1.0.0",
+    "markdown-it-task-lists": "^2.1.1",
     "mermaid": "^11.16.0"
   },
   "devDependencies": {
@@ -45,6 +53,8 @@
     "@tanstack/react-query": "^5.101.2",
     "@types/better-sqlite3": "^7.6.12",
     "@types/katex": "^0.16.8",
+    "@types/markdown-it": "^14.1.2",
+    "@types/markdown-it-container": "^2.0.10",
     "@types/node": "^26.1.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -55,6 +65,7 @@
     "clsx": "^2.1.1",
     "electron": "^43.1.0",
     "electron-builder": "^26.15.3",
+    "jsdom": "^29.1.1",
     "lucide-react": "^1.24.0",
     "postcss": "^8.4.49",
     "react": "^19.2.7",
@@ -64,6 +75,7 @@
     "typescript": "^7.0.2",
     "vite": "^8.1.4",
     "vite-plugin-electron": "^1.1.0",
+    "vitest": "^4.1.10",
     "zustand": "^5.0.3"
   }
 }

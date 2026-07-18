@@ -19,12 +19,16 @@ export function useLocalDocument(
   // 最新 dirty，供 effect 内判断（避免闭包拿到旧值）
   const dirtyRef = useRef(false)
   dirtyRef.current = dirty
+  // 原始换行符：从权威内容（磁盘/数据库）推断，保存时把编辑器规范化后的 LF 还原回去，
+  // 避免 CRLF 文件被编辑保存后变成 LF（CodeMirror 内部统一用 \n 表示行分隔符）。
+  const eolRef = useRef<'\r\n' | '\n'>('\n')
 
   useEffect(() => {
     if (!doc) return
     // 切换到另一篇文档：始终以权威内容（磁盘/数据库）覆盖本地草稿
     if (doc.id !== prevIdRef.current) {
       prevIdRef.current = doc.id
+      eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
       setLocalContent(doc.content)
       setLocalTitle(doc.title)
       savedContentRef.current = doc.content
@@ -40,6 +44,7 @@ export function useLocalDocument(
       savedTitleRef.current = doc.title
       return
     }
+    eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
     setLocalContent(doc.content)
     setLocalTitle(doc.title)
     savedContentRef.current = doc.content
@@ -48,10 +53,34 @@ export function useLocalDocument(
     useUIStore.getState().setDirty(false)
   }, [doc?.id, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 以磁盘文件本身的换行符为准（异步，覆盖上面的同步推断）：
+  // 数据库内容可能被旧版本改写过，磁盘才是行尾真相。仅读取前 64KB，开销可忽略。
+  useEffect(() => {
+    if (!doc?.filePath) return
+    let cancelled = false
+    window.api.documents.eol(doc.filePath).then((eol) => {
+      if (!cancelled) eolRef.current = eol
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [doc?.id, doc?.filePath])
+
   const setDirty = useCallback((d: boolean) => {
     setDirtyState(d)
     useUIStore.getState().setDirty(d)
   }, [])
+
+  // 保存前把编辑器规范化后的 LF 还原为文档原始换行符，避免改动文件行尾。
+  // eol 默认取自 eolRef（异步从磁盘读取的结果）；保存瞬间也可显式传入
+  // （见 EditorPane 在保存时再读一次磁盘，作为最终权威来源，避免依赖异步 effect 是否完成）。
+  const toDiskFormat = useCallback((text: string, eol: '\r\n' | '\n' = eolRef.current): string => {
+    if (eol === '\r\n') {
+      return text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+    }
+    return text
+  }, [])
+
+  // 返回当前推断的原始换行符（保存瞬间 IPC 失败时的回退）
+  const getEol = useCallback((): '\r\n' | '\n' => eolRef.current, [])
 
   // 内容变更：仅更新本地草稿并标记脏状态，不再自动写入磁盘
   const handleContentChange = useCallback(
@@ -94,6 +123,8 @@ export function useLocalDocument(
     handleContentChange,
     handleTitleSave,
     dirty,
-    markSaved
+    markSaved,
+    toDiskFormat,
+    getEol
   }
 }

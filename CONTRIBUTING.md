@@ -90,6 +90,9 @@ markflow/
 | Editor | CodeMirror 6 with Markdown syntax highlighting |
 | Math | KaTeX (LaTeX formula rendering) |
 | Diagrams | Mermaid.js |
+| Markdown parser | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point) |
+| Testing | Vitest + jsdom |
 | Packaging | electron-builder |
 
 ## Coding Conventions
@@ -102,6 +105,35 @@ markflow/
 - **Type safety**: `npm run typecheck` must pass (no new `any` without reason).
 - **Security**: every PR is scanned by **CodeQL** (`codeql.yml`). If it flags something,
   triage it rather than disabling the check.
+
+## Testing
+
+MarkFlow ships **Vitest** unit tests for the Markdown rendering subsystem (the
+security-critical path: parser + single XSS sanitization gate). They run in
+`jsdom` and are exercised on every push/PR by `ci.yml`.
+
+```bash
+# Run the full suite once (CI mode)
+npm run test
+
+# Watch mode during development
+npm run test:watch
+```
+
+What's covered (see `src/renderer/src/lib/*.test.ts`):
+
+- `markdownPipeline.test.ts` — GFM (task lists, strikethrough, tables), KaTeX
+  (inline/block/currency `$` guard), Mermaid slot extraction, GitHub Alerts,
+  custom containers, Frontmatter stripping, `appdoc://` image rewriting, raw
+  HTML passthrough.
+- `sanitize.test.ts` — XSS stripping (`<script>` / `onerror` / `javascript:`),
+  the `style` whitelist (BUG-5: stripped on `div/p/pre`, kept on `span`/`code`/
+  SVG), Mermaid SVG structure retention, `data-mermaid-slot` retention, and
+  KaTeX `<math>` / `<annotation>` retention.
+
+> When you touch `markdownPipeline.ts` or `sanitize.ts`, add/extend a test so
+> the behavior stays locked. The single sanitization gate (`SafeHtml` →
+> `sanitizeHtml`) must never be bypassed.
 
 ## Release Process
 
