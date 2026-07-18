@@ -32,7 +32,7 @@ env:
 
 jobs:
     test:
-        name: Typecheck & Build
+        name: Typecheck, Test & Build
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v7
@@ -40,6 +40,7 @@ jobs:
               with: { node-version: 22, cache: npm }
             - run: npm ci
             - run: npm run typecheck
+            - run: npm run test
             - run: npm run build
 
     # 版本号的唯一来源：只「算」不「打」。不 checkout、不推 tag，纯靠 gh api 读取

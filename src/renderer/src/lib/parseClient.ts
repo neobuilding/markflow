@@ -1,10 +1,10 @@
 // 渲染进程侧的解析客户端：经 comlink 调用 Worker，失败时降级到主线程
-// （复用同一份 markdownEngine，产出同形状 blocks[]，§4.8 G4）。
+// （复用同一份 markdownPipeline，产出同形状 { html, mermaid }）。
 import * as comlink from 'comlink'
-import type { Block } from '../lib/markdownEngine'
+import { render, type RenderResult } from '../lib/markdownPipeline'
 
 interface ParseApi {
-  parse(content: string, docId: string | null): Promise<Block[]>
+  parse(content: string, docId: string | null): Promise<RenderResult>
 }
 
 let worker: Worker | null = null
@@ -23,14 +23,11 @@ function getApi(): comlink.Remote<ParseApi> {
   return api!
 }
 
-async function fallbackParse(content: string, docId: string | null): Promise<Block[]> {
-  const { buildBlocks } = await import('../lib/markdownEngine')
-  return buildBlocks(content, docId)
+async function fallbackParse(content: string, docId: string | null): Promise<RenderResult> {
+  return render(content, docId)
 }
 
-// 应用启动时预热 Worker + shiki 缓存，把冷启动开销移出“打开文档”关键路径。
-// 用一段含代码围栏的极小文档触发 shiki（WASM + 双主题 + 语法）初始化，
-// 这样用户首次打开文档时 Worker 已就绪、shiki 已热，预览无需再空等（性能修复）。
+// 应用启动时预热 Worker，把冷启动开销移出“打开文档”关键路径。
 let warmed = false
 export function warmupParseWorker(): void {
   if (warmed) return
@@ -45,7 +42,7 @@ export function warmupParseWorker(): void {
   }
 }
 
-export async function parseMarkdown(content: string, docId: string | null): Promise<Block[]> {
+export async function parseMarkdown(content: string, docId: string | null): Promise<RenderResult> {
   try {
     const remote = getApi()
     return await remote.parse(content, docId)
@@ -57,15 +54,10 @@ export async function parseMarkdown(content: string, docId: string | null): Prom
     } catch (e) {
       console.error('[MarkFlow] Main-thread parse also failed:', e)
       const msg = e instanceof Error ? e.message : String(e)
-      return [
-        {
-          id: 'b0-error',
-          html: `<p class="text-[var(--color-danger)]">Error rendering preview: ${msg}</p>`,
-          type: 'normal',
-          startLine: 0,
-          endLine: 0,
-        },
-      ]
+      return {
+        html: `<p class="text-[var(--color-danger)]">Error rendering preview: ${msg}</p>`,
+        mermaid: [],
+      }
     }
   }
 }

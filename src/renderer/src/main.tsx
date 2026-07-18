@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { warmupParseWorker } from './lib/parseClient'
+import 'katex/dist/katex.min.css'
+import 'highlight.js/styles/github.css'
 import './styles/globals.css'
 
 const queryClient = new QueryClient({
