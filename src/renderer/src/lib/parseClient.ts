@@ -28,6 +28,23 @@ async function fallbackParse(content: string, docId: string | null): Promise<Blo
   return buildBlocks(content, docId)
 }
 
+// 应用启动时预热 Worker + shiki 缓存，把冷启动开销移出“打开文档”关键路径。
+// 用一段含代码围栏的极小文档触发 shiki（WASM + 双主题 + 语法）初始化，
+// 这样用户首次打开文档时 Worker 已就绪、shiki 已热，预览无需再空等（性能修复）。
+let warmed = false
+export function warmupParseWorker(): void {
+  if (warmed) return
+  warmed = true
+  try {
+    const remote = getApi()
+    void remote
+      .parse('# Warmup\n\n```js\nconsole.log(1)\n```\n', null)
+      .catch(() => {})
+  } catch {
+    // Worker 不可用：真实解析会自动降级主线程，预热失败无影响。
+  }
+}
+
 export async function parseMarkdown(content: string, docId: string | null): Promise<Block[]> {
   try {
     const remote = getApi()

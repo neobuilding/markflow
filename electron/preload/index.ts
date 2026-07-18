@@ -18,6 +18,7 @@ const api = {
       ipcRenderer.invoke('documents:save-as', id, filePath, params),
     reload: (id: string) => ipcRenderer.invoke('documents:reload', id),
     stat: (filePath: string) => ipcRenderer.invoke('documents:stat', filePath),
+    eol: (filePath: string) => ipcRenderer.invoke('documents:eol', filePath),
     watch: (id: string) => ipcRenderer.invoke('documents:watch', id),
     unwatch: (id: string) => ipcRenderer.invoke('documents:unwatch', id),
   },

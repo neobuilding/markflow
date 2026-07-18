@@ -19,6 +19,7 @@ import rehypeSlug from 'rehype-slug'
 import rehypeAutolinkHeadings from 'rehype-autolink-headings'
 import rehypePrettyCode from 'rehype-pretty-code'
 import rehypeSanitize from 'rehype-sanitize'
+import rehypeRaw from 'rehype-raw'
 import { toHtml } from 'hast-util-to-html'
 import { VFile } from 'vfile'
 import { sanitizeSchema } from './sanitizeSchema'
@@ -157,7 +158,13 @@ const mdastProc: any = (unified() as any)
   .freeze()
 
 const hastProc: any = (unified() as any)
-  .use(remarkRehype)
+  // allowDangerousHtml: 让 remark-rehype 把内嵌 HTML 暂存为 raw 节点，
+  // 交由随后的 rehype-raw 解析进 hast 树；末位 rehype-sanitize 仍是单点净化
+  // chokepoint（白名单剥离 on*/script/javascript:），故 XSS 不直透（设计 §8 顺序铁律）。
+  .use(remarkRehype, { allowDangerousHtml: true })
+  // 必须位于 rehype-sanitize 之前、rehypeImgRewrite 之前：先入树才能被净化，
+  // 且让 raw HTML 内的 <img> 也能被改写为 appdoc://（本地图正常加载）。
+  .use(rehypeRaw)
   .use(rehypeImgRewrite)
   .use(rehypeKatex, { throwOnError: false })
   .use(rehypeSlug)
@@ -210,54 +217,90 @@ const classify = (node: any): 'mermaid' | 'directive' | 'normal' => {
   return 'normal'
 }
 
+// 从 hast 节点抽取 mermaid 源码（兜底）。定位 pre.mermaid / [data-mermaid]，
+// 拼接其 <code> 文本。当 mdast 位置配对失效时仍能正确取到源码，避免空 raw
+// 触发 “Mermaid 渲染失败：No diagram type detected”（纵深防护，与 classify 同源判定）。
+const extractMermaidCode = (node: any): string | undefined => {
+  let pre: any = null
+  const walk = (n: any) => {
+    if (pre) return
+    if (n.tagName === 'pre' && (hasClass(n, 'mermaid') || n.properties?.dataMermaid != null)) {
+      pre = n
+      return
+    }
+    n.children?.forEach?.(walk)
+  }
+  walk(node)
+  if (!pre) return undefined
+  let text = ''
+  const collect = (n: any) => {
+    if (typeof n.value === 'string') text += n.value
+    n.children?.forEach?.(collect)
+  }
+  collect(pre)
+  return text || undefined
+}
+
 // 解析 Markdown 为块数组（设计 §4.2）。docId 为当前文档 id（用于 appdoc: 图片重写）。
+//
+// 性能关键：整树单次 run（而非“逐块 run”）。原实现对每个顶层块都跑一遍完整
+// unified 管线（rehype-raw → katex → slug → autolink → mermaidRename →
+// ★rehype-pretty-code/shiki★ → sanitize），N 个块 = N 次管线固定开销，且 shiki
+// 高亮器被反复拉起，是大文档解析慢的主因。改为整树跑一次：管线固定开销仅付一次，
+// shiki/katex 在单次会话内完成；随后按顶层 hast 节点切分块，块形状（id/html/type/
+// startLine/endLine）与逐块法完全一致，<Block> 增量 diff 与滚动同步不受影响。
+// 单点净化（C1）仍成立：rehype-sanitize 仍是管线末位、仅一次。引用定义 / 脚注定义
+// 本就在整树内，单遍中自然解析（R7），无需再逐块并入（旧写法还会把脚注区重复产出）。
 export async function buildBlocks(content: string, docId: string | null): Promise<Block[]> {
   const mdastRoot: any = await mdastProc.run(mdastProc.parse(content))
 
-  // 抽离引用链接定义 / 脚注定义，逐块并入 subRoot，保证跨块解析（R7）。
-  const defs: any[] = mdastRoot.children.filter((c: any) => c.type === 'definition')
-  const footnotes: any[] = mdastRoot.children.filter((c: any) => c.type === 'footnoteDefinition')
+  const file = new VFile()
+  file.data.docId = docId
+  // 整树单次管线：引用 / 脚注在单遍中解析，净化仅一次。
+  const clean: any = await hastProc.run(mdastRoot, file)
 
+  const mdChildren: any[] = mdastRoot.children
   const blocks: Block[] = []
+  // 按 startLine 建立 mdast 节点索引，供 hast 元素节点精确配对（见下方说明）。
+  // 不产生内联输出的顶层 mdast 节点（frontmatter / 引用定义 / 脚注定义）在
+  // remark-rehype 后无对应 hast 子节点，自然不会参与配对。
+  const mdByLine = new Map<number, any>()
+  for (const n of mdChildren) {
+    const line = n.position?.start.line
+    if (typeof line === 'number') mdByLine.set(line, n)
+  }
 
-  for (let i = 0; i < mdastRoot.children.length; i++) {
-    const n = mdastRoot.children[i]
-    // frontmatter / definition / footnoteDefinition 不渲染或已抽离，跳过。
-    if (
-      n.type === 'yaml' ||
-      n.type === 'toml' ||
-      n.type === 'definition' ||
-      n.type === 'footnoteDefinition'
-    ) {
-      continue
-    }
-    const meta = {
-      startLine: n.position?.start.line ?? 0,
-      endLine: n.position?.end.line ?? 0,
-      raw: n.type === 'code' ? (n as { value: string }).value : undefined,
-    }
-    const file = new VFile()
-    file.data.docId = docId
-    // 每块并入 definition + footnotes，保证 [text][ref] 与 [^fn] 解析、脚注区同树产出。
-    const subRoot = { type: 'root', children: [n, ...defs, ...footnotes] }
-    const clean: any = await hastProc.run(subRoot, file)
-    const html = toHtml(clean)
-    const type = classify(clean)
+  // 按顶层 hast 节点切分块。注意不能按“索引”把 hast 子节点与 mdast 子节点
+  // 一一对应：开启 rehype-raw（allowDangerousHtml）后，remark-rehype 会在块间
+  // 插入空白 text 节点（如 '\n'）；脚注定义会被收拢为末尾一个 <section>。这些
+  // 节点无 position，若按索引配对会把 mermaid 的 <pre> 错位配到 m=null，导致
+  // raw 为空 → “Mermaid 渲染失败：No diagram type detected”。
+  // 改为：仅对“元素节点”配对，且用 startLine 在 mdast 中精确查找源节点
+  // （元素节点的 position 经整条管线 + sanitize 后依然保留，与源 mdast 对齐）。
+  for (const hNode of clean.children) {
+    if (hNode.type !== 'element') continue // 跳过空白 text / comment 节点
+    const line = hNode.position?.start.line
+    const m = typeof line === 'number' ? mdByLine.get(line) ?? null : null
+    const startLine = m?.position?.start.line ?? 0
+    const endLine = m?.position?.end.line ?? 0
+    const raw = m?.type === 'code' ? (m as { value: string }).value : undefined
+    const html = toHtml(hNode)
+    const type = classify(hNode)
+    // mermaid 源码优先取 mdast 原文（位置配对），配对失效时从渲染后的
+    // pre.mermaid 抽取兜底，确保 raw 永不为空（见 extractMermaidCode）。
+    const mermaidRaw = type === 'mermaid' ? (raw ?? extractMermaidCode(hNode) ?? '') : undefined
     blocks.push({
       id: `b${blocks.length}-${hashCode(html)}`,
       html,
       type,
-      raw: type === 'mermaid' ? (meta.raw ?? '') : undefined,
-      startLine: meta.startLine,
-      endLine: meta.endLine,
+      raw: mermaidRaw,
+      startLine,
+      endLine,
     })
   }
 
   // 全文仅 frontmatter（无正文块）→ 退回整篇单块。
   if (blocks.length === 0) {
-    const file = new VFile()
-    file.data.docId = docId
-    const clean: any = await hastProc.run(mdastRoot, file)
     blocks.push({
       id: 'b0-full',
       html: toHtml(clean),

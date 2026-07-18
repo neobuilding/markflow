@@ -116,6 +116,21 @@ html, body {
 .prose code::before, .prose code::after { content: none; }
 .prose .katex { font-size: 1.05em; background: none; padding: 0; }
 
+/* 徽章/inline-img 横排：Tailwind Typography 默认给 .prose img 设 display:block
+   且上下 margin:2em，导致 <p align="center"> 内的 shields.io 徽章竖向堆叠、行高被撑大。
+   这里仅对「徽章式」行内图恢复 inline 并清零纵向 margin：
+     - p > a > img：徽章几乎都包在 <a> 里（shields.io / 链接图）
+     - p[align="center"] > img：居中的独立图（如 README 的 Logo）
+   刻意不命中普通段落内的独立插图（无 align、无 <a> 包裹），保留其块级排版，
+   避免把常见 `![alt](x.png)` 单独成行图误改成行内小图（回归）。 */
+.prose p > a > img,
+.prose p[align="center"] > img {
+  display: inline-block;
+  vertical-align: middle;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
 /* 代码块背景/内边距（与旧 globals.css 等价；整体替换 .prose pre，勿并存以免双层 padding） */
 .prose pre {
   background: var(--color-surface-overlay);
@@ -225,6 +240,15 @@ html.dark code[data-theme] span {
 .mermaid-container svg {
   max-width: 100%;
   height: auto;
+}
+/* 渲染前的骨架占位：给定稳定最小高度，避免滚动同步在 mermaid SVG 就绪前
+   把块高读成 ≈0 而卡住（问题#2）。高度与常见图接近即可，渲染后由真实 SVG 接管。
+   注意：此处刻意不做闪烁动画——mermaid 已提前渲染（warmMermaidCache），SVG 通常
+   在滚动到之前就绪；若极个别情况仍见骨架，静态占位也比“快速闪烁”更易接受。 */
+.mermaid-skeleton {
+  min-height: 240px;
+  border-radius: 8px;
+  background: var(--color-surface-overlay);
 }
 
 /* CodeMirror theme overrides */

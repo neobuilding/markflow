@@ -27,21 +27,42 @@ function enqueueMermaid(id: string, code: string): Promise<{ svg: string }> {
 const mermaidCache = new Map<string, string>()
 const mermaidKey = (code: string) => `m-${hashCode(code)}`
 
+// 提前渲染：解析完成后立即对所有 mermaid 块排队渲染，使 SVG 在用户滚动到之前通常已
+// 就绪（滚动同步读到的块高即真实高度，避免骨架期高度跳变 / 闪烁，问题#2）。
+// 渲染经同一串行队列与缓存，重复 code 不会重画；失败静默忽略（运行时由组件兜底骨架）。
+// 返回 Promise：全部排队渲染完成后 resolve —— 调用方据此「等 SVG 真正进入 DOM 后再
+// 重建偏移缓存」，否则缓存会量到骨架高度（≈40px），导致后续块 top 偏移、预览提前跳到 mermaid。
+export function warmMermaidCache(codes: string[]): Promise<void> {
+  const tasks: Promise<unknown>[] = []
+  for (const code of codes) {
+    if (!code) continue
+    const key = mermaidKey(code)
+    if (mermaidCache.has(key)) continue
+    const id = `mermaid-${key}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    ensureMermaid()
+    tasks.push(enqueueMermaid(id, code).catch(() => undefined))
+  }
+  return Promise.all(tasks).then(() => undefined)
+}
+
 export function MermaidBlock({ code }: { code: string }): React.ReactElement {
-  const [svg, setSvg] = useState<string | null>(null)
+  // 首帧即从模块级缓存取 SVG：warmMermaidCache 已在解析后提前渲染，多数情况下首帧即出图，
+  // 避免「骨架→SVG」这一帧的高度跳变 / 闪烁（问题#2）。取不到再走 effect 兜底渲染。
+  const [svg, setSvg] = useState<string | null>(() => mermaidCache.get(mermaidKey(code)) ?? null)
   const [error, setError] = useState<string | null>(null)
   const renderToken = useRef(0)
 
   useEffect(() => {
     const token = ++renderToken.current
     setError(null)
-    setSvg(null)
     const key = mermaidKey(code)
     const cached = mermaidCache.get(key)
     if (cached) {
       setSvg(cached)
       return
     }
+    // 仅当无缓存时才回退骨架，避免已命中缓存时闪一下空骨架（问题#2）。
+    setSvg(null)
     const id = `mermaid-${key}-${Date.now()}`
     ensureMermaid()
     enqueueMermaid(id, code)

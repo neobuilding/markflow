@@ -37,6 +37,7 @@ export interface Api {
     saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) => Promise<Document | null>
     reload: (id: string) => Promise<Document | null>
     stat: (filePath: string) => Promise<FileStat | null>
+    eol: (filePath: string) => Promise<'\r\n' | '\n'>
     watch: (id: string) => Promise<void>
     unwatch: (id: string) => Promise<void>
   }

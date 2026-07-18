@@ -8,13 +8,22 @@ import { defaultSchema, type Schema } from 'hast-util-sanitize'
 // 结构化克隆默认 schema，避免污染共享对象。
 const schema: Schema = structuredClone(defaultSchema)
 
-// 放行所有元素上的 className / style / id（shiki 内联 style、标题锚点 id）。
+// 放行所有元素上的 className / id（标题锚点 id）。
+// ⚠️ style 不放 '*'：开启 rehype-raw 后原生 HTML 可达，若 '*' 放行 style，
+// 恶意文档可注入任意内联样式（CSS 属性选择 + background 外泄等，PLAN §5.3 已知残余）。
+// 改为仅对 shiki/KaTeX 真正需要 style 的标签白名单放行（实测为 code/span，
+// 另补 math/svg 覆盖 KaTeX MathML/SVG）。div/p/a/pre 等常见原生 HTML 标签不放行。
 schema.attributes!['*'] = [
   ...(schema.attributes!['*'] ?? []),
   'className',
-  'style',
   'id',
 ]
+
+// shiki 内联颜色 / KaTeX 尺寸与 MathML 所需的 style 白名单（替代原 '*' 放行）。
+for (const tag of ['code', 'span', 'math', 'svg']) {
+  const existing = schema.attributes![tag]
+  schema.attributes![tag] = existing ? [...existing, 'style'] : ['style']
+}
 
 // 协议白名单：封死 javascript:；图片允许 appdoc:/data:/https:（外链合法图）。
 schema.protocols = {

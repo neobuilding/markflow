@@ -4,7 +4,7 @@ import { getDb } from '../db/database'
 
 let _app: App | null = null
 import { join, dirname, basename } from 'path'
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, watch, statSync } from 'fs'
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, watch, statSync, openSync, readSync, closeSync } from 'fs'
 import type { FSWatcher } from 'fs'
 import { randomUUID } from 'crypto'
 
@@ -391,6 +391,22 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
 
     insertMany(filePaths)
     return results
+  })
+
+  // 读取文件“原始换行符”（仅读前 64KB，避免大文件开销）：保存时据此还原行尾。
+  // 以磁盘文件本身为准，不受数据库内容（可能被旧版本改写过）影响。
+  ipcMain.handle('documents:eol', (_event, filePath: string) => {
+    try {
+      if (!existsSync(filePath)) return '\n'
+      const fd = openSync(filePath, 'r')
+      const buf = Buffer.alloc(65536)
+      const n = readSync(fd, buf, 0, buf.length, 0)
+      closeSync(fd)
+      const sample = buf.subarray(0, n).toString('utf-8')
+      return sample.includes('\r\n') ? '\r\n' : '\n'
+    } catch {
+      return '\n'
+    }
   })
 
   // 文件详情：返回磁盘上的大小 / 创建时间 / 修改时间（用于详情对话框）
