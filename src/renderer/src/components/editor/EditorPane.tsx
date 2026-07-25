@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
 import {
   Edit3, Eye, Columns, Hash, Bold, Italic, Code, Link, List, CheckSquare, PanelLeft,
-  GripVertical, PenLine, Lock, X, FolderOpen, Folder, Save, SaveAll, RotateCcw, Info
+  GripVertical, PenLine, Lock, X, FolderOpen, Folder, Save, SaveAll, RotateCcw, Info, FileOutput
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
@@ -288,6 +288,19 @@ export function EditorPane(): React.ReactElement {
             <TooltipContent>File details (⌘I)</TooltipContent>
           </Tooltip>
 
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => useUIStore.getState().setExportOpen(true)}
+              >
+                <FileOutput size={13} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Export as HTML… (⌘⇧E)</TooltipContent>
+          </Tooltip>
+
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
         </>
       )}
@@ -512,33 +525,36 @@ export function EditorPane(): React.ReactElement {
 
       {/* Editor / Preview / Split */}
       <div ref={splitContainerRef} className="flex-1 flex min-h-0 overflow-hidden">
-        {viewMode === 'edit' && (
-          <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} docId={activeDocumentId} />
+        {/* Editor：edit / split 显示；preview 模式隐藏 */}
+        {viewMode !== 'preview' && (
+          <div
+            className={viewMode === 'split' ? 'min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'}
+            style={viewMode === 'split' ? { width: `${splitRatio * 100}%` } : undefined}
+          >
+            <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} docId={activeDocumentId} />
+          </div>
         )}
-        {viewMode === 'preview' && (
-          <MarkdownPreview content={localContent} />
-        )}
+
+        {/* Draggable divider（仅 split 模式） */}
         {viewMode === 'split' && (
-          <>
-            <div className="min-w-0 overflow-hidden" style={{ width: `${splitRatio * 100}%` }}>
-              <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} docId={activeDocumentId} />
-            </div>
-            {/* Draggable divider */}
-            <div
-              onMouseDown={startSplitDrag}
-              className="relative w-px shrink-0 bg-[var(--color-border)] cursor-col-resize group/divider z-10"
-            >
-              <div className="absolute inset-y-0 -left-1 -right-1 hover:bg-accent/20 transition-colors" />
-              <GripVertical
-                size={12}
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 group-hover/divider:opacity-100 transition-opacity pointer-events-none"
-              />
-            </div>
-            <div className="flex-1 min-w-0 overflow-hidden">
-              <MarkdownPreview content={localContent} />
-            </div>
-          </>
+          <div
+            onMouseDown={startSplitDrag}
+            className="relative w-px shrink-0 bg-[var(--color-border)] cursor-col-resize group/divider z-10"
+          >
+            <div className="absolute inset-y-0 -left-1 -right-1 hover:bg-accent/20 transition-colors" />
+            <GripVertical
+              size={12}
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 group-hover/divider:opacity-100 transition-opacity pointer-events-none"
+            />
+          </div>
         )}
+
+        {/* Preview：preview / split 显示；edit 模式隐藏但仍挂载，保证导出 HTML 单一数据源就绪（R7） */}
+        <div
+          className={viewMode === 'edit' ? 'hidden' : 'flex-1 min-w-0 overflow-hidden'}
+        >
+          <MarkdownPreview content={localContent} />
+        </div>
       </div>
 
       {/* 磁盘文件被其它程序改动的提示 */}

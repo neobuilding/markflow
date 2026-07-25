@@ -102,6 +102,14 @@ describe('markdownPipeline — image rewrite (appdoc://)', () => {
   })
 })
 
+describe('markdownPipeline — remote image referrerpolicy (R4)', () => {
+  it('adds referrerpolicy="no-referrer" to https images', () => {
+    const { html } = render('![y](https://e.com/a.png)\n', docId)
+    expect(html).toContain('referrerpolicy="no-referrer"')
+    expect(html).toContain('src="https://e.com/a.png"')
+  })
+})
+
 describe('markdownPipeline — raw HTML passthrough', () => {
   it('passes raw HTML through to the sanitize step', () => {
     const { html } = render('<div onclick="x()">hi</div>\n', docId)

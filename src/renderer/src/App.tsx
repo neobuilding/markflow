@@ -8,10 +8,13 @@ import { CommandPalette } from './components/editor/CommandPalette'
 import { NewDocumentDialog } from './components/editor/NewDocumentDialog'
 import { FileDetailsDialog } from './components/editor/FileDetailsDialog'
 import { AboutDialog } from './components/editor/AboutDialog'
+import { ExportDialog } from './components/editor/ExportDialog'
 import { TooltipProvider } from './components/ui/tooltip'
+import { buildStandaloneHtml, resolveTheme } from './lib/export'
+import { getExportHtml } from './lib/exportStore'
 
 export default function App(): React.ReactElement {
-  const { setNewDocOpen, toggleSidebar, theme, closeWorkspace } = useUIStore()
+  const { setNewDocOpen, toggleSidebar, theme, closeWorkspace, setPrinting, printing } = useUIStore()
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
 
@@ -50,10 +53,33 @@ export default function App(): React.ReactElement {
     const removeAbout = window.api.onMenuEvent('about', () => {
       useUIStore.getState().setAboutOpen(true)
     })
+    const removeExport = window.api.onMenuEvent('export-html', () => {
+      useUIStore.getState().setExportOpen(true)
+    })
+    const removePrint = window.api.onMenuEvent('print', async () => {
+      if (!getExportHtml()) {
+        window.alert('预览尚未就绪，请先切换到预览/拆分视图。')
+        return
+      }
+      if (useUIStore.getState().printing) return
+      setPrinting(true)
+      window.api.menu.setPrinting(true)
+      try {
+        const theme = resolveTheme('current', useUIStore.getState().theme)
+        const html = await buildStandaloneHtml({ theme, embedImages: true })
+        await window.api.export.print(html)
+      } catch (e) {
+        console.error('Print failed', e)
+        window.alert('打印失败：' + ((e as Error)?.message || e))
+      } finally {
+        setPrinting(false)
+        window.api.menu.setPrinting(false)
+      }
+    })
     const removeOpenPaths = window.api.onOpenPaths((paths) => {
       if (paths && paths.length > 0) openPathsMut.mutate(paths)
     })
-    return () => { removeNew(); removeSidebar(); removeOpen(); removeClose(); removeOpenPaths(); removeFileDetails(); removeAbout() }
+    return () => { removeNew(); removeSidebar(); removeOpen(); removeClose(); removeOpenPaths(); removeFileDetails(); removeAbout(); removeExport(); removePrint() }
   }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace])
 
   // 启动时拉取命令行 / 文件关联传入的路径并打开
@@ -124,6 +150,14 @@ export default function App(): React.ReactElement {
         <NewDocumentDialog />
         <FileDetailsDialog />
         <AboutDialog />
+        <ExportDialog />
+        {printing && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 shadow-lg">
+              <span className="text-sm text-[var(--color-text-secondary)]">正在准备打印…</span>
+            </div>
+          </div>
+        )}
       </div>
     </TooltipProvider>
   )

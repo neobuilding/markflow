@@ -6,7 +6,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'jsdom',
-    include: ['src/renderer/src/**/*.test.ts'],
+    include: ['src/renderer/src/**/*.test.ts', 'electron/main/**/*.test.ts'],
     // 解析 Worker 用到的“同形”包别名（与 vite.config.ts 对齐），
     // 确保 markdownPipeline 在测试中也走 DOM-free 变体（虽本测试不进 Worker，
     // 但保持与构建一致，避免潜在解析差异）。

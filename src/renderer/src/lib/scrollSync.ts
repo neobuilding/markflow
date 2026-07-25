@@ -16,6 +16,8 @@ class ScrollSyncController {
   private syncedPane: PaneId | null = null
   private clearTimer: ReturnType<typeof setTimeout> | null = null
   private rafId: number | null = null
+  // 最近一次作为“滚动源”的窗格：图片异步加载改变预览高度后，据此把另一侧重新对齐。
+  private lastSource: PaneId = 'editor'
 
   register(id: PaneId, el: HTMLElement): void {
     if (this.elements[id]) this.unregister(id)
@@ -85,8 +87,20 @@ class ScrollSyncController {
     // 清除旧锁后继续同步，消除 80ms 死区。
     if (this.syncedPane !== null) this.clearLock()
 
+    // 记录本次滚动源（供图片 onload 后 realign 使用）。
+    this.lastSource = id
     const destId: PaneId = id === 'editor' ? 'preview' : 'editor'
     this.scheduleSync(() => this.sync(id, destId))
+  }
+
+  // 图片异步加载改变预览/编辑器高度后，按上一次滚动源重算对侧比例，
+  // 修正因高度跳变导致的半屏错位（Final Design §3.1 补充）。
+  public realign(): void {
+    if (!this.lastSource) return
+    const dest: PaneId = this.lastSource === 'editor' ? 'preview' : 'editor'
+    if (!this.elements[this.lastSource] || !this.elements[dest]) return
+    const src = this.lastSource
+    this.scheduleSync(() => this.sync(src, dest))
   }
 
   private armClear(): void {

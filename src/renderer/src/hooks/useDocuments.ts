@@ -93,6 +93,21 @@ export function useReloadDocument() {
   })
 }
 
+// 手动切换编码：用选定编码重新解码磁盘文件，刷新内容（不写磁盘）。
+export function useSetEncoding() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, encoding }: { id: string; encoding: string }) =>
+      window.api.documents.setEncoding(id, encoding),
+    onSuccess: (data: Document | null) => {
+      if (data) {
+        qc.setQueryData([...DOCS_KEY, 'detail', data.id], data)
+        qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
+      }
+    }
+  })
+}
+
 // 查询磁盘上文件的详情（大小 / 创建时间 / 修改时间）
 export function useFileStat(filePath: string | null | undefined) {
   return useQuery({

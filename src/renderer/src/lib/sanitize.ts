@@ -17,6 +17,12 @@ DOMPurify.addHook('afterSanitizeAttributes', (node: Element) => {
   node.removeAttribute('style')
 })
 
+// 显式剥离所有事件处理属性（DOMPurify 的 FORBID_ATTR 不支持通配符 `on*`，
+// 必须用钩子逐个拦截；任何以 on 开头的属性一律丢弃）。
+DOMPurify.addHook('uponSanitizeAttribute', (_node, attr) => {
+  if (attr.attrName.toLowerCase().startsWith('on')) attr.keepAttr = false
+})
+
 export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(html, {
     // mermaid 占位属性；其余 data-* 由 DOMPurify 默认 ALLOW_DATA_ATTR 放行。
@@ -25,5 +31,8 @@ export function sanitizeHtml(html: string): string {
     // （annotation 携带 TeX 源码，供屏幕阅读器；jsdom 解析器会丢，但 Chromium 保留，
     // 这里显式放行以锁死行为，与原 rehype-sanitize schema 对齐）。
     ADD_TAGS: ['use', 'annotation', 'annotation-xml'],
+    // 安全关键禁项：刻意不含 input（GFM 任务列表勾选框需要 <input type=checkbox disabled>）。
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'foreignObject', 'form', 'button'],
+    FORBID_ATTR: ['action', 'formaction'],
   })
 }

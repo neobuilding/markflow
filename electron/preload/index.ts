@@ -17,10 +17,18 @@ const api = {
     saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) =>
       ipcRenderer.invoke('documents:save-as', id, filePath, params),
     reload: (id: string) => ipcRenderer.invoke('documents:reload', id),
+    setEncoding: (id: string, encoding: string) => ipcRenderer.invoke('documents:set-encoding', id, encoding),
     stat: (filePath: string) => ipcRenderer.invoke('documents:stat', filePath),
     eol: (filePath: string) => ipcRenderer.invoke('documents:eol', filePath),
     watch: (id: string) => ipcRenderer.invoke('documents:watch', id),
     unwatch: (id: string) => ipcRenderer.invoke('documents:unwatch', id),
+  },
+
+  // Export: md → standalone html（复用预览净化后 HTML 单一数据源，R7）
+  export: {
+    embedImages: (html: string) => ipcRenderer.invoke('export:embed-images', html),
+    write: (path: string, html: string) => ipcRenderer.invoke('export:write', path, html),
+    print: (html: string) => ipcRenderer.invoke('export:print', html),
   },
 
   // Search
@@ -64,6 +72,7 @@ const api = {
     openFolder: () => ipcRenderer.invoke('dialog:open-folder'),
     openFolderPath: () => ipcRenderer.invoke('dialog:select-folder'),
     saveFile: (defaultPath?: string) => ipcRenderer.invoke('dialog:save-file', defaultPath),
+    saveHtmlFile: (defaultPath?: string) => ipcRenderer.invoke('dialog:save-html', defaultPath),
   },
 
   // Window control
@@ -78,6 +87,7 @@ const api = {
   menu: {
     setEditable: (editable: boolean) => ipcRenderer.send('menu:set-editable', editable),
     setHasDocument: (has: boolean) => ipcRenderer.send('menu:set-has-document', has),
+    setPrinting: (printing: boolean) => ipcRenderer.send('menu:set-printing', printing),
   },
 
   // Menu event listeners
@@ -92,7 +102,10 @@ const api = {
       | 'open-folder'
       | 'open-files'
       | 'close-workspace'
-      | 'file-details',
+      | 'file-details'
+      | 'about'
+      | 'export-html'
+      | 'print',
     callback: (data?: string | string[]) => void
   ) => {
     const handler = (_: Electron.IpcRendererEvent, data?: string | string[]) => callback(data)

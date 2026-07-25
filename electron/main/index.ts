@@ -1,12 +1,14 @@
 // electron/main/index.ts - MarkFlow main process (ESM)
 import { app, shell, BrowserWindow, ipcMain, Menu, dialog, nativeTheme, session, screen, protocol } from 'electron'
-import { join, dirname, resolve, extname, sep } from 'path'
+import { join, dirname, resolve, extname } from 'path'
 import { tmpdir } from 'os'
 import { pathToFileURL } from 'url'
-import { readdirSync, statSync, readFileSync, existsSync, realpathSync } from 'fs'
+import { readdirSync, statSync, readFileSync, existsSync } from 'fs'
 import { registerDocumentHandlers } from './ipc/documents'
 import { registerSearchHandlers } from './ipc/search'
+import { registerExportHandlers } from './ipc/export'
 import { initDatabase, getDb } from './db/database'
+import { isSubdir, APPDOC_MIME, parseAppDocUrl } from './lib/security'
 
 // __dirname is auto-injected by vite-plugin-electron/plugin esmShim()
 
@@ -116,37 +118,17 @@ function setupCSP(): void {
 // ─── appdoc: 协议处理（越权/符号链接白名单，C2 / §4.1 / §4.5） ───
 // URL 形如 appdoc://<docId>/<相对路径>。handler 据 docId 查 DB 得 file_path，
 // 算出 docBaseDir，把相对路径解析为绝对路径后做二次包含性校验，越权一律返回 403。
-const APPDOC_MIME: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.webp': 'image/webp',
-  '.bmp': 'image/bmp',
-  '.ico': 'image/x-icon',
-  '.avif': 'image/avif',
-}
-
-// 二次包含性校验：递归解析符号链接后比较真实路径，确认 child 仍位于 parent 内
-// （防 ../ 穿越与符号链接逃逸，§4.5）。
-function isSubdir(parent: string, child: string): boolean {
-  const realParent = realpathSync(parent)
-  const realChild = realpathSync(child)
-  return realChild === realParent || realChild.startsWith(realParent + sep)
-}
-
+// APPDOC_MIME / isSubdir 定义见 ./lib/security（与主进程其它 handler 复用）。
 function registerAppDocProtocol(): void {
   protocol.handle('appdoc', (request) => {
     try {
-      const url = new URL(request.url)
-      // pathname: /<docId>/<relativePath>
-      const segments = url.pathname.replace(/^\/+/, '').split('/')
-      const docId = segments.shift()
-      const relPath = segments.join('/')
-      if (!docId || !relPath) {
+      // appdoc://<docId>/<relativePath>：docId 在 hostname、相对路径需 percent-decode，
+      // 统一交给 parseAppDocUrl（见 ./lib/security），避免与导出内联逻辑漂移。
+      const parsed = parseAppDocUrl(request.url)
+      if (!parsed) {
         return new Response('Not Found', { status: 404 })
       }
+      const { docId, relPath } = parsed
       const row = getDb()
         .prepare('SELECT file_path FROM documents WHERE id = ?')
         .get(docId) as { file_path: string } | undefined
@@ -387,6 +369,20 @@ function setupMenu(): void {
           enabled: false, // 无打开文件时禁用，由渲染层同步状态启用
           click: () => mainWindow?.webContents.send('menu:file-details'),
         },
+        {
+          id: 'export-html',
+          label: 'Export as HTML…',
+          accelerator: 'CmdOrCtrl+Shift+E',
+          enabled: false, // 无打开文件时禁用，由渲染层同步状态启用
+          click: () => mainWindow?.webContents.send('menu:export-html'),
+        },
+        {
+          id: 'print',
+          label: 'Print…',
+          accelerator: 'CmdOrCtrl+P',
+          enabled: false, // 无打开文件时禁用，由渲染层同步状态启用
+          click: () => mainWindow?.webContents.send('menu:print'),
+        },
         { type: 'separator' },
         {
           label: 'Close Workspace',
@@ -477,15 +473,33 @@ ipcMain.on('menu:set-editable', (_event, editable: boolean) => {
   Menu.setApplicationMenu(appMenu)
 })
 
-// 渲染层同步“是否有打开文件”的状态：无文件时禁用 Reload / File Details。
+// 渲染层同步的“是否有打开文件”与“是否正在打印”状态，用于控制原生菜单 Print 项。
+let hasDocumentState = false
+let printingState = false
+function syncPrintMenu(): void {
+  if (!appMenu) return
+  const printItem = appMenu.getMenuItemById('print')
+  if (printItem) printItem.enabled = hasDocumentState && !printingState
+  Menu.setApplicationMenu(appMenu)
+}
+
+// 渲染层同步“是否有打开文件”的状态：无文件时禁用 Reload / File Details / Export / Print。
 ipcMain.on('menu:set-has-document', (_event, has: boolean) => {
   if (!appMenu) return
+  hasDocumentState = has
   const reloadItem = appMenu.getMenuItemById('reload')
   const detailsItem = appMenu.getMenuItemById('file-details')
+  const exportItem = appMenu.getMenuItemById('export-html')
   if (reloadItem) reloadItem.enabled = has
   if (detailsItem) detailsItem.enabled = has
-  // 重新设置菜单以应用 enabled 变化（菜单项对象需重新挂载才刷新 UI）
-  Menu.setApplicationMenu(appMenu)
+  if (exportItem) exportItem.enabled = has
+  syncPrintMenu()
+})
+
+// 打印过程中禁用 Print 菜单项，避免用户重复触发。
+ipcMain.on('menu:set-printing', (_event, printing: boolean) => {
+  printingState = printing
+  syncPrintMenu()
 })
 
 // ─── Single instance + file/protocol open handling ───────────────
@@ -537,6 +551,7 @@ if (!shouldStart) {
 
   registerDocumentHandlers(ipcMain, app, () => mainWindow)
   registerSearchHandlers(ipcMain)
+  registerExportHandlers(ipcMain)
 
   ipcMain.handle('app:get-theme', () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
   ipcMain.handle('app:set-theme', (_event, theme: 'light' | 'dark' | 'system') => {
@@ -582,6 +597,19 @@ if (!shouldStart) {
       defaultPath,
       filters: [
         { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    })
+    return result.canceled ? null : result.filePath ?? null
+  })
+
+  // 让渲染层主动弹出“导出 HTML”对话框（R7），默认 .html 过滤。
+  ipcMain.handle('dialog:save-html', async (_event, defaultPath?: string) => {
+    const result = await dialog.showSaveDialog({
+      title: 'Export as HTML',
+      defaultPath,
+      filters: [
+        { name: 'HTML', extensions: ['html', 'htm'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     })

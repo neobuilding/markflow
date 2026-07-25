@@ -185,8 +185,11 @@ const defaultImage =
 md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const token = tokens[idx]
   const src = token.attrGet('src') || ''
-  const docId = (env as { docId?: string | null }).docId
-  if (src && !/^(https?:|data:|appdoc:)/i.test(src)) {
+  if (/^https?:/i.test(src)) {
+    // 远程图：收紧来源站点（隐藏 Referer），避免泄露本地文件路径。
+    token.attrSet('referrerpolicy', 'no-referrer')
+  } else if (!/^(https?:|data:|appdoc:)/i.test(src)) {
+    const docId = (env as { docId?: string | null }).docId
     const rel = src.replace(/^\.\//, '')
     if (docId) token.attrSet('src', `appdoc://${docId}/${rel}`)
   }

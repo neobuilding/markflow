@@ -16,6 +16,8 @@ export function useLocalDocument(
   const savedTitleRef = useRef('')
   // 当前文档 id，用于区分“切换文档”与“同一文档内容刷新”
   const prevIdRef = useRef<string | null>(null)
+  // 当前文档已应用的编码（用于检测“手动切换编码”事件）
+  const appliedEncodingRef = useRef<string | undefined>(undefined)
   // 最新 dirty，供 effect 内判断（避免闭包拿到旧值）
   const dirtyRef = useRef(false)
   dirtyRef.current = dirty
@@ -28,6 +30,7 @@ export function useLocalDocument(
     // 切换到另一篇文档：始终以权威内容（磁盘/数据库）覆盖本地草稿
     if (doc.id !== prevIdRef.current) {
       prevIdRef.current = doc.id
+      appliedEncodingRef.current = doc.encoding
       eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
       setLocalContent(doc.content)
       setLocalTitle(doc.title)
@@ -52,6 +55,21 @@ export function useLocalDocument(
     setDirtyState(false)
     useUIStore.getState().setDirty(false)
   }, [doc?.id, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 手动切换编码（同文档、encoding 字段变化）：以重新解码后的内容覆盖本地草稿，
+  // 清脏并刷新“已保存”基准（磁盘字节未变，不应误报脏）。
+  useEffect(() => {
+    if (!doc) return
+    if (doc.id !== prevIdRef.current) return // 切换文档由上方 effect 处理
+    if (doc.encoding === appliedEncodingRef.current) return
+    appliedEncodingRef.current = doc.encoding
+    setLocalContent(doc.content)
+    setLocalTitle(doc.title)
+    savedContentRef.current = doc.content
+    savedTitleRef.current = doc.title
+    setDirtyState(false)
+    useUIStore.getState().setDirty(false)
+  }, [doc?.id, doc?.encoding, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 以磁盘文件本身的换行符为准（异步，覆盖上面的同步推断）：
   // 数据库内容可能被旧版本改写过，磁盘才是行尾真相。仅读取前 64KB，开销可忽略。

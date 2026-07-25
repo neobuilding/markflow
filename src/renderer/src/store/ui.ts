@@ -56,6 +56,10 @@ interface UIState {
   saving: boolean
   setSaving: (saving: boolean) => void
 
+  // 是否正在准备打印（底部状态栏显示 “Printing…”）
+  printing: boolean
+  setPrinting: (printing: boolean) => void
+
   // 刚刚保存过（底部状态栏瞬时显示 “✓ Saved”，延迟后自动消失）
   justSaved: boolean
   setJustSaved: (justSaved: boolean) => void
@@ -68,6 +72,10 @@ interface UIState {
   // 文件详情对话框：展示当前文档的路径 / 大小 / 修改日期等（null 表示关闭）
   fileDetailsId: string | null
   setFileDetailsId: (id: string | null) => void
+
+  // 导出 HTML 对话框（R7）
+  exportOpen: boolean
+  setExportOpen: (open: boolean) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -114,6 +122,9 @@ export const useUIStore = create<UIState>((set) => ({
   saving: false,
   setSaving: (saving) => set({ saving }),
 
+  printing: false,
+  setPrinting: (printing) => set({ printing }),
+
   justSaved: false,
   setJustSaved: (justSaved) => set({ justSaved }),
 
@@ -122,5 +133,8 @@ export const useUIStore = create<UIState>((set) => ({
   clearExternalChange: () => set({ externalChange: null }),
 
   fileDetailsId: null,
-  setFileDetailsId: (id) => set({ fileDetailsId: id })
+  setFileDetailsId: (id) => set({ fileDetailsId: id }),
+
+  exportOpen: false,
+  setExportOpen: (open) => set({ exportOpen: open })
 }))

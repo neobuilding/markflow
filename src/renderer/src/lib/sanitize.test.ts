@@ -90,6 +90,35 @@ describe('sanitizeHtml — KaTeX MathML accessibility', () => {
   })
 })
 
+describe('sanitizeHtml — R6 加固（FORBID_TAGS / on* 钩子）', () => {
+  it('strips <foreignObject> (SVG 内嵌 HTML 的 XSS 面)', () => {
+    const out = sanitizeHtml('<svg><foreignObject><div onload="evil()">x</div></foreignObject></svg>')
+    expect(out).not.toContain('foreignObject')
+  })
+  it('strips <script> inside SVG', () => {
+    const out = sanitizeHtml('<svg><script>alert(1)</script></svg>')
+    expect(out).not.toContain('<script')
+  })
+  it('strips <form> and <button>', () => {
+    const out = sanitizeHtml('<form action="/x"><button>go</button></form>')
+    expect(out).not.toContain('<form')
+    expect(out).not.toContain('<button')
+  })
+  it('strips on* attribute via uponSanitizeAttribute hook', () => {
+    const out = sanitizeHtml('<div onclick="evil()" onmouseover="x()">y</div>')
+    expect(out).not.toContain('onclick')
+    expect(out).not.toContain('onmouseover')
+  })
+  it('retains GFM task-list checkbox <input type="checkbox">', () => {
+    const out = sanitizeHtml('<li><input type="checkbox" disabled> task</li>')
+    expect(out).toContain('type="checkbox"')
+  })
+  it('retains SVG <style> (mermaid/katex)', () => {
+    const out = sanitizeHtml('<svg><style>.a{fill:red}</style></svg>')
+    expect(out).toContain('.a{fill:red}')
+  })
+})
+
 describe('sanitizeHtml — integration with markdownPipeline', () => {
   it('produces sanitized HTML safe from injected scripts in raw HTML passthrough', async () => {
     const { render } = await import('./markdownPipeline')

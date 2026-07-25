@@ -6,6 +6,8 @@ export interface Document {
   content: string
   wordCount: number
   isArchived: boolean
+  encoding: string
+  encodingConfidence: number
   createdAt: number
   updatedAt: number
 }

@@ -4,6 +4,9 @@ import { parseMarkdown } from '../../lib/parseClient'
 import type { RenderResult } from '../../lib/markdownPipeline'
 import { SafeHtml } from '../SafeHtml'
 import { scrollSync } from '../../lib/scrollSync'
+import { debounce } from '../../lib/utils'
+import { sanitizeHtml } from '../../lib/sanitize'
+import { setExportHtml } from '../../lib/exportStore'
 import mermaid from 'mermaid'
 
 let mermaidInitialized = false
@@ -78,8 +81,14 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
             )
           }
           if (cancelled || token !== renderToken.current) return
+          // 暂存“已净化”的预览 HTML 作为导出的唯一数据源（R7 单一数据源）。
+          // SafeHtml 渲染时会再次净化（幂等），保持单点语义。
+          setExportHtml(sanitizeHtml(html))
           setRenderedHtml(html)
           setLoading(false)
+          // 兜底：解析完成后（大图可能已就绪或稍后就绪）至少对齐一次，
+          // 修正图片高度跳变引起的半屏错位（Final Design §3.1）。
+          requestAnimationFrame(() => scrollSync.realign())
         })
         .catch((err) => {
           if (cancelled || token !== renderToken.current) return
@@ -99,10 +108,12 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   }, [content, docId])
 
   // 容器级 error 委托：图片加载失败时降级为占位符（覆盖注入 HTML 内的所有 <img>）。
+  // 同时挂 load 委托（capture 阶段才能捕获 <img> 的 load）：图片就绪后预览高度变化，
+  // 防抖重对齐同步滚动，修正因高度跳变导致的半屏错位（W5-D）。
   useEffect(() => {
     const container = previewRef.current
     if (!container) return
-    const handler = (e: Event) => {
+    const onErr = (e: Event) => {
       const target = e.target as HTMLElement | null
       if (!target || target.tagName !== 'IMG') return
       const img = target as HTMLImageElement
@@ -117,8 +128,13 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
         'border-radius:6px;color:var(--color-text-tertiary);font-size:12px;background:var(--color-surface-overlay);'
       img.replaceWith(placeholder)
     }
-    container.addEventListener('error', handler, true)
-    return () => container.removeEventListener('error', handler, true)
+    const onLoad = debounce(() => scrollSync.realign(), 150)
+    container.addEventListener('error', onErr, true)
+    container.addEventListener('load', onLoad, true)
+    return () => {
+      container.removeEventListener('error', onErr, true)
+      container.removeEventListener('load', onLoad, true)
+    }
   }, [renderedHtml])
 
   // 注册到同步滚动控制器（preview 侧）。

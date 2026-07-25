@@ -23,6 +23,8 @@ export type MenuEvent =
   | 'close-workspace'
   | 'file-details'
   | 'about'
+  | 'export-html'
+  | 'print'
 
 // Electron preload bridge exposed on window.api
 export interface Api {
@@ -36,10 +38,16 @@ export interface Api {
     importMany: (filePaths: string[]) => Promise<Document[]>
     saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) => Promise<Document | null>
     reload: (id: string) => Promise<Document | null>
+    setEncoding: (id: string, encoding: string) => Promise<Document | null>
     stat: (filePath: string) => Promise<FileStat | null>
     eol: (filePath: string) => Promise<'\r\n' | '\n'>
     watch: (id: string) => Promise<void>
     unwatch: (id: string) => Promise<void>
+  }
+  export: {
+    embedImages: (html: string) => Promise<string>
+    write: (path: string, html: string) => Promise<void>
+    print: (html: string) => Promise<void>
   }
   search: {
     query: (q: string) => Promise<SearchResult[]>
@@ -60,6 +68,7 @@ export interface Api {
     openFolder: () => Promise<string | null>
     openFolderPath: () => Promise<string | null>
     saveFile: (defaultPath?: string) => Promise<string | null>
+    saveHtmlFile: (defaultPath?: string) => Promise<string | null>
   }
   window: {
     maximize: () => Promise<void>
@@ -69,6 +78,7 @@ export interface Api {
   menu: {
     setEditable: (editable: boolean) => void
     setHasDocument: (has: boolean) => void
+    setPrinting: (printing: boolean) => void
   }
   onMenuEvent: (event: MenuEvent, callback: (data?: string | string[]) => void) => () => void
   onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => () => void

@@ -82,6 +82,8 @@ function migrate(db: Database.Database): void {
       content     TEXT NOT NULL DEFAULT '',
       word_count  INTEGER NOT NULL DEFAULT 0,
       is_archived INTEGER NOT NULL DEFAULT 0,
+      encoding    TEXT NOT NULL DEFAULT 'utf-8',
+      encoding_confidence REAL NOT NULL DEFAULT 1,
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     );
