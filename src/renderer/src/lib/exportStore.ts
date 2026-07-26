@@ -10,3 +10,15 @@ export function setExportHtml(html: string): void {
 export function getExportHtml(): string {
   return current
 }
+
+// 导出 HTML 的 <html lang> 取值来源：缓存原始 markdown（含 frontmatter）字符串引用，
+// 在导出/打印时由 resolveExportLang 现算一次，避免预览解析阶段反复运行 franc（仅导出时才需要）。
+let currentMarkdown = ''
+
+export function setExportContent(markdown: string): void {
+  currentMarkdown = markdown
+}
+
+export function getExportContent(): string {
+  return currentMarkdown
+}

@@ -44,41 +44,47 @@ interface UIState {
   newDocOpen: boolean
   setNewDocOpen: (open: boolean) => void
 
-  // About dialog（Help > About）
+  // About dialog (Help > About)
   aboutOpen: boolean
   setAboutOpen: (open: boolean) => void
 
-  // 是否存在未保存的改动（用于“脏”标记与关闭前的确认）
+  // Whether there are unsaved changes (for the "dirty" flag and pre-close confirmation)
   dirty: boolean
   setDirty: (dirty: boolean) => void
 
-  // 是否正在保存（底部状态栏显示 “Saving…”）
+  // Whether a save is in progress (status bar shows "Saving…")
   saving: boolean
   setSaving: (saving: boolean) => void
 
-  // 是否正在准备打印（底部状态栏显示 “Printing…”）
+  // Whether printing is being prepared (status bar shows "Printing…")
   printing: boolean
   setPrinting: (printing: boolean) => void
 
-  // 刚刚保存过（底部状态栏瞬时显示 “✓ Saved”，延迟后自动消失）
+  // Just saved (status bar briefly shows "✓ Saved", then auto-hides)
   justSaved: boolean
   setJustSaved: (justSaved: boolean) => void
 
-  // 磁盘文件被其它程序改动的提示（externalChange 为 null 表示无提示）
+  // Prompt when the on-disk file was modified by another program (null = no prompt)
   externalChange: { id: string; filePath: string } | null
   setExternalChange: (change: { id: string; filePath: string } | null) => void
   clearExternalChange: () => void
 
-  // 文件详情对话框：展示当前文档的路径 / 大小 / 修改日期等（null 表示关闭）
+  // File details dialog: shows the current document's path / size / modified date etc. (null = closed)
   fileDetailsId: string | null
   setFileDetailsId: (id: string | null) => void
 
-  // 导出 HTML 对话框（R7）
+  // Export HTML dialog (R7)
   exportOpen: boolean
   setExportOpen: (open: boolean) => void
+
+  // Whether an export write is in progress (hard lock: while exporting or with the dialog open,
+  // closing the current file or workspace is forbidden, so even an accidental "Close Workspace"
+  // shortcut (Cmd/Ctrl+W) won't lose the workspace).
+  exporting: boolean
+  setExporting: (v: boolean) => void
 }
 
-export const useUIStore = create<UIState>((set) => ({
+export const useUIStore = create<UIState>((set, get) => ({
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
@@ -93,11 +99,18 @@ export const useUIStore = create<UIState>((set) => ({
   setEditable: (editable) => set({ editable }),
   toggleEditable: () => set((s) => ({ editable: !s.editable })),
 
-  closeDocument: () =>
-    set({ activeDocumentId: null, editable: false }),
+  // While exporting or with the export dialog open, forbid closing the current file/workspace:
+  // this is a hard guarantee covering all call paths (menu shortcuts, sidebar close button, etc.),
+  // ensuring "exporting HTML never closes the current file or workspace".
+  closeDocument: () => {
+    if (get().exporting || get().exportOpen) return
+    set({ activeDocumentId: null, editable: false })
+  },
 
-  closeWorkspace: () =>
-    set({ activeDocumentId: null, activeFolder: null, editable: false }),
+  closeWorkspace: () => {
+    if (get().exporting || get().exportOpen) return
+    set({ activeDocumentId: null, activeFolder: null, editable: false })
+  },
 
   viewMode: 'split',
   setViewMode: (mode) => set({ viewMode: mode }),
@@ -136,5 +149,8 @@ export const useUIStore = create<UIState>((set) => ({
   setFileDetailsId: (id) => set({ fileDetailsId: id }),
 
   exportOpen: false,
-  setExportOpen: (open) => set({ exportOpen: open })
+  setExportOpen: (open) => set({ exportOpen: open }),
+
+  exporting: false,
+  setExporting: (v) => set({ exporting: v })
 }))

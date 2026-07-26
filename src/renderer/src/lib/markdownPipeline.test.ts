@@ -37,6 +37,47 @@ describe('markdownPipeline — math (katex)', () => {
     const { html } = render('It costs $5 and $10 today.\n', docId)
     expect(html).not.toContain('katex')
   })
+
+  it('does not treat adjacent-digit currency $5…$10 as math', () => {
+    const { html } = render('我买了苹果花了$5又买了橘子花了$10。\n', docId)
+    expect(html).not.toContain('katex')
+  })
+
+  it('leaves brackets-delimited \\(E = mc^2\\) as plain text (not connected)', () => {
+    const { html } = render('\\(E = mc^2\\)\n', docId)
+    expect(html).not.toContain('katex')
+    expect(html).toContain('(E = mc^2)')
+  })
+
+  it('renders $5^2 = 25$ as math', () => {
+    const { html } = render('Inline $5^2 = 25$ end\n', docId)
+    expect(html).toContain('class="katex"')
+  })
+
+  it('renders bmatrix matrix as math', () => {
+    const { html } = render('$\\begin{bmatrix}a&b\\\\c&d\\end{bmatrix}$\n', docId)
+    expect(html).toContain('class="katex"')
+  })
+
+  it('does not render $x$ inside a fenced code block as math', () => {
+    const { html } = render('```\n$x$\n```\n', docId)
+    expect(html).not.toContain('katex')
+  })
+
+  it('does not render $x$ inside inline code as math', () => {
+    const { html } = render('code `$x$` here\n', docId)
+    expect(html).not.toContain('katex')
+  })
+
+  it('does not render inner-spaced $ E = mc^2 $ (leading/trailing space) as math', () => {
+    const { html } = render('Inline $ E = mc^2 $ end\n', docId)
+    expect(html).not.toContain('katex')
+  })
+
+  it('renders inline $$x=1$$ as display-mode math (math_inline_double)', () => {
+    const { html } = render('Text $$x=1$$ more\n', docId)
+    expect(html).toContain('katex-display')
+  })
 })
 
 describe('markdownPipeline — mermaid slot extraction', () => {

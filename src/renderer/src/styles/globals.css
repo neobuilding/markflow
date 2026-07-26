@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
-/* Tailwind Typography 插件：用 prose 替代手写 ~130 行 markdown 排版（§4.6） */
+/* Tailwind Typography plugin: replace hand-written ~130 lines of markdown styles with prose (§4.6) */
 @plugin "@tailwindcss/typography";
 
-/* v4 必需：dark: 跟随 App 在 <html> 上切换的 .dark class（darkMode:'class' 在 v4 无效） */
+/* v4 requirement: dark: follows the .dark class the App toggles on <html> (darkMode:'class' is a no-op in v4) */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* Keep using the existing JS config for custom theme (colors, fonts, animations) */
@@ -106,23 +106,25 @@ html, body {
   caret-color: var(--color-accent);
 }
 
-/* ─── Markdown Preview（prose 接管排版，此处仅保留最小容器，§4.6） ─── */
+/* ─── Markdown Preview (prose takes over layout; keep only a minimal container here, §4.6) ─── */
 .markdown-preview {
   user-select: text;
   width: 100%;
 }
 
-/* 关闭 prose 对 code/pre/katex 的误伤 */
+/* Disable prose's misfiring on code/pre/katex, and the decorative quotes auto-added to blockquotes */
 .prose code::before, .prose code::after { content: none; }
+.prose blockquote p:first-of-type::before,
+.prose blockquote p:last-of-type::after { content: none; }
 .prose .katex { font-size: 1.05em; background: none; padding: 0; }
 
-/* 徽章/inline-img 横排：Tailwind Typography 默认给 .prose img 设 display:block
-   且上下 margin:2em，导致 <p align="center"> 内的 shields.io 徽章竖向堆叠、行高被撑大。
-   这里仅对「徽章式」行内图恢复 inline 并清零纵向 margin：
-     - p > a > img：徽章几乎都包在 <a> 里（shields.io / 链接图）
-     - p[align="center"] > img：居中的独立图（如 README 的 Logo）
-   刻意不命中普通段落内的独立插图（无 align、无 <a> 包裹），保留其块级排版，
-   避免把常见 `![alt](x.png)` 单独成行图误改成行内小图（回归）。 */
+/* Badge / inline-img horizontal layout: Tailwind Typography defaults .prose img to display:block with
+   2em vertical margin, which makes shields.io badges inside <p align="center"> stack vertically and inflate line height.
+   Here we only restore inline + zero vertical margin for "badge-style" inline images:
+     - p > a > img: badges are almost always wrapped in <a> (shields.io / linked images)
+     - p[align="center"] > img: centered standalone images (e.g. a README logo)
+   Deliberately skip standalone illustrations in normal paragraphs (no align, no <a> wrap) to keep their block layout,
+   avoiding turning common `![alt](x.png)` standalone-line images into inline thumbnails (regression). */
 .prose p > a > img,
 .prose p[align="center"] > img {
   display: inline-block;
@@ -131,7 +133,7 @@ html, body {
   margin-bottom: 0;
 }
 
-/* 代码块背景/内边距（与旧 globals.css 等价；整体替换 .prose pre，勿并存以免双层 padding） */
+/* Code block background/padding (equivalent to the old globals.css; fully replace .prose pre, don't coexist to avoid double padding) */
 .prose pre {
   background: var(--color-surface-overlay);
   border: 1px solid var(--color-border);
@@ -144,12 +146,12 @@ html, body {
   font-size: 0.875rem;
 }
 
-/* GFM 任务列表：Tailwind Typography 不内置勾选框样式，显式补回避免残留小圆点 */
+/* GFM task lists: Tailwind Typography doesn't ship checkbox styles, explicitly restore them to avoid leftover bullets */
 .prose ul:has(> li > input[type="checkbox"]) { list-style: none; padding-left: 0; }
 .prose li:has(> input[type="checkbox"]) { list-style: none; }
 .prose li > input[type="checkbox"] { margin-right: 0.4rem; vertical-align: middle; }
 
-/* prose 变量映射到项目 Linear 主题变量（避免 prose 自带灰阶跑色） */
+/* Map prose variables to the project's Linear theme variables (avoid prose's built-in gray scale shifting colors) */
 .prose {
   --tw-prose-body: var(--color-text-primary);
   --tw-prose-headings: var(--color-text-primary);
@@ -175,8 +177,8 @@ html, body {
   --tw-prose-quote-borders: var(--color-accent);
 }
 
-/* highlight.js 代码块：github.css 提供浅色 token 配色（已在 main.tsx 引入）。
-   此处把 .hljs 盒子交给 prose 主题变量统一管理（背景/边框/内边距），避免双层 padding。 */
+/* highlight.js code blocks: github.css provides the light token palette (already imported in main.tsx).
+   Here we hand the .hljs box to prose theme variables for unified management (background/border/padding), avoiding double padding. */
 .prose pre.hljs {
   background: var(--color-surface-overlay);
   border: 1px solid var(--color-border);
@@ -184,7 +186,7 @@ html, body {
   padding: 1rem;
 }
 
-/* highlight.js 暗色 token 配色（github-dark 调色板，仅暗色生效） */
+/* highlight.js dark token palette (github-dark palette, only active in dark mode) */
 html.dark .hljs {
   color: #c9d1d9;
   background: transparent;
@@ -263,10 +265,10 @@ html.dark .hljs-deletion {
   background-color: #67060c;
 }
 
-/* ─── GitHub-style alerts（remark-github-alerts → .markdown-alert） ───
-   净化后保留 .markdown-alert / .markdown-alert-note 等 class，这里补视觉样式。
-   标题段为 alert <div> 的首个 <p>，其内 <span style="--oct-icon:..."> 用 GitHub
-   内联 SVG 作图标背景。 */
+/* ─── GitHub-style alerts (remark-github-alerts → .markdown-alert) ───
+   After sanitization .markdown-alert / .markdown-alert-note etc. classes are kept; here we add visual styles.
+   The heading is the alert <div>'s first <p>, whose inner <span style="--oct-icon:..."> uses a GitHub
+   inline SVG as the icon background. */
 .markdown-alert {
   margin: 1rem 0;
   padding: 0.75rem 1rem;
@@ -304,15 +306,8 @@ html.dark .hljs-deletion {
   overflow-x: auto;
   overflow-y: hidden;
 }
-.markdown-preview .katex-error {
-  color: var(--color-danger);
-  font-family: var(--font-mono);
-  background: rgba(229,72,77,0.08);
-  padding: 0.15em 0.4em;
-  border-radius: 4px;
-}
 
-/* Mermaid diagrams（注入前已烘焙为原始 SVG，故直接约束 svg 尺寸防溢出） */
+/* Mermaid diagrams (already baked into raw SVG before injection, so just constrain svg size to prevent overflow) */
 .mermaid-container {
   width: 100%;
 }
@@ -324,10 +319,10 @@ svg[id^="mermaid-"] {
   max-width: 100%;
   height: auto;
 }
-/* 渲染前的骨架占位：给定稳定最小高度，避免滚动同步在 mermaid SVG 就绪前
-   把块高读成 ≈0 而卡住（问题#2）。高度与常见图接近即可，渲染后由真实 SVG 接管。
-   注意：此处刻意不做闪烁动画——mermaid 已提前渲染（warmMermaidCache），SVG 通常
-   在滚动到之前就绪；若极个别情况仍见骨架，静态占位也比“快速闪烁”更易接受。 */
+/* Pre-render skeleton placeholder: give a stable min-height to avoid scroll-sync reading the block height as ≈0
+   and stalling before the mermaid SVG is ready (issue #2). Height close to common diagrams is enough; the real SVG takes over after render.
+   Note: deliberately no shimmer animation here — mermaid is pre-rendered (warmMermaidCache), so the SVG is usually
+   ready before scrolling to it; if a skeleton is still seen in rare cases, a static placeholder is more acceptable than a "quick flicker". */
 .mermaid-skeleton {
   min-height: 240px;
   border-radius: 8px;

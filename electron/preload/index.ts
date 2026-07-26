@@ -24,10 +24,11 @@ const api = {
     unwatch: (id: string) => ipcRenderer.invoke('documents:unwatch', id),
   },
 
-  // Export: md → standalone html（复用预览净化后 HTML 单一数据源，R7）
+  // Export: md -> standalone html (reuse the sanitized preview HTML as the single source of truth, R7)
   export: {
     embedImages: (html: string) => ipcRenderer.invoke('export:embed-images', html),
-    write: (path: string, html: string) => ipcRenderer.invoke('export:write', path, html),
+    write: (path: string, html: string, overwrite = false) =>
+      ipcRenderer.invoke('export:write', path, html, overwrite),
     print: (html: string) => ipcRenderer.invoke('export:print', html),
   },
 

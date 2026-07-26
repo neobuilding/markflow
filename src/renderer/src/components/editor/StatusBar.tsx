@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useUIStore } from '../../store/ui'
 import { useDocument, useSetEncoding } from '../../hooks/useDocuments'
 
-// 常用编码列表（状态栏手动切换用，R5）。
+// Common encoding list (for manual switching in the status bar, R5).
 const ENCODINGS = [
   'UTF-8',
   'GBK',
@@ -14,7 +14,7 @@ const ENCODINGS = [
   'windows-1252',
 ] as const
 
-// 底部状态栏：显示字数、编码（可切换 / 低置信度提示），以及保存状态提示。
+// Bottom status bar: shows word count, encoding (switchable / low-confidence hint), and save status.
 export function StatusBar(): React.ReactElement {
   const activeDocumentId = useUIStore((s) => s.activeDocumentId)
   const dirty = useUIStore((s) => s.dirty)
@@ -28,7 +28,8 @@ export function StatusBar(): React.ReactElement {
   const [encOpen, setEncOpen] = useState(false)
   const encRef = useRef<HTMLDivElement>(null)
 
-  // R3：状态栏显示换行符（CRLF/LF）。数据源已就绪（documents:eol IPC，无需改类型）。
+  // R3: status bar shows the line ending (CRLF/LF). The data source is ready
+  // (documents:eol IPC, no type change needed).
   const [eol, setEol] = useState<'\r\n' | '\n' | null>(null)
   useEffect(() => {
     if (!doc?.filePath) {
@@ -47,19 +48,19 @@ export function StatusBar(): React.ReactElement {
     }
   }, [doc?.id, doc?.filePath])
 
-  // “✓ Saved” 提示在延迟后自动消失
+  // The "✓ Saved" hint auto-hides after a delay.
   useEffect(() => {
     if (!justSaved) return
     const t = setTimeout(() => setJustSaved(false), 2000)
     return () => clearTimeout(t)
   }, [justSaved, setJustSaved])
 
-  // 切换文档时清除“已保存”提示
+  // Clear the "saved" hint when switching documents.
   useEffect(() => {
     setJustSaved(false)
   }, [activeDocumentId, setJustSaved])
 
-  // 点击编码胶囊外部关闭下拉
+  // Close the dropdown when clicking outside the encoding pill.
   useEffect(() => {
     if (!encOpen) return
     const onDown = (e: MouseEvent) => {
@@ -99,12 +100,12 @@ export function StatusBar(): React.ReactElement {
         {doc ? `${doc.wordCount} words` : ''}
       </span>
 
-      {/* 编码胶囊（R5）：点击切换；低置信度显示 ⚠ */}
+      {/* Encoding pill (R5): click to switch; show ⚠ on low confidence */}
       {doc && (
         <div className="relative ml-3" ref={encRef}>
           <button
             onClick={() => setEncOpen((v) => !v)}
-            title={lowConfidence ? '编码可能检测不准，点击切换' : `编码：${encoding}`}
+            title={lowConfidence ? 'Encoding may be inaccurate, click to switch' : `Encoding: ${encoding}`}
             className={
               'text-2xs px-1.5 py-0.5 rounded border transition-colors ' +
               (lowConfidence
@@ -136,11 +137,11 @@ export function StatusBar(): React.ReactElement {
         </div>
       )}
 
-      {/* 换行符胶囊（R3）：只读，与编码胶囊并列 */}
+      {/* Line-ending pill (R3): read-only, next to the encoding pill */}
       {eol && (
         <span
           className="text-2xs px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-tertiary)] ml-3"
-          title="换行符"
+          title="Line ending"
         >
           {eol === '\r\n' ? 'CRLF' : 'LF'}
         </span>

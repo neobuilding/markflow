@@ -54,13 +54,13 @@ function toDocument(row: DocumentRow): Document {
   }
 }
 
-// ─── 编码检测 / 解码（R5 全编码自动识别） ──────────────────────────
-// 编码检测策略（R5 全编码自动识别，2026-07-23 升级）：
-// 主检测器用 jschardet-ultra（纯 JS，覆盖 100+ 编码含 CJK，API 兼容旧 jschardet）；
-// 采样窗口由 64KB 扩大到 1MB；命中率低置信度时回退 utf-8；BOM 优先。
-// 额外增加“CJK 二次判断”：用 iconv 对候选编码解码、统计 U+FFFD 替换符数量，
-// 把“被误判为 UTF-8 的 GBK/Big5 等多字节编码”纠正回来，避免中文乱码。
-const SAMPLE_LIMIT = 1 << 20 // 1MB：在准确率与超大文件开销间取平衡
+// ─── Encoding detection / decoding (R5 full encoding auto-detection) ─────────────
+// Encoding detection strategy (R5 full encoding auto-detection, upgraded 2026-07-23):
+// The primary detector uses jschardet-ultra (pure JS, covers 100+ encodings including CJK, API-compatible with the old jschardet);
+// The sampling window is enlarged from 64KB to 1MB; low-confidence hits fall back to utf-8; BOM takes priority.
+// Additionally a "CJK second pass" decodes candidate encodings with iconv and counts U+FFFD replacement characters,
+// correcting multi-byte encodings (GBK/Big5 etc.) misdetected as UTF-8, to avoid garbled CJK text.
+const SAMPLE_LIMIT = 1 << 20 // 1MB: balances accuracy against the cost of very large files
 const ENC_ALIAS: Record<string, string> = {
   UTF8: 'utf-8', UTF16: 'utf-16le', UTF16LE: 'utf-16le', UTF16BE: 'utf-16be',
   UTF32: 'utf-32le', UTF32LE: 'utf-32le', GB2312: 'gbk', GBK: 'gbk',
@@ -71,7 +71,7 @@ export function normEnc(name: string): string {
   return ENC_ALIAS[name.toUpperCase()] ?? name.toLowerCase()
 }
 
-// 统计某编码解码后产生的 U+FFFD 替换符数量（越少说明该编码越匹配；∞ 表示无法解码）。
+// Count U+FFFD replacement chars produced when decoding with a given encoding (fewer = better match; Infinity = undecodable).
 function countReplacements(sample: Buffer, encName: string): number {
   if (!iconv.encodingExists(encName)) return Infinity
   let decoded: string
@@ -87,10 +87,10 @@ function countReplacements(sample: Buffer, encName: string): number {
   return n
 }
 
-// CJK 二次判断：比较 UTF-8 与常见 CJK 编码的解码干净程度，纠正 GBK/Big5 被误判为 UTF-8。
-// 仅当 primary 落在 “UTF-8 / CJK 候选 / 低置信度” 范围内才调用（见 detectEncoding 的 inCjkScope 闸门），
-// 以免把强置信的非 CJK 编码（如西里尔 windows-1251、ISO-8859-5）误覆盖为 GBK——
-// GBK 解码任意字节通常 0 替换符，会比真实编码“更干净”从而抢占 best。
+// CJK second pass: compare how cleanly UTF-8 vs common CJK encodings decode, correcting GBK/Big5 misdetected as UTF-8.
+// Only called when primary is in the "UTF-8 / CJK candidate / low confidence" range (see the inCjkScope gate in detectEncoding);
+// this avoids wrongly overriding high-confidence non-CJK encodings (e.g. Cyrillic windows-1251, ISO-8859-5) with GBK —
+// GBK decoding arbitrary bytes usually yields 0 replacements, making it appear "cleaner" than the real encoding and seizing best.
 const CJK_CANDIDATES = ['utf-8', 'gbk', 'big5', 'shift_jis', 'euc-kr']
 function cjkSecondPass(sample: Buffer, primary: string): { enc: string; confidence: number } {
   let best = primary
@@ -120,8 +120,8 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   if (!r.encoding) return { enc: 'utf-8', confidence: 0 }
   const primary = normEnc(r.encoding)
   const primaryConf = r.confidence ?? 0
-  // 二次判断闸门：仅 UTF-8 / CJK 候选 / 低置信度 才进入 CJK 二次判断；
-  // 强置信的其它编码（西里尔、拉丁等）直接采信，避免被 CJK 候选误覆盖。
+  // Second-pass gate: only UTF-8 / CJK candidates / low confidence enter the CJK second pass;
+  // other high-confidence encodings (Cyrillic, Latin, etc.) are trusted directly to avoid being wrongly overridden by CJK candidates.
   const inCjkScope = primary === 'utf-8' || CJK_CANDIDATES.includes(primary) || primaryConf < 0.6
   if (!inCjkScope) {
     return primaryConf < 0.6 ? { enc: 'utf-8', confidence: primaryConf } : { enc: primary, confidence: primaryConf }
@@ -129,9 +129,9 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   const fixed = cjkSecondPass(sample, primary)
   return fixed.confidence < 0.6 ? { enc: 'utf-8', confidence: fixed.confidence } : fixed
 }
-// 原始 Buffer 读取 → 检测编码 → 解码为字符串（带编码元数据）。
+// Raw Buffer read -> detect encoding -> decode to string (with encoding metadata).
 export function readMarkdownText(filePath: string): { text: string; encoding: string; confidence: number } {
-  const buf = readFileSync(filePath) // 原始 Buffer，不指定编码
+  const buf = readFileSync(filePath) // raw Buffer, no encoding specified
   const { enc, confidence } = detectEncoding(buf)
   return { text: iconv.decode(buf, enc), encoding: enc, confidence }
 }
@@ -149,16 +149,19 @@ function getDefaultDocsDir(): string {
   return docsDir
 }
 
-// 获取主窗口的引用（registerDocumentHandlers 在 createWindow 之前调用，
-// 因此通过 getter 延迟获取，避免闭包捕获到 null）。
+// Get a reference to the main window (registerDocumentHandlers is called before createWindow,
+// so we fetch it lazily via a getter to avoid the closure capturing null).
 let _getMainWindow: (() => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null) | null = null
 
-// ─── 磁盘文件改动监听 ────────────────────────────────────────────
-// 按文档 id 维护一个 fs.FSWatcher。当被监听的文件在磁盘上被其它程序
-// 修改时，主动通知渲染层，由它询问用户是否重新加载。
-// 我们自己写入文件时会临时压制一段时间，避免误报“文件已改动”。
+// ─── Disk file change watching ────────────────────────────────────────
+// Maintain one fs.FSWatcher per document id. When the watched file is modified on disk by another
+// program, proactively notify the renderer, which asks the user whether to reload.
+// We temporarily suppress notifications while we write the file ourselves, to avoid false "file changed" alerts.
 const fileWatchers = new Map<string, FSWatcher>()
 const suppressUntil = new Map<string, number>()
+// Baseline mtime of the "last confirmed unchanged" state of the watched file. Used when filename is null
+// to determine whether the file itself changed (see the watchDocument callback).
+const watchedMtime = new Map<string, number>()
 
 function watchDocument(id: string): void {
   if (fileWatchers.has(id)) return
@@ -172,13 +175,43 @@ function watchDocument(id: string): void {
   }
   if (!row?.file_path || !existsSync(row.file_path)) return
   const filePath = row.file_path
+  // Record the starting mtime as the "unchanged" baseline (for comparison when filename is null)
+  try {
+    watchedMtime.set(filePath, statSync(filePath).mtimeMs)
+  } catch {
+    watchedMtime.delete(filePath)
+  }
   let timer: ReturnType<typeof setTimeout> | null = null
   try {
-    const watcher = watch(filePath, () => {
+    const watcher = watch(filePath, (_event, filename) => {
       const now = Date.now()
       if (now < (suppressUntil.get(filePath) ?? 0)) return
+      // Treat as an external change only when the modified file is the watched file itself:
+      // fs.watch on Windows watches the whole directory, not a single file, so other writes in the
+      // same directory (e.g. exporting HTML to foo.html, or another tool editing a sibling file) also fire this callback.
+      // ① When filename is known: compare filenames directly and ignore if different;
+      // ② When filename is null (some platforms omit it): fall back to comparing the watched file's own
+      //    mtime - if unchanged it was a sibling file's write and should be ignored, otherwise we'd falsely
+      //    report "file changed" and pop a dialog that disrupts the current document/workspace (this is exactly
+      //    why exporting HTML into the same directory falsely triggered the watcher).
+      // This way, exporting HTML etc. (writing to sibling files) never falsely alerts or disturbs the workspace.
+      if (filename) {
+        if (basename(filename) !== basename(filePath)) return
+      } else {
+        try {
+          if (statSync(filePath).mtimeMs === (watchedMtime.get(filePath) ?? -1)) return
+        } catch {
+          // If unreadable, conservatively treat as a real change
+        }
+      }
       if (timer) clearTimeout(timer)
       timer = setTimeout(() => {
+        // Re-confirm the mtime actually changed before sending (avoid races in a tiny window), then record latest mtime
+        try {
+          watchedMtime.set(filePath, statSync(filePath).mtimeMs)
+        } catch {
+          /* ignore */
+        }
         const win = _getMainWindow?.()
         if (win) win.webContents.send('app:file-changed', { id, filePath })
       }, 300)
@@ -198,6 +231,15 @@ function unwatchDocument(id: string): void {
       // ignore
     }
     fileWatchers.delete(id)
+  }
+  // Fetch the document's file path to clean up the mtime baseline
+  try {
+    const row = getDb()
+      .prepare('SELECT file_path FROM documents WHERE id = ?')
+      .get(id) as { file_path: string } | undefined
+    if (row?.file_path) watchedMtime.delete(row.file_path)
+  } catch {
+    // ignore
   }
 }
 
@@ -287,8 +329,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       const newContent = updates.content ?? existing.content
       const wordCount = countWords(newContent)
 
-      // Write to file（压制随后由本次写入触发的“文件已改动”通知）
-      // 按文档元数据中的原始编码写回，保持字节级保真（R5）。
+      // Write to file (suppress the "file changed" notification that this write would otherwise trigger)
+      // Write back in the document's original metadata encoding to preserve byte-level fidelity (R5).
       suppressUntil.set(existing.file_path, Date.now() + 2000)
       writeFileSync(existing.file_path, iconv.encode(newContent, existing.encoding || 'utf-8'))
 
@@ -320,8 +362,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     }
   )
 
-  // Save As：将内容写入一个全新的文件路径，并把数据库记录指向该新文件
-  // （folder_path / file_path / title 同步更新）。原文件保持不变。
+  // Save As: write the content to a brand-new file path and point the DB record at that new file
+  // (folder_path / file_path / title are updated in sync). The original file is left untouched.
   ipcMain.handle(
     'documents:save-as',
     (_event, id: string, newFilePath: string, updates: { title?: string; content?: string }) => {
@@ -336,10 +378,10 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       const wordCount = countWords(content)
       const now = Date.now()
 
-      // 压制新文件的“文件已改动”通知（我们自己的写入）
+      // Suppress the new file's "file changed" notification (our own write)
       suppressUntil.set(newFilePath, Date.now() + 2000)
       mkdirSync(dirname(newFilePath), { recursive: true })
-      // 另存为：以源文档原始编码写回（副本沿用其编码，R5）。
+      // Save As: write back in the source document's original encoding (the copy inherits that encoding, R5).
       writeFileSync(newFilePath, iconv.encode(content, existing.encoding || 'utf-8'))
 
       const folderPath = dirname(newFilePath)
@@ -354,8 +396,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     }
   )
 
-  // Reload：从磁盘重新读取当前文件内容，写回数据库并返回最新文档。
-  // 若文件已被删除，则返回 null。
+  // Reload: re-read the current file from disk, write back to the DB, and return the latest document.
+  // Returns null if the file has been deleted.
   ipcMain.handle('documents:reload', (_event, id: string) => {
     const db = getDb()
     const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
@@ -375,7 +417,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     return toDocument(row)
   })
 
-  // 监听 / 取消监听某个文档对应文件的磁盘改动
+  // Watch / unwatch disk changes for the file backing a document
   ipcMain.handle('documents:watch', (_event, id: string) => {
     watchDocument(id)
   })
@@ -419,8 +461,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       .prepare('SELECT * FROM documents WHERE file_path = ?')
       .get(filePath) as DocumentRow | undefined
     if (existing) {
-      // 重新打开已导入的文件：以磁盘当前内容为准刷新数据库记录，
-      // 避免加载到过期的缓存内容（例如上次会话未保存的改动、或外部程序已修改）。
+      // Re-open an already-imported file: refresh the DB record from the current on-disk content,
+      // avoiding stale cached content (e.g. unsaved changes from a previous session, or external edits).
       db.prepare(
         'UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?'
       ).run(text, wordCount, encoding, confidence, now, existing.id)
@@ -466,7 +508,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
 
         const existing = selectByPath.get(filePath) as DocumentRow | undefined
         if (existing) {
-          // 已导入过的文件：以磁盘当前内容刷新记录，确保加载的是最新内容
+          // Already-imported file: refresh the record from the current on-disk content to ensure the latest is loaded
           db.prepare(
             'UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?'
           ).run(content, wordCount, parsed.encoding, parsed.confidence, now, existing.id)
@@ -486,8 +528,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     return results
   })
 
-  // 读取文件“原始换行符”（仅读前 64KB，避免大文件开销）：保存时据此还原行尾。
-  // 以磁盘文件本身为准，不受数据库内容（可能被旧版本改写过）影响。
+  // Read the file's original line endings (only the first 64KB, to avoid cost on large files): restored on save.
+  // Trust the on-disk file itself, not the DB content (which an older version may have rewritten).
   ipcMain.handle('documents:eol', (_event, filePath: string) => {
     try {
       if (!existsSync(filePath)) return '\n'
@@ -502,7 +544,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     }
   })
 
-  // 文件详情：返回磁盘上的大小 / 创建时间 / 修改时间（用于详情对话框）
+  // File details: return the on-disk size / creation time / modification time (for the details dialog)
   ipcMain.handle('documents:stat', (_event, filePath: string) => {
     try {
       const st = statSync(filePath)
@@ -517,8 +559,8 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     }
   })
 
-  // 手动切换编码：用用户选定编码重新解码磁盘文件，更新数据库内容与编码元数据。
-  // 不写磁盘（文件字节不变），仅刷新内存中的解码结果，供编辑器重新渲染。
+  // Manual encoding switch: re-decode the on-disk file with the user-selected encoding and update DB content + encoding metadata.
+  // Does not write to disk (file bytes unchanged); only refreshes the in-memory decode result for the editor to re-render.
   ipcMain.handle('documents:set-encoding', (_event, id: string, enc: string) => {
     const db = getDb()
     const row = db.prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as

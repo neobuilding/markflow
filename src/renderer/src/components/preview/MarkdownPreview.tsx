@@ -6,7 +6,7 @@ import { SafeHtml } from '../SafeHtml'
 import { scrollSync } from '../../lib/scrollSync'
 import { debounce } from '../../lib/utils'
 import { sanitizeHtml } from '../../lib/sanitize'
-import { setExportHtml } from '../../lib/exportStore'
+import { setExportHtml, setExportContent } from '../../lib/exportStore'
 import mermaid from 'mermaid'
 
 let mermaidInitialized = false
@@ -17,12 +17,12 @@ function ensureMermaid(): void {
   }
 }
 
-// 模块级串行队列：mermaid 内部有全局状态（共享 id/临时 DOM），并发 render 会串图/报错，
-// 故所有 render 排队执行。
+// Module-level serial queue: mermaid has internal global state (shared id / temp DOM),
+// so concurrent renders would corrupt diagrams / throw. All renders are queued.
 let mermaidChain: Promise<unknown> = Promise.resolve()
 function renderMermaidSvg(id: string, code: string): Promise<{ svg: string }> {
   const task = mermaidChain.then(() => mermaid.render(id, code.trim()))
-  mermaidChain = task.catch(() => undefined) // 失败也续链，不影响后续
+  mermaidChain = task.catch(() => undefined) // Keep the chain alive on failure so later renders aren't blocked.
   return task as Promise<{ svg: string }>
 }
 
@@ -37,12 +37,13 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   const lastDocIdRef = useRef<string | null | undefined>(undefined)
   const [renderedHtml, setRenderedHtml] = useState('')
   const [loading, setLoading] = useState(true)
-  // docId 取自全局 store，经 comlink 传入 Worker 用于 appdoc: 图片重写。
+  // docId comes from the global store and is passed to the Worker via comlink for appdoc: image rewriting.
   const docId = useUIStore((s) => s.activeDocumentId)
 
-  // 解析：经 comlink 发 Worker，失败自动降级主线程。
-  // 首屏 / 切换文档时立即解析（不防抖）；仅同一文档连续输入才防抖 150ms 合并，
-  // 避免把防抖延迟加在“打开 / 切换文档”关键路径上（否则预览会先空等才出）。
+  // Parsing: sent to the Worker via comlink, with automatic fallback to the main thread on failure.
+  // Parse immediately on first paint / document switch (no debounce); only debounce 150ms for
+  // consecutive keystrokes within the same document, so the "open / switch document" critical path
+  // never waits on the debounce (otherwise the preview would sit empty first).
   useEffect(() => {
     const token = ++renderToken.current
     const isDocSwitch = docId !== lastDocIdRef.current
@@ -50,7 +51,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     const immediate = isDocSwitch || renderedHtml === ''
     let cancelled = false
 
-    // 切换文档：立即清空旧内容并显示 Loading，避免旧文件内容残留。
+    // On document switch: clear old content immediately and show Loading to avoid stale content.
     if (isDocSwitch) {
       setRenderedHtml('')
       setLoading(true)
@@ -60,8 +61,9 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
       parseMarkdown(content, docId)
         .then(async (res: RenderResult) => {
           if (cancelled || token !== renderToken.current) return
-          // 注入前烘焙 mermaid：把占位 <div data-mermaid-slot="{i}"> 替换为原始 SVG，
-          // 得到含 mermaid SVG 的完整 HTML 串；净化由后续 SafeHtml 单次完成。
+          // Bake mermaid before injection: replace placeholder <div data-mermaid-slot="{i}"> with
+          // the raw SVG, producing the full HTML string containing mermaid SVGs; sanitization is
+          // done once later by SafeHtml.
           let html = res.html
           if (res.mermaid.length > 0) {
             ensureMermaid()
@@ -72,7 +74,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
                 const out = await renderMermaidSvg(id, m.code)
                 svgs[m.slot] = out.svg
               } catch {
-                svgs[m.slot] = '<div class="mermaid-skeleton">⚠ Mermaid 渲染失败</div>'
+                svgs[m.slot] = '<div class="mermaid-skeleton">⚠ Mermaid render failed</div>'
               }
             }
             html = html.replace(
@@ -81,13 +83,15 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
             )
           }
           if (cancelled || token !== renderToken.current) return
-          // 暂存“已净化”的预览 HTML 作为导出的唯一数据源（R7 单一数据源）。
-          // SafeHtml 渲染时会再次净化（幂等），保持单点语义。
+          // Stash the "sanitized" preview HTML as the single source of truth for export (R7 single source).
+          // SafeHtml sanitizes again on render (idempotent), keeping the single-point semantics.
           setExportHtml(sanitizeHtml(html))
+          // Stash the raw markdown (frontmatter intact) so export/print can resolve <html lang> on demand.
+          setExportContent(content)
           setRenderedHtml(html)
           setLoading(false)
-          // 兜底：解析完成后（大图可能已就绪或稍后就绪）至少对齐一次，
-          // 修正图片高度跳变引起的半屏错位（Final Design §3.1）。
+          // Fallback: after parsing completes (large images may be ready now or soon), realign once
+          // to fix the half-screen offset caused by image height jumps (Final Design §3.1).
           requestAnimationFrame(() => scrollSync.realign())
         })
         .catch((err) => {
@@ -97,9 +101,9 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
         })
     }
 
-    // 切换文档用 setTimeout(0)：合并“docId 先变、content 经 useLocalDocument 的
-    // effect 后变”的瞬时双渲染，仅向 Worker 发送最终 (docId, content) 一次。
-    // 同文档连续输入：150ms 防抖合并击键。
+    // Document switch uses setTimeout(0): merge the transient double render where "docId changes
+    // first, content changes later via useLocalDocument's effect" into a single (docId, content)
+    // send to the Worker. For consecutive keystrokes in the same document: debounce 150ms.
     const t = setTimeout(run, immediate ? 0 : 150)
     return () => {
       cancelled = true
@@ -107,9 +111,10 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     }
   }, [content, docId])
 
-  // 容器级 error 委托：图片加载失败时降级为占位符（覆盖注入 HTML 内的所有 <img>）。
-  // 同时挂 load 委托（capture 阶段才能捕获 <img> 的 load）：图片就绪后预览高度变化，
-  // 防抖重对齐同步滚动，修正因高度跳变导致的半屏错位（W5-D）。
+  // Container-level error delegation: downgrade failed images to a placeholder (covers all <img>
+  // inside the injected HTML). Also attach a load delegate (capture phase, needed to catch <img>
+  // load) so that after an image is ready and the preview height changes, a debounced realign
+  // keeps scroll in sync, fixing the half-screen offset from height jumps (W5-D).
   useEffect(() => {
     const container = previewRef.current
     if (!container) return
@@ -122,7 +127,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
       const placeholder = document.createElement('span')
       placeholder.className = 'img-error-placeholder'
       const alt = img.getAttribute('alt') ?? ''
-      placeholder.textContent = alt ? `⚠ 图片加载失败：${alt}` : '⚠ 图片加载失败'
+      placeholder.textContent = alt ? `⚠ Image failed to load: ${alt}` : '⚠ Image failed to load'
       placeholder.style.cssText =
         'display:inline-block;padding:4px 8px;margin:4px 0;border:1px dashed var(--color-border);' +
         'border-radius:6px;color:var(--color-text-tertiary);font-size:12px;background:var(--color-surface-overlay);'
@@ -137,7 +142,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     }
   }, [renderedHtml])
 
-  // 注册到同步滚动控制器（preview 侧）。
+  // Register with the scroll-sync controller (preview side).
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return

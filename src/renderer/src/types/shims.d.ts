@@ -1,2 +1,3 @@
-// 第三方模块缺少官方类型声明时的最小补充（保持 tsc 通过）。
+// Minimal supplemental declarations for third-party modules lacking official types (keeps tsc happy).
 declare module 'markdown-it-task-lists'
+declare module 'markdown-it-texmath'

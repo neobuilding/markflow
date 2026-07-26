@@ -1,7 +1,7 @@
-// Markdown 解析管线（markdown-render-v2-simple 设计）。
-// 在 Worker 内运行：把 Markdown 源解析为单段 HTML 字符串 + mermaid 占位数组。
-// 净化与 mermaid 烘焙在渲染进程完成（见 sanitize.ts / MarkdownPreview.tsx），
-// 本文件只负责「解析」，不碰 DOM（Worker 友好）。
+// Markdown parsing pipeline (markdown-render-v2-simple design).
+// Runs inside a Worker: parse Markdown source into a single HTML string + a mermaid slot array.
+// Sanitization and mermaid baking happen in the renderer (see sanitize.ts / MarkdownPreview.tsx);
+// this file only handles "parsing" and never touches the DOM (Worker-friendly).
 import MarkdownIt from 'markdown-it'
 import anchor from 'markdown-it-anchor'
 import frontMatter from 'markdown-it-front-matter'
@@ -10,6 +10,7 @@ import githubAlerts from 'markdown-it-github-alerts'
 import taskLists from 'markdown-it-task-lists'
 import hljs from 'highlight.js'
 import katex from 'katex'
+import texmath from 'markdown-it-texmath'
 
 export interface MermaidSlot {
   slot: number
@@ -22,32 +23,11 @@ export interface RenderResult {
   mermaid: MermaidSlot[]
 }
 
-// 稳定字符串哈希（djb2），用于 mermaid 缓存键与占位标识。
+// Stable string hash (djb2), used for mermaid cache keys and placeholder ids.
 export function hashCode(s: string): string {
   let h = 0
   for (const c of s) h = (Math.imul(h, 31) + c.charCodeAt(0)) | 0
   return (h >>> 0).toString(36)
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-function renderKatex(tex: string, displayMode: boolean): string {
-  try {
-    return katex.renderToString(tex, {
-      displayMode,
-      throwOnError: false,
-      output: 'htmlAndMathml',
-    })
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return `<span class="katex-error" title="${escapeHtml(msg)}">${escapeHtml(tex)}</span>`
-  }
 }
 
 const md: MarkdownIt = new MarkdownIt({
@@ -63,7 +43,7 @@ const md: MarkdownIt = new MarkdownIt({
           '</code></pre>'
         )
       } catch {
-        /* 落到自动识别 */
+        /* fall through to auto-detect */
       }
     }
     try {
@@ -76,90 +56,40 @@ const md: MarkdownIt = new MarkdownIt({
   },
 })
 
-// 标题锚点 id（供目录/定位；不生成可点击 permalink）。
+// Heading anchor ids (for TOC / navigation; does not generate clickable permalinks).
 md.use(anchor, { permalink: false })
 
-// Frontmatter 剥离（丢弃，不渲染进预览）。
+// Frontmatter stripping (discarded, not rendered into preview).
 md.use(frontMatter, () => {})
 
-// GitHub Alerts：> [!NOTE] 等 → <div class="markdown-alert markdown-alert-note">。
+// GitHub Alerts: > [!NOTE] etc. -> <div class="markdown-alert markdown-alert-note">.
 md.use(githubAlerts)
 
-// GFM 任务列表：- [ ] / - [x] → <li><input type="checkbox" disabled>。
+// GFM task lists: - [ ] / - [x] -> <li><input type="checkbox" disabled>.
 md.use(taskLists as any, { enabled: true, label: true })
 
-// 自定义容器：:::warning / :::note / :::tip / :::caution / :::important / :::info
-// → <div class="warning"> 等。@types/markdown-it-container 的声明与默认导入存在
-// 互通摩擦，故用 md.use 并以 any 桥接（运行时即 container(md, name)）。
+// Custom containers: :::warning / :::note / :::tip / :::caution / :::important / :::info
+// -> <div class="warning"> etc. The @types/markdown-it-container declaration and default import have
+// interop friction, so we use md.use with an any bridge (runs as container(md, name) at runtime).
 for (const name of ['warning', 'note', 'tip', 'caution', 'important', 'info']) {
   md.use(container as any, name)
 }
 
-// ─── 数学公式（自写 fence/inline 规则调 katex.renderToString，避免第三方插件兼容性风险） ───
-// 行内 $...$（含货币空格守卫：首尾空格视为普通文本，如 $5 and $10）。
-md.inline.ruler.before('escape', 'math_inline', (state, silent) => {
-  const src = state.src
-  const pos = state.pos
-  if (src.charCodeAt(pos) !== 0x24 /* $ */) return false
-  if (src.charCodeAt(pos + 1) === 0x24) return false // $$ 交给块级规则
-  const end = src.indexOf('$', pos + 1)
-  if (end === -1) return false
-  const content = src.slice(pos + 1, end)
-  if (!content.trim()) return false
-  if (/^\s|\s$/.test(content)) return false // 货币写法守卫
-  if (silent) {
-    state.pos = end + 1
-    return true
-  }
-  const token = state.push('math_inline', 'math', 0)
-  token.content = content
-  token.markup = '$'
-  state.pos = end + 1
-  return true
+// ─── Math formulas (markdown-it-texmath handles $…$ / $$…$$ delimiter recognition, KaTeX does the rendering) ───
+// Only enable the dollars delimiter style (not the brackets \(…\) / \[…\] style).
+// [Pure dependency, zero patching] We do not modify texmath internals: keep texmath's default <eq>/<eqn>/<section>
+// wrappers, which are non-standard tags dropped by DOMPurify during sanitization while the inner KaTeX is kept;
+// <section> is a standard HTML tag and is kept, serving only as a harmless block-level semantic wrapper (see Plan §7 risk 4).
+// Formula boundary detection (delimiter recognition, inline/block split, currency $ guard via $_pre/$_post) is 100%
+// from the regex rules injected by texmath; this project writes no $ / $$ boundary-detection code of its own.
+md.use(texmath, {
+  engine: katex,
+  delimiters: 'dollars',
+  katexOptions: { throwOnError: false, output: 'htmlAndMathml' },
 })
-md.renderer.rules.math_inline = (tokens, idx) => renderKatex(tokens[idx].content, false)
 
-// 块级 $$...$$（支持跨多行，至首个以 $$ 结尾的行结束）。
-md.block.ruler.before('fence', 'math_block', (state, startLine, endLine, silent) => {
-  const startPos = state.bMarks[startLine] + state.tShift[startLine]
-  const max = state.eMarks[startLine]
-  if (state.src.slice(startPos, startPos + 2) !== '$$') return false
-  if (silent) return false
-
-  let content = ''
-  let found = false
-  let lastLine = startLine
-  const firstLine = state.src.slice(startPos + 2, max)
-  if (firstLine.trim().endsWith('$$')) {
-    content = firstLine.trim().slice(0, -2)
-    found = true
-  } else {
-    content = firstLine
-    for (let line = startLine + 1; line <= endLine; line++) {
-      const lp = state.bMarks[line] + state.tShift[line]
-      const lm = state.eMarks[line]
-      const text = state.src.slice(lp, lm)
-      lastLine = line
-      if (text.trim().endsWith('$$')) {
-        content += '\n' + text.trim().slice(0, -2)
-        found = true
-        break
-      }
-      content += '\n' + text
-    }
-  }
-  if (!found) return false
-  const token = state.push('math_block', 'math', 0)
-  token.block = true
-  token.content = content.trim()
-  token.markup = '$$'
-  state.line = lastLine + 1
-  return true
-})
-md.renderer.rules.math_block = (tokens, idx) => renderKatex(tokens[idx].content, true) + '\n'
-
-// ─── Mermaid 抽离：把 ```mermaid 围栏替换为占位 <div data-mermaid-slot="{i}">，
-// 并把源码收集进 env.mermaid（纯字符串，无需 DOM）。渲染进程在注入前烘焙 SVG。 ───
+// ─── Mermaid extraction: replace ```mermaid fences with placeholder <div data-mermaid-slot="{i}">,
+//   and collect the source into env.mermaid (plain string, no DOM needed). The renderer bakes SVG before injection. ───
 const defaultFence =
   md.renderer.rules.fence ||
   ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options))
@@ -177,7 +107,7 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   return defaultFence(tokens, idx, options, env, self)
 }
 
-// ─── 相对图片改写为 appdoc://<docId>/<相对路径>（外链/数据/已 appdoc: 不动） ───
+// ─── Rewrite relative images to appdoc://<docId>/<relativePath> (leave external/data/already-appdoc: alone) ───
 const defaultImage =
   md.renderer.rules.image ||
   ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options))
@@ -186,7 +116,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const token = tokens[idx]
   const src = token.attrGet('src') || ''
   if (/^https?:/i.test(src)) {
-    // 远程图：收紧来源站点（隐藏 Referer），避免泄露本地文件路径。
+    // Remote image: tighten the source site (hide Referer) to avoid leaking the local file path.
     token.attrSet('referrerpolicy', 'no-referrer')
   } else if (!/^(https?:|data:|appdoc:)/i.test(src)) {
     const docId = (env as { docId?: string | null }).docId
@@ -196,7 +126,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   return defaultImage(tokens, idx, options, env, self)
 }
 
-// 解析入口：返回整篇 HTML（含 mermaid 占位）+ mermaid 源码数组。
+// Parse entry: return the whole HTML (with mermaid placeholders) + the mermaid source array.
 export function render(content: string, docId: string | null): RenderResult {
   const env = { docId, mermaid: [] as MermaidSlot[] }
   const html = md.render(content, env)

@@ -2,7 +2,7 @@
 
 import type { Document, SearchResult, ThemeMode } from './types'
 
-// 文件在磁盘上的状态信息（大小 / 创建时间 / 修改时间）
+// Status information of a file on disk (size / creation time / modification time)
 export interface FileStat {
   exists: boolean
   size: number
@@ -10,7 +10,7 @@ export interface FileStat {
   updatedAt: number
 }
 
-// 主进程通过原生菜单 / 文件关联触发的事件名
+// Event names triggered by the main process via native menus / file associations
 export type MenuEvent =
   | 'new-document'
   | 'save'
@@ -46,7 +46,7 @@ export interface Api {
   }
   export: {
     embedImages: (html: string) => Promise<string>
-    write: (path: string, html: string) => Promise<void>
+    write: (path: string, html: string, overwrite?: boolean) => Promise<void>
     print: (html: string) => Promise<void>
   }
   search: {

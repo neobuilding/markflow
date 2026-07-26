@@ -90,8 +90,8 @@ describe('sanitizeHtml — KaTeX MathML accessibility', () => {
   })
 })
 
-describe('sanitizeHtml — R6 加固（FORBID_TAGS / on* 钩子）', () => {
-  it('strips <foreignObject> (SVG 内嵌 HTML 的 XSS 面)', () => {
+describe('sanitizeHtml — R6 hardening (FORBID_TAGS / on* hook)', () => {
+  it('strips <foreignObject> (SVG-embedded HTML XSS surface)', () => {
     const out = sanitizeHtml('<svg><foreignObject><div onload="evil()">x</div></foreignObject></svg>')
     expect(out).not.toContain('foreignObject')
   })
@@ -132,5 +132,18 @@ describe('sanitizeHtml — integration with markdownPipeline', () => {
     const { html } = render('Inline $E=mc^2$ end\n', 'doc-1')
     const out = sanitizeHtml(html)
     expect(out).toContain('class="katex"')
+  })
+
+  it('strips texmath <eq>/<eqn> wrappers but keeps inner katex', async () => {
+    const { render } = await import('./markdownPipeline')
+    const { html } = render('Inline $E=mc^2$ end\n\n$$\nx=1\n$$\n', 'doc-1')
+    // texmath default output wraps inline in <eq> and block in <section><eqn>.
+    expect(html).toContain('<eq')
+    const out = sanitizeHtml(html)
+    // non-standard <eq>/<eqn> tags are dropped by DOMPurify ...
+    expect(out).not.toContain('<eq')
+    // ... while the inner KaTeX rendering is retained.
+    expect(out).toContain('class="katex"')
+    expect(out).toContain('katex-display')
   })
 })

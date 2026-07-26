@@ -15,16 +15,18 @@ export default defineConfig({
   // resolve correctly inside the app bundle. A root-relative base would make
   // chunks point to /assets/... on the filesystem, where they don't exist.
   base: './',
-  // Worker 内 unified 管线依赖若干“同形（isomorphic）”包，这些包的 package.json
-  // 为浏览器环境解析到带 DOM 依赖的变体（如 decode-named-character-reference 的
-  // index.dom.js 用 document.createElement；hast-util-from-html-isomorphic 的
-  // lib/browser.js 用 DOMParser）。Web Worker 既没有 document 也没有 DOMParser，
-  // 会导致 Worker 加载即抛 `document is not defined` / `DOMParser is not defined`、
-  // comlink 调用永久挂起、预览一直停在 "Loading preview…"。
+  // The unified pipeline inside the Worker depends on several "isomorphic" packages
+  // whose package.json resolves to DOM-dependent variants for the browser (e.g.
+  // decode-named-character-reference's index.dom.js uses document.createElement;
+  // hast-util-from-html-isomorphic's lib/browser.js uses DOMParser). A Web Worker has
+  // neither document nor DOMParser, which would make the Worker throw
+  // `document is not defined` / `DOMParser is not defined` on load, hang the comlink
+  // call forever, and leave the preview stuck at "Loading preview…".
   //
-  // 这些包都已提供 `worker`（及 default）导出条件，指向 DOM-free 变体。这里用别名
-  // 强制走这些版本（渲染进程同样可用，无副作用）。别名在 dev 预打包与 build 中均生效，
-  // 是最可靠的修复手段。
+  // These packages all provide a `worker` (and default) export condition pointing to
+  // DOM-free variants. We force those versions via aliases (also usable in the renderer,
+  // no side effects). The alias takes effect in both dev pre-bundling and build, and is
+  // the most reliable fix.
   resolve: {
     alias: {
       'decode-named-character-reference': fileURLToPath(
@@ -35,10 +37,11 @@ export default defineConfig({
       ),
     },
   },
-  // 解析 Worker（parse.worker.ts）构建为 ES module（R1/G5）。
-  // 严禁为此新增 electron 插件的 renderer 选项（见下方注释）。
-  // 额外：让 Worker 构建优先解析 `worker` 导出条件（而非默认的 `browser`），
-  // 覆盖任何遗漏的同类包（unified 生态普遍提供 worker 条件），避免 DOM 依赖进入 Worker。
+  // Resolve the Worker (parse.worker.ts) build as an ES module (R1/G5).
+  // Do NOT add a renderer option to the electron plugin for this (see comment below).
+  // Additionally: let the Worker build prefer the `worker` export condition (instead of
+  // the default `browser`), covering any missed sibling packages (unified ecosystem widely
+  // provides the worker condition) and keeping DOM dependencies out of the Worker.
   worker: {
     format: 'es',
     resolve: {
@@ -90,6 +93,14 @@ export default defineConfig({
   server: {
     port: 5174,
     strictPort: false,
+    // Key: In Vite dev mode, changes to .html files in the project root trigger a full page
+    // reload. When the user exports HTML into the project (e.g. examples/demo.html), the write
+    // is misread as a source change, causing the renderer to reload and lose workspace state.
+    // Here we ignore changes to any .html other than index.html — keeping index.html hot-reload
+    // while avoiding accidental reloads from export operations.
+    watch: {
+      ignored: (path) => /[^/\\]\.html$/i.test(path) && !/index\.html$/i.test(path),
+    },
   },
   build: {
     outDir: 'dist/renderer',

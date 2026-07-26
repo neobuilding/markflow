@@ -1,6 +1,6 @@
-# md2html 功能演示
+# Markdown 功能演示
 
-> **增强版 Markdown → HTML 转换工具** — 支持 Mermaid 图表、代码高亮、数学公式。
+> 这是一个通用的 Markdown 演示文档，覆盖常见的 Markdown 语法、GFM 扩展与图表功能，可用于测试任何 Markdown 渲染工具的输出是否符合预期。
 
 ---
 
@@ -9,30 +9,43 @@
 | 功能 | 状态 | 说明 |
 |------|------|------|
 | 标准 Markdown | ✅ | 标题、列表、链接、图片等 |
-| Mermaid 图表 | ✅ | 流程图、时序图、甘特图 |
-| 代码高亮 | ✅ | Pygments 服务端渲染，450+ 语言 |
-| 数学公式 | ✅ | LaTeX 语法，MathJax 渲染 |
-| 任务列表 | ✅ | 勾选框支持 |
+| GFM 表格 | ✅ | 表头、对齐、单元格内嵌 |
+| Mermaid 图表 | ✅ | 流程图、时序图、甘特图、饼图等 |
+| 代码高亮 | ✅ | 多种编程语言 |
+| 数学公式 | ✅ | 行内、块级；定界符风格有两种，均属 LaTeX 数学语法：美元符 `$...$`/`$$...$$` 与括号 `\(...\)`/`\[...\]` |
+| 任务列表 | ✅ | GFM 风格勾选框 |
 
 ## ✅ 任务列表
 
-- [x] 完成核心转换逻辑
-- [x] 添加 Mermaid 支持
-- [x] 添加代码高亮
-- [ ] 添加 PDF 导出
-- [ ] 添加实时预览
+- [x] 已完成项示例
+- [x] 另一项已完成
+- [ ] 待办项示例
+- [ ] 另一项待办
 
 ## 📐 数学公式
 
-行内公式：$E = mc^2$
+以下覆盖几种常见写法；不同渲染工具支持的语法子集可能不同。
 
-块级公式：
+**货币 / 非公式边界测试：**
+
+- 我买了苹果花了$5又买了橘子花了$10。
+- 我买了苹果花了 $5 又买了橘子花了 $10 。
+
+**行内公式（美元符）：** $E = mc^2$
+
+**行内公式（LaTeX 括号）：** \(E = mc^2\)
+
+**行内公式（美元符 + 内侧空格）：** $ E = mc^2 $
+
+**行内公式（美元符 + 数字边界）：** $5^2 = 25$
+
+**块级公式：**
 
 $$
-\int_{0}^{\infty} e^{-x^2} dx = \frac{\sqrt{\pi}}{2}
+\int_{0}^{\infty} e^{-x^2} \, dx = \frac{\sqrt{\pi}}{2}
 $$
 
-矩阵：
+**矩阵：**
 
 $$
 \begin{bmatrix}
@@ -54,12 +67,10 @@ $$
 
 ```mermaid
 graph TD
-    A[Markdown 文件] --> B{md2html}
-    B -->|浅色主题| C[Light HTML]
-    B -->|深色主题| D[Dark HTML]
-    C --> E[浏览器查看]
-    D --> E
-    E --> F[打印 / 分享]
+    A[Markdown 源] --> B{解析器}
+    B --> C[HTML 输出]
+    C --> D[浏览器查看]
+    D --> E[打印 / 分享]
 ```
 
 ## 🔷 Mermaid 时序图
@@ -67,15 +78,15 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant U as 用户
-    participant T as md2html
+    participant T as 工具
     participant B as 浏览器
 
-    U->>T: md2html doc.md -o doc.html
+    U->>T: tool doc.md -o doc.html
     T->>T: 解析 Markdown
-    T->>T: 渲染 Mermaid
-    T->>T: 高亮代码
-    T->>B: 输出 HTML 文件
-    B->>U: 美观的文档 ✨
+    T->>T: 渲染图表与代码
+    T->>T: 处理数学公式
+    T->>B: 输出 HTML
+    B->>U: 显示结果
 ```
 
 ## 🔷 Mermaid 甘特图
@@ -173,13 +184,13 @@ ORDER BY date DESC;
 
 ```bash
 #!/bin/bash
-# 批量转换 Markdown 文件
-MD2HTML="md2html"
+# 批量处理 Markdown 文件
+TOOL="markdown-tool"
 
 for file in docs/*.md; do
     name=$(basename "$file" .md)
-    echo "转换: $file → output/${name}.html"
-    $MD2HTML "$file" -o "output/${name}.html" --theme dark
+    echo "处理: $file → output/${name}.html"
+    $TOOL "$file" -o "output/${name}.html"
 done
 
 echo "✅ 全部完成！"
@@ -200,27 +211,27 @@ echo "✅ 全部完成！"
 ## 🎯 提示块（Admonitions）
 
 !!! note "注意"
-    这是 `pymdownx.admonition` 扩展支持的提示块，可以自定义标题。
+    一些 Markdown 工具支持 `!!! type "标题"` 形式的提示块，可自定义标题。
 
 !!! warning "警告"
-    确保已安装所有依赖：`pip install markdown pymdown-extensions pygments`
+    不同工具支持的语法子集不尽相同，使用前请参考对应工具的文档。
 
 !!! tip "提示"
-    使用 `--theme dark` 切换到深色模式，适合夜间阅读。
+    许多 Markdown 工具支持深色模式与自定义主题。
 
 !!! info "信息"
-    Mermaid 图表由应用本地打包（Vite 将 `mermaid` 作为代码块动态导入并打包进渲染进程），无需联网、无需 CDN，离线即可正常渲染。
+    Mermaid 图表语法由支持该扩展的工具渲染，是否需要联网取决于具体实现。
 
 ## 📋 定义列表
 
 Markdown
-: 一种轻量级标记语言，由 John Gruber 创建
+:: 一种轻量级标记语言，由 John Gruber 创建
 
 HTML
-: 超文本标记语言，用于创建网页的标准语言
+:: 超文本标记语言，用于创建网页的标准语言
 
 CSS
-: 层叠样式表，用于描述 HTML 文档的外观
+:: 层叠样式表，用于描述 HTML 文档的外观
 
 ## 🔗 缩写支持
 
@@ -232,7 +243,7 @@ HTML 是 Web 的基础。CSS 负责样式，JS 负责交互。
 
 ## 📸 图片
 
-![占位图](https://via.placeholder.com/600x200/0366d6/ffffff?text=md2html+Demo)
+![占位图](https://via.placeholder.com/600x200/0366d6/ffffff?text=Markdown+Demo)
 
 ---
 
