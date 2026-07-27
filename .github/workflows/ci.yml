@@ -13,18 +13,18 @@ on:
     workflow_dispatch:
 
 permissions:
-    contents: write # release 经 API 推 tag + 建 draft release 都需要
+    contents: read # 默认最小权限；仅 release job 提权到 write 用于推 tag / 建 draft release
 
 # 按 ref 隔离并发；cancel-in-progress:false 保护在途 release 出包不被打断
 concurrency:
     group: ci-${{ github.ref }}
     cancel-in-progress: false
 
-# 版本号的唯一来源是 compute-version job：它只「算」不「打」，先跑并输出 tag 与 version；
-# build / release 都从 compute-version 的 outputs 读取，杜绝两处重复推断、保证一致。
-#   - push 到 main / dispatch  → compute-version 算出 v{ver}-{提交时间}.{短SHA}（不推送）
-#   - 推送 v* tag             → compute-version 复用已有 tag，version = tag 去 v
-#   - PR / 非 main 分支 push  → compute-version 输出为空：build 不注入（用基础版）、release 不跑
+# 版本号的唯一来源是 test job：它只「算」不「打」，在 checkout 后算出 tag 与 version 并输出；
+# build / release 都从 test 的 outputs 读取，杜绝两处重复推断、保证一致。
+#   - push 到 main / dispatch  → test 算出 v{ver}-{提交时间}.{短SHA}（不推送）
+#   - 推送 v* tag             → test 复用已有 tag，version = tag 去 v
+#   - PR / 非 main 分支 push  → test 输出为空：build 不注入（用基础版）、release 不跑
 # 「打 tag」的动作推迟到 release 阶段，通过 gh api 推送（无需 checkout），幂等可复现；
 # 同一 commit 重跑得到相同 tag（提交时间取自 committer date，稳定）。
 env:
@@ -34,34 +34,15 @@ jobs:
     test:
         name: Typecheck, Test & Build
         runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v7
-            - uses: actions/setup-node@v7
-              with: { node-version: 22, cache: npm }
-            - run: npm ci
-            - run: npm run typecheck
-            - run: npm run test
-            - run: npm run build
-
-    # 版本号的唯一来源：只「算」不「打」。不 checkout、不推 tag，纯靠 gh api 读取
-    # package.json 基础版本与提交时间，输出 tag + version 给下游。
-    #   - 推送 v* tag 时复用已有 tag（version = tag 去 v 前缀）；
-    #   - push main / dispatch 时算出滚动版 tag（见下）；
-    #   - PR 时输出为空（不推断），让 build/release 退化为纯验证。
-    # 因为不 checkout，本 job 几乎只做两次 API 调用 + 一个 echo，开销趋近于 0，
-    # 从而 build 在 test 之后可立即跟上，不再被 checkout/推送拖慢。
-    compute-version:
-        name: Compute version
-        needs: test
-        runs-on: ubuntu-latest
+        # 版本号的唯一来源：只「算」不「打」，在 checkout 后算出 tag/version 并输出给下游。
         outputs:
             tag: ${{ steps.compute.outputs.tag }}
             version: ${{ steps.compute.outputs.version }}
         steps:
-            - name: Compute version (no checkout)
+            - uses: actions/checkout@v7
+            - name: Compute version
               id: compute
-              env:
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              shell: bash
               run: |
                   set -e
                   # PR：不推断版本，输出为空，让下游只做验证
@@ -75,28 +56,37 @@ jobs:
                     VERSION="${GITHUB_REF_NAME#v}"
                     echo "::notice::Tag push ${TAG}; reusing existing tag."
                   else
-                    # 基础版本取自 package.json（经 API 读取，避免 checkout）
-                    BASE=$(gh api "repos/${{ github.repository }}/contents/package.json" \
-                              --jq '.content' | base64 -d \
-                              | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+                    # 基础版本直接读 checkout 后的 package.json（无 API 依赖）
+                    # node 显式校验 version 为「非空字符串」：缺失/非字符串/JSON 非法时退出非零，
+                    # 配合 || true 避免被 set -e 提前中断，从而由下方判断打印友好报错而非静默生成非法 tag。
+                    BASE=$(node -p "const v=require('./package.json').version; if(typeof v!=='string'||!v){process.exit(1)} v" || true)
+                    if [[ -z "$BASE" ]]; then
+                      echo "::error::无法从 package.json 读取 version 字段（缺失或非字符串）" >&2
+                      exit 1
+                    fi
                     # 短 SHA（取完整 sha 前 7 位）
-                    SHA7="${{ github.sha }}"
-                    SHA7="${SHA7:0:7}"
+                    SHA7="${GITHUB_SHA:0:7}"
                     # 提交时间取自 committer date（稳定，保证同 commit 幂等）
-                    CTIME=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}" --jq '.commit.committer.date')
+                    CTIME=$(git show -s --format=%cI "${GITHUB_SHA}")
                     BUILDTIME="$(date -u -d "$CTIME" +%Y%m%dT%H%M%SZ)"
                     TAG="v${BASE}-${BUILDTIME}.${SHA7}"
                     VERSION="${BASE}-${BUILDTIME}.${SHA7}"
                   fi
                   echo "tag=$TAG" >> "$GITHUB_OUTPUT"
                   echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            - uses: actions/setup-node@v7
+              with: { node-version: 22, cache: npm }
+            - run: npm ci
+            - run: npm run typecheck
+            - run: npm run test
+            - run: npm run build
 
     # 永远运行（PR / 非 main push / main push / tag push / dispatch）：三平台 build + dist。
     # 这是全仓库唯一一次三平台构建——PR 当验证用，main/tag push 当出包用，杜绝重复 build。
-    # 版本来自 compute-version 的输出（唯一来源）：非空才注入，空（PR）则用 package.json 基础版。
+    # 版本来自 test 的输出（唯一来源）：非空才注入，空（PR）则用 package.json 基础版。
     build:
         name: Build (${{ matrix.os }})
-        needs: [test, compute-version]
+        needs: [test]
         runs-on: ${{ matrix.os }}
         strategy:
             fail-fast: false
@@ -145,14 +135,14 @@ jobs:
 
             - run: npm ci
 
-            # 注入 compute-version 算出的版本（唯一来源）。
+            # 注入 test 算出的版本（唯一来源）。
             # 非空（main/tag/dispatch）→ app 内部「关于」与文件名都带完整滚动版；
             # 空（PR）→ 不注入，用 package.json 基础版本号。
-            - name: Inject version from compute-version
-              if: needs.compute-version.outputs.version != ''
+            - name: Inject version from test
+              if: needs.test.outputs.version != ''
               shell: bash
               run: |
-                  npm version --no-git-tag-version --no-commit-hooks "${{ needs.compute-version.outputs.version }}"
+                  npm version --no-git-tag-version --no-commit-hooks "${{ needs.test.outputs.version }}"
 
             - run: npm run build
             - run: npm run dist:${{ matrix.target }}
@@ -160,7 +150,7 @@ jobs:
             # 仅 release 路径（version 非空）上传产物；PR 只验证不传（省存储）
             # 只上传最终发布格式（dmg/zip/AppImage），排除 unpacked 目录等中间物以大幅缩减 artifact 体积
             - name: Upload artifact (release path only)
-              if: needs.compute-version.outputs.version != ''
+              if: needs.test.outputs.version != ''
               uses: actions/upload-artifact@v7
               with:
                   name: ${{ matrix.artifact-name }}
@@ -172,13 +162,18 @@ jobs:
                   retention-days: 7
 
     # 下载三平台产物 → 打 tag（经 API，幂等）→ 生成 SHA256SUMS → 建 draft release（不 publish）。
-    # 文件名已带完整版本（build 阶段注入 compute-version 的版本），无需改名；只按允许清单发布，无需删除任何文件。
-    # 「打 tag」从 compute-version 推迟到此：用 gh api 创建 git ref，无需 checkout；
+    # 文件名已带完整版本（build 阶段注入 test 的版本），无需改名；只按允许清单发布，无需删除任何文件。
+    # 「打 tag」从 test 推迟到此：用 gh api 创建 git ref，无需 checkout；
     # tag 已存在（如重跑）则跳过，避免冲突。无论 draft 是否保留，tag 都留下（可追溯）。
     release:
         name: Draft Release
-        needs: [build, compute-version]
-        if: needs.compute-version.outputs.tag != ''
+        # 需同时直接依赖 build（下载产物）与 test（读取其算出的 tag）。
+        # 注意：needs 上下文只暴露「直接」依赖的 outputs，test 是 build 的间接依赖，
+        # 若不在此显式列出，needs.test.* 会解析为 undefined（CI 报错上下文无效）。
+        needs: [build, test]
+        if: needs.test.outputs.tag != ''
+        permissions:
+            contents: write # 推 tag + 建 draft release 需要写权限
         runs-on: ubuntu-latest
         steps:
             # 仅「计算版本」路径（非 tag push）才需打 tag；tag push 时 tag 已存在。
@@ -188,15 +183,20 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   set -e
-                  TAG="${{ needs.compute-version.outputs.tag }}"
-                  # 幂等：tag 已存在则跳过
-                  if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
+                  TAG="${{ needs.test.outputs.tag }}"
+                  # 幂等：已存在则跳过；创建失败再确认是否已存在（并发重跑），仍失败才报错。
+                  # 仅吞 stdout，保留 stderr 以便排查 gh api 异常（如返回 HTML）。
+                  if gh api -X GET "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null; then
                     echo "::notice::Tag $TAG already exists; skipping."
-                  else
-                    gh api -X POST "repos/${{ github.repository }}/git/refs" \
+                  elif gh api -X POST "repos/${{ github.repository }}/git/refs" \
                       -f "ref=refs/tags/$TAG" \
-                      -f "sha=${{ github.sha }}"
+                      -f "sha=${{ github.sha }}" >/dev/null; then
                     echo "::notice::Pushed tag $TAG."
+                  elif gh api -X GET "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null; then
+                    echo "::notice::Tag $TAG already exists (created by concurrent run); continuing."
+                  else
+                    echo "::error::Failed to push tag $TAG"
+                    exit 1
                   fi
 
             - uses: actions/download-artifact@v8
@@ -217,10 +217,11 @@ jobs:
             - name: Create draft Release
               uses: softprops/action-gh-release@v3
               with:
-                  name: ${{ needs.compute-version.outputs.tag }}
-                  tag_name: ${{ needs.compute-version.outputs.tag }}
+                  name: ${{ needs.test.outputs.tag }}
+                  tag_name: ${{ needs.test.outputs.tag }}
                   draft: true
                   prerelease: false
+                  allowUpdates: true # 重发（同 tag 重跑）时更新已有 draft，而非报错失败
                   files: |
                       artifacts/markflow-macos/*.dmg
                       artifacts/markflow-windows/*.zip
