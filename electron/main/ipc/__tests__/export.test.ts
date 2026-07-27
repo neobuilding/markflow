@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { registerExportHandlers } from '../export'
-import { writeFileSync, mkdtempSync, readFileSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 // better-sqlite3 is a native module compiled against the Electron ABI in the main process,
 // so it can't load under the system Node (it would trigger a node-gyp rebuild and hang for a

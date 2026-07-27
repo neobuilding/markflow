@@ -1,9 +1,9 @@
 // electron/main/index.ts - MarkFlow main process (ESM)
 import { app, shell, BrowserWindow, ipcMain, Menu, dialog, nativeTheme, session, screen, protocol } from 'electron'
-import { join, dirname, resolve, extname } from 'path'
-import { tmpdir } from 'os'
-import { pathToFileURL } from 'url'
-import { readdirSync, statSync, readFileSync, existsSync } from 'fs'
+import { join, dirname, resolve, extname } from 'node:path'
+import { tmpdir } from 'node:os'
+import { pathToFileURL } from 'node:url'
+import { readdirSync, statSync, readFileSync, existsSync } from 'node:fs'
 import { registerDocumentHandlers } from './ipc/documents'
 import { registerSearchHandlers } from './ipc/search'
 import { registerExportHandlers } from './ipc/export'

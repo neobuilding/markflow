@@ -45,6 +45,7 @@ export async function buildStandaloneHtml(opts: {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'none'">
 <title>Exported Markdown</title>
 <style>${css}</style>
 <style>${katexCss}</style>

@@ -2,8 +2,8 @@
 // containment" checks. Extracted into a standalone module so the main process
 // (index.ts) and ipc/export.ts can share it without export.ts importing index.ts
 // and re-triggering its top-level side effects (registerSchemesAsPrivileged).
-import { extname, sep } from 'path'
-import { realpathSync } from 'fs'
+import { extname, sep } from 'node:path'
+import { realpathSync } from 'node:fs'
 
 // MIME map for images the appdoc:// protocol may return.
 export const APPDOC_MIME: Record<string, string> = {
@@ -28,13 +28,16 @@ export function isSubdir(parent: string, child: string): boolean {
 }
 
 // Parse appdoc://<docId>/<relativePath>.
-// Gotcha: new URL('appdoc://doc-123/a.png') puts doc-123 into hostname and leaves
-// pathname as just '/a.png' (docId is not the first path segment). So prefer hostname
-// for docId and fall back to the first path segment; take the relative path from
-// pathname and percent-decode it so filenames with spaces / non-ASCII characters
+// Requires the canonical appdoc://<docId>/<relPath> form: docId must be in the
+// hostname, the hostname must be a plain identifier (alphanumeric, -, _), and the
+// relative path must be non-empty. This avoids confusing docId with a path segment
+// (e.g. appdoc:doc-123/a.png) and blocks malformed hostnames.
+// Percent-decode the path so filenames with spaces / non-ASCII characters
 // (the browser encodes them as %20 / %E4%B8%AD etc.) are restored correctly.
 // Invalid forms (non-appdoc protocol, missing relative path) return null; the caller
 // treats that as "do not inline / 404".
+const DOC_ID_RE = /^[a-zA-Z0-9_-]+$/
+
 export function parseAppDocUrl(input: string): { docId: string; relPath: string } | null {
   let u: URL
   try {
@@ -42,10 +45,13 @@ export function parseAppDocUrl(input: string): { docId: string; relPath: string 
   } catch {
     return null
   }
-  if (u.protocol !== 'appdoc:') return null
-  const docId = u.hostname || u.pathname.replace(/^\/+/, '').split('/')[0]
+  // Require the canonical appdoc://<docId>/<relPath> form so the docId is always
+  // in the hostname and cannot be confused with a path segment.
+  if (u.protocol !== 'appdoc:' || !u.hostname) return null
+  const docId = u.hostname
+  if (!DOC_ID_RE.test(docId)) return null
   const raw = u.pathname.replace(/^\/+/, '')
-  if (!docId || !raw) return null
+  if (!raw) return null
   let relPath: string
   try {
     relPath = decodeURIComponent(raw)

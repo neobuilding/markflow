@@ -1,5 +1,5 @@
-import { join } from 'path'
-import { mkdirSync, existsSync, unlinkSync } from 'fs'
+import { join } from 'node:path'
+import { mkdirSync, existsSync, unlinkSync } from 'node:fs'
 import type { App } from 'electron'
 import type Database from 'better-sqlite3'
 

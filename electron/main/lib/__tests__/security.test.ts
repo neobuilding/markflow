@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach } from 'vitest'
 import { parseAppDocUrl, isSubdir } from '../security'
-import { writeFileSync, mkdtempSync, rmSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 // Collect the temp dirs/files created by this test and clean them up after each case, to
 // avoid polluting the system temp directory.
@@ -44,6 +44,12 @@ describe('parseAppDocUrl (R4/R6 appdoc 解析)', () => {
   })
   it('非法 URL → null（不抛异常）', () => {
     expect(parseAppDocUrl('not a url')).toBeNull()
+  })
+  it('非规范形式 appdoc:doc-123/a.png（缺少 //）→ null', () => {
+    expect(parseAppDocUrl('appdoc:doc-123/a.png')).toBeNull()
+  })
+  it('hostname 含非法字符 → null', () => {
+    expect(parseAppDocUrl('appdoc://doc 123/a.png')).toBeNull()
   })
 })
 

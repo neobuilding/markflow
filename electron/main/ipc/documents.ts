@@ -3,10 +3,10 @@ import type { App } from 'electron'
 import { getDb } from '../db/database'
 
 let _app: App | null = null
-import { join, dirname, basename } from 'path'
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, watch, statSync, openSync, readSync, closeSync } from 'fs'
-import type { FSWatcher } from 'fs'
-import { randomUUID } from 'crypto'
+import { join, dirname, basename } from 'node:path'
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, watch, statSync, openSync, readSync, closeSync } from 'node:fs'
+import type { FSWatcher } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
 import iconv from 'iconv-lite'
 
@@ -61,14 +61,14 @@ function toDocument(row: DocumentRow): Document {
 // Additionally a "CJK second pass" decodes candidate encodings with iconv and counts U+FFFD replacement characters,
 // correcting multi-byte encodings (GBK/Big5 etc.) misdetected as UTF-8, to avoid garbled CJK text.
 const SAMPLE_LIMIT = 1 << 20 // 1MB: balances accuracy against the cost of very large files
-const ENC_ALIAS: Record<string, string> = {
-  UTF8: 'utf-8', UTF16: 'utf-16le', UTF16LE: 'utf-16le', UTF16BE: 'utf-16be',
-  UTF32: 'utf-32le', UTF32LE: 'utf-32le', GB2312: 'gbk', GBK: 'gbk',
-  GB18030: 'gbk', CP936: 'gbk', BIG5: 'big5',
-  'WINDOWS-1252': 'win1252', 'ISO-8859-1': 'latin1',
-}
+const ENC_ALIAS = new Map<string, string>([
+  ['UTF8', 'utf-8'], ['UTF16', 'utf-16le'], ['UTF16LE', 'utf-16le'], ['UTF16BE', 'utf-16be'],
+  ['UTF32', 'utf-32le'], ['UTF32LE', 'utf-32le'], ['GB2312', 'gbk'], ['GBK', 'gbk'],
+  ['GB18030', 'gbk'], ['CP936', 'gbk'], ['BIG5', 'big5'],
+  ['WINDOWS-1252', 'win1252'], ['ISO-8859-1', 'latin1'],
+])
 export function normEnc(name: string): string {
-  return ENC_ALIAS[name.toUpperCase()] ?? name.toLowerCase()
+  return ENC_ALIAS.get(name.toUpperCase()) ?? name.toLowerCase()
 }
 
 // Count U+FFFD replacement chars produced when decoding with a given encoding (fewer = better match; Infinity = undecodable).
@@ -173,7 +173,7 @@ function watchDocument(id: string): void {
   } catch {
     return
   }
-  if (!row?.file_path || !existsSync(row.file_path)) return
+  if (!row?.file_path || typeof row.file_path !== 'string' || !existsSync(row.file_path)) return
   const filePath = row.file_path
   // Record the starting mtime as the "unchanged" baseline (for comparison when filename is null)
   try {
@@ -195,7 +195,7 @@ function watchDocument(id: string): void {
       //    report "file changed" and pop a dialog that disrupts the current document/workspace (this is exactly
       //    why exporting HTML into the same directory falsely triggered the watcher).
       // This way, exporting HTML etc. (writing to sibling files) never falsely alerts or disturbs the workspace.
-      if (filename) {
+      if (typeof filename === 'string' && filename.length > 0) {
         if (basename(filename) !== basename(filePath)) return
       } else {
         try {

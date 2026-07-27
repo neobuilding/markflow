@@ -7,11 +7,12 @@
 // Image reading / network fetching must happen in the main process (the renderer sandbox has no Node API).
 import type { IpcMain } from 'electron'
 import { BrowserWindow } from 'electron'
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
-import { tmpdir } from 'os'
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { getDb } from '../db/database'
 import { isSubdir, APPDOC_MIME, parseAppDocUrl } from '../lib/security'
-import { dirname, extname, resolve, join } from 'path'
+import { dirname, extname, resolve, join } from 'node:path'
 
 function b64(buf: Buffer): string {
   return buf.toString('base64')
@@ -77,11 +78,14 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
   // This way, even if another entry point misuses export:write, it won't overwrite the user's file without confirmation.
   ipcMain.handle(
     'export:write',
-    (_e, path: string, html: string, overwrite = false): void => {
-      if (existsSync(path) && !overwrite) {
+    (_e, filePath: unknown, html: unknown, overwrite = false): void => {
+      if (typeof filePath !== 'string' || typeof html !== 'string') {
+        throw new TypeError('export:write expects string path and html')
+      }
+      if (existsSync(filePath) && !overwrite) {
         throw new Error('FILE_EXISTS') // already confirmed by renderer; the normal flow won't hit this
       }
-      writeFileSync(path, html, 'utf-8') // html is a utf-8 string (with the original encoding-declaring <meta>)
+      writeFileSync(filePath, html, 'utf-8') // html is a utf-8 string (with the original encoding-declaring <meta>)
     }
   )
 
@@ -105,7 +109,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       show: false,
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
     })
-    const tmp = join(tmpdir(), `mf-print-${process.pid}-${Date.now()}.html`)
+    const tmp = join(tmpdir(), `mf-print-${process.pid}-${randomUUID()}.html`)
     try {
       writeFileSync(tmp, html, 'utf-8')
       await win.loadFile(tmp)
@@ -231,7 +235,10 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
   // Print: pop the system print dialog so the user picks the physical printer / copies / margins / target (can save as PDF).
   // Failures (invalid printer settings, no usable printer, etc.) are thrown upward as-is for the renderer to surface; no silent downgrade.
   // Note: this is real printing and is NOT downgraded to "export a PDF file".
-  ipcMain.handle('export:print', async (_e, html: string): Promise<void> => {
+  ipcMain.handle('export:print', async (_e, html: unknown): Promise<void> => {
+    if (typeof html !== 'string') {
+      throw new TypeError('export:print expects string html')
+    }
     await openPrintDialog(html)
   })
 }

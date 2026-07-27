@@ -2,9 +2,9 @@
 import { describe, it, expect } from 'vitest'
 import { detectEncoding, normEnc, readMarkdownText } from '../documents'
 import iconv from 'iconv-lite'
-import { writeFileSync, mkdtempSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { writeFileSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 describe('encoding — detectEncoding (R5)', () => {
   it('BOM 优先：UTF-8 BOM', () => {
