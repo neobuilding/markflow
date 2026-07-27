@@ -1,12 +1,16 @@
-// 同步滚动控制器：在拆分视图（split）下，让源码窗格与预览窗格的滚动位置
-// 保持同步。两侧内容高度不同，因此采用“滚动比例”算法：
-//   目标滚动比例 = 源滚动比例（已滚动量 / 可滚动总量）
-// 这样无论两侧内容高度差异多大，都能保持视觉位置基本一致。
+// Scroll-sync controller: keeps the source pane and preview pane scroll positions
+// aligned in the split view.
 //
-// 耦合防护：当程序化地设置某一侧的 scrollTop 时，会触发该侧的 scroll 事件
-// （即“回声”）。我们用一个锁标记 syncedPane 记录“刚刚被程序化滚动的那一侧”，
-// 该侧的回声事件到来时直接忽略并解锁，从而避免无限回滚 / 抖动。
-// 同时用一个短延时兜底清理锁，防止某些情况下回声事件未触发导致锁永久不释放。
+// Bidirectional ratio mapping: both sides use `ratio = src.scrollTop /
+// (src.scrollHeight - src.clientHeight)` projected onto the other side's absolute
+// scrollTop. Ratio mapping is inherently continuous and jump-free, and is immune to
+// height jumps from uneven block density / async mermaid rendering / content-visibility
+// (in this design mermaid is baked fully before injection, so there is no async growth).
+// This is the industry-standard approach (used by VS Code / Typora / Obsidian).
+//
+// Echo guard: when one side is scrolled programmatically we set the syncedPane lock and
+// that side's echo scroll event is ignored (it is not released here); the lock is cleared
+// by armClear's timer (80ms) to avoid reverse-sync jitter from repeated echo events.
 
 export type PaneId = 'editor' | 'preview'
 
@@ -15,6 +19,10 @@ class ScrollSyncController {
   private handlers: Partial<Record<PaneId, () => void>> = {}
   private syncedPane: PaneId | null = null
   private clearTimer: ReturnType<typeof setTimeout> | null = null
+  private rafId: number | null = null
+  // The pane that most recently acted as the "scroll source": after async image
+  // loads change the preview height, the other side is re-aligned from this.
+  private lastSource: PaneId = 'editor'
 
   register(id: PaneId, el: HTMLElement): void {
     if (this.elements[id]) this.unregister(id)
@@ -41,27 +49,69 @@ class ScrollSyncController {
     }
   }
 
-  private handleScroll(id: PaneId): void {
-    // 这是“回声”事件：刚刚由我们程序化滚动触发，忽略并解锁
-    if (this.syncedPane === id) {
-      this.clearLock()
-      return
-    }
+  private scheduleSync(fn: () => void): void {
+    if (this.rafId !== null) cancelAnimationFrame(this.rafId)
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null
+      fn()
+    })
+  }
 
-    const src = this.elements[id]
-    const destId: PaneId = id === 'editor' ? 'preview' : 'editor'
+  private sync(srcId: PaneId, destId: PaneId): void {
+    const src = this.elements[srcId]
     const dest = this.elements[destId]
     if (!src || !dest) return
 
-    const srcMax = src.scrollHeight - src.clientHeight
-    const destMax = dest.scrollHeight - dest.clientHeight
-    if (srcMax <= 0 || destMax <= 0) return
+    // Edge alignment: when the source hits top/bottom, snap the target to top/bottom.
+    if (src.scrollTop <= 0) {
+      this.syncedPane = destId
+      dest.scrollTop = 0
+      this.armClear()
+      return
+    }
+    if (src.scrollTop + src.clientHeight >= src.scrollHeight - 1) {
+      this.syncedPane = destId
+      dest.scrollTop = dest.scrollHeight - dest.clientHeight
+      this.armClear()
+      return
+    }
 
+    const srcMax = Math.max(1, src.scrollHeight - src.clientHeight)
     const ratio = src.scrollTop / srcMax
+    const dstMax = Math.max(1, dest.scrollHeight - dest.clientHeight)
     this.syncedPane = destId
-    dest.scrollTop = ratio * destMax
+    dest.scrollTop = ratio * dstMax
+    this.armClear()
+  }
 
-    // 兜底：若某些情况下回声事件未触发，延时后强制解锁
+  private handleScroll(id: PaneId): void {
+    // Echo guard: ignore this pane's own scroll event triggered by programmatic
+    // scrolling; the lock is released by armClear's timer to avoid reverse-sync
+    // jitter from repeated echo events.
+    if (this.syncedPane === id) return
+    // If the other pane was locked (the target of the previous auto-sync), treat this
+    // pane's scroll as user takeover: clear the old lock and continue syncing, removing
+    // the 80ms dead zone.
+    if (this.syncedPane !== null) this.clearLock()
+
+    // Record the scroll source for this turn (used by realign after image onload).
+    this.lastSource = id
+    const destId: PaneId = id === 'editor' ? 'preview' : 'editor'
+    this.scheduleSync(() => this.sync(id, destId))
+  }
+
+  // After async image loads change the preview/editor height, recompute the other
+  // side's ratio from the last scroll source to fix half-screen misalignment caused
+  // by height jumps (Final Design §3.1 addendum).
+  public realign(): void {
+    if (!this.lastSource) return
+    const dest: PaneId = this.lastSource === 'editor' ? 'preview' : 'editor'
+    if (!this.elements[this.lastSource] || !this.elements[dest]) return
+    const src = this.lastSource
+    this.scheduleSync(() => this.sync(src, dest))
+  }
+
+  private armClear(): void {
     if (this.clearTimer) clearTimeout(this.clearTimer)
     this.clearTimer = setTimeout(() => this.clearLock(), 80)
   }

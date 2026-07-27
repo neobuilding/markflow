@@ -34,10 +34,11 @@ export function Sidebar(): React.ReactElement | null {
 
   const { data: allDocs = [], isLoading: loading } = useDocuments()
 
-  // 仅展示“当前文件夹”内的文档（无打开文件夹时为空，由欢迎页接管）
+  // Only show documents within the "current folder" (empty when no folder is open, the welcome
+  // page takes over)
   const folderDocs = activeFolder ? allDocs.filter((d) => isInFolder(d.filePath, activeFolder)) : []
 
-  // 将当前文件夹内的文档构建成“文件夹 + 文件”嵌套树，支持子文件夹结构
+  // Build the current folder's documents into a nested "folder + file" tree, supporting subfolders
   const tree = useMemo(
     () => (activeFolder ? buildFileTree(folderDocs, activeFolder) : []),
     [folderDocs, activeFolder]
@@ -63,10 +64,10 @@ export function Sidebar(): React.ReactElement | null {
   const handleCreate = useCallback(async () => {
     const doc = await createMut.mutateAsync({ title: 'Untitled' })
     setActiveDocumentId(doc.id)
-    useUIStore.getState().setEditable(true) // 新建文档默认可编辑
+    useUIStore.getState().setEditable(true) // new documents are editable by default
   }, [createMut, setActiveDocumentId])
 
-  // 文档选中 / 删除 / 星标 / 详情：供文档树（含子文件夹）复用
+  // Document select / delete / star / details: reused by the doc tree (including subfolders)
   const handleSelectDoc = useCallback((doc: Document) => {
     if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and switch files?')) return
     setActiveDocumentId(doc.id)
@@ -304,7 +305,7 @@ interface DocItemProps {
 }
 
 function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: DocItemProps) {
-  // 受控的右下角菜单：既可通过三个点按钮打开，也可通过右键整行打开
+  // Controlled bottom-right menu: openable both via the three-dot button and by right-clicking the row
   const [menuOpen, setMenuOpen] = useState(false)
   return (
     <li
@@ -317,7 +318,8 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
       style={{ paddingLeft: depth * 12 + 12 }}
       onClick={onSelect}
       onContextMenu={(e) => {
-        // 右键打开与三个点菜单一致的上下文菜单，并屏蔽浏览器原生菜单
+        // Right-click opens the same context menu as the three-dot button, and suppresses the
+        // browser's native menu
         e.preventDefault()
         setMenuOpen(true)
       }}
@@ -376,7 +378,7 @@ interface TreeRowProps {
   onDetailsDoc: (doc: Document) => void
 }
 
-// 递归渲染文档树：文件夹可折叠，文件复用 DocItem。
+// Recursively render the document tree: folders are collapsible, files reuse DocItem.
 function TreeRow({
   node,
   depth,

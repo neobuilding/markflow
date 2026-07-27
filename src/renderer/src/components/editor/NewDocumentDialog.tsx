@@ -15,7 +15,7 @@ export function NewDocumentDialog(): React.ReactElement {
     const t = title.trim() || 'Untitled'
     const doc = await createMut.mutateAsync({ title: t })
     setActiveDocumentId(doc.id)
-    setEditable(true) // 新建文档默认可编辑
+    setEditable(true) // new documents are editable by default
     setTitle('')
     setNewDocOpen(false)
   }

@@ -14,12 +14,22 @@ interface MarkdownEditorProps {
   onChange: (content: string) => void
   autoFocus?: boolean
   editable?: boolean
+  docId?: string | null
 }
 
-export function MarkdownEditor({ content, onChange, autoFocus, editable = true }: MarkdownEditorProps): React.ReactElement {
+export function MarkdownEditor({ content, onChange, autoFocus, editable = true, docId }: MarkdownEditorProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const isInternalChange = useRef(false)
+  // The doc id currently synced: used to tell apart an "echo" (lagging content of the same
+  // document) from a genuine document switch.
+  // On a document switch we must force-apply the new content even if isInternalChange is true
+  // from just having edited.
+  const currentDocIdRef = useRef<string | null | undefined>(undefined)
+  // A programmatic write (document switch / external sync) is in progress: suppress the
+  // updateListener echo during it, otherwise the normalized editor content would be mistaken
+  // for user input and written back, causing a false "unsaved" flag after switching documents.
+  const isApplyingExternal = useRef(false)
   const editableCompartment = useRef(new Compartment())
 
   const debouncedOnChange = useMemo(
@@ -33,7 +43,7 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
     const startState = EditorState.create({
       doc: content,
       extensions: [
-        // 只读模式：禁止编辑与输入（可被 editable 变化动态重配置）
+        // Read-only mode: disable editing and input (can be reconfigured dynamically via editable)
         editableCompartment.current.of([
           EditorState.readOnly.of(!editable),
           EditorView.editable.of(editable)
@@ -53,7 +63,7 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
         }),
         autocompletion(),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
+          if (update.docChanged && !isApplyingExternal.current) {
             isInternalChange.current = true
             debouncedOnChange(update.state.doc.toString())
           }
@@ -88,7 +98,8 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
 
     viewRef.current = view
 
-    // 注册到同步滚动控制器：源码窗格作为 "editor" 一侧
+    // Register with the scroll-sync controller: the source pane acts as the "editor" side
+    // (ratio mapping, no getView needed).
     scrollSync.register('editor', view.scrollDOM)
 
     if (autoFocus) {
@@ -100,7 +111,7 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
 
     // Handle toolbar insert events
     const handleInsert = (e: Event) => {
-      if (!editable) return // 只读模式下忽略格式化插入
+      if (!editable) return // ignore formatting inserts in read-only mode
       const { before, after } = (e as CustomEvent<{ before: string; after: string }>).detail
       const v = viewRef.current
       if (!v) return
@@ -125,7 +136,8 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 切换只读 / 编辑模式时，动态重配置编辑器（不重建实例，保留光标与滚动）
+  // When toggling read-only / edit mode, reconfigure the editor dynamically (no rebuild,
+  // preserving cursor and scroll)
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
@@ -137,22 +149,33 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true }
     })
   }, [editable])
 
-  // Sync external content changes (e.g., doc switch)
+  // Sync external content changes (e.g., doc switch / reload / external file change)
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    if (isInternalChange.current) {
+    // Document switch: force-apply the new content, bypassing the echo guard (otherwise a
+    // recently-edited isInternalChange would make this effect return early, leaving the editor
+    // on the previous document while the preview has already switched).
+    const isDocSwitch = docId !== currentDocIdRef.current
+    currentDocIdRef.current = docId
+    if (isInternalChange.current && !isDocSwitch) {
       isInternalChange.current = false
       return
     }
+    isInternalChange.current = false
     const currentContent = view.state.doc.toString()
     if (currentContent !== content) {
+      // Mark as a programmatic write: suppress this frame's updateListener echo so the 400ms
+      // debounce doesn't mistake the normalized content for "unsaved changes" (dirty flag)
+      // after a document switch.
+      isApplyingExternal.current = true
       view.dispatch({
         changes: { from: 0, to: currentContent.length, insert: content },
         selection: { anchor: 0 }
       })
+      isApplyingExternal.current = false
     }
-  }, [content])
+  }, [content, docId])
 
   return (
     <div

@@ -11,20 +11,28 @@ export function useLocalDocument(
   const [editingTitle, setEditingTitle] = useState(false)
   const [dirty, setDirtyState] = useState(false)
 
-  // 最近一次“已保存”的内容/标题基准，用于计算脏状态
+  // The most recent "saved" content/title baseline, used to compute the dirty state
   const savedContentRef = useRef('')
   const savedTitleRef = useRef('')
-  // 当前文档 id，用于区分“切换文档”与“同一文档内容刷新”
+  // The current document id, used to distinguish "switching documents" from "refreshing the same document's content"
   const prevIdRef = useRef<string | null>(null)
-  // 最新 dirty，供 effect 内判断（避免闭包拿到旧值）
+  // The encoding currently applied to the document (used to detect a "manual encoding switch" event)
+  const appliedEncodingRef = useRef<string | undefined>(undefined)
+  // The latest dirty flag, for use inside effects (avoids capturing a stale value in the closure)
   const dirtyRef = useRef(false)
   dirtyRef.current = dirty
+  // Original line ending: inferred from the authoritative content (disk/database); on save we
+  // restore the editor-normalized LF back to it, so a CRLF file isn't rewritten to LF when edited
+  // (CodeMirror internally uses \n as the line separator).
+  const eolRef = useRef<'\r\n' | '\n'>('\n')
 
   useEffect(() => {
     if (!doc) return
-    // 切换到另一篇文档：始终以权威内容（磁盘/数据库）覆盖本地草稿
+    // Switching to a different document: always overwrite the local draft with the authoritative content (disk/database)
     if (doc.id !== prevIdRef.current) {
       prevIdRef.current = doc.id
+      appliedEncodingRef.current = doc.encoding
+      eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
       setLocalContent(doc.content)
       setLocalTitle(doc.title)
       savedContentRef.current = doc.content
@@ -33,13 +41,15 @@ export function useLocalDocument(
       useUIStore.getState().setDirty(false)
       return
     }
-    // 同一文档的权威内容发生变更（保存 / 重载 / 重新打开 / 导入）：
-    // 若用户有未保存改动，则不覆盖本地草稿，仅更新“已保存”基准以便后续比较。
+    // The same document's authoritative content changed (save / reload / reopen / import):
+    // if the user has unsaved changes, don't overwrite the local draft; just update the "saved"
+    // baseline for later comparison.
     if (dirtyRef.current) {
       savedContentRef.current = doc.content
       savedTitleRef.current = doc.title
       return
     }
+    eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
     setLocalContent(doc.content)
     setLocalTitle(doc.title)
     savedContentRef.current = doc.content
@@ -48,12 +58,55 @@ export function useLocalDocument(
     useUIStore.getState().setDirty(false)
   }, [doc?.id, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Manual encoding switch (same document, encoding field changed): overwrite the local draft
+  // with the re-decoded content, clear dirty and refresh the "saved" baseline (disk bytes are
+  // unchanged, so we must not report a false dirty state).
+  useEffect(() => {
+    if (!doc) return
+    if (doc.id !== prevIdRef.current) return // document switches are handled by the effect above
+    if (doc.encoding === appliedEncodingRef.current) return
+    appliedEncodingRef.current = doc.encoding
+    setLocalContent(doc.content)
+    setLocalTitle(doc.title)
+    savedContentRef.current = doc.content
+    savedTitleRef.current = doc.title
+    setDirtyState(false)
+    useUIStore.getState().setDirty(false)
+  }, [doc?.id, doc?.encoding, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trust the on-disk file's own line ending (async, overriding the synchronous inference above):
+  // the database content may have been rewritten by an older version, so disk is the source of
+  // truth for line endings. Only read the first 64KB, so the cost is negligible.
+  useEffect(() => {
+    if (!doc?.filePath) return
+    let cancelled = false
+    window.api.documents.eol(doc.filePath).then((eol) => {
+      if (!cancelled) eolRef.current = eol
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [doc?.id, doc?.filePath])
+
   const setDirty = useCallback((d: boolean) => {
     setDirtyState(d)
     useUIStore.getState().setDirty(d)
   }, [])
 
-  // 内容变更：仅更新本地草稿并标记脏状态，不再自动写入磁盘
+  // Before saving, restore the editor-normalized LF back to the document's original line ending,
+  // so we don't alter the file's line endings.
+  // eol defaults to eolRef (the async result read from disk); it can also be passed explicitly at
+  // save time (see EditorPane re-reading disk at save time as the final source of truth, avoiding
+  // any dependency on whether the async effect finished).
+  const toDiskFormat = useCallback((text: string, eol: '\r\n' | '\n' = eolRef.current): string => {
+    if (eol === '\r\n') {
+      return text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+    }
+    return text
+  }, [])
+
+  // Return the currently inferred original line ending (fallback if the save-time IPC fails)
+  const getEol = useCallback((): '\r\n' | '\n' => eolRef.current, [])
+
+  // Content change: only update the local draft and mark dirty; no longer auto-write to disk
   const handleContentChange = useCallback(
     (newContent: string) => {
       setLocalContent(newContent)
@@ -62,7 +115,7 @@ export function useLocalDocument(
     [setDirty]
   )
 
-  // 标题编辑完成：仅标记脏状态（真正的重命名/写入由 Save / Save As 完成）
+  // Title editing finished: only mark dirty (the actual rename/write is done by Save / Save As)
   const handleTitleSave = useCallback(() => {
     setEditingTitle(false)
     const trimmed = localTitle.trim()
@@ -74,7 +127,7 @@ export function useLocalDocument(
     setDirty(trimmed !== savedTitleRef.current)
   }, [localTitle, setDirty])
 
-  // 在 Save / Save As / Reload 成功后调用：把“已保存”基准更新为最新内容/标题
+  // Called after Save / Save As / Reload succeeds: update the "saved" baseline to the latest content/title
   const markSaved = useCallback((content: string, title: string) => {
     savedContentRef.current = content
     savedTitleRef.current = title
@@ -94,6 +147,8 @@ export function useLocalDocument(
     handleContentChange,
     handleTitleSave,
     dirty,
-    markSaved
+    markSaved,
+    toDiskFormat,
+    getEol
   }
 }

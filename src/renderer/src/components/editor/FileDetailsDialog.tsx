@@ -39,7 +39,7 @@ export function FileDetailsDialog(): React.ReactElement | null {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
-      // 忽略剪贴板不可用的情况
+      // Ignore when the clipboard is unavailable
     }
   }
 

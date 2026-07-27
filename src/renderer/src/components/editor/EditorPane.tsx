@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
 import {
   Edit3, Eye, Columns, Hash, Bold, Italic, Code, Link, List, CheckSquare, PanelLeft,
-  GripVertical, PenLine, Lock, X, FolderOpen, Folder, Save, SaveAll, RotateCcw, Info
+  GripVertical, PenLine, Lock, X, FolderOpen, Folder, Save, SaveAll, RotateCcw, Info, FileOutput
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
@@ -31,29 +31,34 @@ export function EditorPane(): React.ReactElement {
 
   const {
     localContent, setLocalContent, localTitle, setLocalTitle,
-    editingTitle, setEditingTitle, handleContentChange, handleTitleSave, dirty, markSaved
+    editingTitle, setEditingTitle, handleContentChange, handleTitleSave, dirty, markSaved, toDiskFormat, getEol
   } = useLocalDocument(doc, activeDocumentId)
 
-  // 保存/另存为/重新加载：用 ref 持有最新草稿，避免菜单/快捷键回调拿到旧闭包
+  // Save / Save As / Reload: hold the latest draft in a ref so menu / keyboard shortcuts don't capture a stale closure
   const draftRef = useRef({ localContent, localTitle })
   draftRef.current = { localContent, localTitle }
 
   const handleSave = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
     if (!id) return
-    // 只读模式下禁止保存，提示用户切换到编辑模式
+    // In read-only mode, block saving and prompt the user to switch to edit mode
     if (!useUIStore.getState().editable) return
     const { localContent, localTitle } = draftRef.current
+    // Re-read the on-disk line ending at save time as the final source of truth (don't depend on
+    // whether the async effect finished or the DB is clean)
+    const eol = doc?.filePath
+      ? await window.api.documents.eol(doc.filePath).catch(() => getEol())
+      : getEol()
     useUIStore.getState().setSaving(true)
     try {
       const updated = await updateMut.mutateAsync({
         id,
-        updates: { title: localTitle.trim() || 'Untitled', content: localContent }
+        updates: { title: localTitle.trim() || 'Untitled', content: toDiskFormat(localContent, eol) }
       })
       if (updated) {
         markSaved(updated.content, updated.title)
         useUIStore.getState().setJustSaved(true)
-        // 重新监听（文件名可能因标题变更而改名）
+        // Re-watch (the file name may have changed due to a title edit)
         window.api.documents.unwatch(id)
         window.api.documents.watch(id)
       }
@@ -63,15 +68,19 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [updateMut, markSaved])
+  }, [updateMut, markSaved, doc?.filePath, getEol])
 
   const handleSaveAs = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
     if (!id) return
-    // 只读模式下禁止另存为，提示用户切换到编辑模式
+    // In read-only mode, block Save As and prompt the user to switch to edit mode
     if (!useUIStore.getState().editable) return
     const { localContent, localTitle } = draftRef.current
     const defaultPath = doc?.filePath || `${localTitle.trim() || 'Untitled'}.md`
+    // Save As: follow the source document's on-disk line ending (the new file is a copy of this document)
+    const eol = doc?.filePath
+      ? await window.api.documents.eol(doc.filePath).catch(() => getEol())
+      : getEol()
     let newFilePath: string | null = null
     try {
       newFilePath = await window.api.dialog.saveFile(defaultPath)
@@ -84,7 +93,7 @@ export function EditorPane(): React.ReactElement {
       const updated = await saveAsMut.mutateAsync({
         id,
         filePath: newFilePath,
-        updates: { title: localTitle.trim() || 'Untitled', content: localContent }
+        updates: { title: localTitle.trim() || 'Untitled', content: toDiskFormat(localContent, eol) }
       })
       if (updated) {
         markSaved(updated.content, updated.title)
@@ -121,13 +130,14 @@ export function EditorPane(): React.ReactElement {
     }
   }, [reloadMut, markSaved])
 
-  // 关闭按钮：若有未保存改动先确认
+  // Close button: confirm first if there are unsaved changes
   const handleClose = useCallback(() => {
     if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them?')) return
     closeDocument()
   }, [closeDocument])
 
-  // 菜单（Save / Save As / Reload）与文件监听：仅注册一次，通过 ref 取最新实现
+  // Menu (Save / Save As / Reload) and file watching: register only once, pull the latest
+  // implementation via the ref
   const handlersRef = useRef({ handleSave, handleSaveAs, handleReload })
   handlersRef.current = { handleSave, handleSaveAs, handleReload }
 
@@ -138,14 +148,14 @@ export function EditorPane(): React.ReactElement {
     return () => { rmSave(); rmSaveAs(); rmReload() }
   }, [])
 
-  // 监听当前文档对应文件的磁盘改动
+  // Watch the current document's file for on-disk changes
   useEffect(() => {
     if (!activeDocumentId) return
     window.api.documents.watch(activeDocumentId).catch(() => {})
     return () => { window.api.documents.unwatch(activeDocumentId).catch(() => {}) }
   }, [activeDocumentId])
 
-  // 接收主进程发来的“文件已在磁盘被改动”事件
+  // Receive the "file changed on disk" event sent from the main process
   useEffect(() => {
     const rm = window.api.onFileChanged((data: { id: string; filePath: string }) => {
       if (data.id === useUIStore.getState().activeDocumentId) {
@@ -202,7 +212,7 @@ export function EditorPane(): React.ReactElement {
     document.dispatchEvent(new CustomEvent('markdown:insert', { detail: { before, after } }))
   }, [])
 
-  // 通用工具栏：打开/关闭/侧栏/编辑模式切换（空状态与文档状态共用）
+  // Shared toolbar: open/close/sidebar/edit-mode toggle (used by both empty and document states)
   const CommonToolbar = (
     <div className="titlebar-no-drag flex items-center gap-0.5">
       <Tooltip>
@@ -224,7 +234,7 @@ export function EditorPane(): React.ReactElement {
 
       <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
 
-      {/* Save / Save As / Reload —— 与 Open/Close 同属文件操作，统一放在左侧 */}
+      {/* Save / Save As / Reload — grouped with Open/Close as file operations, kept on the left */}
       {activeDocumentId && (
         <>
           <Tooltip>
@@ -280,6 +290,19 @@ export function EditorPane(): React.ReactElement {
             <TooltipContent>File details (⌘I)</TooltipContent>
           </Tooltip>
 
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => useUIStore.getState().setExportOpen(true)}
+              >
+                <FileOutput size={13} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Export as HTML… (⌘⇧E)</TooltipContent>
+          </Tooltip>
+
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
         </>
       )}
@@ -306,7 +329,7 @@ export function EditorPane(): React.ReactElement {
         </Tooltip>
       )}
 
-      {/* 只读 / 编辑模式切换 */}
+      {/* Read-only / edit mode toggle */}
       {editable ? (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -415,7 +438,7 @@ export function EditorPane(): React.ReactElement {
           </div>
 
           <div className="flex items-center gap-0.5">
-            {/* Formatting toolbar (仅编辑模式可用) */}
+            {/* Formatting toolbar (only available in edit mode) */}
             {viewMode !== 'preview' && editable && (
               <div className="hidden md:flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-[var(--color-border)]">
                 {[
@@ -439,7 +462,7 @@ export function EditorPane(): React.ReactElement {
               </div>
             )}
 
-            {/* Save / Save As / Reload 已移至左侧文件操作区（见 CommonToolbar） */}
+            {/* Save / Save As / Reload moved to the left file-operations area (see CommonToolbar) */}
 
             {/* View mode */}
             <div className="flex items-center rounded border border-[var(--color-border)] overflow-hidden ml-1">
@@ -470,7 +493,7 @@ export function EditorPane(): React.ReactElement {
         </div>
       </div>
 
-      {/* 文件路径 breadcrumb：以「文件夹 / 文件名」形式展示当前文件路径 */}
+      {/* File-path breadcrumb: shows the current path as "folder / file name" */}
       <div className="flex items-center gap-1 px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 text-xs overflow-hidden">
         <button
           onClick={() => doc.filePath && window.api.app.showInFolder(doc.filePath)}
@@ -504,36 +527,40 @@ export function EditorPane(): React.ReactElement {
 
       {/* Editor / Preview / Split */}
       <div ref={splitContainerRef} className="flex-1 flex min-h-0 overflow-hidden">
-        {viewMode === 'edit' && (
-          <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} />
+        {/* Editor: shown in edit / split; hidden in preview mode */}
+        {viewMode !== 'preview' && (
+          <div
+            className={viewMode === 'split' ? 'min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'}
+            style={viewMode === 'split' ? { width: `${splitRatio * 100}%` } : undefined}
+          >
+            <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} docId={activeDocumentId} />
+          </div>
         )}
-        {viewMode === 'preview' && (
-          <MarkdownPreview content={localContent} />
-        )}
+
+        {/* Draggable divider (split mode only) */}
         {viewMode === 'split' && (
-          <>
-            <div className="min-w-0 overflow-hidden" style={{ width: `${splitRatio * 100}%` }}>
-              <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} />
-            </div>
-            {/* Draggable divider */}
-            <div
-              onMouseDown={startSplitDrag}
-              className="relative w-px shrink-0 bg-[var(--color-border)] cursor-col-resize group/divider z-10"
-            >
-              <div className="absolute inset-y-0 -left-1 -right-1 hover:bg-accent/20 transition-colors" />
-              <GripVertical
-                size={12}
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 group-hover/divider:opacity-100 transition-opacity pointer-events-none"
-              />
-            </div>
-            <div className="flex-1 min-w-0 overflow-hidden">
-              <MarkdownPreview content={localContent} />
-            </div>
-          </>
+          <div
+            onMouseDown={startSplitDrag}
+            className="relative w-px shrink-0 bg-[var(--color-border)] cursor-col-resize group/divider z-10"
+          >
+            <div className="absolute inset-y-0 -left-1 -right-1 hover:bg-accent/20 transition-colors" />
+            <GripVertical
+              size={12}
+              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 group-hover/divider:opacity-100 transition-opacity pointer-events-none"
+            />
+          </div>
         )}
+
+        {/* Preview: shown in preview / split; hidden in edit mode but still mounted so the single
+            export-HTML data source stays ready (R7) */}
+        <div
+          className={viewMode === 'edit' ? 'hidden' : 'flex-1 min-w-0 overflow-hidden'}
+        >
+          <MarkdownPreview content={localContent} />
+        </div>
       </div>
 
-      {/* 磁盘文件被其它程序改动的提示 */}
+      {/* Prompt shown when the on-disk file was changed by another program */}
       {externalChange && (
         <Dialog open onOpenChange={(o) => { if (!o) clearExternalChange() }}>
           <DialogContent>

@@ -165,6 +165,9 @@ markflow/
 | Editor | CodeMirror 6 with Markdown syntax highlighting |
 | Math | KaTeX (LaTeX formula rendering) |
 | Diagrams | Mermaid.js |
+| Markdown parser | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point) |
+| Testing | Vitest + jsdom |
 | Packaging | electron-builder |
 
 ## 📦 Packaging Configuration

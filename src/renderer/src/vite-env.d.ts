@@ -2,7 +2,7 @@
 
 import type { Document, SearchResult, ThemeMode } from './types'
 
-// 文件在磁盘上的状态信息（大小 / 创建时间 / 修改时间）
+// Status information of a file on disk (size / creation time / modification time)
 export interface FileStat {
   exists: boolean
   size: number
@@ -10,7 +10,7 @@ export interface FileStat {
   updatedAt: number
 }
 
-// 主进程通过原生菜单 / 文件关联触发的事件名
+// Event names triggered by the main process via native menus / file associations
 export type MenuEvent =
   | 'new-document'
   | 'save'
@@ -23,6 +23,8 @@ export type MenuEvent =
   | 'close-workspace'
   | 'file-details'
   | 'about'
+  | 'export-html'
+  | 'print'
 
 // Electron preload bridge exposed on window.api
 export interface Api {
@@ -36,9 +38,16 @@ export interface Api {
     importMany: (filePaths: string[]) => Promise<Document[]>
     saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) => Promise<Document | null>
     reload: (id: string) => Promise<Document | null>
+    setEncoding: (id: string, encoding: string) => Promise<Document | null>
     stat: (filePath: string) => Promise<FileStat | null>
+    eol: (filePath: string) => Promise<'\r\n' | '\n'>
     watch: (id: string) => Promise<void>
     unwatch: (id: string) => Promise<void>
+  }
+  export: {
+    embedImages: (html: string) => Promise<string>
+    write: (path: string, html: string, overwrite?: boolean) => Promise<void>
+    print: (html: string) => Promise<void>
   }
   search: {
     query: (q: string) => Promise<SearchResult[]>
@@ -59,6 +68,7 @@ export interface Api {
     openFolder: () => Promise<string | null>
     openFolderPath: () => Promise<string | null>
     saveFile: (defaultPath?: string) => Promise<string | null>
+    saveHtmlFile: (defaultPath?: string) => Promise<string | null>
   }
   window: {
     maximize: () => Promise<void>
@@ -68,6 +78,7 @@ export interface Api {
   menu: {
     setEditable: (editable: boolean) => void
     setHasDocument: (has: boolean) => void
+    setPrinting: (printing: boolean) => void
   }
   onMenuEvent: (event: MenuEvent, callback: (data?: string | string[]) => void) => () => void
   onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => () => void

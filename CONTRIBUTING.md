@@ -20,7 +20,8 @@ By participating, you agree to uphold a respectful, harassment-free environment.
 - A C++ toolchain (required to compile the native `better-sqlite3` module during
   `npm install` → `electron-builder install-app-deps`):
   - **Windows**: Install **Visual Studio Build Tools** (2019 or newer) with the
-    **“使用 C++ 的桌面开发” (Desktop development with C++)** workload. This installs
+    **"Desktop development with C++"** workload (listed as “使用 C++ 的桌面开发” in the
+    Chinese installer UI). This installs
     the MSVC toolset + Windows SDK that `node-gyp` needs. Download the VS2022
     installer from <https://aka.ms/vs/17/release/vs_buildtools.exe>, or modify an
     existing install via the Visual Studio Installer.
@@ -90,6 +91,9 @@ markflow/
 | Editor | CodeMirror 6 with Markdown syntax highlighting |
 | Math | KaTeX (LaTeX formula rendering) |
 | Diagrams | Mermaid.js |
+| Markdown parser | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point) |
+| Testing | Vitest + jsdom |
 | Packaging | electron-builder |
 
 ## Coding Conventions
@@ -102,6 +106,35 @@ markflow/
 - **Type safety**: `npm run typecheck` must pass (no new `any` without reason).
 - **Security**: every PR is scanned by **CodeQL** (`codeql.yml`). If it flags something,
   triage it rather than disabling the check.
+
+## Testing
+
+MarkFlow ships **Vitest** unit tests for the Markdown rendering subsystem (the
+security-critical path: parser + single XSS sanitization gate). They run in
+`jsdom` and are exercised on every push/PR by `ci.yml`.
+
+```bash
+# Run the full suite once (CI mode)
+npm run test
+
+# Watch mode during development
+npm run test:watch
+```
+
+What's covered (see `src/renderer/src/lib/*.test.ts`):
+
+- `markdownPipeline.test.ts` — GFM (task lists, strikethrough, tables), KaTeX
+  (inline/block/currency `$` guard), Mermaid slot extraction, GitHub Alerts,
+  custom containers, Frontmatter stripping, `appdoc://` image rewriting, raw
+  HTML passthrough.
+- `sanitize.test.ts` — XSS stripping (`<script>` / `onerror` / `javascript:`),
+  the `style` whitelist (BUG-5: stripped on `div/p/pre`, kept on `span`/`code`/
+  SVG), Mermaid SVG structure retention, `data-mermaid-slot` retention, and
+  KaTeX `<math>` / `<annotation>` retention.
+
+> When you touch `markdownPipeline.ts` or `sanitize.ts`, add/extend a test so
+> the behavior stays locked. The single sanitization gate (`SafeHtml` →
+> `sanitizeHtml`) must never be bypassed.
 
 ## Release Process
 
@@ -145,21 +178,26 @@ folder for distribution — users just extract and run `MarkFlow.exe`, no instal
 > - Enable Windows **Developer Mode** (Settings → System → Developer options), or
 > - Run your terminal as Administrator.
 >
-> **winCodeSign 缓存位置**：构建时若看到 `[winCodeSign] Cache already prepared. Skipping.`，说明代码签名工具已缓存。默认缓存目录为：
+> **winCodeSign cache location**: if you see `[winCodeSign] Cache already prepared. Skipping.`
+> during a build, the code-signing tools are already cached. The default cache directory is:
 > ```
 > %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
 > ```
-> 即 `C:\Users\<用户名>\AppData\Local\electron-builder\Cache\winCodeSign`，目录内为形如 `winCodeSign-2.x.x` 的版本文件夹。
+> i.e. `C:\Users\<username>\AppData\Local\electron-builder\Cache\winCodeSign`, which
+> contains version folders named like `winCodeSign-2.x.x`.
 >
-> 查看或确认缓存目录（cmd）：
+> To inspect or confirm the cache directory (cmd):
 > ```cmd
-> rem 打印缓存路径
+> rem print the cache path
 > echo %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
-> rem 列出已缓存的版本
+> rem list cached versions
 > dir "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
 > ```
 >
-> 注意：若设置过 `CSC_CACHE` 环境变量，或在 `electron-builder` 配置中指定了自定义的 `cache`/`winCodeSign` 路径，缓存位置会被覆盖。要强制重新下载，删除该目录下对应的版本文件夹即可，下次 `npm run dist:win` 会重新拉取。
+> Note: if you have set the `CSC_CACHE` environment variable, or specified a custom
+> `cache`/`winCodeSign` path in the `electron-builder` config, the cache location is
+> overridden. To force a re-download, delete the corresponding version folder under
+> that directory; the next `npm run dist:win` will fetch it again.
 
 ## Submitting Changes
 

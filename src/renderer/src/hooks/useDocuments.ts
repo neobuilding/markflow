@@ -57,7 +57,7 @@ export function useDeleteDocument() {
   })
 }
 
-// 另存为：将内容写入新的文件路径，并把当前文档记录指向该文件
+// Save As: write the content to a new file path and point the current document record at that file
 export function useSaveDocumentAs() {
   const qc = useQueryClient()
   return useMutation({
@@ -79,7 +79,7 @@ export function useSaveDocumentAs() {
   })
 }
 
-// 从磁盘重新加载文件内容
+// Reload file content from disk
 export function useReloadDocument() {
   const qc = useQueryClient()
   return useMutation({
@@ -93,7 +93,23 @@ export function useReloadDocument() {
   })
 }
 
-// 查询磁盘上文件的详情（大小 / 创建时间 / 修改时间）
+// Manually switch encoding: re-decode the on-disk file with the chosen encoding and refresh
+// content (no write to disk).
+export function useSetEncoding() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, encoding }: { id: string; encoding: string }) =>
+      window.api.documents.setEncoding(id, encoding),
+    onSuccess: (data: Document | null) => {
+      if (data) {
+        qc.setQueryData([...DOCS_KEY, 'detail', data.id], data)
+        qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
+      }
+    }
+  })
+}
+
+// Query on-disk file details (size / created time / modified time)
 export function useFileStat(filePath: string | null | undefined) {
   return useQuery({
     queryKey: ['fileStat', filePath ?? ''],
@@ -103,7 +119,7 @@ export function useFileStat(filePath: string | null | undefined) {
   })
 }
 
-// 导入单个 Markdown 文件
+// Import a single Markdown file
 export function useImportDocument() {
   const qc = useQueryClient()
   return useMutation({
@@ -117,7 +133,7 @@ export function useImportDocument() {
   })
 }
 
-// 批量导入多个 Markdown 文件
+// Batch-import multiple Markdown files
 export function useImportDocuments() {
   const qc = useQueryClient()
   return useMutation({
@@ -130,11 +146,12 @@ export function useImportDocuments() {
   })
 }
 
-// 打开一组文件/文件夹路径：
-// 1) 由主进程将文件夹展开为 Markdown 文件列表
-// 2) 批量导入到数据库
-// 3) 将“当前文件夹”设为打开的目录（单个文件则取其所在目录），激活首个文档
-// 4) 默认以只读模式打开（editable=false）
+// Open a set of file/folder paths:
+// 1) the main process expands folders into a Markdown file list
+// 2) batch-import them into the database
+// 3) set the "current folder" to the opened directory (or the file's parent for a single file)
+//    and activate the first document
+// 4) open in read-only mode by default (editable=false)
 export function useOpenPaths() {
   const importMut = useImportDocuments()
   return useMutation({
@@ -148,13 +165,13 @@ export function useOpenPaths() {
       const ui = useUIStore.getState()
       ui.setActiveFolder(folder)
       ui.setActiveDocumentId(imported[0].id)
-      ui.setEditable(false) // 打开文件默认只读
+      ui.setEditable(false) // files open read-only by default
       return { folder, documentId: imported[0].id }
     }
   })
 }
 
-// 打开单个文件夹（批量导入其内所有 Markdown 文件）
+// Open a single folder (batch-import all Markdown files inside it)
 export function useOpenFolder() {
   const openPaths = useOpenPaths()
   return useMutation({
