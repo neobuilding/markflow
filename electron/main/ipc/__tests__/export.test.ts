@@ -5,9 +5,10 @@ import { writeFileSync, mkdtempSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-// better-sqlite3 在主进程是面向 Electron ABI 编译的原生模块，在系统 Node 下
-// 无法加载（会触发 node-gyp 重建而长时间挂起）。导出测试用 vi.mock 提供假 DB，
-// 避免触发 initDatabase → better-sqlite3 加载。
+// better-sqlite3 is a native module compiled against the Electron ABI in the main process,
+// so it can't load under the system Node (it would trigger a node-gyp rebuild and hang for a
+// long time). The export test uses vi.mock to provide a fake DB, avoiding the
+// initDatabase → better-sqlite3 load.
 const hoist = vi.hoisted(() => ({ imgDocPath: '' }))
 vi.mock('../../db/database', () => ({
   getDb: () => ({
@@ -22,7 +23,7 @@ const fakeIpcMain = {
   },
 } as unknown as import('electron').IpcMain
 
-// 1x1 透明 PNG
+// 1x1 transparent PNG
 const PNG = Buffer.from(
   '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
   'hex'

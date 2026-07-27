@@ -34,14 +34,14 @@ export function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
   }
 }
 
-// 返回文件路径的目录部分（跨平台，统一正斜杠）
+// Return the directory part of a file path (cross-platform, normalized to forward slashes)
 export function dirName(filePath: string): string {
   const norm = filePath.replace(/\\/g, '/')
   const idx = norm.lastIndexOf('/')
   return idx <= 0 ? '' : norm.slice(0, idx)
 }
 
-// 判断某个文件的目录是否位于 folder 内（含 folder 自身），大小写不敏感（Windows）
+// Whether a file's directory is inside `folder` (including folder itself); case-insensitive (Windows)
 export function isInFolder(filePath: string, folder: string): boolean {
   if (!folder) return false
   const f = folder.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
@@ -49,7 +49,7 @@ export function isInFolder(filePath: string, folder: string): boolean {
   return d === f || d.startsWith(f + '/')
 }
 
-// 返回文件路径的文件名部分（含扩展名），跨平台，统一正斜杠
+// Return the file-name part of a path (with extension); cross-platform, normalized to forward slashes
 export function baseName(filePath: string): string {
   const norm = filePath.replace(/\\/g, '/')
   const idx = norm.lastIndexOf('/')
@@ -60,7 +60,7 @@ function normalizePathSegments(filePath: string): string {
   return filePath.replace(/\\/g, '/')
 }
 
-// 将字节数格式化为人类可读的字符串（B / KB / MB / GB）
+// Format a byte count into a human-readable string (B / KB / MB / GB)
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   const units = ['KB', 'MB', 'GB', 'TB']
@@ -73,7 +73,7 @@ export function formatFileSize(bytes: number): string {
   return `${size.toFixed(size >= 10 || i === 0 ? 0 : 1)} ${units[i]}`
 }
 
-// 将时间戳格式化为完整日期时间（详情对话框使用）
+// Format a timestamp into a full date-time string (used by the details dialog)
 export function formatDateTime(ts: number): string {
   if (!ts || ts <= 0) return '—'
   return new Date(ts).toLocaleString([], {
@@ -85,20 +85,21 @@ export function formatDateTime(ts: number): string {
   })
 }
 
-// ─── 侧边栏子文件夹树 ──────────────────────────────────────────────
+// ─── Sidebar subfolder tree ──────────────────────────────────────────
 export interface FileTreeNode {
-  /** 文件夹名或文件名（不含路径） */
+  /** Folder or file name (without path) */
   name: string
-  /** 文件夹为绝对目录路径；文件为绝对文件路径；保证唯一可作为 key */
+  /** Absolute directory path for folders, absolute file path for files; unique, usable as key */
   path: string
   isFolder: boolean
-  /** 仅文件节点携带对应的文档 */
+  /** Only file nodes carry the corresponding document */
   doc?: Document
   children: FileTreeNode[]
 }
 
-// 根据一组文档与根文件夹，构建出嵌套的子文件夹 / 文件树。
-// 文档的 folder_path 可能为空，因此统一从 filePath 推导相对目录层级。
+// Build a nested subfolder / file tree from a set of documents and a root folder.
+// A document's folder_path may be empty, so the relative directory levels are derived
+// from filePath uniformly.
 export function buildFileTree(docs: Document[], rootFolder: string): FileTreeNode[] {
   const rootNorm = normalizePathSegments(rootFolder).replace(/\/$/, '').toLowerCase()
   const root: FileTreeNode = { name: '', path: rootFolder, isFolder: true, children: [] }
@@ -132,7 +133,7 @@ export function buildFileTree(docs: Document[], rootFolder: string): FileTreeNod
     })
   }
 
-  // 排序：文件夹优先，其次按名称字母序
+  // Sort: folders first, then alphabetically by name
   const sortRec = (n: FileTreeNode) => {
     n.children.sort((a, b) => {
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1

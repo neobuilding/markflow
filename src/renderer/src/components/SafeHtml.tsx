@@ -1,5 +1,7 @@
-// 强制净化关卡组件：所有预览 HTML 注入必须经此组件，确保经 sanitizeHtml 单次净化。
-// 直接 `dangerouslySetInnerHTML` 未净化串在代码层面不可能出现（替代原 PLAN 的文档/CI 护栏）。
+// Forced sanitization gate component: every preview HTML injection must go through this
+// component, ensuring it passes through sanitizeHtml exactly once. Directly calling
+// dangerouslySetInnerHTML with an unsanitized string becomes impossible at the code level
+// (replacing the original PLAN's doc/CI guardrails).
 import React from 'react'
 import { sanitizeHtml } from '../lib/sanitize'
 

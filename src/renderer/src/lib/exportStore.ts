@@ -1,6 +1,8 @@
-// 导出用“净化后预览 HTML”单一数据源（非响应式单例，避免 store 抖动）。
-// MarkdownPreview 在解析完成后写入；导出时直接读取，复用同一份已净化、
-// 已注入 Mermaid/KaTeX 的 HTML，保证所见即所得且不为导出重写渲染逻辑（R7）。
+// Single source of truth for the "sanitized preview HTML" used by export (a
+// non-reactive singleton to avoid store churn). MarkdownPreview writes it after
+// parsing; export reads it directly, reusing the same sanitized, Mermaid/KaTeX-
+// injected HTML so the output is WYSIWYG and we don't re-implement render logic
+// for export (R7).
 let current = ''
 
 export function setExportHtml(html: string): void {
@@ -11,8 +13,10 @@ export function getExportHtml(): string {
   return current
 }
 
-// 导出 HTML 的 <html lang> 取值来源：缓存原始 markdown（含 frontmatter）字符串引用，
-// 在导出/打印时由 resolveExportLang 现算一次，避免预览解析阶段反复运行 franc（仅导出时才需要）。
+// Source for the exported HTML's <html lang>: cache the raw markdown (including
+// frontmatter) string reference and compute it once at export/print time via
+// resolveExportLang, so franc is not run repeatedly during preview parsing
+// (it is only needed for export).
 let currentMarkdown = ''
 
 export function setExportContent(markdown: string): void {

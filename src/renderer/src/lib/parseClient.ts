@@ -1,5 +1,6 @@
-// 渲染进程侧的解析客户端：经 comlink 调用 Worker，失败时降级到主线程
-// （复用同一份 markdownPipeline，产出同形状 { html, mermaid }）。
+// Renderer-side parse client: calls the Worker via comlink, falling back to the
+// main thread on failure (reusing the same markdownPipeline, producing the same
+// { html, mermaid } shape).
 import * as comlink from 'comlink'
 import { render, type RenderResult } from '../lib/markdownPipeline'
 
@@ -27,7 +28,8 @@ async function fallbackParse(content: string, docId: string | null): Promise<Ren
   return render(content, docId)
 }
 
-// 应用启动时预热 Worker，把冷启动开销移出“打开文档”关键路径。
+// Warm up the Worker at app start so its cold-start cost is off the "open document"
+// critical path.
 let warmed = false
 export function warmupParseWorker(): void {
   if (warmed) return
@@ -38,7 +40,8 @@ export function warmupParseWorker(): void {
       .parse('# Warmup\n\n```js\nconsole.log(1)\n```\n', null)
       .catch(() => {})
   } catch {
-    // Worker 不可用：真实解析会自动降级主线程，预热失败无影响。
+    // Worker unavailable: real parsing auto-falls back to the main thread, so a
+    // failed warmup has no impact.
   }
 }
 

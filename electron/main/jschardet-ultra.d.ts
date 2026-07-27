@@ -1,4 +1,5 @@
-// jschardet-ultra 无官方类型，这里补一个最小声明供主进程使用。
+// jschardet-ultra ships no official types, so we add a minimal declaration for
+// use in the main process.
 declare module 'jschardet-ultra' {
   export interface DetectionResult {
     encoding: string | null

@@ -29,5 +29,5 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   </React.StrictMode>
 )
 
-// 预热解析 Worker（shiki 等冷启动开销），使首次打开文档时预览无需空等。
+// Warm up the parse Worker (shiki cold-start cost etc.) so the preview doesn't stall on first document open.
 warmupParseWorker()

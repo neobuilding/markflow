@@ -5,14 +5,15 @@ import { writeFileSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-// 收集本测试创建的临时目录/文件，逐个用例结束后清理，避免污染系统临时目录。
+// Collect the temp dirs/files created by this test and clean them up after each case, to
+// avoid polluting the system temp directory.
 const tmpArtifacts: string[] = []
 afterEach(() => {
   for (const p of tmpArtifacts) {
     try {
       rmSync(p, { recursive: true, force: true })
     } catch {
-      /* 忽略清理失败 */
+      /* ignore cleanup failures */
     }
   }
   tmpArtifacts.length = 0

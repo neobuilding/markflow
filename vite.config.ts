@@ -104,5 +104,28 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist/renderer',
+    // Split heavy vendors into their own chunks. Without this, a single bundled
+    // chunk (notably mermaid/katex) exceeds Vite's default 500 KB warning limit
+    // and emits a "chunk size" warning on every build. Isolating vendors keeps
+    // the app code chunk small and makes cache invalidation granular.
+    //
+    // The largest chunks are inherently big diagram/editor libraries, not a
+    // regression from this branch: mermaid (~2.4 MB) and its transitive d3
+    // dependency (~2.8 MB in `vendor`), plus CodeMirror (~1.6 MB). We raise the
+    // warning limit above those known sizes so the build stays warning-free
+    // while the chunks remain split for caching.
+    chunkSizeWarningLimit: 3000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('mermaid')) return 'vendor-mermaid'
+          if (id.includes('katex') || id.includes('mathjax')) return 'vendor-katex'
+          if (id.includes('codemirror') || id.includes('@lezer')) return 'vendor-editor'
+          if (id.includes('@radix-ui') || id.includes('@tanstack')) return 'vendor-ui'
+          return 'vendor'
+        },
+      },
+    },
   },
 })

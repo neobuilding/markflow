@@ -20,7 +20,8 @@ describe('encoding — detectEncoding (R5)', () => {
     expect(detectEncoding(buf)).toEqual({ enc: 'utf-16be', confidence: 1 })
   })
   it('检测器命中 GBK（中文）', () => {
-    // 4 字节样本（“中文”）太短易被误判为 koi8-r，用更长的中文段落提升置信度。
+    // A 4-byte sample ("中文") is too short and easily misclassified as koi8-r; use a longer
+    // Chinese paragraph to raise confidence.
     const gbk = iconv.encode('中文编码检测测试文档内容一致性校验', 'gbk')
     const r = detectEncoding(gbk)
     expect(r.enc).toBe('gbk')
@@ -33,7 +34,8 @@ describe('encoding — detectEncoding (R5)', () => {
     expect(typeof r.confidence).toBe('number')
   })
   it('强置信的非 CJK 编码不被 CJK 候选误覆盖（西里尔 windows-1251）', () => {
-    // 西里尔文本：GBK 解码任意字节常 0 替换符，若二次判断无闸门会误判为 gbk。
+    // Cyrillic text: GBK decodes arbitrary bytes to the 0 replacement char, so without a gate
+    // on the second-stage check it would be misclassified as gbk.
     const cyrillic = iconv.encode('Привет мир, это тест кодировки Windows-1251 для проверки детектора', 'windows-1251')
     const r = detectEncoding(cyrillic)
     expect(['gbk', 'big5', 'shift_jis', 'euc-kr']).not.toContain(r.enc)

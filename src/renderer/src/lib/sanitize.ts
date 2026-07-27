@@ -1,11 +1,13 @@
-// 单一 XSS 关卡（markdown-render-v2-simple 设计）。
-// 全应用预览注入一律经 sanitizeHtml（由 SafeHtml 组件强制调用），
-// 使「直接 dangerouslySetInnerHTML 未净化串」在代码层面不可能。
+// Single XSS gate (markdown-render-v2-simple design). Every preview injection in the
+// app goes through sanitizeHtml (forced by the SafeHtml component), making it
+// impossible at the code level to dangerouslySetInnerHTML an unsanitized string.
 import DOMPurify from 'dompurify'
 
-// 仅放行 code/span/math 元素及所有 SVG 命名空间元素的 style（防 BUG-5 重演）：
-// DOMPurify 默认**保留** style，若全量放行，恶意内嵌 HTML 可借 style 做 CSS 外泄
-// （属性选择器 + background:url 探测）。其余元素（div/p/a/pre…）的 style 一律剥离。
+// Only allow style on code/span/math elements and all SVG-namespace elements (to
+// prevent BUG-5 recurrence): DOMPurify keeps style by default, and if allowed
+// everywhere a malicious embedded HTML could use style for CSS exfiltration
+// (attribute selectors + background:url probes). style on all other elements
+// (div/p/a/pre…) is stripped.
 const STYLE_ALLOWED_TAGS = new Set(['code', 'span', 'math'])
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
@@ -13,25 +15,29 @@ DOMPurify.addHook('afterSanitizeAttributes', (node: Element) => {
   if (node.nodeType !== 1 /* Element */ || !node.hasAttribute('style')) return
   const tag = node.tagName.toLowerCase()
   if (STYLE_ALLOWED_TAGS.has(tag)) return
-  if (node.namespaceURI === SVG_NS) return // mermaid/katex 的 SVG 样式需保留
+  if (node.namespaceURI === SVG_NS) return // keep style for mermaid/katex SVG
   node.removeAttribute('style')
 })
 
-// 显式剥离所有事件处理属性（DOMPurify 的 FORBID_ATTR 不支持通配符 `on*`，
-// 必须用钩子逐个拦截；任何以 on 开头的属性一律丢弃）。
+// Explicitly strip all event-handler attributes (DOMPurify's FORBID_ATTR does not
+// support the `on*` wildcard, so we must intercept them one by one; any attribute
+// starting with "on" is dropped).
 DOMPurify.addHook('uponSanitizeAttribute', (_node, attr) => {
   if (attr.attrName.toLowerCase().startsWith('on')) attr.keepAttr = false
 })
 
 export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(html, {
-    // mermaid 占位属性；其余 data-* 由 DOMPurify 默认 ALLOW_DATA_ATTR 放行。
+    // mermaid placeholder attribute; other data-* are allowed by DOMPurify's
+    // default ALLOW_DATA_ATTR.
     ADD_ATTR: ['data-mermaid-slot'],
-    // 放行 KaTeX / mermaid 需要的 SVG <use> 引用，以及 KaTeX MathML 无障碍层
-    // （annotation 携带 TeX 源码，供屏幕阅读器；jsdom 解析器会丢，但 Chromium 保留，
-    // 这里显式放行以锁死行为，与原 rehype-sanitize schema 对齐）。
+    // Allow the SVG <use> references KaTeX / mermaid need, plus KaTeX's MathML
+    // accessibility layer (annotation carries the TeX source for screen readers;
+    // jsdom drops it but Chromium keeps it, so we allow it explicitly to lock the
+    // behavior, matching the original rehype-sanitize schema).
     ADD_TAGS: ['use', 'annotation', 'annotation-xml'],
-    // 安全关键禁项：刻意不含 input（GFM 任务列表勾选框需要 <input type=checkbox disabled>）。
+    // Security-critical forbids: note we deliberately do NOT forbid input (GFM task
+    // list checkboxes need <input type=checkbox disabled>).
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'foreignObject', 'form', 'button'],
     FORBID_ATTR: ['action', 'formaction'],
   })

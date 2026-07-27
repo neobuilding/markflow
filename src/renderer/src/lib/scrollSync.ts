@@ -1,12 +1,16 @@
-// 同步滚动控制器：在拆分视图（split）下，让源码窗格与预览窗格的滚动位置保持同步。
+// Scroll-sync controller: keeps the source pane and preview pane scroll positions
+// aligned in the split view.
 //
-// 双向比例映射：两侧都用 `ratio = src.scrollTop / (src.scrollHeight - src.clientHeight)`
-// 对齐到对侧的绝对 scrollTop。比例映射天然连续、无跳变，免疫块密度不均 /
-// mermaid 异步渲染 / content-visibility 等导致的高度跳变（本方案 mermaid 已在注入前
-// 烘焙完整，更无异步增长）。行业通用方案（VS Code / Typora / Obsidian 均采用比例）。
+// Bidirectional ratio mapping: both sides use `ratio = src.scrollTop /
+// (src.scrollHeight - src.clientHeight)` projected onto the other side's absolute
+// scrollTop. Ratio mapping is inherently continuous and jump-free, and is immune to
+// height jumps from uneven block density / async mermaid rendering / content-visibility
+// (in this design mermaid is baked fully before injection, so there is no async growth).
+// This is the industry-standard approach (used by VS Code / Typora / Obsidian).
 //
-// 回声防护：程序化滚动某一侧时置 syncedPane 锁，该侧回声事件直接忽略（不在此解锁），
-// 锁由 armClear 的定时器（80ms）释放，避免多次回声事件反向同步抖动。
+// Echo guard: when one side is scrolled programmatically we set the syncedPane lock and
+// that side's echo scroll event is ignored (it is not released here); the lock is cleared
+// by armClear's timer (80ms) to avoid reverse-sync jitter from repeated echo events.
 
 export type PaneId = 'editor' | 'preview'
 
@@ -16,7 +20,8 @@ class ScrollSyncController {
   private syncedPane: PaneId | null = null
   private clearTimer: ReturnType<typeof setTimeout> | null = null
   private rafId: number | null = null
-  // 最近一次作为“滚动源”的窗格：图片异步加载改变预览高度后，据此把另一侧重新对齐。
+  // The pane that most recently acted as the "scroll source": after async image
+  // loads change the preview height, the other side is re-aligned from this.
   private lastSource: PaneId = 'editor'
 
   register(id: PaneId, el: HTMLElement): void {
@@ -57,7 +62,7 @@ class ScrollSyncController {
     const dest = this.elements[destId]
     if (!src || !dest) return
 
-    // 边界对齐：源侧到顶/到底时，目标侧直接对齐到顶/底。
+    // Edge alignment: when the source hits top/bottom, snap the target to top/bottom.
     if (src.scrollTop <= 0) {
       this.syncedPane = destId
       dest.scrollTop = 0
@@ -80,21 +85,24 @@ class ScrollSyncController {
   }
 
   private handleScroll(id: PaneId): void {
-    // 回声防护：程序化滚动触发的本窗格滚动事件直接忽略，
-    // 锁由 armClear 的定时器释放，避免多次回声事件造成反向同步抖动。
+    // Echo guard: ignore this pane's own scroll event triggered by programmatic
+    // scrolling; the lock is released by armClear's timer to avoid reverse-sync
+    // jitter from repeated echo events.
     if (this.syncedPane === id) return
-    // 若锁定的另一窗格（上一轮自动同步的目标），本窗格此刻滚动视为用户接管，
-    // 清除旧锁后继续同步，消除 80ms 死区。
+    // If the other pane was locked (the target of the previous auto-sync), treat this
+    // pane's scroll as user takeover: clear the old lock and continue syncing, removing
+    // the 80ms dead zone.
     if (this.syncedPane !== null) this.clearLock()
 
-    // 记录本次滚动源（供图片 onload 后 realign 使用）。
+    // Record the scroll source for this turn (used by realign after image onload).
     this.lastSource = id
     const destId: PaneId = id === 'editor' ? 'preview' : 'editor'
     this.scheduleSync(() => this.sync(id, destId))
   }
 
-  // 图片异步加载改变预览/编辑器高度后，按上一次滚动源重算对侧比例，
-  // 修正因高度跳变导致的半屏错位（Final Design §3.1 补充）。
+  // After async image loads change the preview/editor height, recompute the other
+  // side's ratio from the last scroll source to fix half-screen misalignment caused
+  // by height jumps (Final Design §3.1 addendum).
   public realign(): void {
     if (!this.lastSource) return
     const dest: PaneId = this.lastSource === 'editor' ? 'preview' : 'editor'
