@@ -7,9 +7,8 @@
 // Image reading / network fetching must happen in the main process (the renderer sandbox has no Node API).
 import type { IpcMain } from 'electron'
 import { BrowserWindow } from 'electron'
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
+import { readFileSync, writeFileSync, openSync, closeSync, writeSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { randomUUID } from 'node:crypto'
 import { getDb } from '../db/database'
 import { isSubdir, APPDOC_MIME, parseAppDocUrl } from '../lib/security'
 import { dirname, extname, resolve, join } from 'node:path'
@@ -33,8 +32,13 @@ async function inlineOne(src: string): Promise<string | null> {
       if (!row) return null
       const base = dirname(row.file_path)
       const resolved = resolve(base, rel)
-      if (!isSubdir(base, resolved) || !existsSync(resolved)) return null
-      const buf = readFileSync(resolved)
+      if (!isSubdir(base, resolved)) return null
+      let buf: Buffer
+      try {
+        buf = readFileSync(resolved)
+      } catch {
+        return null
+      }
       return `data:${APPDOC_MIME[extname(resolved).toLowerCase()] ?? 'application/octet-stream'};base64,${b64(buf)}`
     }
     if (/^https?:/i.test(src)) {
@@ -82,10 +86,22 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       if (typeof filePath !== 'string' || typeof html !== 'string') {
         throw new TypeError('export:write expects string path and html')
       }
-      if (existsSync(filePath) && !overwrite) {
-        throw new Error('FILE_EXISTS') // already confirmed by renderer; the normal flow won't hit this
+      // Atomic create-or-fail via O_EXCL to avoid the existsSync/writeFileSync TOCTOU race.
+      // If overwrite is true we deliberately truncate the existing file with 'w'.
+      let fd: number
+      try {
+        fd = openSync(filePath, overwrite ? 'w' : 'wx')
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+          throw new Error('FILE_EXISTS') // already confirmed by renderer; the normal flow won't hit this
+        }
+        throw e
       }
-      writeFileSync(filePath, html, 'utf-8') // html is a utf-8 string (with the original encoding-declaring <meta>)
+      try {
+        writeSync(fd, html, undefined, 'utf-8') // html is a utf-8 string (with the original encoding-declaring <meta>)
+      } finally {
+        closeSync(fd)
+      }
     }
   )
 
@@ -109,8 +125,14 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       show: false,
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
     })
-    const tmp = join(tmpdir(), `mf-print-${process.pid}-${randomUUID()}.html`)
+    // Use mkdtempSync for a dedicated temp directory so the temp file path is not
+    // predictable and cannot be substituted between creation and use (CodeQL insecure temp file).
+    // Declared outside the try block so that, if mkdtempSync itself throws (e.g. the temp dir is
+    // unavailable), the finally block still destroys the window instead of leaking it.
+    let tmpDir: string | undefined
     try {
+      tmpDir = mkdtempSync(join(tmpdir(), 'mf-print-'))
+      const tmp = join(tmpDir, 'doc.html')
       writeFileSync(tmp, html, 'utf-8')
       await win.loadFile(tmp)
       await win.webContents
@@ -224,10 +246,12 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       )
     } finally {
       win.destroy()
-      try {
-        unlinkSync(tmp)
-      } catch {
-        /* ignore cleanup failure */
+      if (tmpDir !== undefined) {
+        try {
+          rmSync(tmpDir, { recursive: true, force: true })
+        } catch {
+          /* ignore cleanup failure */
+        }
       }
     }
   }

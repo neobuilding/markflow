@@ -552,7 +552,7 @@ if (!shouldStart) {
 
   setupCSP()
 
-  initDatabase(app)
+  initDatabase()
 
   // appdoc: protocol handling (must be registered inside whenReady; ② and
   // registerSchemesAsPrivileged happen at two different times)

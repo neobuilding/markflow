@@ -1,6 +1,3 @@
-import { join } from 'node:path'
-import { mkdirSync, existsSync, unlinkSync } from 'node:fs'
-import type { App } from 'electron'
 import type Database from 'better-sqlite3'
 
 // Use dynamic require wrapped in a function so Rollup won't hoist it to top level.
@@ -19,38 +16,10 @@ export function getDb(): Database.Database {
   return db
 }
 
-export function initDatabase(app: App): void {
-  const userDataPath = app.getPath('userData')
-  const dbDir = join(userDataPath, 'data')
-  mkdirSync(dbDir, { recursive: true })
-
-  const dbPath = join(dbDir, 'markflow.db')
-
-  // Backward-compat: the database used to live under AppData\Roaming\markflow\data and
-  // may still contain document content. Even though userData is now redirected to a temp
-  // directory, clean up that legacy location to avoid leaking content.
-  try {
-    const legacyDir = join(app.getPath('appData'), 'markflow', 'data')
-    for (const f of ['markflow.db', 'markflow.db-wal', 'markflow.db-shm']) {
-      const p = join(legacyDir, f)
-      if (existsSync(p)) unlinkSync(p)
-    }
-  } catch {
-    // Ignore cleanup failures
-  }
-
-  // Privacy: document content (and the full-text index) must not persist to disk, so
-  // that deleting the .md file doesn't leave content behind in the database and leak it
-  // unintentionally. We therefore use an in-memory database — once the process exits,
-  // everything (content / metadata / search index) is gone from disk.
-  // We also delete any old on-disk database files to clear content that may remain there.
-  try {
-    for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-      if (existsSync(f)) unlinkSync(f)
-    }
-  } catch {
-    // Cleanup failure must not block startup
-  }
+export function initDatabase(): void {
+  // Privacy by design: the database is intentionally in-memory (':memory:'), so no
+  // document content, metadata, or search index is ever written to disk. Once the
+  // process exits, everything is gone — there is nothing to persist or clean up.
 
   // Require better-sqlite3 at runtime inside a try/catch to show a friendly error
   // instead of crashing the entire process.

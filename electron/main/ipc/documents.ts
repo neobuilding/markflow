@@ -4,7 +4,7 @@ import { getDb } from '../db/database'
 
 let _app: App | null = null
 import { join, dirname, basename } from 'node:path'
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, renameSync, watch, statSync, openSync, readSync, closeSync } from 'node:fs'
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, renameSync, watch, statSync, openSync, readSync, writeSync, closeSync } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
@@ -173,9 +173,10 @@ function watchDocument(id: string): void {
   } catch {
     return
   }
-  if (!row?.file_path || typeof row.file_path !== 'string' || !existsSync(row.file_path)) return
+  if (!row?.file_path || typeof row.file_path !== 'string') return
   const filePath = row.file_path
-  // Record the starting mtime as the "unchanged" baseline (for comparison when filename is null)
+  // Record the starting mtime as the "unchanged" baseline (for comparison when filename is null).
+  // If the file is missing/unreadable, just skip watching instead of pre-checking with existsSync.
   try {
     watchedMtime.set(filePath, statSync(filePath).mtimeMs)
   } catch {
@@ -290,18 +291,31 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
         : getDefaultDocsDir()
       mkdirSync(baseDir, { recursive: true })
 
-      // Create unique filename
-      let fileName = `${title.replace(/[/\\:*?"<>|]/g, '-')}.md`
-      let filePath = join(baseDir, fileName)
-      let counter = 1
-      while (existsSync(filePath)) {
-        fileName = `${title.replace(/[/\\:*?"<>|]/g, '-')}-${counter}.md`
-        filePath = join(baseDir, fileName)
-        counter++
+      // Create a unique filename atomically: open with O_EXCL ('wx') and retry with an
+      // incrementing suffix until we win a free name, avoiding the existsSync/writeFileSync TOCTOU.
+      const safeTitle = title.replace(/[/\\:*?"<>|]/g, '-')
+      let fd: number
+      let filePath: string
+      let counter = 0
+      while (true) {
+        const candidate = counter === 0 ? `${safeTitle}.md` : `${safeTitle}-${counter}.md`
+        filePath = join(baseDir, candidate)
+        try {
+          fd = openSync(filePath, 'wx')
+          break
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+            counter++
+            continue
+          }
+          throw e
+        }
       }
-
-      // Write file
-      writeFileSync(filePath, content, 'utf-8')
+      try {
+        writeSync(fd, content, undefined, 'utf-8')
+      } finally {
+        closeSync(fd)
+      }
 
       // Insert into DB
       db.prepare(`
@@ -338,17 +352,37 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       let newFilePath = existing.file_path
       if (updates.title && updates.title !== existing.title) {
         const dir = dirname(existing.file_path)
-        let newFileName = `${newTitle.replace(/[/\\:*?"<>|]/g, '-')}.md`
-        newFilePath = join(dir, newFileName)
-        let counter = 1
-        while (existsSync(newFilePath) && newFilePath !== existing.file_path) {
-          newFileName = `${newTitle.replace(/[/\\:*?"<>|]/g, '-')}-${counter}.md`
-          newFilePath = join(dir, newFileName)
+        const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
+        // Resolve a non-colliding target name atomically: call renameSync directly and, if the
+        // target is already taken (EEXIST/EPERM on Windows), retry with an incrementing suffix.
+        // This removes the existsSync→renameSync TOCTOU window (CodeQL file-system race).
+        const tryRename = (target: string): boolean => {
+          if (target === existing.file_path) {
+            // Title change resolves to the same filename we already have: nothing to rename.
+            return true
+          }
+          try {
+            renameSync(existing.file_path, target)
+            return true
+          } catch (e) {
+            const code = (e as NodeJS.ErrnoException).code
+            if (code === 'EEXIST' || code === 'EPERM') {
+              return false // target occupied; caller retries with the next suffixed name
+            }
+            throw e // any other error (e.g. permission) propagates
+          }
+        }
+        let target = join(dir, `${safeTitle}.md`)
+        let counter = 0
+        const MAX_RENAME_ATTEMPTS = 10000
+        while (!tryRename(target)) {
           counter++
+          if (counter > MAX_RENAME_ATTEMPTS) throw new Error('RENAME_COLLISION_LIMIT')
+          target = join(dir, `${safeTitle}-${counter}.md`)
+          // Defensive: if a generated name equals our own current path, stop trying to rename.
+          if (target === existing.file_path) break
         }
-        if (newFilePath !== existing.file_path) {
-          renameSync(existing.file_path, newFilePath)
-        }
+        newFilePath = target
       }
 
       db.prepare(`
@@ -404,9 +438,15 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       | DocumentRow
       | undefined
     if (!existing) return null
-    if (!existsSync(existing.file_path)) return null
 
-    const { text, encoding, confidence } = readMarkdownText(existing.file_path)
+    let text: string
+    let encoding: string
+    let confidence: number
+    try {
+      ;({ text, encoding, confidence } = readMarkdownText(existing.file_path))
+    } catch {
+      return null
+    }
     const wordCount = countWords(text)
     const now = Date.now()
     db.prepare(`
@@ -434,11 +474,12 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     if (!existing) return false
 
     try {
-      if (existsSync(existing.file_path)) {
-        unlinkSync(existing.file_path)
-      }
+      unlinkSync(existing.file_path)
     } catch (e) {
-      console.error('Failed to delete file:', e)
+      // A missing file is not a failure here (already removed externally); only log real errors.
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error('Failed to delete file:', e)
+      }
     }
 
     db.prepare('DELETE FROM documents WHERE id = ?').run(id)
@@ -448,9 +489,15 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
   // Import markdown file from disk
   ipcMain.handle('documents:import', (_event, filePath: string) => {
     const db = getDb()
-    if (!existsSync(filePath)) return null
 
-    const { text, encoding, confidence } = readMarkdownText(filePath)
+    let text: string
+    let encoding: string
+    let confidence: number
+    try {
+      ;({ text, encoding, confidence } = readMarkdownText(filePath))
+    } catch {
+      return null
+    }
     const title = basename(filePath, '.md')
     const id = randomUUID()
     const now = Date.now()
@@ -495,7 +542,6 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
 
     const insertMany = db.transaction((paths: string[]) => {
       for (const filePath of paths) {
-        if (!existsSync(filePath)) continue
         let parsed: { text: string; encoding: string; confidence: number }
         try {
           parsed = readMarkdownText(filePath)
@@ -530,17 +576,25 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
 
   // Read the file's original line endings (only the first 64KB, to avoid cost on large files): restored on save.
   // Trust the on-disk file itself, not the DB content (which an older version may have rewritten).
+  // Avoid existsSync/openSync TOCTOU: try opening directly and treat any failure as "use default \n".
   ipcMain.handle('documents:eol', (_event, filePath: string) => {
+    let fd: number | undefined
     try {
-      if (!existsSync(filePath)) return '\n'
-      const fd = openSync(filePath, 'r')
+      fd = openSync(filePath, 'r')
       const buf = Buffer.alloc(65536)
       const n = readSync(fd, buf, 0, buf.length, 0)
-      closeSync(fd)
       const sample = buf.subarray(0, n).toString('utf-8')
       return sample.includes('\r\n') ? '\r\n' : '\n'
     } catch {
       return '\n'
+    } finally {
+      if (fd !== undefined) {
+        try {
+          closeSync(fd)
+        } catch {
+          /* ignore */
+        }
+      }
     }
   })
 
@@ -567,8 +621,12 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       | { file_path: string }
       | undefined
     if (!row) return null
-    if (!existsSync(row.file_path)) return null
-    const buf = readFileSync(row.file_path)
+    let buf: Buffer
+    try {
+      buf = readFileSync(row.file_path)
+    } catch {
+      return null
+    }
     const norm = normEnc(enc)
     const text = iconv.decode(buf, norm)
     const now = Date.now()
