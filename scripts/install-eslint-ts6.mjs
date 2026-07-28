@@ -12,7 +12,15 @@
 //
 // Invoked from `postinstall` (so `npx eslint .` works for devs) and from the
 // `lint` / `lint:fix` scripts (idempotent, and a safe fallback after `npm ci`).
-import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, readFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  cpSync,
+  writeFileSync,
+  readFileSync,
+} from 'node:fs'
 import { execSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
@@ -45,8 +53,13 @@ if (alreadyDone) {
 }
 
 // Install TS6 into an isolated temp project so npm does NOT pull the root tree.
-const tmp = path.join(os.tmpdir(), 'markflow-ts6-' + Date.now())
-mkdirSync(tmp, { recursive: true })
+// mkdtempSync creates a uniquely-named, randomly-suffixed directory atomically
+// under os.tmpdir() (CWE-377 / CWE-378 fix).
+const tmp = mkdtempSync(path.join(os.tmpdir(), 'markflow-ts6-'))
+// Always remove the temp dir — including on the failure paths below (process.exit
+// bypasses `finally`, so we must clean up explicitly before each exit).
+const cleanupTmp = () => rmSync(tmp, { recursive: true, force: true })
+
 writeFileSync(
   path.join(tmp, 'package.json'),
   JSON.stringify({ name: 'markflow-ts6-tmp', version: '1.0.0', private: true }),
@@ -56,12 +69,14 @@ try {
 } catch (err) {
   // Never break `npm ci` / `postinstall`: warn and continue. The `lint` script also
   // calls this, so a later attempt (after `npm ci` releases its cache lock) will retry.
+  cleanupTmp()
   console.warn('[eslint-ts6] warning: could not install TypeScript 6 API:', err?.message || err)
   process.exit(0)
 }
 
 const srcTs = path.join(tmp, 'node_modules', 'typescript')
 if (!existsSync(srcTs)) {
+  cleanupTmp()
   console.warn('[eslint-ts6] warning: TypeScript 6 was not installed; eslint may fail under TS7.')
   process.exit(0)
 }
@@ -74,5 +89,5 @@ for (const target of targets) {
   console.log(`[eslint-ts6] TypeScript 6 API placed at ${path.relative(root, dest)}`)
 }
 
-rmSync(tmp, { recursive: true, force: true })
+cleanupTmp()
 console.log('[eslint-ts6] done. typescript-eslint will now run against the TS6 API.')
