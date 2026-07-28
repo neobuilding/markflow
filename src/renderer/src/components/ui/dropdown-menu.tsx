@@ -15,7 +15,7 @@ const DropdownMenuContent = React.forwardRef<
       sideOffset={sideOffset}
       className={cn(
         'z-50 min-w-[160px] bg-[var(--color-surface)] rounded-lg shadow-linear-lg border border-[var(--color-border)] p-1 animate-slide-up',
-        className
+        className,
       )}
       {...props}
     />
@@ -34,7 +34,7 @@ const DropdownMenuItem = React.forwardRef<
       destructive
         ? 'text-[var(--color-danger)] hover:bg-red-50 focus:bg-red-50'
         : 'text-[var(--color-text-primary)] hover:bg-[var(--color-surface-overlay)] focus:bg-[var(--color-surface-overlay)]',
-      className
+      className,
     )}
     {...props}
   />
@@ -53,4 +53,10 @@ const DropdownMenuSeparator = React.forwardRef<
 ))
 DropdownMenuSeparator.displayName = DropdownMenuPrimitive.Separator.displayName
 
-export { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator }
+export {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+}

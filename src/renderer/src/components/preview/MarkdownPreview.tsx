@@ -39,6 +39,10 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   const [loading, setLoading] = useState(true)
   // docId comes from the global store and is passed to the Worker via comlink for appdoc: image rewriting.
   const docId = useUIStore((s) => s.activeDocumentId)
+  // Tracks whether the preview has rendered at least once, so the parse effect can decide whether to
+  // parse immediately (first paint) without reading `renderedHtml` reactively (which would make it a
+  // dependency and cause a re-parse loop). Mirrors the old `renderedHtml === ''` check.
+  const hasContentRef = useRef(false)
 
   // Parsing: sent to the Worker via comlink, with automatic fallback to the main thread on failure.
   // Parse immediately on first paint / document switch (no debounce); only debounce 150ms for
@@ -48,7 +52,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     const token = ++renderToken.current
     const isDocSwitch = docId !== lastDocIdRef.current
     lastDocIdRef.current = docId
-    const immediate = isDocSwitch || renderedHtml === ''
+    const immediate = isDocSwitch || !hasContentRef.current
     let cancelled = false
 
     // On document switch: clear old content immediately and show Loading to avoid stale content.
@@ -79,7 +83,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
             }
             html = html.replace(
               /<div data-mermaid-slot="(\d+)"><\/div>/g,
-              (_m, i) => svgs[Number(i)] ?? ''
+              (_m, i) => svgs[Number(i)] ?? '',
             )
           }
           if (cancelled || token !== renderToken.current) return
@@ -89,6 +93,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
           // Stash the raw markdown (frontmatter intact) so export/print can resolve <html lang> on demand.
           setExportContent(content)
           setRenderedHtml(html)
+          hasContentRef.current = true
           setLoading(false)
           // Fallback: after parsing completes (large images may be ready now or soon), realign once
           // to fix the half-screen offset caused by image height jumps (Final Design §3.1).

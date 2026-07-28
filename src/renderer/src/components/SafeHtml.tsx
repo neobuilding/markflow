@@ -12,7 +12,5 @@ export function SafeHtml({
   html: string
   className?: string
 }): React.ReactElement {
-  return (
-    <div className={className} dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />
-  )
+  return <div className={className} dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />
 }

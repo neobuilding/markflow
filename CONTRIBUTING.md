@@ -15,7 +15,7 @@ By participating, you agree to uphold a respectful, harassment-free environment.
 
 ### Prerequisites
 
-- Node.js >= 18
+- Node.js >= 22
 - npm >= 9
 - A C++ toolchain (required to compile the native `better-sqlite3` module during
   `npm install` → `electron-builder install-app-deps`):
@@ -80,21 +80,21 @@ markflow/
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Build | Vite 5 + vite-plugin-electron |
-| Desktop | Electron 30 |
-| Frontend | React 18 + TypeScript (strict) + Tailwind CSS 3.4 |
-| UI Components | Radix UI primitives (shadcn/ui style) |
-| State | Zustand (UI) + TanStack Query v5 (IPC) |
-| Storage | better-sqlite3 + FTS5 + Markdown file dual-write |
-| Editor | CodeMirror 6 with Markdown syntax highlighting |
-| Math | KaTeX (LaTeX formula rendering) |
-| Diagrams | Mermaid.js |
-| Markdown parser | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
-| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point) |
-| Testing | Vitest + jsdom |
-| Packaging | electron-builder |
+| Layer             | Technology                                                    |
+| ----------------- | ------------------------------------------------------------- |
+| Build             | Vite 8 + vite-plugin-electron                                 |
+| Desktop           | Electron 43                                                   |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4               |
+| UI Components     | Radix UI primitives (shadcn/ui style)                         |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                        |
+| Storage           | better-sqlite3 + FTS5 + Markdown file dual-write              |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                |
+| Math              | KaTeX (LaTeX formula rendering)                               |
+| Diagrams          | Mermaid.js                                                    |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)         |
+| Testing           | Vitest + jsdom                                                |
+| Packaging         | electron-builder                                              |
 
 ## Coding Conventions
 
@@ -106,6 +106,17 @@ markflow/
 - **Type safety**: `npm run typecheck` must pass (no new `any` without reason).
 - **Security**: every PR is scanned by **CodeQL** (`codeql.yml`). If it flags something,
   triage it rather than disabling the check.
+- **Quality gates**: run `npm run quality` before pushing — it runs Prettier's format check,
+  ESLint, Stylelint (CSS), Markdownlint (docs) and Secretlint (secrets). A Husky `pre-commit` hook runs
+  lint-staged automatically. ESLint is a **hard gate** with zero warnings: `typescript-eslint` v8 still
+  caps TypeScript at `<6.1.0`, so a `postinstall` shim (`scripts/install-eslint-ts6.mjs`) installs the TS6
+  API alongside the project's TS7 for the linter only (Microsoft's documented "side-by-side" approach).
+  A few new, opinionated `react-hooks` rules (`refs`, `set-state-in-effect`) are kept at `warn` because the
+  code intentionally uses "latest-value ref" and effect-init patterns; the `preserve-caught-error` core rule
+  is satisfied by attaching the original error via `Object.assign(new Error(...), { cause })`, which is
+  type-safe under TS7 (whose `Error` type lacks the `options` overload) yet still preserves the cause at runtime.
+- **Secrets**: never commit credentials. Secretlint scans the repo locally (`npm run lint:secret`)
+  and in CI; CodeQL also runs on every PR.
 
 ## Testing
 
@@ -174,19 +185,23 @@ folder for distribution — users just extract and run `MarkFlow.exe`, no instal
 > Windows accounts. No manual setup needed — just run `npm run dist:win` and it works.
 >
 > If you encounter the error `Cannot create symbolic link`, either:
+>
 > - Run the build again (the script should have pre-cached correctly), or
 > - Enable Windows **Developer Mode** (Settings → System → Developer options), or
 > - Run your terminal as Administrator.
 >
 > **winCodeSign cache location**: if you see `[winCodeSign] Cache already prepared. Skipping.`
 > during a build, the code-signing tools are already cached. The default cache directory is:
+>
 > ```
 > %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
 > ```
+>
 > i.e. `C:\Users\<username>\AppData\Local\electron-builder\Cache\winCodeSign`, which
 > contains version folders named like `winCodeSign-2.x.x`.
 >
 > To inspect or confirm the cache directory (cmd):
+>
 > ```cmd
 > rem print the cache path
 > echo %LOCALAPPDATA%\electron-builder\Cache\winCodeSign

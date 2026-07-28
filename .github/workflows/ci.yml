@@ -7,34 +7,53 @@ run-name: >-
 on:
     push:
         branches: [main]
-        tags: ['v*'] # 手动推送 v* tag 可触发「重发」：重新 build + 开新 draft
+        tags: ['v*'] # Manually pushing a v* tag triggers a "re-release": rebuild + open a new draft.
     pull_request:
         branches: [main]
     workflow_dispatch:
 
 permissions:
-    contents: read # 默认最小权限；仅 release job 提权到 write 用于推 tag / 建 draft release
+    contents: read # Least privilege by default; only the release job elevates to write to push tags / create draft releases.
 
-# 按 ref 隔离并发；cancel-in-progress:false 保护在途 release 出包不被打断
+# Isolate concurrency per ref; cancel-in-progress:false protects in-flight release builds from being interrupted.
 concurrency:
     group: ci-${{ github.ref }}
     cancel-in-progress: false
 
-# 版本号的唯一来源是 test job：它只「算」不「打」，在 checkout 后算出 tag 与 version 并输出；
-# build / release 都从 test 的 outputs 读取，杜绝两处重复推断、保证一致。
-#   - push 到 main / dispatch  → test 算出 v{ver}-{提交时间}.{短SHA}（不推送）
-#   - 推送 v* tag             → test 复用已有 tag，version = tag 去 v
-#   - PR / 非 main 分支 push  → test 输出为空：build 不注入（用基础版）、release 不跑
-# 「打 tag」的动作推迟到 release 阶段，通过 gh api 推送（无需 checkout），幂等可复现；
-# 同一 commit 重跑得到相同 tag（提交时间取自 committer date，稳定）。
+# The version's single source of truth is the test job: it only "computes" (never "tags"),
+# calculating the tag/version after checkout and emitting them as outputs;
+# build / release read from the test job's outputs, avoiding duplicate inference and staying consistent.
+#   - push to main / dispatch   → test computes v{ver}-{commit-time}.{shortSHA} (not pushed)
+#   - push of a v* tag           → test reuses the existing tag (version = tag with the v stripped)
+#   - PR / non-main branch push → test emits empty outputs: build injects nothing (uses the base version), release does not run
+# The actual "tag push" is deferred to the release stage via the gh api (no checkout needed), so it is idempotent and reproducible;
+# re-running on the same commit yields the same tag (commit time comes from the committer date, which is stable).
 env:
-    CSC_IDENTITY_AUTOMATION: false # mac 不走签名/公证自动化（与历史一致）
+    CSC_IDENTITY_AUTOMATION: false # mac does not use signing/notarization automation (consistent with history)
 
 jobs:
+    # Static quality gate. Runs before the version-computing test job so style/rule violations
+    # fail fast and don't waste build minutes.
+    # Enforced gate (`npm run quality`): Prettier format check + ESLint (TS7 side-by-side via the
+    # `postinstall` shim in scripts/install-eslint-ts6.mjs) + Stylelint (CSS) + Markdownlint (docs)
+    # + Secretlint (secrets). ESLint is a hard gate now — typescript-eslint v8 still caps TypeScript
+    # at <6.1.0, so the shim installs the TS6 API alongside the project's TS7 for the linter only.
+    quality:
+        name: Lint & Format
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-node@v7
+              with: { node-version: 22, cache: npm }
+            - run: npm ci
+            - run: npm run quality
+
     test:
         name: Typecheck, Test & Build
+        needs: [quality]
         runs-on: ubuntu-latest
-        # 版本号的唯一来源：只「算」不「打」，在 checkout 后算出 tag/version 并输出给下游。
+        # Single source of truth for the version: only "compute" (never "tag"); after checkout it
+        # calculates the tag/version and emits them as outputs for downstream jobs.
         outputs:
             tag: ${{ steps.compute.outputs.tag }}
             version: ${{ steps.compute.outputs.version }}
@@ -45,7 +64,7 @@ jobs:
               shell: bash
               run: |
                   set -e
-                  # PR：不推断版本，输出为空，让下游只做验证
+                  # PR: do not infer a version; emit empty outputs so downstream jobs only validate.
                   if [[ "${{ github.event_name }}" == "pull_request" ]]; then
                     echo "tag=" >> "$GITHUB_OUTPUT"
                     echo "version=" >> "$GITHUB_OUTPUT"
@@ -56,17 +75,18 @@ jobs:
                     VERSION="${GITHUB_REF_NAME#v}"
                     echo "::notice::Tag push ${TAG}; reusing existing tag."
                   else
-                    # 基础版本直接读 checkout 后的 package.json（无 API 依赖）
-                    # node 显式校验 version 为「非空字符串」：缺失/非字符串/JSON 非法时退出非零，
-                    # 配合 || true 避免被 set -e 提前中断，从而由下方判断打印友好报错而非静默生成非法 tag。
+                    # Read the base version directly from the checked-out package.json (no API dependency).
+                    # Explicitly validate that version is a non-empty string: missing/non-string/illegal-JSON
+                    # exits non-zero; the `|| true` avoids being killed by set -e, so the friendly error below prints
+                    # instead of silently generating an illegal tag.
                     BASE=$(node -p "const v=require('./package.json').version; if(typeof v!=='string'||!v){process.exit(1)} v" || true)
                     if [[ -z "$BASE" ]]; then
-                      echo "::error::无法从 package.json 读取 version 字段（缺失或非字符串）" >&2
+                      echo "::error::Failed to read the version field from package.json (missing or non-string)" >&2
                       exit 1
                     fi
-                    # 短 SHA（取完整 sha 前 7 位）
+                    # Short SHA (first 7 chars of the full SHA).
                     SHA7="${GITHUB_SHA:0:7}"
-                    # 提交时间取自 committer date（稳定，保证同 commit 幂等）
+                    # Commit time is taken from the committer date (stable, guarantees idempotency for the same commit).
                     CTIME=$(git show -s --format=%cI "${GITHUB_SHA}")
                     BUILDTIME="$(date -u -d "$CTIME" +%Y%m%dT%H%M%SZ)"
                     TAG="v${BASE}-${BUILDTIME}.${SHA7}"
@@ -81,9 +101,11 @@ jobs:
             - run: npm run test
             - run: npm run build
 
-    # 永远运行（PR / 非 main push / main push / tag push / dispatch）：三平台 build + dist。
-    # 这是全仓库唯一一次三平台构建——PR 当验证用，main/tag push 当出包用，杜绝重复 build。
-    # 版本来自 test 的输出（唯一来源）：非空才注入，空（PR）则用 package.json 基础版。
+    # Always runs (PR / non-main push / main push / tag push / dispatch): three-platform build + dist.
+    # This is the only three-platform build in the whole repo — PRs use it for validation, main/tag pushes for shipping,
+    # avoiding duplicate builds.
+    # The version comes from the test job's outputs (the single source of truth): injected only when non-empty;
+    # empty (PR) means the base package.json version is used.
     build:
         name: Build (${{ matrix.os }})
         needs: [test]
@@ -100,7 +122,7 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
 
-            # 复用 Electron / electron-builder 下载物缓存，加速构建
+            # Reuse Electron / electron-builder download caches to speed up the build.
             - name: Cache Electron binaries
               uses: actions/cache@v6
               with:
@@ -115,7 +137,7 @@ jobs:
                   restore-keys: |
                       ${{ runner.os }}-electron-
 
-            # Linux 依赖安装（缺失会导致 AppImage 构建失败）
+            # Install Linux dependencies (missing ones cause the AppImage build to fail).
             - name: Install Linux dependencies
               if: matrix.target == 'linux'
               run: |
@@ -135,9 +157,9 @@ jobs:
 
             - run: npm ci
 
-            # 注入 test 算出的版本（唯一来源）。
-            # 非空（main/tag/dispatch）→ app 内部「关于」与文件名都带完整滚动版；
-            # 空（PR）→ 不注入，用 package.json 基础版本号。
+            # Inject the version computed by the test job (the single source of truth).
+            # Non-empty (main/tag/dispatch) → the app's "About" and file names carry the full rolling version;
+            # empty (PR) → not injected, the base package.json version is used.
             - name: Inject version from test
               if: needs.test.outputs.version != ''
               shell: bash
@@ -147,8 +169,9 @@ jobs:
             - run: npm run build
             - run: npm run dist:${{ matrix.target }}
 
-            # 仅 release 路径（version 非空）上传产物；PR 只验证不传（省存储）
-            # 只上传最终发布格式（dmg/zip/AppImage），排除 unpacked 目录等中间物以大幅缩减 artifact 体积
+            # Upload artifacts only on the release path (version non-empty); PRs only validate and do not upload (saves storage).
+            # Only upload final release formats (dmg/zip/AppImage), excluding unpacked dirs and other intermediates
+            # to drastically shrink the artifact size.
             - name: Upload artifact (release path only)
               if: needs.test.outputs.version != ''
               uses: actions/upload-artifact@v7
@@ -161,22 +184,25 @@ jobs:
                   if-no-files-found: error
                   retention-days: 7
 
-    # 下载三平台产物 → 打 tag（经 API，幂等）→ 生成 SHA256SUMS → 建 draft release（不 publish）。
-    # 文件名已带完整版本（build 阶段注入 test 的版本），无需改名；只按允许清单发布，无需删除任何文件。
-    # 「打 tag」从 test 推迟到此：用 gh api 创建 git ref，无需 checkout；
-    # tag 已存在（如重跑）则跳过，避免冲突。无论 draft 是否保留，tag 都留下（可追溯）。
+    # Download the three-platform artifacts → push the tag (via API, idempotent) → generate SHA256SUMS →
+    # create a draft release (not published).
+    # File names already carry the full version (injected by build from the test job's version), so no renaming is needed;
+    # only the allow-listed files are published, so nothing needs to be deleted.
+    # "Tag push" is deferred here from the test job: create the git ref via gh api (no checkout needed);
+    # if the tag already exists (e.g. on a re-run) it is skipped to avoid conflicts. Whether or not the draft is kept,
+    # the tag remains (for traceability).
     release:
         name: Draft Release
-        # 需同时直接依赖 build（下载产物）与 test（读取其算出的 tag）。
-        # 注意：needs 上下文只暴露「直接」依赖的 outputs，test 是 build 的间接依赖，
-        # 若不在此显式列出，needs.test.* 会解析为 undefined（CI 报错上下文无效）。
+        # Needs both build (download artifacts) and test (read its computed tag) directly.
+        # Note: the needs context only exposes outputs of *directly* depended-on jobs; test is an indirect
+        # dependency of build, so if it were not listed here, needs.test.* would resolve to undefined (invalid CI context error).
         needs: [build, test]
         if: needs.test.outputs.tag != ''
         permissions:
-            contents: write # 推 tag + 建 draft release 需要写权限
+            contents: write # Push tag + create draft release needs write permission.
         runs-on: ubuntu-latest
         steps:
-            # 仅「计算版本」路径（非 tag push）才需打 tag；tag push 时 tag 已存在。
+            # Only the "computed version" path (non tag push) needs to push a tag; on a tag push the tag already exists.
             - name: Push tag (computed path only)
               if: github.ref_type != 'tag'
               env:
@@ -184,8 +210,9 @@ jobs:
               run: |
                   set -e
                   TAG="${{ needs.test.outputs.tag }}"
-                  # 幂等：已存在则跳过；创建失败再确认是否已存在（并发重跑），仍失败才报错。
-                  # 仅吞 stdout，保留 stderr 以便排查 gh api 异常（如返回 HTML）。
+                  # Idempotent: skip if it already exists; if creation fails, re-check whether it already exists
+                  # (a concurrent re-run), and only error if it still cannot be created.
+                  # Swallow stdout only, keep stderr so gh api anomalies (e.g. returning HTML) can be diagnosed.
                   if gh api -X GET "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null; then
                     echo "::notice::Tag $TAG already exists; skipping."
                   elif gh api -X POST "repos/${{ github.repository }}/git/refs" \
@@ -202,9 +229,9 @@ jobs:
             - uses: actions/download-artifact@v8
               with: { path: artifacts }
 
-            # 只校验真正发布的文件类型（dmg/zip/AppImage），天然排除
-            # builder-debug.yml 与 *-unpacked 解包目录，无需手动删除。
-            # ⚠️ 若 electron-builder.json5 增删 target（如 deb/exe），需同步更新下方 globs。
+            # Only verify the actually-published file types (dmg/zip/AppImage), which naturally excludes
+            # builder-debug.yml and *-unpacked dirs, so no manual deletion is needed.
+            # ⚠️ If electron-builder.json5 adds/removes targets (e.g. deb/exe), update the globs below accordingly.
             - name: Generate SHA256SUMS
               run: |
                   cd artifacts
@@ -213,7 +240,7 @@ jobs:
                     | sort -z | xargs -0 sha256sum > SHA256SUMS
                   cat SHA256SUMS
 
-            # 仅发布允许清单内的文件；draft=true 由人工决定去留，本流程不自动 publish。
+            # Publish only files on the allow-list; draft=true leaves the decision to a human, the flow does not auto-publish.
             - name: Create draft Release
               uses: softprops/action-gh-release@v3
               with:
@@ -221,7 +248,7 @@ jobs:
                   tag_name: ${{ needs.test.outputs.tag }}
                   draft: true
                   prerelease: false
-                  allowUpdates: true # 重发（同 tag 重跑）时更新已有 draft，而非报错失败
+                  overwrite_files: true # On a re-release (re-run on the same tag), overwrite the same-named files of the existing draft instead of failing.
                   files: |
                       artifacts/markflow-macos/*.dmg
                       artifacts/markflow-windows/*.zip

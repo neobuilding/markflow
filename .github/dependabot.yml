@@ -1,7 +1,7 @@
 # .github/dependabot.yml
 version: 2
 updates:
-  # npm 依赖（含 devDependencies）
+  # npm dependencies (includes devDependencies)
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -10,11 +10,11 @@ updates:
     labels:
       - "dependencies"
     groups:
-      # 所有 npm 升级（major / minor / patch）合并为一个 PR，最大限度减少分支噪音
+      # Group all npm updates (major / minor / patch) into a single PR to minimize branch noise
       npm-all:
         patterns: ["*"]
 
-  # GitHub Actions 版本
+  # GitHub Actions versions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -24,6 +24,6 @@ updates:
       - "dependencies"
       - "github-actions"
     groups:
-      # 所有 GitHub Actions 升级合并为一个 PR
+      # Group all GitHub Actions updates into a single PR
       actions-all:
         patterns: ["*"]

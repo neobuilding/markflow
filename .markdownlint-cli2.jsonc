@@ -1,0 +1,23 @@
+{
+  // Keep markdownlint focused on structure/semantics; let Prettier own formatting.
+  "config": {
+    "default": true,
+    "MD013": false, // line length (docs + CJK lines run long)
+    "MD033": false, // inline HTML (README badges, demo.md examples)
+    "MD041": false, // first line heading (some docs start with HTML/HTML comment)
+    "MD024": { "siblings_only": true }, // duplicate headings only within a sibling group
+    "MD029": false, // ordered list marker value
+    "MD040": false, // fenced code language (demo.md has plain blocks)
+    "MD046": false, // code-block style (avoid clashing with Prettier)
+    "MD007": { "indent": 2 }, // match Prettier's 2-space list indent
+    "MD009": { "flush_block_constraints": false }, // trailing spaces in code/content
+    "MD034": false, // bare URLs (README badges use raw URLs)
+  },
+  "ignores": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/dist-electron/**",
+    "**/release/**",
+    "**/docs.local/**",
+  ],
+}

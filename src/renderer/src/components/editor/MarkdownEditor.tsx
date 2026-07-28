@@ -17,7 +17,13 @@ interface MarkdownEditorProps {
   docId?: string | null
 }
 
-export function MarkdownEditor({ content, onChange, autoFocus, editable = true, docId }: MarkdownEditorProps): React.ReactElement {
+export function MarkdownEditor({
+  content,
+  onChange,
+  autoFocus,
+  editable = true,
+  docId,
+}: MarkdownEditorProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const isInternalChange = useRef(false)
@@ -32,10 +38,7 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true, 
   const isApplyingExternal = useRef(false)
   const editableCompartment = useRef(new Compartment())
 
-  const debouncedOnChange = useMemo(
-    () => debounce((val: string) => onChange(val), 400),
-    [onChange]
-  )
+  const debouncedOnChange = useMemo(() => debounce((val: string) => onChange(val), 400), [onChange])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -46,20 +49,15 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true, 
         // Read-only mode: disable editing and input (can be reconfigured dynamically via editable)
         editableCompartment.current.of([
           EditorState.readOnly.of(!editable),
-          EditorView.editable.of(editable)
+          EditorView.editable.of(editable),
         ]),
         history(),
         highlightActiveLine(),
-        keymap.of([
-          ...defaultKeymap,
-          ...historyKeymap,
-          ...searchKeymap,
-          indentWithTab
-        ]),
+        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
         markdown({
           base: markdownLanguage,
           codeLanguages: languages,
-          addKeymap: true
+          addKeymap: true,
         }),
         autocompletion(),
         EditorView.updateListener.of((update) => {
@@ -71,29 +69,31 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true, 
         EditorView.theme({
           '&': {
             height: '100%',
-            fontSize: '14px'
+            fontSize: '14px',
           },
           '.cm-content': {
             fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
             lineHeight: '1.7',
             caretColor: '#5e6ad2',
             color: '#1a1a1a',
-            padding: '24px 0'
+            padding: '24px 0',
           },
           '.cm-line': { padding: '0 32px' },
           '.cm-activeLine': { backgroundColor: 'rgba(94,106,210,0.04)' },
           '.cm-gutters': { display: 'none' },
           '.cm-selectionBackground': { backgroundColor: 'rgba(94,106,210,0.2) !important' },
-          '&.cm-focused .cm-selectionBackground': { backgroundColor: 'rgba(94,106,210,0.2) !important' },
-          '.cm-cursor': { borderLeftColor: '#5e6ad2' }
+          '&.cm-focused .cm-selectionBackground': {
+            backgroundColor: 'rgba(94,106,210,0.2) !important',
+          },
+          '.cm-cursor': { borderLeftColor: '#5e6ad2' },
         }),
-        EditorView.lineWrapping
-      ]
+        EditorView.lineWrapping,
+      ],
     })
 
     const view = new EditorView({
       state: startState,
-      parent: containerRef.current
+      parent: containerRef.current,
     })
 
     viewRef.current = view
@@ -105,7 +105,7 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true, 
     if (autoFocus) {
       view.focus()
       view.dispatch({
-        selection: { anchor: view.state.doc.length }
+        selection: { anchor: view.state.doc.length },
       })
     }
 
@@ -120,7 +120,10 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true, 
       const insertion = before + (selectedText || 'text') + after
       v.dispatch({
         changes: { from: sel.from, to: sel.to, insert: insertion },
-        selection: { anchor: sel.from + before.length, head: sel.from + before.length + (selectedText || 'text').length }
+        selection: {
+          anchor: sel.from + before.length,
+          head: sel.from + before.length + (selectedText || 'text').length,
+        },
       })
       v.focus()
     }
@@ -133,7 +136,7 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true, 
       view.destroy()
       viewRef.current = null
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // When toggling read-only / edit mode, reconfigure the editor dynamically (no rebuild,
@@ -144,8 +147,8 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true, 
     view.dispatch({
       effects: editableCompartment.current.reconfigure([
         EditorState.readOnly.of(!editable),
-        EditorView.editable.of(editable)
-      ])
+        EditorView.editable.of(editable),
+      ]),
     })
   }, [editable])
 
@@ -171,7 +174,7 @@ export function MarkdownEditor({ content, onChange, autoFocus, editable = true, 
       isApplyingExternal.current = true
       view.dispatch({
         changes: { from: 0, to: currentContent.length, insert: content },
-        selection: { anchor: 0 }
+        selection: { anchor: 0 },
       })
       isApplyingExternal.current = false
     }

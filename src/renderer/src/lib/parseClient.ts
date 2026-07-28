@@ -36,9 +36,7 @@ export function warmupParseWorker(): void {
   warmed = true
   try {
     const remote = getApi()
-    void remote
-      .parse('# Warmup\n\n```js\nconsole.log(1)\n```\n', null)
-      .catch(() => {})
+    void remote.parse('# Warmup\n\n```js\nconsole.log(1)\n```\n', null).catch(() => {})
   } catch {
     // Worker unavailable: real parsing auto-falls back to the main thread, so a
     // failed warmup has no impact.

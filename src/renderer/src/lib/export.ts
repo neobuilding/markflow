@@ -10,7 +10,7 @@ import { resolveExportLang } from './lang'
 // Extracted into a shared function so printing (App.tsx) and exporting HTML (ExportDialog) don't diverge on 'system' theme resolution.
 export function resolveTheme(
   choice: 'current' | 'light' | 'dark',
-  uiTheme: string
+  uiTheme: string,
 ): 'light' | 'dark' {
   if (choice !== 'current') return choice
   if (uiTheme === 'system') {
@@ -36,7 +36,10 @@ export async function buildStandaloneHtml(opts: {
     body = await window.api.export.embedImages(body)
   } else {
     // Non-inline: restore appdoc:// to a relative path (shipped with images/), keep remote https as-is.
-    body = body.replace(/src="appdoc:\/\/[^/]+\/([^"]+)"/g, (_m, p1) => `src="${decodeURIComponent(p1)}"`)
+    body = body.replace(
+      /src="appdoc:\/\/[^/]+\/([^"]+)"/g,
+      (_m, p1) => `src="${decodeURIComponent(p1)}"`,
+    )
   }
   const css = opts.theme === 'dark' ? githubDarkCss : githubCss
   const lang = resolveExportLang(getExportContent()) || 'en'

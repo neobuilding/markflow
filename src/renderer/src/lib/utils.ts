@@ -25,7 +25,7 @@ export function formatDate(ts: number): string {
 
 export function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
   fn: T,
-  delay: number
+  delay: number,
 ): (...args: Parameters<T>) => void {
   let timer: ReturnType<typeof setTimeout>
   return (...args: Parameters<T>) => {
@@ -81,7 +81,7 @@ export function formatDateTime(ts: number): string {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
   })
 }
 
@@ -117,7 +117,9 @@ export function buildFileTree(docs: Document[], rootFolder: string): FileTreeNod
     let currentPath = normalizePathSegments(rootFolder).replace(/\/$/, '')
     for (const seg of relSegments) {
       currentPath += '/' + seg
-      let child = node.children.find((c) => c.isFolder && c.name.toLowerCase() === seg.toLowerCase())
+      let child = node.children.find(
+        (c) => c.isFolder && c.name.toLowerCase() === seg.toLowerCase(),
+      )
       if (!child) {
         child = { name: seg, path: currentPath, isFolder: true, children: [] }
         node.children.push(child)
@@ -129,7 +131,7 @@ export function buildFileTree(docs: Document[], rootFolder: string): FileTreeNod
       path: doc.filePath,
       isFolder: false,
       doc,
-      children: []
+      children: [],
     })
   }
 

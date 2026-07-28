@@ -17,7 +17,8 @@ const api = {
     saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) =>
       ipcRenderer.invoke('documents:save-as', id, filePath, params),
     reload: (id: string) => ipcRenderer.invoke('documents:reload', id),
-    setEncoding: (id: string, encoding: string) => ipcRenderer.invoke('documents:set-encoding', id, encoding),
+    setEncoding: (id: string, encoding: string) =>
+      ipcRenderer.invoke('documents:set-encoding', id, encoding),
     stat: (filePath: string) => ipcRenderer.invoke('documents:stat', filePath),
     eol: (filePath: string) => ipcRenderer.invoke('documents:eol', filePath),
     watch: (id: string) => ipcRenderer.invoke('documents:watch', id),
@@ -54,7 +55,7 @@ const api = {
     // preload context via require('electron')) to recover the real path.
     getPathForFile: (file: File) => {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const electronModule = require('electron') as any
         if (electronModule?.webUtils?.getPathForFile) {
           return electronModule.webUtils.getPathForFile(file)
@@ -107,7 +108,7 @@ const api = {
       | 'about'
       | 'export-html'
       | 'print',
-    callback: (data?: string | string[]) => void
+    callback: (data?: string | string[]) => void,
   ) => {
     const handler = (_: Electron.IpcRendererEvent, data?: string | string[]) => callback(data)
     ipcRenderer.on(`menu:${event}`, handler)
@@ -115,10 +116,9 @@ const api = {
   },
 
   // A file open in the editor was modified on disk by another program
-  onFileChanged: (
-    callback: (data: { id: string; filePath: string }) => void
-  ) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { id: string; filePath: string }) => callback(data)
+  onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => {
+    const handler = (_: Electron.IpcRendererEvent, data: { id: string; filePath: string }) =>
+      callback(data)
     ipcRenderer.on('app:file-changed', handler)
     return () => ipcRenderer.removeListener('app:file-changed', handler)
   },

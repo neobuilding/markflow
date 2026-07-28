@@ -33,8 +33,10 @@ export function StatusBar(): React.ReactElement {
   const [eol, setEol] = useState<'\r\n' | '\n' | null>(null)
   useEffect(() => {
     if (!doc?.filePath) {
-      setEol(null)
-      return
+      // Deferred so the setState isn't synchronous within the effect body
+      // (avoids cascading re-renders; satisfies react-hooks/set-state-in-effect).
+      const id = setTimeout(() => setEol(null), 0)
+      return () => clearTimeout(id)
     }
     let cancelled = false
     window.api.documents
@@ -105,7 +107,11 @@ export function StatusBar(): React.ReactElement {
         <div className="relative ml-3" ref={encRef}>
           <button
             onClick={() => setEncOpen((v) => !v)}
-            title={lowConfidence ? 'Encoding may be inaccurate, click to switch' : `Encoding: ${encoding}`}
+            title={
+              lowConfidence
+                ? 'Encoding may be inaccurate, click to switch'
+                : `Encoding: ${encoding}`
+            }
             className={
               'text-2xs px-1.5 py-0.5 rounded border transition-colors ' +
               (lowConfidence

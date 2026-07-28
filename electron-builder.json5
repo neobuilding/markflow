@@ -1,67 +1,65 @@
 {
-  "appId": "com.markflow.app",
-  "productName": "MarkFlow",
-  "directories": {
-    "buildResources": "resources",
-    "output": "release"
+  appId: 'com.markflow.app',
+  productName: 'MarkFlow',
+  directories: {
+    buildResources: 'resources',
+    output: 'release',
   },
-  "fileAssociations": [
-    { "ext": "md", "name": "Markdown Document", "role": "Editor" },
-    { "ext": "markdown", "name": "Markdown Document", "role": "Editor" },
-    { "ext": "mdx", "name": "Markdown Document", "role": "Editor" },
-    { "ext": "mdtxt", "name": "Markdown Document", "role": "Editor" },
-    { "ext": "mdtext", "name": "Markdown Document", "role": "Editor" }
+  fileAssociations: [
+    { ext: 'md', name: 'Markdown Document', role: 'Editor' },
+    { ext: 'markdown', name: 'Markdown Document', role: 'Editor' },
+    { ext: 'mdx', name: 'Markdown Document', role: 'Editor' },
+    { ext: 'mdtxt', name: 'Markdown Document', role: 'Editor' },
+    { ext: 'mdtext', name: 'Markdown Document', role: 'Editor' },
   ],
-  "files": [
-    "dist-electron/**/*",
-    "dist/renderer/**/*",
-    "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,caches,lock}",
-    "!.eslintrc.{js,yml,yaml}",
-    "!.prettier*",
-    "!.editorconfig",
-    "!*.{spec,test}.{js,ts}",
-    "!**/{.DS_Store,Thumbs.db,desktop.ini}",
-    "!**/node_modules/.bin"
+  files: [
+    'dist-electron/**/*',
+    'dist/renderer/**/*',
+    '!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,caches,lock}',
+    '!.eslintrc.{js,yml,yaml}',
+    '!.prettier*',
+    '!.editorconfig',
+    '!*.{spec,test}.{js,ts}',
+    '!**/{.DS_Store,Thumbs.db,desktop.ini}',
+    '!**/node_modules/.bin',
   ],
-  "asarUnpack": [
-    "node_modules/better-sqlite3/**"
-  ],
-  "mac": {
-    "entitlementsInherit": "resources/entitlements.mac.plist",
-    "extendInfo": {
-      "NSCameraUsageDescription": "Application requests access to the device's camera.",
-      "NSMicrophoneUsageDescription": "Application requests access to the device's microphone.",
-      "NSDocumentsFolderUsageDescription": "Application requests access to the user's Documents folder.",
-      "NSDownloadsFolderUsageDescription": "Application requests access to the user's Downloads folder."
+  asarUnpack: ['node_modules/better-sqlite3/**'],
+  mac: {
+    entitlementsInherit: 'resources/entitlements.mac.plist',
+    extendInfo: {
+      NSCameraUsageDescription: "Application requests access to the device's camera.",
+      NSMicrophoneUsageDescription: "Application requests access to the device's microphone.",
+      NSDocumentsFolderUsageDescription: "Application requests access to the user's Documents folder.",
+      NSDownloadsFolderUsageDescription: "Application requests access to the user's Downloads folder.",
     },
-    "notarize": false,
-    "target": [
+    notarize: false,
+    target: [
       {
-        "target": "dmg",
-        "arch": ["universal"]
-      }
-    ]
-  },
-  "win": {
-    "executableName": "MarkFlow",
-    "target": [
-      {
-        "target": "zip",
-        "arch": ["x64"]
-      }
+        target: 'dmg',
+        arch: ['universal'],
+      },
     ],
-    "artifactName": "${name}-${version}-${os}.${ext}"
   },
-  "linux": {
-    "target": [
+  win: {
+    executableName: 'MarkFlow',
+    target: [
       {
-        "target": "AppImage",
-        "arch": ["x64"]
-      }
-    ]
+        target: 'zip',
+        arch: ['x64'],
+      },
+    ],
+    artifactName: '${name}-${version}-${os}.${ext}',
   },
-  "dmg": {
-    "artifactName": "${name}-${version}.${ext}"
+  linux: {
+    target: [
+      {
+        target: 'AppImage',
+        arch: ['x64'],
+      },
+    ],
   },
-  "publish": null
+  dmg: {
+    artifactName: '${name}-${version}.${ext}',
+  },
+  publish: null,
 }

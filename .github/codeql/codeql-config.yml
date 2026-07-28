@@ -1,6 +1,7 @@
 name: "MarkFlow CodeQL config"
 
-# 只扫源码，跳过依赖、构建产物与测试桩，缩短分析时间、减少误报
+# Scan only first-party source; skip dependencies, build output, and test stubs
+# to shorten analysis time and reduce false positives.
 paths-ignore:
   - node_modules
   - dist
@@ -8,6 +9,7 @@ paths-ignore:
   - "**/*.test.ts"
   - "**/*.test.tsx"
 
-# 默认安全套件 + 安全与质量扩展查询（含可维护性/正确性规则）
+# Default security suite plus the security-and-quality extended query pack
+# (includes maintainability / correctness rules).
 queries:
   - uses: security-and-quality

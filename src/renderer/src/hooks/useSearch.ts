@@ -8,7 +8,7 @@ export function useSearch() {
     queryKey: ['search', searchQuery],
     queryFn: () => window.api.search.query(searchQuery),
     enabled: searchQuery.trim().length > 0,
-    staleTime: 1000 * 5
+    staleTime: 1000 * 5,
   })
 
   return result

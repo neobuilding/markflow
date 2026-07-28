@@ -24,19 +24,19 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
             'border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-surface-overlay)] active:scale-[0.98]':
               variant === 'outline',
             'bg-accent text-white hover:bg-[var(--color-accent-hover)] active:scale-[0.98]':
-              variant === 'accent'
+              variant === 'accent',
           },
           {
             // sizes
             'h-7 px-2.5 text-xs': size === 'sm',
             'h-8 px-3 text-sm': size === 'md',
-            'h-7 w-7 p-0': size === 'icon'
+            'h-7 w-7 p-0': size === 'icon',
           },
-          className
+          className,
         )}
         {...props}
       />
     )
-  }
+  },
 )
 Button.displayName = 'Button'

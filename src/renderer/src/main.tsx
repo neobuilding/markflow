@@ -14,9 +14,9 @@ const queryClient = new QueryClient({
       staleTime: 1000 * 10, // 10s
       gcTime: 1000 * 60 * 5, // 5m
       retry: 1,
-      refetchOnWindowFocus: false
-    }
-  }
+      refetchOnWindowFocus: false,
+    },
+  },
 })
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
@@ -26,7 +26,7 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
         <App />
       </QueryClientProvider>
     </ErrorBoundary>
-  </React.StrictMode>
+  </React.StrictMode>,
 )
 
 // Warm up the parse Worker (shiki cold-start cost etc.) so the preview doesn't stall on first document open.

@@ -25,7 +25,8 @@ export function registerSearchHandlers(ipcMain: IpcMain): void {
 
     try {
       const rows = db
-        .prepare(`
+        .prepare(
+          `
           SELECT
             d.id,
             d.title,
@@ -39,15 +40,16 @@ export function registerSearchHandlers(ipcMain: IpcMain): void {
             AND d.is_archived = 0
           ORDER BY rank
           LIMIT 20
-        `)
+        `,
+        )
         .all(safeQuery) as Array<{
-          id: string
-          title: string
-          folder_path: string
-          updated_at: number
-          snippet: string
-          score: number
-        }>
+        id: string
+        title: string
+        folder_path: string
+        updated_at: number
+        snippet: string
+        score: number
+      }>
 
       return rows.map((r) => ({
         id: r.id,
@@ -55,28 +57,30 @@ export function registerSearchHandlers(ipcMain: IpcMain): void {
         folderPath: r.folder_path,
         snippet: r.snippet || '',
         score: r.score,
-        updatedAt: r.updated_at
+        updatedAt: r.updated_at,
       }))
     } catch (e) {
       console.error('FTS search error:', e)
       // Fallback: LIKE search
       const likeQuery = `%${query.trim()}%`
       const rows = db
-        .prepare(`
+        .prepare(
+          `
           SELECT id, title, folder_path, updated_at,
             SUBSTR(content, 1, 200) AS snippet
           FROM documents
           WHERE (title LIKE ? OR content LIKE ?) AND is_archived = 0
           ORDER BY updated_at DESC
           LIMIT 20
-        `)
+        `,
+        )
         .all(likeQuery, likeQuery) as Array<{
-          id: string
-          title: string
-          folder_path: string
-          updated_at: number
-          snippet: string
-        }>
+        id: string
+        title: string
+        folder_path: string
+        updated_at: number
+        snippet: string
+      }>
 
       return rows.map((r) => ({
         id: r.id,
@@ -84,7 +88,7 @@ export function registerSearchHandlers(ipcMain: IpcMain): void {
         folderPath: r.folder_path,
         snippet: r.snippet || '',
         score: 0,
-        updatedAt: r.updated_at
+        updatedAt: r.updated_at,
       }))
     }
   })

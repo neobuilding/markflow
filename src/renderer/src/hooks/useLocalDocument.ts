@@ -4,7 +4,7 @@ import { useUIStore } from '../store/ui'
 
 export function useLocalDocument(
   doc: Document | null | undefined,
-  activeDocumentId: string | null
+  _activeDocumentId: string | null,
 ) {
   const [localContent, setLocalContent] = useState('')
   const [localTitle, setLocalTitle] = useState('')
@@ -18,9 +18,12 @@ export function useLocalDocument(
   const prevIdRef = useRef<string | null>(null)
   // The encoding currently applied to the document (used to detect a "manual encoding switch" event)
   const appliedEncodingRef = useRef<string | undefined>(undefined)
-  // The latest dirty flag, for use inside effects (avoids capturing a stale value in the closure)
+  // The latest dirty flag, for use inside effects (avoids capturing a stale value in the closure).
+  // Updated in an effect (not during render) so react-hooks/refs stays happy.
   const dirtyRef = useRef(false)
-  dirtyRef.current = dirty
+  useEffect(() => {
+    dirtyRef.current = dirty
+  })
   // Original line ending: inferred from the authoritative content (disk/database); on save we
   // restore the editor-normalized LF back to it, so a CRLF file isn't rewritten to LF when edited
   // (CodeMirror internally uses \n as the line separator).
@@ -80,10 +83,15 @@ export function useLocalDocument(
   useEffect(() => {
     if (!doc?.filePath) return
     let cancelled = false
-    window.api.documents.eol(doc.filePath).then((eol) => {
-      if (!cancelled) eolRef.current = eol
-    }).catch(() => {})
-    return () => { cancelled = true }
+    window.api.documents
+      .eol(doc.filePath)
+      .then((eol) => {
+        if (!cancelled) eolRef.current = eol
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [doc?.id, doc?.filePath])
 
   const setDirty = useCallback((d: boolean) => {
@@ -112,7 +120,7 @@ export function useLocalDocument(
       setLocalContent(newContent)
       setDirty(newContent !== savedContentRef.current)
     },
-    [setDirty]
+    [setDirty],
   )
 
   // Title editing finished: only mark dirty (the actual rename/write is done by Save / Save As)
@@ -149,6 +157,6 @@ export function useLocalDocument(
     dirty,
     markSaved,
     toDiskFormat,
-    getEol
+    getEol,
   }
 }

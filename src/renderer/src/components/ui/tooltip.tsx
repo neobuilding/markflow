@@ -21,7 +21,7 @@ const TooltipContent = React.forwardRef<
         'z-50 overflow-hidden rounded-md border px-2.5 py-1.5 text-xs font-medium leading-none shadow-lg animate-fade-in',
         'bg-[#1a1a1a] border-black/40 text-white',
         'dark:bg-[#2a2a2a] dark:border-[var(--color-border-strong)]',
-        className
+        className,
       )}
       {...props}
     />

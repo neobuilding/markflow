@@ -15,11 +15,11 @@ export default defineConfig({
       alias: {
         'decode-named-character-reference': new URL(
           './node_modules/decode-named-character-reference/index.js',
-          import.meta.url
+          import.meta.url,
         ).pathname,
         'hast-util-from-html-isomorphic': new URL(
           './node_modules/hast-util-from-html-isomorphic/index.js',
-          import.meta.url
+          import.meta.url,
         ).pathname,
       },
     },

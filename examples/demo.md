@@ -6,14 +6,14 @@
 
 ## 📊 表格支持
 
-| 功能 | 状态 | 说明 |
-|------|------|------|
-| 标准 Markdown | ✅ | 标题、列表、链接、图片等 |
-| GFM 表格 | ✅ | 表头、对齐、单元格内嵌 |
-| Mermaid 图表 | ✅ | 流程图、时序图、甘特图、饼图等 |
-| 代码高亮 | ✅ | 多种编程语言 |
-| 数学公式 | ✅ | 行内、块级；定界符风格有两种，均属 LaTeX 数学语法：美元符 `$...$`/`$$...$$` 与括号 `\(...\)`/`\[...\]` |
-| 任务列表 | ✅ | GFM 风格勾选框 |
+| 功能          | 状态 | 说明                                                                                                   |
+| ------------- | ---- | ------------------------------------------------------------------------------------------------------ |
+| 标准 Markdown | ✅   | 标题、列表、链接、图片等                                                                               |
+| GFM 表格      | ✅   | 表头、对齐、单元格内嵌                                                                                 |
+| Mermaid 图表  | ✅   | 流程图、时序图、甘特图、饼图等                                                                         |
+| 代码高亮      | ✅   | 多种编程语言                                                                                           |
+| 数学公式      | ✅   | 行内、块级；定界符风格有两种，均属 LaTeX 数学语法：美元符 `$...$`/`$$...$$` 与括号 `\(...\)`/`\[...\]` |
+| 任务列表      | ✅   | GFM 风格勾选框                                                                                         |
 
 ## ✅ 任务列表
 
@@ -150,19 +150,22 @@ async def process_tasks(tasks: list[Task]) -> list[str]:
 ```javascript
 // 防抖函数
 function debounce(fn, delay = 300) {
-  let timer = null;
+  let timer = null
   return function (...args) {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn.apply(this, args), delay);
-  };
+    clearTimeout(timer)
+    timer = setTimeout(() => fn.apply(this, args), delay)
+  }
 }
 
 // 使用示例
-const searchInput = document.querySelector('#search');
-searchInput.addEventListener('input', debounce(async (e) => {
-  const results = await fetch(`/api/search?q=${e.target.value}`);
-  renderResults(await results.json());
-}, 500));
+const searchInput = document.querySelector('#search')
+searchInput.addEventListener(
+  'input',
+  debounce(async (e) => {
+    const results = await fetch(`/api/search?q=${e.target.value}`)
+    renderResults(await results.json())
+  }, 500),
+)
 ```
 
 ### SQL
@@ -205,22 +208,24 @@ echo "✅ 全部完成！"
 ### 多层嵌套引用
 
 > 第一层引用
->> 第二层引用
->>> 第三层引用 — 深层次的思考
+>
+> > 第二层引用
+> >
+> > > 第三层引用 — 深层次的思考
 
 ## 🎯 提示块（Admonitions）
 
 !!! note "注意"
-    一些 Markdown 工具支持 `!!! type "标题"` 形式的提示块，可自定义标题。
+一些 Markdown 工具支持 `!!! type "标题"` 形式的提示块，可自定义标题。
 
 !!! warning "警告"
-    不同工具支持的语法子集不尽相同，使用前请参考对应工具的文档。
+不同工具支持的语法子集不尽相同，使用前请参考对应工具的文档。
 
 !!! tip "提示"
-    许多 Markdown 工具支持深色模式与自定义主题。
+许多 Markdown 工具支持深色模式与自定义主题。
 
 !!! info "信息"
-    Mermaid 图表语法由支持该扩展的工具渲染，是否需要联网取决于具体实现。
+Mermaid 图表语法由支持该扩展的工具渲染，是否需要联网取决于具体实现。
 
 ## 📋 定义列表
 
@@ -247,4 +252,4 @@ HTML 是 Web 的基础。CSS 负责样式，JS 负责交互。
 
 ---
 
-**Happy Coding! 🎉**
+### Happy Coding! 🎉

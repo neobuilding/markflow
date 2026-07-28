@@ -1,0 +1,42 @@
+{
+  "extends": ["stylelint-config-recommended"],
+  "rules": {
+    "at-rule-no-unknown": [
+      true,
+      {
+        "ignoreAtRules": [
+          "tailwindcss",
+          "plugin",
+          "custom-variant",
+          "config",
+          "source",
+          "apply",
+          "utility",
+          "variant",
+          "theme",
+          "screen",
+          "layer",
+          "import"
+        ]
+      }
+    ],
+    "selector-pseudo-element-no-unknown": [
+      true,
+      {
+        "ignorePseudoElements": [
+          "::-webkit-scrollbar",
+          "::-webkit-scrollbar-track",
+          "::-webkit-scrollbar-thumb",
+          "::-webkit-scrollbar-corner",
+          "::-webkit-scrollbar-button",
+          "::-webkit-scrollbar-resizer"
+        ]
+      }
+    ],
+    "selector-pseudo-class-no-unknown": [true, { "ignorePseudoClasses": ["has"] }],
+    "comment-empty-line-before": null,
+    "no-descending-specificity": null,
+    "declaration-block-no-redundant-longhand-properties": null
+  },
+  "ignoreFiles": ["**/dist/**", "**/dist-electron/**", "**/release/**", "**/node_modules/**"]
+}

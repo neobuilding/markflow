@@ -1,5 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FileText, Plus, Search, MoreHorizontal, Trash2, FolderOpen, Folder, ChevronRight, X, GripVertical } from 'lucide-react'
+import {
+  FileText,
+  Plus,
+  Search,
+  MoreHorizontal,
+  Trash2,
+  FolderOpen,
+  Folder,
+  ChevronRight,
+  X,
+  GripVertical,
+} from 'lucide-react'
 import { cn, formatDate, isInFolder, buildFileTree, type FileTreeNode } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
@@ -7,7 +18,7 @@ import {
   useDeleteDocument,
   useCreateDocument,
   useOpenPaths,
-  useOpenFolder
+  useOpenFolder,
 } from '../../hooks/useDocuments'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -16,7 +27,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger
+  DropdownMenuTrigger,
 } from '../ui/dropdown-menu'
 import type { Document } from '../../types'
 
@@ -27,7 +38,7 @@ export function Sidebar(): React.ReactElement | null {
     setActiveDocumentId,
     setSearchOpen,
     activeFolder,
-    closeWorkspace
+    closeWorkspace,
   } = useUIStore()
   const [sidebarWidth, setSidebarWidth] = useState(240)
   const isResizing = useRef(false)
@@ -35,13 +46,16 @@ export function Sidebar(): React.ReactElement | null {
   const { data: allDocs = [], isLoading: loading } = useDocuments()
 
   // Only show documents within the "current folder" (empty when no folder is open, the welcome
-  // page takes over)
-  const folderDocs = activeFolder ? allDocs.filter((d) => isInFolder(d.filePath, activeFolder)) : []
+  // page takes over). Memoized so it's a stable dependency for the tree useMemo below.
+  const folderDocs = useMemo(
+    () => (activeFolder ? allDocs.filter((d) => isInFolder(d.filePath, activeFolder)) : []),
+    [activeFolder, allDocs],
+  )
 
   // Build the current folder's documents into a nested "folder + file" tree, supporting subfolders
   const tree = useMemo(
     () => (activeFolder ? buildFileTree(folderDocs, activeFolder) : []),
-    [folderDocs, activeFolder]
+    [folderDocs, activeFolder],
   )
 
   const deleteMut = useDeleteDocument()
@@ -68,18 +82,28 @@ export function Sidebar(): React.ReactElement | null {
   }, [createMut, setActiveDocumentId])
 
   // Document select / delete / star / details: reused by the doc tree (including subfolders)
-  const handleSelectDoc = useCallback((doc: Document) => {
-    if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and switch files?')) return
-    setActiveDocumentId(doc.id)
-  }, [setActiveDocumentId])
+  const handleSelectDoc = useCallback(
+    (doc: Document) => {
+      if (
+        useUIStore.getState().dirty &&
+        !window.confirm('You have unsaved changes. Discard them and switch files?')
+      )
+        return
+      setActiveDocumentId(doc.id)
+    },
+    [setActiveDocumentId],
+  )
 
-  const handleDeleteDoc = useCallback((doc: Document) => {
-    deleteMut.mutate(doc.id)
-    if (activeDocumentId === doc.id) {
-      const next = folderDocs.find((d) => d.id !== doc.id)
-      setActiveDocumentId(next?.id ?? null)
-    }
-  }, [deleteMut, activeDocumentId, folderDocs])
+  const handleDeleteDoc = useCallback(
+    (doc: Document) => {
+      deleteMut.mutate(doc.id)
+      if (activeDocumentId === doc.id) {
+        const next = folderDocs.find((d) => d.id !== doc.id)
+        setActiveDocumentId(next?.id ?? null)
+      }
+    },
+    [deleteMut, activeDocumentId, folderDocs, setActiveDocumentId],
+  )
 
   const handleDetailsDoc = useCallback((doc: Document) => {
     useUIStore.getState().setFileDetailsId(doc.id)
@@ -117,7 +141,7 @@ export function Sidebar(): React.ReactElement | null {
   if (!sidebarOpen) return null
 
   const folderName = activeFolder
-    ? activeFolder.split(/[\\/]/).filter(Boolean).pop() ?? activeFolder
+    ? (activeFolder.split(/[\\/]/).filter(Boolean).pop() ?? activeFolder)
     : ''
 
   return (
@@ -130,7 +154,10 @@ export function Sidebar(): React.ReactElement | null {
         className="titlebar-drag flex items-center border-b border-[var(--color-border)] shrink-0 pr-2"
         style={{
           height: 'var(--titlebar-height)',
-          paddingLeft: typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.userAgent) ? '5rem' : '0.75rem'
+          paddingLeft:
+            typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.userAgent)
+              ? '5rem'
+              : '0.75rem',
         }}
       >
         <div className="titlebar-no-drag flex items-center gap-1.5 flex-1 min-w-0">
@@ -138,7 +165,9 @@ export function Sidebar(): React.ReactElement | null {
             <div className="w-5 h-5 rounded bg-accent flex items-center justify-center shrink-0">
               <FileText size={11} className="text-white" />
             </div>
-            <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate">MarkFlow</span>
+            <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate">
+              MarkFlow
+            </span>
           </div>
           <div className="flex items-center gap-0.5">
             <Tooltip>
@@ -177,7 +206,12 @@ export function Sidebar(): React.ReactElement | null {
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={handleCreate} disabled={createMut.isPending}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleCreate}
+                  disabled={createMut.isPending}
+                >
                   <Plus size={13} />
                 </Button>
               </TooltipTrigger>
@@ -191,7 +225,10 @@ export function Sidebar(): React.ReactElement | null {
       {activeFolder && (
         <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--color-border)] shrink-0">
           <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
-          <span className="text-2xs text-[var(--color-text-tertiary)] truncate flex-1" title={activeFolder}>
+          <span
+            className="text-2xs text-[var(--color-text-tertiary)] truncate flex-1"
+            title={activeFolder}
+          >
             {folderName}
           </span>
           <Tooltip>
@@ -201,7 +238,13 @@ export function Sidebar(): React.ReactElement | null {
                 size="icon"
                 className="h-6 w-6"
                 onClick={() => {
-                  if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them and close the workspace?')) return
+                  if (
+                    useUIStore.getState().dirty &&
+                    !window.confirm(
+                      'You have unsaved changes. Discard them and close the workspace?',
+                    )
+                  )
+                    return
                   closeWorkspace()
                 }}
               >
@@ -222,7 +265,9 @@ export function Sidebar(): React.ReactElement | null {
             onCreate={handleCreate}
           />
         ) : loading ? (
-          <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">Loading…</div>
+          <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">
+            Loading…
+          </div>
         ) : folderDocs.length === 0 ? (
           <EmptyState onCreate={handleCreate} />
         ) : (
@@ -248,7 +293,10 @@ export function Sidebar(): React.ReactElement | null {
         onMouseDown={startResize}
         title="Drag to resize sidebar"
       >
-        <GripVertical size={12} className="absolute right-0 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 hover:opacity-100 transition-opacity" />
+        <GripVertical
+          size={12}
+          className="absolute right-0 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 hover:opacity-100 transition-opacity"
+        />
       </div>
     </aside>
   )
@@ -257,7 +305,7 @@ export function Sidebar(): React.ReactElement | null {
 function WelcomeState({
   onOpenFile,
   onOpenFolder,
-  onCreate
+  onCreate,
 }: {
   onOpenFile: () => void
   onOpenFolder: () => void
@@ -273,9 +321,15 @@ function WelcomeState({
         Open a file or folder to start reading.
       </p>
       <div className="flex flex-col gap-2">
-        <Button variant="accent" size="sm" onClick={onOpenFile}>Open File…</Button>
-        <Button variant="outline" size="sm" onClick={onOpenFolder}>Open Folder…</Button>
-        <Button variant="ghost" size="sm" onClick={onCreate}>New Document</Button>
+        <Button variant="accent" size="sm" onClick={onOpenFile}>
+          Open File…
+        </Button>
+        <Button variant="outline" size="sm" onClick={onOpenFolder}>
+          Open Folder…
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onCreate}>
+          New Document
+        </Button>
       </div>
     </div>
   )
@@ -285,9 +339,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="px-3 py-8 text-center">
       <FileText size={24} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" />
-      <p className="text-xs text-[var(--color-text-tertiary)]">
-        No documents in this folder
-      </p>
+      <p className="text-xs text-[var(--color-text-tertiary)]">No documents in this folder</p>
       <button onClick={onCreate} className="mt-2 text-xs text-accent hover:underline">
         Create your first document
       </button>
@@ -313,7 +365,7 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
         'group relative flex items-start gap-2 px-3 py-2 mx-1 rounded cursor-pointer transition-colors',
         isActive
           ? 'bg-[var(--color-accent-muted)] text-[var(--color-text-primary)]'
-          : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-secondary)]'
+          : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-secondary)]',
       )}
       style={{ paddingLeft: depth * 12 + 12 }}
       onClick={onSelect}
@@ -326,14 +378,21 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
     >
       <FileText
         size={13}
-        className={cn('mt-0.5 shrink-0', isActive ? 'text-accent' : 'text-[var(--color-text-tertiary)]')}
+        className={cn(
+          'mt-0.5 shrink-0',
+          isActive ? 'text-accent' : 'text-[var(--color-text-tertiary)]',
+        )}
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1">
-          <span className="text-sm font-medium truncate text-[var(--color-text-primary)]">{doc.title}</span>
+          <span className="text-sm font-medium truncate text-[var(--color-text-primary)]">
+            {doc.title}
+          </span>
         </div>
         <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-2xs text-[var(--color-text-tertiary)]">{formatDate(doc.updatedAt)}</span>
+          <span className="text-2xs text-[var(--color-text-tertiary)]">
+            {formatDate(doc.updatedAt)}
+          </span>
           {doc.wordCount > 0 && (
             <>
               <span className="text-2xs text-[var(--color-border-strong)]">·</span>
@@ -348,7 +407,7 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
           <button
             className={cn(
               'shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-overlay)] transition-opacity',
-              isActive && 'opacity-60'
+              isActive && 'opacity-60',
             )}
             onClick={(e) => e.stopPropagation()}
           >
@@ -356,11 +415,22 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDetails() }}>
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation()
+              onDetails()
+            }}
+          >
             <FileText size={13} /> Details
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem destructive onClick={(e) => { e.stopPropagation(); onDelete() }}>
+          <DropdownMenuItem
+            destructive
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+          >
             <Trash2 size={13} /> Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -379,16 +449,9 @@ interface TreeRowProps {
 }
 
 // Recursively render the document tree: folders are collapsible, files reuse DocItem.
-function TreeRow({
-  node,
-  depth,
-  activeId,
-  onSelectDoc,
-  onDeleteDoc,
-  onDetailsDoc
-}: TreeRowProps) {
+function TreeRow({ node, depth, activeId, onSelectDoc, onDeleteDoc, onDetailsDoc }: TreeRowProps) {
+  const [open, setOpen] = useState(true)
   if (node.isFolder) {
-    const [open, setOpen] = useState(true)
     return (
       <li>
         <button
@@ -400,7 +463,7 @@ function TreeRow({
             size={13}
             className={cn(
               'shrink-0 text-[var(--color-text-tertiary)] transition-transform',
-              open && 'rotate-90'
+              open && 'rotate-90',
             )}
           />
           {open ? (

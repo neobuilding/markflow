@@ -26,7 +26,7 @@ const fakeIpcMain = {
 // 1x1 transparent PNG
 const PNG = Buffer.from(
   '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
-  'hex'
+  'hex',
 )
 
 beforeAll(() => {
@@ -34,19 +34,19 @@ beforeAll(() => {
 })
 
 describe('export — embed-images (R7)', () => {
-  it('data: 图片原样保留（不触碰 DB）', async () => {
+  it('data: image preserved as-is (no DB access)', async () => {
     const html = '<img src="data:image/png;base64,AAAA">'
     const out = (await handlers['export:embed-images'](null, html)) as string
     expect(out).toContain('data:image/png;base64,AAAA')
   })
 
-  it('appdoc:// 内联为 base64 data URL（经假 DB 取 file_path）', async () => {
+  it('appdoc:// inlined as base64 data URL (file_path fetched via fake DB)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mf-embed-'))
     const imgPath = join(dir, 'a.png')
     writeFileSync(imgPath, PNG)
     const mdPath = join(dir, 'doc.md')
     writeFileSync(mdPath, '# hi')
-    hoist.imgDocPath = mdPath // 假 DB：doc 的 file_path
+    hoist.imgDocPath = mdPath // fake DB: the document's file_path
     const html = `<img src="appdoc://doc1/a.png">`
     const out = (await handlers['export:embed-images'](null, html)) as string
     expect(out).toContain('data:image/png;base64,')
@@ -55,7 +55,7 @@ describe('export — embed-images (R7)', () => {
 })
 
 describe('export — write (R7)', () => {
-  it('写出 HTML 到磁盘', async () => {
+  it('writes HTML to disk', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mf-write-'))
     const p = join(dir, 'o.html')
     await handlers['export:write'](null, p, '<p>hi</p>')

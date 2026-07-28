@@ -33,7 +33,12 @@ export function AboutDialog(): React.ReactElement | null {
   }
 
   return (
-    <Dialog open={aboutOpen} onOpenChange={(o) => { if (!o) close() }}>
+    <Dialog
+      open={aboutOpen}
+      onOpenChange={(o) => {
+        if (!o) close()
+      }}
+    >
       <DialogContent className="max-w-sm">
         {/* Screen-reader-visible title, ensures dialog accessibility */}
         <DialogTitle className="sr-only">About MarkFlow</DialogTitle>
@@ -65,7 +70,9 @@ export function AboutDialog(): React.ReactElement | null {
 
         <div className="flex items-center justify-center mt-5">
           <DialogClose asChild>
-            <Button variant="accent" size="sm" className="px-8">Close</Button>
+            <Button variant="accent" size="sm" className="px-8">
+              Close
+            </Button>
           </DialogClose>
         </div>
       </DialogContent>

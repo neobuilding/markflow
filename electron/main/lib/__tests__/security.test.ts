@@ -19,49 +19,49 @@ afterEach(() => {
   tmpArtifacts.length = 0
 })
 
-describe('parseAppDocUrl (R4/R6 appdoc 解析)', () => {
-  it('docId 落在 hostname', () => {
+describe('parseAppDocUrl (R4/R6 appdoc parsing)', () => {
+  it('docId is placed in the hostname', () => {
     expect(parseAppDocUrl('appdoc://doc-123/a.png')).toEqual({ docId: 'doc-123', relPath: 'a.png' })
   })
-  it('子目录相对路径保留层级', () => {
+  it('subdirectory relative paths preserve hierarchy', () => {
     expect(parseAppDocUrl('appdoc://doc-123/img/photo.png')).toEqual({
       docId: 'doc-123',
       relPath: 'img/photo.png',
     })
   })
-  it('文件名含空格 → percent-decode 还原', () => {
+  it('filename with spaces is percent-decoded', () => {
     expect(parseAppDocUrl('appdoc://doc-123/my%20photo.png')).toEqual({
       docId: 'doc-123',
       relPath: 'my photo.png',
     })
   })
-  it('非 appdoc 协议 → null（不应内联）', () => {
+  it('non-appdoc protocol returns null (should not inline)', () => {
     expect(parseAppDocUrl('https://example.com/a.png')).toBeNull()
     expect(parseAppDocUrl('data:image/png;base64,AAAA')).toBeNull()
   })
-  it('缺少相对路径 → null（404）', () => {
+  it('missing relative path returns null (404)', () => {
     expect(parseAppDocUrl('appdoc://doc-123')).toBeNull()
   })
-  it('非法 URL → null（不抛异常）', () => {
+  it('invalid URL returns null (no throw)', () => {
     expect(parseAppDocUrl('not a url')).toBeNull()
   })
-  it('非规范形式 appdoc:doc-123/a.png（缺少 //）→ null', () => {
+  it('non-canonical form appdoc:doc-123/a.png (missing //) returns null', () => {
     expect(parseAppDocUrl('appdoc:doc-123/a.png')).toBeNull()
   })
-  it('hostname 含非法字符 → null', () => {
+  it('hostname with illegal characters returns null', () => {
     expect(parseAppDocUrl('appdoc://doc 123/a.png')).toBeNull()
   })
 })
 
-describe('isSubdir 防穿越 (R4/R6)', () => {
-  it('允许子目录/文件', () => {
+describe('isSubdir traversal prevention (R4/R6)', () => {
+  it('allows subdirectory / file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mf-sub-'))
     tmpArtifacts.push(dir)
     const child = join(dir, 'a.png')
-    writeFileSync(child, 'x') // isSubdir 用 realpathSync，需文件真实存在
+    writeFileSync(child, 'x') // isSubdir uses realpathSync, so the file must really exist
     expect(isSubdir(dir, child)).toBe(true)
   })
-  it('拦截越权路径（../ 逃逸）', () => {
+  it('blocks privilege-escalation path (../ escape)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mf-prev-'))
     tmpArtifacts.push(dir)
     const outsideDir = mkdtempSync(join(tmpdir(), 'mf-prev-out-'))

@@ -1,13 +1,37 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
 import {
-  Edit3, Eye, Columns, Hash, Bold, Italic, Code, Link, List, CheckSquare, PanelLeft,
-  GripVertical, PenLine, Lock, X, FolderOpen, Folder, Save, SaveAll, RotateCcw, Info, FileOutput
+  Edit3,
+  Eye,
+  Columns,
+  Hash,
+  Bold,
+  Italic,
+  Code,
+  Link,
+  List,
+  CheckSquare,
+  PanelLeft,
+  GripVertical,
+  PenLine,
+  Lock,
+  X,
+  FolderOpen,
+  Folder,
+  Save,
+  SaveAll,
+  RotateCcw,
+  Info,
+  FileOutput,
 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
-  useDocument, useUpdateDocument, useOpenPaths, useOpenFolder,
-  useSaveDocumentAs, useReloadDocument
+  useDocument,
+  useUpdateDocument,
+  useOpenPaths,
+  useOpenFolder,
+  useSaveDocumentAs,
+  useReloadDocument,
 } from '../../hooks/useDocuments'
 import { MarkdownEditor } from './MarkdownEditor'
 import { MarkdownPreview } from '../preview/MarkdownPreview'
@@ -19,8 +43,16 @@ import type { ViewMode } from '../../types'
 
 export function EditorPane(): React.ReactElement {
   const {
-    activeDocumentId, viewMode, setViewMode, sidebarOpen, toggleSidebar, editable,
-    toggleEditable, closeDocument, externalChange, clearExternalChange
+    activeDocumentId,
+    viewMode,
+    setViewMode,
+    sidebarOpen,
+    toggleSidebar,
+    editable,
+    toggleEditable,
+    closeDocument,
+    externalChange,
+    clearExternalChange,
   } = useUIStore()
   const { data: doc, isLoading } = useDocument(activeDocumentId)
   const updateMut = useUpdateDocument()
@@ -30,13 +62,24 @@ export function EditorPane(): React.ReactElement {
   const openFolderMut = useOpenFolder()
 
   const {
-    localContent, setLocalContent, localTitle, setLocalTitle,
-    editingTitle, setEditingTitle, handleContentChange, handleTitleSave, dirty, markSaved, toDiskFormat, getEol
+    localContent,
+    localTitle,
+    setLocalTitle,
+    editingTitle,
+    setEditingTitle,
+    handleContentChange,
+    handleTitleSave,
+    dirty,
+    markSaved,
+    toDiskFormat,
+    getEol,
   } = useLocalDocument(doc, activeDocumentId)
 
   // Save / Save As / Reload: hold the latest draft in a ref so menu / keyboard shortcuts don't capture a stale closure
   const draftRef = useRef({ localContent, localTitle })
-  draftRef.current = { localContent, localTitle }
+  useEffect(() => {
+    draftRef.current = { localContent, localTitle }
+  })
 
   const handleSave = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -53,7 +96,10 @@ export function EditorPane(): React.ReactElement {
     try {
       const updated = await updateMut.mutateAsync({
         id,
-        updates: { title: localTitle.trim() || 'Untitled', content: toDiskFormat(localContent, eol) }
+        updates: {
+          title: localTitle.trim() || 'Untitled',
+          content: toDiskFormat(localContent, eol),
+        },
       })
       if (updated) {
         markSaved(updated.content, updated.title)
@@ -68,7 +114,7 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [updateMut, markSaved, doc?.filePath, getEol])
+  }, [updateMut, markSaved, doc, getEol, toDiskFormat])
 
   const handleSaveAs = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -81,7 +127,7 @@ export function EditorPane(): React.ReactElement {
     const eol = doc?.filePath
       ? await window.api.documents.eol(doc.filePath).catch(() => getEol())
       : getEol()
-    let newFilePath: string | null = null
+    let newFilePath: string | null
     try {
       newFilePath = await window.api.dialog.saveFile(defaultPath)
     } catch {
@@ -93,7 +139,10 @@ export function EditorPane(): React.ReactElement {
       const updated = await saveAsMut.mutateAsync({
         id,
         filePath: newFilePath,
-        updates: { title: localTitle.trim() || 'Untitled', content: toDiskFormat(localContent, eol) }
+        updates: {
+          title: localTitle.trim() || 'Untitled',
+          content: toDiskFormat(localContent, eol),
+        },
       })
       if (updated) {
         markSaved(updated.content, updated.title)
@@ -107,7 +156,7 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [doc?.filePath, saveAsMut, markSaved])
+  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat])
 
   const handleReload = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -132,27 +181,36 @@ export function EditorPane(): React.ReactElement {
 
   // Close button: confirm first if there are unsaved changes
   const handleClose = useCallback(() => {
-    if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them?')) return
+    if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them?'))
+      return
     closeDocument()
   }, [closeDocument])
 
   // Menu (Save / Save As / Reload) and file watching: register only once, pull the latest
   // implementation via the ref
   const handlersRef = useRef({ handleSave, handleSaveAs, handleReload })
-  handlersRef.current = { handleSave, handleSaveAs, handleReload }
+  useEffect(() => {
+    handlersRef.current = { handleSave, handleSaveAs, handleReload }
+  })
 
   useEffect(() => {
     const rmSave = window.api.onMenuEvent('save', () => handlersRef.current.handleSave())
     const rmSaveAs = window.api.onMenuEvent('save-as', () => handlersRef.current.handleSaveAs())
     const rmReload = window.api.onMenuEvent('reload', () => handlersRef.current.handleReload())
-    return () => { rmSave(); rmSaveAs(); rmReload() }
+    return () => {
+      rmSave()
+      rmSaveAs()
+      rmReload()
+    }
   }, [])
 
   // Watch the current document's file for on-disk changes
   useEffect(() => {
     if (!activeDocumentId) return
     window.api.documents.watch(activeDocumentId).catch(() => {})
-    return () => { window.api.documents.unwatch(activeDocumentId).catch(() => {}) }
+    return () => {
+      window.api.documents.unwatch(activeDocumentId).catch(() => {})
+    }
   }, [activeDocumentId])
 
   // Receive the "file changed on disk" event sent from the main process
@@ -217,7 +275,12 @@ export function EditorPane(): React.ReactElement {
     <div className="titlebar-no-drag flex items-center gap-0.5">
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" onClick={handleOpenFile} disabled={openPathsMut.isPending}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleOpenFile}
+            disabled={openPathsMut.isPending}
+          >
             <FolderOpen size={13} />
           </Button>
         </TooltipTrigger>
@@ -225,7 +288,12 @@ export function EditorPane(): React.ReactElement {
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" onClick={handleOpenFolder} disabled={openFolderMut.isPending}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleOpenFolder}
+            disabled={openFolderMut.isPending}
+          >
             <Folder size={13} />
           </Button>
         </TooltipTrigger>
@@ -250,7 +318,11 @@ export function EditorPane(): React.ReactElement {
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {editable ? (dirty ? 'Save (⌘S)' : 'No changes to save') : 'Save — switch to Edit mode first'}
+              {editable
+                ? dirty
+                  ? 'Save (⌘S)'
+                  : 'No changes to save'
+                : 'Save — switch to Edit mode first'}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -270,7 +342,12 @@ export function EditorPane(): React.ReactElement {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" onClick={handleReload} disabled={reloadMut.isPending}>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleReload}
+                disabled={reloadMut.isPending}
+              >
                 <RotateCcw size={13} />
               </Button>
             </TooltipTrigger>
@@ -367,11 +444,19 @@ export function EditorPane(): React.ReactElement {
             <div className="w-16 h-16 rounded-2xl bg-[var(--color-accent-muted)] flex items-center justify-center mx-auto mb-4">
               <Edit3 size={28} className="text-accent" />
             </div>
-            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">No document selected</h2>
-            <p className="text-sm text-[var(--color-text-tertiary)] mb-4">Open a file or folder to get started</p>
+            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">
+              No document selected
+            </h2>
+            <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
+              Open a file or folder to get started
+            </p>
             <div className="flex items-center justify-center gap-2">
-              <Button variant="accent" size="sm" onClick={handleOpenFile}>Open File…</Button>
-              <Button variant="outline" size="sm" onClick={handleOpenFolder}>Open Folder…</Button>
+              <Button variant="accent" size="sm" onClick={handleOpenFile}>
+                Open File…
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleOpenFolder}>
+                Open Folder…
+              </Button>
             </div>
           </div>
         </div>
@@ -417,7 +502,10 @@ export function EditorPane(): React.ReactElement {
                   onBlur={handleTitleSave}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleTitleSave()
-                    if (e.key === 'Escape') { setLocalTitle(doc.title); setEditingTitle(false) }
+                    if (e.key === 'Escape') {
+                      setLocalTitle(doc.title)
+                      setEditingTitle(false)
+                    }
                   }}
                   className="w-full text-sm font-semibold bg-transparent border-none outline-none text-[var(--color-text-primary)] focus:ring-0"
                   autoFocus
@@ -448,11 +536,15 @@ export function EditorPane(): React.ReactElement {
                   { icon: <Code size={12} />, before: '`', after: '`', tip: 'Code' },
                   { icon: <Link size={12} />, before: '[', after: '](url)', tip: 'Link' },
                   { icon: <List size={12} />, before: '- ', after: '', tip: 'List' },
-                  { icon: <CheckSquare size={12} />, before: '- [ ] ', after: '', tip: 'Task' }
+                  { icon: <CheckSquare size={12} />, before: '- [ ] ', after: '', tip: 'Task' },
                 ].map(({ icon, before, after, tip }) => (
                   <Tooltip key={tip}>
                     <TooltipTrigger asChild>
-                      <Button variant="ghost" size="icon" onClick={() => insertMarkdown(before, after)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => insertMarkdown(before, after)}
+                      >
                         {icon}
                       </Button>
                     </TooltipTrigger>
@@ -466,11 +558,13 @@ export function EditorPane(): React.ReactElement {
 
             {/* View mode */}
             <div className="flex items-center rounded border border-[var(--color-border)] overflow-hidden ml-1">
-              {([
-                { mode: 'edit' as ViewMode, icon: <Edit3 size={12} />, tip: 'Editor' },
-                { mode: 'split' as ViewMode, icon: <Columns size={12} />, tip: 'Split' },
-                { mode: 'preview' as ViewMode, icon: <Eye size={12} />, tip: 'Preview' }
-              ] as const).map(({ mode, icon, tip }) => (
+              {(
+                [
+                  { mode: 'edit' as ViewMode, icon: <Edit3 size={12} />, tip: 'Editor' },
+                  { mode: 'split' as ViewMode, icon: <Columns size={12} />, tip: 'Split' },
+                  { mode: 'preview' as ViewMode, icon: <Eye size={12} />, tip: 'Preview' },
+                ] as const
+              ).map(({ mode, icon, tip }) => (
                 <Tooltip key={mode}>
                   <TooltipTrigger asChild>
                     <button
@@ -479,7 +573,7 @@ export function EditorPane(): React.ReactElement {
                         'px-2 py-1 text-xs transition-colors',
                         viewMode === mode
                           ? 'bg-[var(--color-accent-muted)] text-accent'
-                          : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]'
+                          : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]',
                       )}
                     >
                       {icon}
@@ -506,22 +600,28 @@ export function EditorPane(): React.ReactElement {
           className="flex items-center gap-0.5 min-w-0 overflow-hidden text-[var(--color-text-tertiary)]"
           title={doc.filePath}
         >
-          {doc.filePath.replace(/\\/g, '/').split('/').filter(Boolean).map((seg: string, i: number, arr: string[]) => {
-            const isLast = i === arr.length - 1
-            return (
-              <span key={i} className="flex items-center gap-0.5 min-w-0">
-                <span
-                  className={cn(
-                    'truncate',
-                    isLast ? 'text-[var(--color-text-primary)] font-medium' : 'hover:text-[var(--color-text-secondary)]'
-                  )}
-                >
-                  {seg}
+          {doc.filePath
+            .replace(/\\/g, '/')
+            .split('/')
+            .filter(Boolean)
+            .map((seg: string, i: number, arr: string[]) => {
+              const isLast = i === arr.length - 1
+              return (
+                <span key={i} className="flex items-center gap-0.5 min-w-0">
+                  <span
+                    className={cn(
+                      'truncate',
+                      isLast
+                        ? 'text-[var(--color-text-primary)] font-medium'
+                        : 'hover:text-[var(--color-text-secondary)]',
+                    )}
+                  >
+                    {seg}
+                  </span>
+                  {!isLast && <span className="text-[var(--color-border-strong)] shrink-0">/</span>}
                 </span>
-                {!isLast && <span className="text-[var(--color-border-strong)] shrink-0">/</span>}
-              </span>
-            )
-          })}
+              )
+            })}
         </div>
       </div>
 
@@ -530,10 +630,17 @@ export function EditorPane(): React.ReactElement {
         {/* Editor: shown in edit / split; hidden in preview mode */}
         {viewMode !== 'preview' && (
           <div
-            className={viewMode === 'split' ? 'min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'}
+            className={
+              viewMode === 'split' ? 'min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'
+            }
             style={viewMode === 'split' ? { width: `${splitRatio * 100}%` } : undefined}
           >
-            <MarkdownEditor content={localContent} onChange={handleContentChange} editable={editable} docId={activeDocumentId} />
+            <MarkdownEditor
+              content={localContent}
+              onChange={handleContentChange}
+              editable={editable}
+              docId={activeDocumentId}
+            />
           </div>
         )}
 
@@ -553,16 +660,19 @@ export function EditorPane(): React.ReactElement {
 
         {/* Preview: shown in preview / split; hidden in edit mode but still mounted so the single
             export-HTML data source stays ready (R7) */}
-        <div
-          className={viewMode === 'edit' ? 'hidden' : 'flex-1 min-w-0 overflow-hidden'}
-        >
+        <div className={viewMode === 'edit' ? 'hidden' : 'flex-1 min-w-0 overflow-hidden'}>
           <MarkdownPreview content={localContent} />
         </div>
       </div>
 
       {/* Prompt shown when the on-disk file was changed by another program */}
       {externalChange && (
-        <Dialog open onOpenChange={(o) => { if (!o) clearExternalChange() }}>
+        <Dialog
+          open
+          onOpenChange={(o) => {
+            if (!o) clearExternalChange()
+          }}
+        >
           <DialogContent>
             <DialogHeader>
               <DialogTitle>File changed on disk</DialogTitle>

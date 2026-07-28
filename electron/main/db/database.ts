@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3'
 // Use dynamic require wrapped in a function so Rollup won't hoist it to top level.
 // better-sqlite3 depends on 'bindings' which is bundled in the asar.
 function loadBetterSqlite3(): typeof import('better-sqlite3') {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   return require('better-sqlite3')
 }
 
@@ -28,7 +28,10 @@ export function initDatabase(): void {
     DatabaseConstructor = loadBetterSqlite3()
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    throw new Error(`Failed to load better-sqlite3: ${msg}`)
+    // Attached via Object.assign so the original error is preserved as `cause` (satisfies the
+    // `preserve-caught-error` rule at runtime) while still type-checking under TypeScript 7, whose
+    // bundled `Error` type no longer accepts the `options` overload.
+    throw Object.assign(new Error(`Failed to load better-sqlite3: ${msg}`), { cause: err })
   }
   // better-sqlite3 is loaded dynamically at runtime, so the constructed instance is typed
   // any; narrowing it to a local const of type Database.Database avoids later null-type

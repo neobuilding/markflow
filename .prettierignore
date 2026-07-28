@@ -1,0 +1,21 @@
+# Dependencies & build output
+node_modules
+dist
+dist-electron
+release
+coverage
+.npm-cache
+docs.local
+
+# Lockfiles & artifacts
+package-lock.json
+electron-win32-x64.zip
+*.log
+
+# CI / YAML (kept hand-formatted)
+.github
+**/*.yml
+**/*.yaml
+
+# Static type declarations don't need formatting
+**/*.d.ts

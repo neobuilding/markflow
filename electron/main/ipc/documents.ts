@@ -4,7 +4,19 @@ import { getDb } from '../db/database'
 
 let _app: App | null = null
 import { join, dirname, basename } from 'node:path'
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync, renameSync, watch, statSync, openSync, readSync, writeSync, closeSync } from 'node:fs'
+import {
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  mkdirSync,
+  renameSync,
+  watch,
+  statSync,
+  openSync,
+  readSync,
+  writeSync,
+  closeSync,
+} from 'node:fs'
 import type { FSWatcher } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
@@ -50,7 +62,7 @@ function toDocument(row: DocumentRow): Document {
     encoding: row.encoding ?? 'utf-8',
     encodingConfidence: row.encoding_confidence ?? 1,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
   }
 }
 
@@ -62,10 +74,19 @@ function toDocument(row: DocumentRow): Document {
 // correcting multi-byte encodings (GBK/Big5 etc.) misdetected as UTF-8, to avoid garbled CJK text.
 const SAMPLE_LIMIT = 1 << 20 // 1MB: balances accuracy against the cost of very large files
 const ENC_ALIAS = new Map<string, string>([
-  ['UTF8', 'utf-8'], ['UTF16', 'utf-16le'], ['UTF16LE', 'utf-16le'], ['UTF16BE', 'utf-16be'],
-  ['UTF32', 'utf-32le'], ['UTF32LE', 'utf-32le'], ['GB2312', 'gbk'], ['GBK', 'gbk'],
-  ['GB18030', 'gbk'], ['CP936', 'gbk'], ['BIG5', 'big5'],
-  ['WINDOWS-1252', 'win1252'], ['ISO-8859-1', 'latin1'],
+  ['UTF8', 'utf-8'],
+  ['UTF16', 'utf-16le'],
+  ['UTF16LE', 'utf-16le'],
+  ['UTF16BE', 'utf-16be'],
+  ['UTF32', 'utf-32le'],
+  ['UTF32LE', 'utf-32le'],
+  ['GB2312', 'gbk'],
+  ['GBK', 'gbk'],
+  ['GB18030', 'gbk'],
+  ['CP936', 'gbk'],
+  ['BIG5', 'big5'],
+  ['WINDOWS-1252', 'win1252'],
+  ['ISO-8859-1', 'latin1'],
 ])
 export function normEnc(name: string): string {
   return ENC_ALIAS.get(name.toUpperCase()) ?? name.toLowerCase()
@@ -105,14 +126,19 @@ function cjkSecondPass(sample: Buffer, primary: string): { enc: string; confiden
   }
   const confidence =
     best === 'utf-8'
-      ? bestRep === 0 ? 0.99 : Math.max(0.1, 1 - bestRep / Math.max(1, sample.length))
-      : bestRep === 0 ? 0.99 : Math.max(0.7, 1 - bestRep / Math.max(1, sample.length))
+      ? bestRep === 0
+        ? 0.99
+        : Math.max(0.1, 1 - bestRep / Math.max(1, sample.length))
+      : bestRep === 0
+        ? 0.99
+        : Math.max(0.7, 1 - bestRep / Math.max(1, sample.length))
   return { enc: best, confidence }
 }
 
 export function detectEncoding(buf: Buffer): { enc: string; confidence: number } {
   if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return { enc: 'utf-8', confidence: 1 }
-  if (buf[0] === 0xff && buf[1] === 0xfe && buf[2] === 0x00 && buf[3] === 0x00) return { enc: 'utf-32le', confidence: 1 }
+  if (buf[0] === 0xff && buf[1] === 0xfe && buf[2] === 0x00 && buf[3] === 0x00)
+    return { enc: 'utf-32le', confidence: 1 }
   if (buf[0] === 0xff && buf[1] === 0xfe) return { enc: 'utf-16le', confidence: 1 }
   if (buf[0] === 0xfe && buf[1] === 0xff) return { enc: 'utf-16be', confidence: 1 }
   const sample = buf.subarray(0, Math.min(buf.length, SAMPLE_LIMIT))
@@ -124,13 +150,19 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   // other high-confidence encodings (Cyrillic, Latin, etc.) are trusted directly to avoid being wrongly overridden by CJK candidates.
   const inCjkScope = primary === 'utf-8' || CJK_CANDIDATES.includes(primary) || primaryConf < 0.6
   if (!inCjkScope) {
-    return primaryConf < 0.6 ? { enc: 'utf-8', confidence: primaryConf } : { enc: primary, confidence: primaryConf }
+    return primaryConf < 0.6
+      ? { enc: 'utf-8', confidence: primaryConf }
+      : { enc: primary, confidence: primaryConf }
   }
   const fixed = cjkSecondPass(sample, primary)
   return fixed.confidence < 0.6 ? { enc: 'utf-8', confidence: fixed.confidence } : fixed
 }
 // Raw Buffer read -> detect encoding -> decode to string (with encoding metadata).
-export function readMarkdownText(filePath: string): { text: string; encoding: string; confidence: number } {
+export function readMarkdownText(filePath: string): {
+  text: string
+  encoding: string
+  confidence: number
+} {
   const buf = readFileSync(filePath) // raw Buffer, no encoding specified
   const { enc, confidence } = detectEncoding(buf)
   return { text: iconv.decode(buf, enc), encoding: enc, confidence }
@@ -138,7 +170,7 @@ export function readMarkdownText(filePath: string): { text: string; encoding: st
 
 function countWords(text: string): number {
   return text
-    .replace(/[#*`~\[\]()>|]/g, ' ')
+    .replace(/[\]#*`~[()>|]/g, ' ')
     .split(/\s+/)
     .filter((w) => w.length > 0).length
 }
@@ -151,7 +183,9 @@ function getDefaultDocsDir(): string {
 
 // Get a reference to the main window (registerDocumentHandlers is called before createWindow,
 // so we fetch it lazily via a getter to avoid the closure capturing null).
-let _getMainWindow: (() => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null) | null = null
+let _getMainWindow:
+  (() => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null) | null =
+  null
 
 // ─── Disk file change watching ────────────────────────────────────────
 // Maintain one fs.FSWatcher per document id. When the watched file is modified on disk by another
@@ -167,9 +201,8 @@ function watchDocument(id: string): void {
   if (fileWatchers.has(id)) return
   let row: { file_path: string } | undefined
   try {
-    row = getDb()
-      .prepare('SELECT file_path FROM documents WHERE id = ?')
-      .get(id) as { file_path: string } | undefined
+    row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as
+      { file_path: string } | undefined
   } catch {
     return
   }
@@ -235,18 +268,23 @@ function unwatchDocument(id: string): void {
   }
   // Fetch the document's file path to clean up the mtime baseline
   try {
-    const row = getDb()
-      .prepare('SELECT file_path FROM documents WHERE id = ?')
-      .get(id) as { file_path: string } | undefined
+    const row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as
+      { file_path: string } | undefined
     if (row?.file_path) watchedMtime.delete(row.file_path)
   } catch {
     // ignore
   }
 }
 
-export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWindow: () => unknown): void {
+export function registerDocumentHandlers(
+  ipcMain: IpcMain,
+  app: App,
+  getMainWindow: () => unknown,
+): void {
   _app = app
-  _getMainWindow = getMainWindow as () => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null
+  _getMainWindow = getMainWindow as () => {
+    webContents: { send: (channel: string, ...args: unknown[]) => void }
+  } | null
   // List all documents (sorted by updated_at)
   ipcMain.handle('documents:list', (_event, folderPath?: string) => {
     const db = getDb()
@@ -254,7 +292,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     if (folderPath !== undefined && folderPath !== '') {
       rows = db
         .prepare(
-          'SELECT * FROM documents WHERE folder_path = ? AND is_archived = 0 ORDER BY updated_at DESC'
+          'SELECT * FROM documents WHERE folder_path = ? AND is_archived = 0 ORDER BY updated_at DESC',
         )
         .all(folderPath) as DocumentRow[]
     } else {
@@ -269,8 +307,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
   ipcMain.handle('documents:get', (_event, id: string) => {
     const db = getDb()
     const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-      | DocumentRow
-      | undefined
+      DocumentRow | undefined
     return row ? toDocument(row) : null
   })
 
@@ -286,9 +323,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       const content = params.content || `# ${title}\n\n`
       const wordCount = countWords(content)
 
-      const baseDir = folderPath
-        ? join(getDefaultDocsDir(), folderPath)
-        : getDefaultDocsDir()
+      const baseDir = folderPath ? join(getDefaultDocsDir(), folderPath) : getDefaultDocsDir()
       mkdirSync(baseDir, { recursive: true })
 
       // Create a unique filename atomically: open with O_EXCL ('wx') and retry with an
@@ -318,14 +353,16 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       }
 
       // Insert into DB
-      db.prepare(`
+      db.prepare(
+        `
         INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, encoding, encoding_confidence, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, 0, 'utf-8', 1, ?, ?)
-      `).run(id, title, folderPath, filePath, content, wordCount, now, now)
+      `,
+      ).run(id, title, folderPath, filePath, content, wordCount, now, now)
 
       const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
       return toDocument(row)
-    }
+    },
   )
 
   // Update document content
@@ -335,8 +372,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       const db = getDb()
       const now = Date.now()
       const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-        | DocumentRow
-        | undefined
+        DocumentRow | undefined
       if (!existing) return null
 
       const newTitle = updates.title ?? existing.title
@@ -385,15 +421,17 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
         newFilePath = target
       }
 
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE documents
         SET title = ?, content = ?, word_count = ?, file_path = ?, updated_at = ?
         WHERE id = ?
-      `).run(newTitle, newContent, wordCount, newFilePath, now, id)
+      `,
+      ).run(newTitle, newContent, wordCount, newFilePath, now, id)
 
       const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
       return toDocument(row)
-    }
+    },
   )
 
   // Save As: write the content to a brand-new file path and point the DB record at that new file
@@ -403,8 +441,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     (_event, id: string, newFilePath: string, updates: { title?: string; content?: string }) => {
       const db = getDb()
       const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-        | DocumentRow
-        | undefined
+        DocumentRow | undefined
       if (!existing) return null
 
       const content = updates.content ?? existing.content
@@ -419,15 +456,17 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
       writeFileSync(newFilePath, iconv.encode(content, existing.encoding || 'utf-8'))
 
       const folderPath = dirname(newFilePath)
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE documents
         SET title = ?, folder_path = ?, file_path = ?, content = ?, word_count = ?, updated_at = ?
         WHERE id = ?
-      `).run(title, folderPath, newFilePath, content, wordCount, now, id)
+      `,
+      ).run(title, folderPath, newFilePath, content, wordCount, now, id)
 
       const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
       return toDocument(row)
-    }
+    },
   )
 
   // Reload: re-read the current file from disk, write back to the DB, and return the latest document.
@@ -435,8 +474,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
   ipcMain.handle('documents:reload', (_event, id: string) => {
     const db = getDb()
     const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-      | DocumentRow
-      | undefined
+      DocumentRow | undefined
     if (!existing) return null
 
     let text: string
@@ -449,9 +487,11 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     }
     const wordCount = countWords(text)
     const now = Date.now()
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?
-    `).run(text, wordCount, encoding, confidence, now, id)
+    `,
+    ).run(text, wordCount, encoding, confidence, now, id)
 
     const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
     return toDocument(row)
@@ -469,8 +509,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
   ipcMain.handle('documents:delete', (_event, id: string) => {
     const db = getDb()
     const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-      | DocumentRow
-      | undefined
+      DocumentRow | undefined
     if (!existing) return false
 
     try {
@@ -504,23 +543,24 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     const wordCount = countWords(text)
 
     // Check if already exists
-    const existing = db
-      .prepare('SELECT * FROM documents WHERE file_path = ?')
-      .get(filePath) as DocumentRow | undefined
+    const existing = db.prepare('SELECT * FROM documents WHERE file_path = ?').get(filePath) as
+      DocumentRow | undefined
     if (existing) {
       // Re-open an already-imported file: refresh the DB record from the current on-disk content,
       // avoiding stale cached content (e.g. unsaved changes from a previous session, or external edits).
       db.prepare(
-        'UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?'
+        'UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?',
       ).run(text, wordCount, encoding, confidence, now, existing.id)
       const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(existing.id) as DocumentRow
       return toDocument(row)
     }
 
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, encoding, encoding_confidence, created_at, updated_at)
       VALUES (?, ?, '', ?, ?, ?, 0, ?, ?, ?, ?)
-    `).run(id, title, filePath, text, wordCount, encoding, confidence, now, now)
+    `,
+    ).run(id, title, filePath, text, wordCount, encoding, confidence, now, now)
 
     const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
     return toDocument(row)
@@ -556,7 +596,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
         if (existing) {
           // Already-imported file: refresh the record from the current on-disk content to ensure the latest is loaded
           db.prepare(
-            'UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?'
+            'UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?',
           ).run(content, wordCount, parsed.encoding, parsed.confidence, now, existing.id)
           const row = selectById.get(existing.id) as DocumentRow
           results.push(toDocument(row))
@@ -564,7 +604,18 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
         }
 
         const id = randomUUID()
-        insertStmt.run(id, title, '', filePath, content, wordCount, parsed.encoding, parsed.confidence, now, now)
+        insertStmt.run(
+          id,
+          title,
+          '',
+          filePath,
+          content,
+          wordCount,
+          parsed.encoding,
+          parsed.confidence,
+          now,
+          now,
+        )
         const row = selectById.get(id) as DocumentRow
         results.push(toDocument(row))
       }
@@ -606,7 +657,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
         exists: true,
         size: st.size,
         createdAt: st.birthtimeMs,
-        updatedAt: st.mtimeMs
+        updatedAt: st.mtimeMs,
       }
     } catch {
       return { exists: false }
@@ -618,8 +669,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
   ipcMain.handle('documents:set-encoding', (_event, id: string, enc: string) => {
     const db = getDb()
     const row = db.prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as
-      | { file_path: string }
-      | undefined
+      { file_path: string } | undefined
     if (!row) return null
     let buf: Buffer
     try {
@@ -631,7 +681,7 @@ export function registerDocumentHandlers(ipcMain: IpcMain, app: App, getMainWind
     const text = iconv.decode(buf, norm)
     const now = Date.now()
     db.prepare(
-      'UPDATE documents SET content = ?, encoding = ?, encoding_confidence = 1, updated_at = ? WHERE id = ?'
+      'UPDATE documents SET content = ?, encoding = ?, encoding_confidence = 1, updated_at = ? WHERE id = ?',
     ).run(text, norm, now, id)
     const updated = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
     return toDocument(updated)

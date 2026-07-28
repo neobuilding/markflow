@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 /* Tailwind Typography plugin: replace hand-written ~130 lines of markdown styles with prose (§4.6) */
 @plugin "@tailwindcss/typography";
@@ -21,7 +21,9 @@
    silently zero out `.px-3` / `.p-6` etc. Wrapping it keeps utilities
    able to override it. */
 @layer base {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
@@ -69,7 +71,8 @@
   --color-warning: #f76b15;
 }
 
-html, body {
+html,
+body {
   height: 100%;
   font-size: 16px;
   font-family: var(--font-sans);
@@ -87,10 +90,20 @@ html, body {
 }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-text-tertiary); }
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
 
 /* Titlebar drag region */
 .titlebar-drag {
@@ -113,10 +126,19 @@ html, body {
 }
 
 /* Disable prose's misfiring on code/pre/katex, and the decorative quotes auto-added to blockquotes */
-.prose code::before, .prose code::after { content: none; }
+.prose code::before,
+.prose code::after {
+  content: none;
+}
 .prose blockquote p:first-of-type::before,
-.prose blockquote p:last-of-type::after { content: none; }
-.prose .katex { font-size: 1.05em; background: none; padding: 0; }
+.prose blockquote p:last-of-type::after {
+  content: none;
+}
+.prose .katex {
+  font-size: 1.05em;
+  background: none;
+  padding: 0;
+}
 
 /* Badge / inline-img horizontal layout: Tailwind Typography defaults .prose img to display:block with
    2em vertical margin, which makes shields.io badges inside <p align="center"> stack vertically and inflate line height.
@@ -126,7 +148,7 @@ html, body {
    Deliberately skip standalone illustrations in normal paragraphs (no align, no <a> wrap) to keep their block layout,
    avoiding turning common `![alt](x.png)` standalone-line images into inline thumbnails (regression). */
 .prose p > a > img,
-.prose p[align="center"] > img {
+.prose p[align='center'] > img {
   display: inline-block;
   vertical-align: middle;
   margin-top: 0;
@@ -147,9 +169,17 @@ html, body {
 }
 
 /* GFM task lists: Tailwind Typography doesn't ship checkbox styles, explicitly restore them to avoid leftover bullets */
-.prose ul:has(> li > input[type="checkbox"]) { list-style: none; padding-left: 0; }
-.prose li:has(> input[type="checkbox"]) { list-style: none; }
-.prose li > input[type="checkbox"] { margin-right: 0.4rem; vertical-align: middle; }
+.prose ul:has(> li > input[type='checkbox']) {
+  list-style: none;
+  padding-left: 0;
+}
+.prose li:has(> input[type='checkbox']) {
+  list-style: none;
+}
+.prose li > input[type='checkbox'] {
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
 
 /* Map prose variables to the project's Linear theme variables (avoid prose's built-in gray scale shifting colors) */
 .prose {
@@ -277,13 +307,17 @@ html.dark .hljs-deletion {
   border-radius: 6px;
   background: var(--color-surface);
 }
-.markdown-alert > :first-child { margin-top: 0; }
-.markdown-alert > :last-child { margin-bottom: 0; }
+.markdown-alert > :first-child {
+  margin-top: 0;
+}
+.markdown-alert > :last-child {
+  margin-bottom: 0;
+}
 .markdown-alert > p:first-child {
   font-weight: 600;
   margin-bottom: 0.25rem;
 }
-.markdown-alert > p:first-child span[style*="--oct-icon"] {
+.markdown-alert > p:first-child span[style*='--oct-icon'] {
   display: inline-block;
   padding-left: 1.4em;
   background-image: var(--oct-icon);
@@ -291,11 +325,21 @@ html.dark .hljs-deletion {
   background-position: left center;
   background-size: 1em;
 }
-.markdown-alert-note { border-left-color: #0969da; }
-.markdown-alert-tip { border-left-color: #1a7f37; }
-.markdown-alert-important { border-left-color: #8250df; }
-.markdown-alert-warning { border-left-color: #9a6700; }
-.markdown-alert-caution { border-left-color: #cf222e; }
+.markdown-alert-note {
+  border-left-color: #0969da;
+}
+.markdown-alert-tip {
+  border-left-color: #1a7f37;
+}
+.markdown-alert-important {
+  border-left-color: #8250df;
+}
+.markdown-alert-warning {
+  border-left-color: #9a6700;
+}
+.markdown-alert-caution {
+  border-left-color: #cf222e;
+}
 
 /* KaTeX math rendering */
 .markdown-preview .katex {
@@ -315,7 +359,7 @@ html.dark .hljs-deletion {
   max-width: 100%;
   height: auto;
 }
-svg[id^="mermaid-"] {
+svg[id^='mermaid-'] {
   max-width: 100%;
   height: auto;
 }
@@ -336,12 +380,25 @@ svg[id^="mermaid-"] {
   font-family: var(--font-mono) !important;
   font-size: 14px !important;
 }
-.cm-editor.cm-focused { outline: none !important; }
-.cm-scroller { font-family: var(--font-mono) !important; }
-.cm-content { padding: 24px 0 !important; }
-.cm-line { padding: 0 24px !important; }
-.cm-activeLine { background: rgba(94,106,210,0.04) !important; }
-.cm-gutters { background: transparent !important; border-right: none !important; }
+.cm-editor.cm-focused {
+  outline: none !important;
+}
+.cm-scroller {
+  font-family: var(--font-mono) !important;
+}
+.cm-content {
+  padding: 24px 0 !important;
+}
+.cm-line {
+  padding: 0 24px !important;
+}
+.cm-activeLine {
+  background: rgba(94, 106, 210, 0.04) !important;
+}
+.cm-gutters {
+  background: transparent !important;
+  border-right: none !important;
+}
 
 /* Focus glow */
 .focus-ring:focus-visible {
@@ -350,7 +407,27 @@ svg[id^="mermaid-"] {
 }
 
 /* Animations */
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes slideUp { from { transform: translateY(4px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.animate-fade-in { animation: fadeIn 0.15s ease-out; }
-.animate-slide-up { animation: slideUp 0.2s ease-out; }
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes slideUp {
+  from {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fadeIn 0.15s ease-out;
+}
+.animate-slide-up {
+  animation: slideUp 0.2s ease-out;
+}

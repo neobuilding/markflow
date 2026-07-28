@@ -6,12 +6,22 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
 import { formatFileSize, formatDateTime } from '../../lib/utils'
 
-function Row({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
+function Row({
+  icon,
+  label,
+  children,
+}: {
+  icon: React.ReactNode
+  label: string
+  children: React.ReactNode
+}) {
   return (
     <div className="flex items-start gap-2.5 py-2">
       <div className="mt-0.5 text-[var(--color-text-tertiary)] shrink-0">{icon}</div>
       <div className="min-w-0 flex-1">
-        <div className="text-2xs uppercase tracking-wide text-[var(--color-text-tertiary)]">{label}</div>
+        <div className="text-2xs uppercase tracking-wide text-[var(--color-text-tertiary)]">
+          {label}
+        </div>
         <div className="text-sm text-[var(--color-text-primary)] break-all mt-0.5">{children}</div>
       </div>
     </div>
@@ -48,7 +58,12 @@ export function FileDetailsDialog(): React.ReactElement | null {
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) close() }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) close()
+      }}
+    >
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

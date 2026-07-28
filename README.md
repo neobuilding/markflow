@@ -11,7 +11,7 @@
   <a href="https://github.com/neobuilding/markflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/neobuilding/markflow?style=flat-square" alt="License"></a>
 </p>
 
-A cross-platform Markdown editor with **Linear-style UI**, built with Electron + React 18 + TypeScript.
+A cross-platform Markdown editor with **Linear-style UI**, built with Electron + React 19 + TypeScript.
 
 ## ✨ Features
 
@@ -35,13 +35,13 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 
 ## 📸 Screenshots
 
-> *Add screenshots here: editor view, split view, dark mode, search palette...*
+> _Add screenshots here: editor view, split view, dark mode, search palette..._
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Node.js >= 18
+- Node.js >= 22
 - npm >= 9
 - A C++ toolchain to compile the native `better-sqlite3` module:
   - **Windows**: **Visual Studio Build Tools** with the **“使用 C++ 的桌面开发” (Desktop development with C++)** workload (download: <https://aka.ms/vs/17/release/vs_buildtools.exe>).
@@ -138,37 +138,37 @@ markflow/
 
 ## ⌨️ Keyboard Shortcuts
 
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl/Cmd + N` | New document |
-| `Ctrl/Cmd + K` | Search documents |
-| `Ctrl/Cmd + \` | Toggle sidebar |
-| `Ctrl/Cmd + Shift + P` | Toggle preview mode (edit/preview/split) |
-| `Ctrl/Cmd + W` | Close workspace (close current file & folder) |
-| `Ctrl/Cmd + O` | Open external `.md` file |
-| `Ctrl/Cmd + Shift + O` | Open folder (batch import `.md` files) |
-| `Ctrl/Cmd + S` | Save (manual; no auto-save) |
-| `Ctrl/Cmd + Shift + S` | Save As… |
-| `Ctrl/Cmd + Shift + R` | Reload from Disk (load latest file content) |
-| `Ctrl/Cmd + I` | File details (path, size, modified date) |
+| Shortcut               | Action                                        |
+| ---------------------- | --------------------------------------------- |
+| `Ctrl/Cmd + N`         | New document                                  |
+| `Ctrl/Cmd + K`         | Search documents                              |
+| `Ctrl/Cmd + \`         | Toggle sidebar                                |
+| `Ctrl/Cmd + Shift + P` | Toggle preview mode (edit/preview/split)      |
+| `Ctrl/Cmd + W`         | Close workspace (close current file & folder) |
+| `Ctrl/Cmd + O`         | Open external `.md` file                      |
+| `Ctrl/Cmd + Shift + O` | Open folder (batch import `.md` files)        |
+| `Ctrl/Cmd + S`         | Save (manual; no auto-save)                   |
+| `Ctrl/Cmd + Shift + S` | Save As…                                      |
+| `Ctrl/Cmd + Shift + R` | Reload from Disk (load latest file content)   |
+| `Ctrl/Cmd + I`         | File details (path, size, modified date)      |
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology |
-| --- | --- |
-| Build | Vite 5 + vite-plugin-electron |
-| Desktop | Electron 30 |
-| Frontend | React 18 + TypeScript (strict) + Tailwind CSS 3.4 |
-| UI Components | Radix UI primitives (shadcn/ui style) |
-| State | Zustand (UI) + TanStack Query v5 (IPC) |
-| Storage | better-sqlite3 + FTS5 + Markdown file dual-write |
-| Editor | CodeMirror 6 with Markdown syntax highlighting |
-| Math | KaTeX (LaTeX formula rendering) |
-| Diagrams | Mermaid.js |
-| Markdown parser | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
-| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point) |
-| Testing | Vitest + jsdom |
-| Packaging | electron-builder |
+| Layer             | Technology                                                    |
+| ----------------- | ------------------------------------------------------------- |
+| Build             | Vite 8 + vite-plugin-electron                                 |
+| Desktop           | Electron 43                                                   |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4               |
+| UI Components     | Radix UI primitives (shadcn/ui style)                         |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                        |
+| Storage           | better-sqlite3 + FTS5 + Markdown file dual-write              |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                |
+| Math              | KaTeX (LaTeX formula rendering)                               |
+| Diagrams          | Mermaid.js                                                    |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)         |
+| Testing           | Vitest + jsdom                                                |
+| Packaging         | electron-builder                                              |
 
 ## 📦 Packaging Configuration
 
@@ -184,6 +184,20 @@ Configuration is in `electron-builder.json5`. Key settings:
 - `productName`: `MarkFlow`
 - `asar`: enabled (with `better-sqlite3` unpacked for native module loading)
 - `entitlements`: `resources/entitlements.mac.plist` (macOS sandbox permissions)
+
+## 🧹 Code Quality & Linting
+
+Quality gates run locally and in CI:
+
+```bash
+npm run quality   # Prettier format check + ESLint + Stylelint (CSS) + Markdownlint (docs) + Secretlint (secrets) — enforced
+npm run lint      # ESLint (hard gate; runs via the TS7 side-by-side shim in scripts/install-eslint-ts6.mjs)
+npm run format    # Auto-format everything with Prettier
+```
+
+A Husky `pre-commit` hook runs **lint-staged**, applying Stylelint + Markdownlint + Prettier to
+staged `*.css` / `*.md` / source files. Run `npm run quality` before opening a PR so the CI
+`quality` job stays green.
 
 ## 🤝 Contributing
 

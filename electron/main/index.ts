@@ -1,5 +1,16 @@
 // electron/main/index.ts - MarkFlow main process (ESM)
-import { app, shell, BrowserWindow, ipcMain, Menu, dialog, nativeTheme, session, screen, protocol } from 'electron'
+import {
+  app,
+  shell,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  dialog,
+  nativeTheme,
+  session,
+  screen,
+  protocol,
+} from 'electron'
 import { join, dirname, resolve, extname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -137,9 +148,8 @@ function registerAppDocProtocol(): void {
         return new Response('Not Found', { status: 404 })
       }
       const { docId, relPath } = parsed
-      const row = getDb()
-        .prepare('SELECT file_path FROM documents WHERE id = ?')
-        .get(docId) as { file_path: string } | undefined
+      const row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(docId) as
+        { file_path: string } | undefined
       if (!row?.file_path) {
         return new Response('Not Found', { status: 404 })
       }
@@ -234,7 +244,7 @@ function createWindow(): void {
 
   // Get screen work area (excludes taskbar)
   const primaryDisplay = screen.getPrimaryDisplay()
-  const workArea = primaryDisplay.workArea  // { x, y, width, height }
+  const workArea = primaryDisplay.workArea // { x, y, width, height }
 
   // Window size is not persisted: start maximized by default. Keep a sensible initial
   // size to use as the restore size when the user un-maximizes.
@@ -546,154 +556,154 @@ if (!shouldStart) {
   app.quit()
 } else {
   app.whenReady().then(() => {
-  if (process.platform === 'win32') {
-    app.setAppUserModelId(app.isPackaged ? 'com.mark-flow.app' : process.execPath)
-  }
+    if (process.platform === 'win32') {
+      app.setAppUserModelId(app.isPackaged ? 'com.mark-flow.app' : process.execPath)
+    }
 
-  setupCSP()
+    setupCSP()
 
-  initDatabase()
+    initDatabase()
 
-  // appdoc: protocol handling (must be registered inside whenReady; ② and
-  // registerSchemesAsPrivileged happen at two different times)
-  registerAppDocProtocol()
+    // appdoc: protocol handling (must be registered inside whenReady; ② and
+    // registerSchemesAsPrivileged happen at two different times)
+    registerAppDocProtocol()
 
-  // Deny all permission requests: a Markdown reader needs no camera/microphone/geolocation
-  // permissions (§4.1)
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false)
-  })
-
-  registerDocumentHandlers(ipcMain, app, () => mainWindow)
-  registerSearchHandlers(ipcMain)
-  registerExportHandlers(ipcMain)
-
-  ipcMain.handle('app:get-theme', () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
-  ipcMain.handle('app:set-theme', (_event, theme: 'light' | 'dark' | 'system') => {
-    nativeTheme.themeSource = theme
-  })
-
-  // Let the renderer proactively open a file-picker dialog
-  ipcMain.handle('dialog:open-files', async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Open Markdown File',
-      filters: [
-        { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-      properties: ['openFile', 'multiSelections'],
+    // Deny all permission requests: a Markdown reader needs no camera/microphone/geolocation
+    // permissions (§4.1)
+    session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+      callback(false)
     })
-    return result.canceled ? [] : result.filePaths
-  })
 
-  // Let the renderer proactively open a folder-picker dialog, returning all .md files under it
-  ipcMain.handle('dialog:open-folder', async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Open Folder (batch import .md files)',
-      properties: ['openDirectory'],
+    registerDocumentHandlers(ipcMain, app, () => mainWindow)
+    registerSearchHandlers(ipcMain)
+    registerExportHandlers(ipcMain)
+
+    ipcMain.handle('app:get-theme', () => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light'))
+    ipcMain.handle('app:set-theme', (_event, theme: 'light' | 'dark' | 'system') => {
+      nativeTheme.themeSource = theme
     })
-    if (result.canceled || result.filePaths.length === 0) return []
-    return collectMarkdownFiles(result.filePaths[0])
-  })
 
-  // Let the renderer proactively open a folder-picker dialog, returning only the chosen folder path
-  ipcMain.handle('dialog:select-folder', async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Open Folder',
-      properties: ['openDirectory'],
+    // Let the renderer proactively open a file-picker dialog
+    ipcMain.handle('dialog:open-files', async () => {
+      const result = await dialog.showOpenDialog({
+        title: 'Open Markdown File',
+        filters: [
+          { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+        properties: ['openFile', 'multiSelections'],
+      })
+      return result.canceled ? [] : result.filePaths
     })
-    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
-  })
 
-  // Let the renderer proactively open a "Save As" dialog, returning the chosen path (null if canceled)
-  ipcMain.handle('dialog:save-file', async (_event, defaultPath?: string) => {
-    const result = await dialog.showSaveDialog({
-      title: 'Save As',
-      defaultPath,
-      filters: [
-        { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
+    // Let the renderer proactively open a folder-picker dialog, returning all .md files under it
+    ipcMain.handle('dialog:open-folder', async () => {
+      const result = await dialog.showOpenDialog({
+        title: 'Open Folder (batch import .md files)',
+        properties: ['openDirectory'],
+      })
+      if (result.canceled || result.filePaths.length === 0) return []
+      return collectMarkdownFiles(result.filePaths[0])
     })
-    return result.canceled ? null : result.filePath ?? null
-  })
 
-  // Let the renderer proactively open an "Export as HTML" dialog (R7) with .html filter by default.
-  ipcMain.handle('dialog:save-html', async (_event, defaultPath?: string) => {
-    const result = await dialog.showSaveDialog({
-      title: 'Export as HTML',
-      defaultPath,
-      filters: [
-        { name: 'HTML', extensions: ['html', 'htm'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
+    // Let the renderer proactively open a folder-picker dialog, returning only the chosen folder path
+    ipcMain.handle('dialog:select-folder', async () => {
+      const result = await dialog.showOpenDialog({
+        title: 'Open Folder',
+        properties: ['openDirectory'],
+      })
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
     })
-    return result.canceled ? null : result.filePath ?? null
-  })
 
-  // Resolve a set of dropped/passed paths: expand folders into all their .md files,
-  // filter files by extension, and return de-duplicated directory and Markdown file lists.
-  // The renderer uses this to import in one shot and set the "current folder".
-  ipcMain.handle('files:resolve-paths', (_event, paths: string[]) => {
-    const directories: string[] = []
-    const markdownFiles = new Set<string>()
-    for (const p of paths) {
-      try {
-        const absolute = resolve(p)
-        const st = statSync(absolute)
-        if (st.isDirectory()) {
-          directories.push(absolute)
-          for (const f of collectMarkdownFiles(absolute)) markdownFiles.add(f)
-        } else if (st.isFile()) {
-          const ext = absolute.slice(absolute.lastIndexOf('.')).toLowerCase()
-          if (MD_EXTS.has(ext)) {
-            markdownFiles.add(absolute)
-            // When opening a single file, also import every .md file in its directory so the
-            // sidebar shows sibling documents (not just the one currently open).
-            const parentDir = dirname(absolute)
-            if (!directories.includes(parentDir)) {
-              directories.push(parentDir)
+    // Let the renderer proactively open a "Save As" dialog, returning the chosen path (null if canceled)
+    ipcMain.handle('dialog:save-file', async (_event, defaultPath?: string) => {
+      const result = await dialog.showSaveDialog({
+        title: 'Save As',
+        defaultPath,
+        filters: [
+          { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      })
+      return result.canceled ? null : (result.filePath ?? null)
+    })
+
+    // Let the renderer proactively open an "Export as HTML" dialog (R7) with .html filter by default.
+    ipcMain.handle('dialog:save-html', async (_event, defaultPath?: string) => {
+      const result = await dialog.showSaveDialog({
+        title: 'Export as HTML',
+        defaultPath,
+        filters: [
+          { name: 'HTML', extensions: ['html', 'htm'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      })
+      return result.canceled ? null : (result.filePath ?? null)
+    })
+
+    // Resolve a set of dropped/passed paths: expand folders into all their .md files,
+    // filter files by extension, and return de-duplicated directory and Markdown file lists.
+    // The renderer uses this to import in one shot and set the "current folder".
+    ipcMain.handle('files:resolve-paths', (_event, paths: string[]) => {
+      const directories: string[] = []
+      const markdownFiles = new Set<string>()
+      for (const p of paths) {
+        try {
+          const absolute = resolve(p)
+          const st = statSync(absolute)
+          if (st.isDirectory()) {
+            directories.push(absolute)
+            for (const f of collectMarkdownFiles(absolute)) markdownFiles.add(f)
+          } else if (st.isFile()) {
+            const ext = absolute.slice(absolute.lastIndexOf('.')).toLowerCase()
+            if (MD_EXTS.has(ext)) {
+              markdownFiles.add(absolute)
+              // When opening a single file, also import every .md file in its directory so the
+              // sidebar shows sibling documents (not just the one currently open).
+              const parentDir = dirname(absolute)
+              if (!directories.includes(parentDir)) {
+                directories.push(parentDir)
+              }
+              for (const f of collectMarkdownFiles(parentDir)) markdownFiles.add(f)
             }
-            for (const f of collectMarkdownFiles(parentDir)) markdownFiles.add(f)
           }
+        } catch {
+          // Skip paths we can't access
         }
-      } catch {
-        // Skip paths we can't access
       }
-    }
-    return { directories, markdownFiles: [...markdownFiles] }
-  })
+      return { directories, markdownFiles: [...markdownFiles] }
+    })
 
-  // After the renderer starts, proactively pull the pending open paths accumulated at launch (CLI args, etc.)
-  ipcMain.handle('app:get-initial-paths', () => {
-    const paths = pendingInitialPaths.splice(0, pendingInitialPaths.length)
-    return paths
-  })
+    // After the renderer starts, proactively pull the pending open paths accumulated at launch (CLI args, etc.)
+    ipcMain.handle('app:get-initial-paths', () => {
+      const paths = pendingInitialPaths.splice(0, pendingInitialPaths.length)
+      return paths
+    })
 
-  // Locate and highlight the given file in the system file manager
-  ipcMain.handle('app:show-in-folder', (_event, filePath: string) => {
-    try {
-      shell.showItemInFolder(filePath)
-    } catch {
-      // Ignore: the file may not exist or we lack permission
-    }
-  })
+    // Locate and highlight the given file in the system file manager
+    ipcMain.handle('app:show-in-folder', (_event, filePath: string) => {
+      try {
+        shell.showItemInFolder(filePath)
+      } catch {
+        // Ignore: the file may not exist or we lack permission
+      }
+    })
 
-  // Renderer's "About" dialog fetches the app version (in production this is the injected rolling version)
-  ipcMain.handle('app:get-version', () => app.getVersion())
+    // Renderer's "About" dialog fetches the app version (in production this is the injected rolling version)
+    ipcMain.handle('app:get-version', () => app.getVersion())
 
-  // ─── Window control ────────────────────────────────────────────
+    // ─── Window control ────────────────────────────────────────────
 
-  ipcMain.handle('window:maximize', () => mainWindow?.maximize())
-  ipcMain.handle('window:unmaximize', () => mainWindow?.unmaximize())
-  ipcMain.handle('window:is-maximized', () => !!mainWindow?.isMaximized())
+    ipcMain.handle('window:maximize', () => mainWindow?.maximize())
+    ipcMain.handle('window:unmaximize', () => mainWindow?.unmaximize())
+    ipcMain.handle('window:is-maximized', () => !!mainWindow?.isMaximized())
 
-  createWindow()
-  setupMenu()
+    createWindow()
+    setupMenu()
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
   })
 }
 

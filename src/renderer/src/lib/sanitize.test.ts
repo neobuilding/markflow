@@ -28,7 +28,7 @@ describe('sanitizeHtml — XSS stripping', () => {
 describe('sanitizeHtml — style whitelist (BUG-5)', () => {
   it('strips style on non-allowed elements (div/p/a/pre)', () => {
     const out = sanitizeHtml(
-      '<div style="color:red">a</div><p style="color:blue">b</p><pre style="color:green">c</pre>'
+      '<div style="color:red">a</div><p style="color:blue">b</p><pre style="color:green">c</pre>',
     )
     expect(out).not.toContain('style="color:red"')
     expect(out).not.toContain('style="color:blue"')
@@ -92,7 +92,9 @@ describe('sanitizeHtml — KaTeX MathML accessibility', () => {
 
 describe('sanitizeHtml — R6 hardening (FORBID_TAGS / on* hook)', () => {
   it('strips <foreignObject> (SVG-embedded HTML XSS surface)', () => {
-    const out = sanitizeHtml('<svg><foreignObject><div onload="evil()">x</div></foreignObject></svg>')
+    const out = sanitizeHtml(
+      '<svg><foreignObject><div onload="evil()">x</div></foreignObject></svg>',
+    )
     expect(out).not.toContain('foreignObject')
   })
   it('strips <script> inside SVG', () => {

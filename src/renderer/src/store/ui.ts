@@ -152,5 +152,5 @@ export const useUIStore = create<UIState>((set, get) => ({
   setExportOpen: (open) => set({ exportOpen: open }),
 
   exporting: false,
-  setExporting: (v) => set({ exporting: v })
+  setExporting: (v) => set({ exporting: v }),
 }))

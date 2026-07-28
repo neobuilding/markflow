@@ -7,7 +7,15 @@
 // Image reading / network fetching must happen in the main process (the renderer sandbox has no Node API).
 import type { IpcMain } from 'electron'
 import { BrowserWindow } from 'electron'
-import { readFileSync, writeFileSync, openSync, closeSync, writeSync, mkdtempSync, rmSync } from 'node:fs'
+import {
+  readFileSync,
+  writeFileSync,
+  openSync,
+  closeSync,
+  writeSync,
+  mkdtempSync,
+  rmSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { getDb } from '../db/database'
 import { isSubdir, APPDOC_MIME, parseAppDocUrl } from '../lib/security'
@@ -27,8 +35,7 @@ async function inlineOne(src: string): Promise<string | null> {
       if (!parsed) return null
       const { docId, relPath: rel } = parsed
       const row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(docId) as
-        | { file_path: string }
-        | undefined
+        { file_path: string } | undefined
       if (!row) return null
       const base = dirname(row.file_path)
       const resolved = resolve(base, rel)
@@ -67,9 +74,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       const [full, pre, src, post] = m
       out += html.slice(last, m.index)
       const dataUrl = await inlineOne(src)
-      out += dataUrl
-        ? `<img${pre}src="${dataUrl}"${post}>`
-        : full // inline failed: keep original <img> (remote image still renders online after export)
+      out += dataUrl ? `<img${pre}src="${dataUrl}"${post}>` : full // inline failed: keep original <img> (remote image still renders online after export)
       last = m.index + full.length
     }
     out += html.slice(last)
@@ -93,7 +98,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
         fd = openSync(filePath, overwrite ? 'w' : 'wx')
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
-          throw new Error('FILE_EXISTS') // already confirmed by renderer; the normal flow won't hit this
+          throw Object.assign(new Error('FILE_EXISTS'), { cause: e }) // already confirmed by renderer; the normal flow won't hit this
         }
         throw e
       }
@@ -102,7 +107,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       } finally {
         closeSync(fd)
       }
-    }
+    },
   )
 
   // Shared: drop the fully-assembled HTML from the renderer into a hidden BrowserWindow, wait for
@@ -137,7 +142,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       await win.loadFile(tmp)
       await win.webContents
         .executeJavaScript(
-          'new Promise(r => { if (document.readyState === "complete") r(); else window.addEventListener("load", r) })'
+          'new Promise(r => { if (document.readyState === "complete") r(); else window.addEventListener("load", r) })',
         )
         .catch(() => {})
       // On Windows the system print dialog is modal to the parent window; if the parent is fully hidden (show:false),
@@ -162,7 +167,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       // uniformly report Invalid printer settings; so the first attempt passes only the safest empty object,
       // and on failure we try fallbacks adding printBackground, then a specified deviceName.
       const tryPrint = async (
-        options: Electron.WebContentsPrintOptions
+        options: Electron.WebContentsPrintOptions,
       ): Promise<{ type: 'success' | 'cancel' | 'error'; reason?: string }> => {
         return new Promise((resolve) => {
           try {
@@ -179,7 +184,9 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
 
       const emptyOutcome = await tryPrint({})
       if (emptyOutcome.type === 'success' || emptyOutcome.type === 'cancel') return
-      console.error(`[export:print] Print with empty options failed: ${emptyOutcome.reason ?? 'unknown'}`)
+      console.error(
+        `[export:print] Print with empty options failed: ${emptyOutcome.reason ?? 'unknown'}`,
+      )
 
       const bgOutcome = await tryPrint({ printBackground: true })
       if (bgOutcome.type === 'success' || bgOutcome.type === 'cancel') return
@@ -190,7 +197,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       const printers = await win.webContents.getPrintersAsync().catch(() => [])
       if (printers.length === 0) {
         throw new Error(
-          'No printer was detected on the system and printing is unavailable. Add a printer in Windows Settings → Bluetooth & devices → Printers & scanners and try again.'
+          'No printer was detected on the system and printing is unavailable. Add a printer in Windows Settings → Bluetooth & devices → Printers & scanners and try again.',
         )
       }
       const isDefaultPrinter = (p: (typeof printers)[number]): boolean =>
@@ -209,32 +216,35 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       // Try each candidate printer in turn: stop on success or user cancel; on failure (non-cancel) move to the next.
       const attempts: { name: string; reason?: string }[] = []
       for (const candidate of ordered) {
-        const outcome = await new Promise<{ type: 'success' | 'cancel' | 'error'; reason?: string }>(
-          (resolve) => {
-            try {
-              win.webContents.print(
-                {
-                  printBackground: true,
-                  deviceName: candidate.name,
-                  pageSize: 'A4',
-                  margins: { marginType: 'default' },
-                },
-                (success: boolean, reason?: string) => {
-                  if (success) resolve({ type: 'success' })
-                  // User canceling the print dialog is not a failure; just stop silently.
-                  else if (reason && /cancel/i.test(reason)) resolve({ type: 'cancel' })
-                  else resolve({ type: 'error', reason })
-                }
-              )
-            } catch (e) {
-              resolve({ type: 'error', reason: e instanceof Error ? e.message : String(e) })
-            }
+        const outcome = await new Promise<{
+          type: 'success' | 'cancel' | 'error'
+          reason?: string
+        }>((resolve) => {
+          try {
+            win.webContents.print(
+              {
+                printBackground: true,
+                deviceName: candidate.name,
+                pageSize: 'A4',
+                margins: { marginType: 'default' },
+              },
+              (success: boolean, reason?: string) => {
+                if (success) resolve({ type: 'success' })
+                // User canceling the print dialog is not a failure; just stop silently.
+                else if (reason && /cancel/i.test(reason)) resolve({ type: 'cancel' })
+                else resolve({ type: 'error', reason })
+              },
+            )
+          } catch (e) {
+            resolve({ type: 'error', reason: e instanceof Error ? e.message : String(e) })
           }
-        )
+        })
         if (outcome.type === 'success' || outcome.type === 'cancel') return
         // Record this failure reason for the summary when candidates are exhausted; also log to the main-process log for debugging.
         attempts.push({ name: candidate.name, reason: outcome.reason })
-        console.error(`[export:print] Printer "${candidate.name}" initialization failed: ${outcome.reason ?? 'unknown'}`)
+        console.error(
+          `[export:print] Printer "${candidate.name}" initialization failed: ${outcome.reason ?? 'unknown'}`,
+        )
       }
       // All candidates failed: summarize each printer's failure reason so the user/developer can tell
       // whether it's a protected-mode issue or a single-driver problem.
@@ -242,7 +252,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
         .map((a, i) => `${i + 1}. "${a.name}": ${mapPrintFailureReason(a.reason)}`)
         .join('\n')
       throw new Error(
-        `Could not initialize any available printer. Attempted:\n${summary}\n\nCheck Windows "Printers & scanners", or set "Microsoft Print to PDF" as the default printer and try again.`
+        `Could not initialize any available printer. Attempted:\n${summary}\n\nCheck Windows "Printers & scanners", or set "Microsoft Print to PDF" as the default printer and try again.`,
       )
     } finally {
       win.destroy()

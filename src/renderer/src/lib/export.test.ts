@@ -13,7 +13,12 @@ describe('export — buildStandaloneHtml (R7)', () => {
     setExportContent('---\nlang: ko\n---\n\n# 안녕하세요')
     let captured = ''
     ;(window as unknown as { api: unknown }).api = {
-      export: { embedImages: vi.fn(async (h: string) => h), write: vi.fn(async (_p: string, html: string) => { captured = html }) },
+      export: {
+        embedImages: vi.fn(async (h: string) => h),
+        write: vi.fn(async (_p: string, html: string) => {
+          captured = html
+        }),
+      },
     }
     await exportDocument({ path: 'x.html', theme: 'light', embedImages: false })
     expect(captured).toContain('<html lang="ko"')
@@ -24,7 +29,12 @@ describe('export — buildStandaloneHtml (R7)', () => {
     setExportContent('# 你好世界\n\n这是中文内容。')
     let captured = ''
     ;(window as unknown as { api: unknown }).api = {
-      export: { embedImages: vi.fn(async (h: string) => h), write: vi.fn(async (_p: string, html: string) => { captured = html }) },
+      export: {
+        embedImages: vi.fn(async (h: string) => h),
+        write: vi.fn(async (_p: string, html: string) => {
+          captured = html
+        }),
+      },
     }
     await exportDocument({ path: 'x.html', theme: 'light', embedImages: false })
     expect(captured).toContain('<html lang="zh-CN"')
@@ -35,7 +45,12 @@ describe('export — buildStandaloneHtml (R7)', () => {
     setExportContent('')
     let captured = ''
     ;(window as unknown as { api: unknown }).api = {
-      export: { embedImages: vi.fn(async (h: string) => h), write: vi.fn(async (_p: string, html: string) => { captured = html }) },
+      export: {
+        embedImages: vi.fn(async (h: string) => h),
+        write: vi.fn(async (_p: string, html: string) => {
+          captured = html
+        }),
+      },
     }
     await exportDocument({ path: 'x.html', theme: 'light', embedImages: false })
     expect(captured).toContain('<html lang="en"')
@@ -56,7 +71,7 @@ describe('export — buildStandaloneHtml (R7)', () => {
     expect(captured).toContain('<meta charset="utf-8">')
     expect(captured).toContain('class="markdown-body"')
     expect(captured).toContain(
-      'body{padding:24px;width:100%;max-width:none;margin:0;box-sizing:border-box;}'
+      'body{padding:24px;width:100%;max-width:none;margin:0;box-sizing:border-box;}',
     )
     expect(captured).not.toContain('max-width:980px')
     expect(captured).toContain('src="a.png"') // appdoc rewritten to relative path
@@ -79,7 +94,9 @@ describe('export — buildStandaloneHtml (R7)', () => {
 
   it('inline images: calls embedImages to inline as base64', async () => {
     setExportHtml('<img src="appdoc://doc1/a.png">')
-    const embed = vi.fn(async (h: string) => h.replace('appdoc://doc1/a.png', 'data:image/png;base64,XYZ'))
+    const embed = vi.fn(async (h: string) =>
+      h.replace('appdoc://doc1/a.png', 'data:image/png;base64,XYZ'),
+    )
     ;(window as unknown as { api: unknown }).api = {
       export: { embedImages: embed, write: vi.fn() },
     }

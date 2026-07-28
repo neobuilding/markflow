@@ -14,7 +14,8 @@ import { buildStandaloneHtml, resolveTheme } from './lib/export'
 import { getExportHtml } from './lib/exportStore'
 
 export default function App(): React.ReactElement {
-  const { setNewDocOpen, toggleSidebar, theme, closeWorkspace, setPrinting, printing } = useUIStore()
+  const { setNewDocOpen, toggleSidebar, theme, closeWorkspace, setPrinting, printing } =
+    useUIStore()
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
 
@@ -26,8 +27,14 @@ export default function App(): React.ReactElement {
     const handleKey = (e: KeyboardEvent) => {
       const isMac = navigator.platform.includes('Mac')
       const mod = isMac ? e.metaKey : e.ctrlKey
-      if (mod && e.key === 'n') { e.preventDefault(); setNewDocOpen(true) }
-      if (mod && e.key === '\\') { e.preventDefault(); toggleSidebar() }
+      if (mod && e.key === 'n') {
+        e.preventDefault()
+        setNewDocOpen(true)
+      }
+      if (mod && e.key === '\\') {
+        e.preventDefault()
+        toggleSidebar()
+      }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
@@ -38,7 +45,7 @@ export default function App(): React.ReactElement {
     const removeNew = window.api.onMenuEvent('new-document', () => setNewDocOpen(true))
     const removeSidebar = window.api.onMenuEvent('toggle-sidebar', () => toggleSidebar())
     const removeOpen = window.api.onMenuEvent('open-files', (data) => {
-      const paths = Array.isArray(data) ? data : (data ? [data as string] : [])
+      const paths = Array.isArray(data) ? data : data ? [data as string] : []
       if (paths.length === 0) return
       openPathsMut.mutate(paths)
     })
@@ -47,10 +54,17 @@ export default function App(): React.ReactElement {
       // When the export dialog is open, Cmd/Ctrl+W should close the dialog (not the whole workspace):
       // overwriting an existing file adds a confirmation step, and users often hit the close shortcut
       // to dismiss the dialog; closing the workspace directly would be harmful.
-      if (st.exportOpen) { st.setExportOpen(false); return }
+      if (st.exportOpen) {
+        st.setExportOpen(false)
+        return
+      }
       // While writing a file, fully ignore the close-workspace request so no path loses the workspace.
       if (st.exporting) return
-      if (st.dirty && !window.confirm('You have unsaved changes. Discard them and close the workspace?')) return
+      if (
+        st.dirty &&
+        !window.confirm('You have unsaved changes. Discard them and close the workspace?')
+      )
+        return
       closeWorkspace()
     })
     const removeFileDetails = window.api.onMenuEvent('file-details', () => {
@@ -86,8 +100,18 @@ export default function App(): React.ReactElement {
     const removeOpenPaths = window.api.onOpenPaths((paths) => {
       if (paths && paths.length > 0) openPathsMut.mutate(paths)
     })
-    return () => { removeNew(); removeSidebar(); removeOpen(); removeClose(); removeOpenPaths(); removeFileDetails(); removeAbout(); removeExport(); removePrint() }
-  }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace])
+    return () => {
+      removeNew()
+      removeSidebar()
+      removeOpen()
+      removeClose()
+      removeOpenPaths()
+      removeFileDetails()
+      removeAbout()
+      removeExport()
+      removePrint()
+    }
+  }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, setPrinting])
 
   // On startup, open paths passed via CLI arguments / file associations
   useEffect(() => {
@@ -98,7 +122,8 @@ export default function App(): React.ReactElement {
   // Note: no workspace state is persisted; after refresh or restart, previously opened files/folders are not restored.
   useEffect(() => {
     if (!window.api?.app?.getInitialPaths) return
-    window.api.app.getInitialPaths()
+    window.api.app
+      .getInitialPaths()
       .then((paths: string[]) => {
         if (paths && paths.length > 0) openPathsMutRef.current.mutate(paths)
       })
@@ -163,7 +188,9 @@ export default function App(): React.ReactElement {
         {printing && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 shadow-lg">
-              <span className="text-sm text-[var(--color-text-secondary)]">Preparing to print…</span>
+              <span className="text-sm text-[var(--color-text-secondary)]">
+                Preparing to print…
+              </span>
             </div>
           </div>
         )}

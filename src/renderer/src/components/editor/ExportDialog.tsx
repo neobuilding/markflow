@@ -31,14 +31,19 @@ export function ExportDialog(): React.ReactElement {
   // accidentally close the whole workspace at the moment of cancel/confirm.
   const [showOverwrite, setShowOverwrite] = useState(false)
 
-  // Reset state and provide a default target path when the dialog opens.
+  // Reset state and provide a default target path when the dialog opens. The setState calls are
+  // deferred via setTimeout so they aren't synchronous within the effect body (avoids cascading
+  // re-renders; satisfies react-hooks/set-state-in-effect).
   useEffect(() => {
     if (open) {
-      setThemeChoice('current')
-      setEmbedImages(true)
-      setError(null)
-      setShowOverwrite(false)
-      setTargetPath(doc ? defaultHtmlPath(doc.filePath, doc.title) : null)
+      const id = setTimeout(() => {
+        setThemeChoice('current')
+        setEmbedImages(true)
+        setError(null)
+        setShowOverwrite(false)
+        setTargetPath(doc ? defaultHtmlPath(doc.filePath, doc.title) : null)
+      }, 0)
+      return () => clearTimeout(id)
     }
   }, [open, doc])
 
@@ -155,7 +160,9 @@ export function ExportDialog(): React.ReactElement {
 
           {/* Target path */}
           <div>
-            <label className="block text-2xs text-[var(--color-text-tertiary)] mb-1">Save location</label>
+            <label className="block text-2xs text-[var(--color-text-tertiary)] mb-1">
+              Save location
+            </label>
             <div className="flex items-center gap-2">
               <input
                 value={targetPath ?? ''}
@@ -168,37 +175,44 @@ export function ExportDialog(): React.ReactElement {
               </Button>
             </div>
             <p className="text-2xs text-[var(--color-text-tertiary)] mt-1">
-              When not inlined, local images are rewritten to relative paths (distributed alongside the .html), while remote https images are kept.
+              When not inlined, local images are rewritten to relative paths (distributed alongside
+              the .html), while remote https images are kept.
             </p>
           </div>
 
           {error && <p className="text-2xs text-red-500">{error}</p>}
         </div>
 
-          {showOverwrite ? (
-            <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3 mt-4">
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                File &quot;{targetPath}&quot; already exists. Are you sure you want to overwrite it? This action cannot be undone.
-              </p>
-              <div className="flex items-center justify-end gap-2 mt-3">
-                <Button variant="ghost" size="sm" onClick={() => setShowOverwrite(false)} disabled={busy}>
-                  Cancel
-                </Button>
-                <Button variant="accent" size="sm" onClick={() => doExport(true)} disabled={busy}>
-                  {busy ? 'Exporting…' : 'Overwrite'}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-end gap-2 mt-5">
-              <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+        {showOverwrite ? (
+          <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3 mt-4">
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              File &quot;{targetPath}&quot; already exists. Are you sure you want to overwrite it?
+              This action cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowOverwrite(false)}
+                disabled={busy}
+              >
                 Cancel
               </Button>
-              <Button variant="accent" size="sm" onClick={handleConfirm} disabled={busy}>
-                {busy ? 'Exporting…' : 'Export'}
+              <Button variant="accent" size="sm" onClick={() => doExport(true)} disabled={busy}>
+                {busy ? 'Exporting…' : 'Overwrite'}
               </Button>
             </div>
-          )}
+          </div>
+        ) : (
+          <div className="flex items-center justify-end gap-2 mt-5">
+            <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="accent" size="sm" onClick={handleConfirm} disabled={busy}>
+              {busy ? 'Exporting…' : 'Export'}
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )

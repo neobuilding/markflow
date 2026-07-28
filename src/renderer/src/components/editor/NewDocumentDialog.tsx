@@ -49,7 +49,12 @@ export function NewDocumentDialog(): React.ReactElement {
             <Button variant="ghost" size="sm" onClick={() => setNewDocOpen(false)}>
               Cancel
             </Button>
-            <Button variant="accent" size="sm" onClick={handleCreate} disabled={createMut.isPending}>
+            <Button
+              variant="accent"
+              size="sm"
+              onClick={handleCreate}
+              disabled={createMut.isPending}
+            >
               Create
             </Button>
           </div>

@@ -13,10 +13,14 @@ beforeEach(async () => {
   vi.mocked(franc).mockImplementation(actual.franc)
 })
 
-const ZH = '我们生活在一个充满变化的时代。技术的进步正在深刻地影响着每一个人的日常生活。学习新知识、适应新环境，已经成为现代人不可或缺的能力。'
-const JA = '私たちは日々変化する世界に生きている。技術の進歩は人々の暮らしを大きく変えている。新しい知識を学び、環境に適応することが大切である。'
-const KO = '우리는 변화하는 세계에 살고 있습니다. 기술의 발전은 사람들의 일상생활을 크게 바꾸고 있습니다. 새로운 지식을 배우고 환경에 적응하는 것이 중요합니다.'
-const EN = "We live in an era of constant change. Technological progress is profoundly affecting everyone's daily life. Learning new knowledge and adapting to new environments has become an essential ability for modern people."
+const ZH =
+  '我们生活在一个充满变化的时代。技术的进步正在深刻地影响着每一个人的日常生活。学习新知识、适应新环境，已经成为现代人不可或缺的能力。'
+const JA =
+  '私たちは日々変化する世界に生きている。技術の進歩は人々の暮らしを大きく変えている。新しい知識を学び、環境に適応することが大切である。'
+const KO =
+  '우리는 변화하는 세계에 살고 있습니다. 기술의 발전은 사람들의 일상생활을 크게 바꾸고 있습니다. 새로운 지식을 배우고 환경에 적응하는 것이 중요합니다.'
+const EN =
+  "We live in an era of constant change. Technological progress is profoundly affecting everyone's daily life. Learning new knowledge and adapting to new environments has become an essential ability for modern people."
 
 describe('extractFrontmatterLang', () => {
   it('returns null when there is no frontmatter block', () => {

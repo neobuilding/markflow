@@ -47,9 +47,7 @@ const md: MarkdownIt = new MarkdownIt({
       }
     }
     try {
-      return (
-        '<pre class="hljs"><code>' + hljs.highlightAuto(str).value + '</code></pre>'
-      )
+      return '<pre class="hljs"><code>' + hljs.highlightAuto(str).value + '</code></pre>'
     } catch {
       return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>'
     }

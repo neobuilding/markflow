@@ -5,22 +5,26 @@ import { useUIStore } from '../../store/ui'
 import { useSearch } from '../../hooks/useSearch'
 
 export function CommandPalette(): React.ReactElement | null {
-  const { searchOpen, setSearchOpen, setSearchQuery, searchQuery, setActiveDocumentId } = useUIStore()
+  const { searchOpen, setSearchOpen, setSearchQuery, searchQuery, setActiveDocumentId } =
+    useUIStore()
   const { data: results = [], isFetching } = useSearch()
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
 
   useEffect(() => {
     if (searchOpen) {
-      setTimeout(() => inputRef.current?.focus(), 50)
-      setSelectedIndex(0)
+      setTimeout(() => {
+        inputRef.current?.focus()
+        setSelectedIndex(0)
+      }, 50)
     } else {
       setSearchQuery('')
     }
   }, [searchOpen, setSearchQuery])
 
   useEffect(() => {
-    setSelectedIndex(0)
+    const id = setTimeout(() => setSelectedIndex(0), 0)
+    return () => clearTimeout(id)
   }, [results])
 
   useEffect(() => {
@@ -77,7 +81,10 @@ export function CommandPalette(): React.ReactElement | null {
             className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery('')} className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]">
+            <button
+              onClick={() => setSearchQuery('')}
+              className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+            >
               <X size={14} />
             </button>
           )}
@@ -110,12 +117,15 @@ export function CommandPalette(): React.ReactElement | null {
                     'flex items-start gap-3 px-4 py-2.5 cursor-pointer transition-colors',
                     i === selectedIndex
                       ? 'bg-[var(--color-accent-muted)]'
-                      : 'hover:bg-[var(--color-surface-overlay)]'
+                      : 'hover:bg-[var(--color-surface-overlay)]',
                   )}
                   onClick={() => handleSelect(r.id)}
                   onMouseEnter={() => setSelectedIndex(i)}
                 >
-                  <FileText size={14} className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]" />
+                  <FileText
+                    size={14}
+                    className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]"
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
                       {r.title}
@@ -140,11 +150,15 @@ export function CommandPalette(): React.ReactElement | null {
         {/* Footer */}
         <div className="flex items-center gap-3 px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-bg)]">
           <div className="flex items-center gap-1 text-xs text-[var(--color-text-tertiary)]">
-            <kbd className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs">↑↓</kbd>
+            <kbd className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs">
+              ↑↓
+            </kbd>
             navigate
           </div>
           <div className="flex items-center gap-1 text-xs text-[var(--color-text-tertiary)]">
-            <kbd className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs">↵</kbd>
+            <kbd className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs">
+              ↵
+            </kbd>
             open
           </div>
         </div>

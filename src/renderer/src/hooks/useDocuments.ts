@@ -9,7 +9,7 @@ export function useDocuments(folderPath?: string) {
   return useQuery({
     queryKey: [...DOCS_KEY, 'list', folderPath ?? ''],
     queryFn: () => window.api.documents.list(folderPath),
-    staleTime: 0
+    staleTime: 0,
   })
 }
 
@@ -18,7 +18,7 @@ export function useDocument(id: string | null) {
     queryKey: [...DOCS_KEY, 'detail', id],
     queryFn: () => window.api.documents.get(id!),
     enabled: id !== null,
-    staleTime: 0
+    staleTime: 0,
   })
 }
 
@@ -29,7 +29,7 @@ export function useCreateDocument() {
       window.api.documents.create(params),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: DOCS_KEY })
-    }
+    },
   })
 }
 
@@ -43,7 +43,7 @@ export function useUpdateDocument() {
         qc.setQueryData([...DOCS_KEY, 'detail', data.id], data)
         qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
       }
-    }
+    },
   })
 }
 
@@ -53,7 +53,7 @@ export function useDeleteDocument() {
     mutationFn: (id: string) => window.api.documents.delete(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: DOCS_KEY })
-    }
+    },
   })
 }
 
@@ -64,7 +64,7 @@ export function useSaveDocumentAs() {
     mutationFn: ({
       id,
       filePath,
-      updates
+      updates,
     }: {
       id: string
       filePath: string
@@ -75,7 +75,7 @@ export function useSaveDocumentAs() {
         qc.setQueryData([...DOCS_KEY, 'detail', data.id], data)
         qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
       }
-    }
+    },
   })
 }
 
@@ -89,7 +89,7 @@ export function useReloadDocument() {
         qc.setQueryData([...DOCS_KEY, 'detail', data.id], data)
         qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
       }
-    }
+    },
   })
 }
 
@@ -105,7 +105,7 @@ export function useSetEncoding() {
         qc.setQueryData([...DOCS_KEY, 'detail', data.id], data)
         qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
       }
-    }
+    },
   })
 }
 
@@ -115,7 +115,7 @@ export function useFileStat(filePath: string | null | undefined) {
     queryKey: ['fileStat', filePath ?? ''],
     queryFn: () => window.api.documents.stat(filePath!),
     enabled: !!filePath,
-    staleTime: 5000
+    staleTime: 5000,
   })
 }
 
@@ -129,7 +129,7 @@ export function useImportDocument() {
         qc.setQueryData([...DOCS_KEY, 'detail', data.id], data)
         qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
       }
-    }
+    },
   })
 }
 
@@ -142,7 +142,7 @@ export function useImportDocuments() {
       if (data.length > 0) {
         qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'list'] })
       }
-    }
+    },
   })
 }
 
@@ -167,7 +167,7 @@ export function useOpenPaths() {
       ui.setActiveDocumentId(imported[0].id)
       ui.setEditable(false) // files open read-only by default
       return { folder, documentId: imported[0].id }
-    }
+    },
   })
 }
 
@@ -175,6 +175,6 @@ export function useOpenPaths() {
 export function useOpenFolder() {
   const openPaths = useOpenPaths()
   return useMutation({
-    mutationFn: async (folderPath: string) => openPaths.mutateAsync([folderPath])
+    mutationFn: async (folderPath: string) => openPaths.mutateAsync([folderPath]),
   })
 }
