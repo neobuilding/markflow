@@ -12,12 +12,15 @@ import { ExportDialog } from './components/editor/ExportDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { buildStandaloneHtml, resolveTheme } from './lib/export'
 import { getExportHtml } from './lib/exportStore'
+import { t, useT, changeLanguage } from './i18n'
+import type { Locale } from './i18n'
 
 export default function App(): React.ReactElement {
   const { setNewDocOpen, toggleSidebar, theme, closeWorkspace, setPrinting, printing } =
     useUIStore()
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
+  const { t: rt } = useT()
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -60,11 +63,7 @@ export default function App(): React.ReactElement {
       }
       // While writing a file, fully ignore the close-workspace request so no path loses the workspace.
       if (st.exporting) return
-      if (
-        st.dirty &&
-        !window.confirm('You have unsaved changes. Discard them and close the workspace?')
-      )
-        return
+      if (st.dirty && !window.confirm(t('app.unsavedCloseWorkspace'))) return
       closeWorkspace()
     })
     const removeFileDetails = window.api.onMenuEvent('file-details', () => {
@@ -79,7 +78,7 @@ export default function App(): React.ReactElement {
     })
     const removePrint = window.api.onMenuEvent('print', async () => {
       if (!getExportHtml()) {
-        window.alert('Preview is not ready yet. Please switch to the preview or split view first.')
+        window.alert(t('app.printNotReady'))
         return
       }
       if (useUIStore.getState().printing) return
@@ -91,7 +90,7 @@ export default function App(): React.ReactElement {
         await window.api.export.print(html)
       } catch (e) {
         console.error('Print failed', e)
-        window.alert('Print failed: ' + ((e as Error)?.message || e))
+        window.alert(t('app.printFailed', { message: (e as Error)?.message || String(e) }))
       } finally {
         setPrinting(false)
         window.api.menu.setPrinting(false)
@@ -112,6 +111,37 @@ export default function App(): React.ReactElement {
       removePrint()
     }
   }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, setPrinting])
+
+  // ── i18n: keep the UI language in sync with the native menu ─────────────
+  // When the user picks a language in the native menu, the main process sends
+  // 'menu:language'; we update the store (which persists the choice).
+  useEffect(() => {
+    if (!window.api) return
+    const remove = window.api.onMenuEvent('language', (data) => {
+      const locale = data as string
+      if (locale === 'en' || locale === 'zh-CN') {
+        useUIStore.getState().setLanguage(locale as Locale)
+      }
+    })
+    return () => remove()
+  }, [])
+
+  // Push the active UI language to the main process (so the native menu's
+  // labels + checked state match) and keep <html lang> in sync. Runs on mount
+  // and whenever the language changes. Main does NOT echo back (notify=false),
+  // so this cannot create a loop.
+  useEffect(() => {
+    const sync = (lang: string) => {
+      document.documentElement.lang = lang
+      changeLanguage(lang as Locale)
+      window.api?.app?.setLanguage(lang as 'en' | 'zh-CN')
+    }
+    sync(useUIStore.getState().language)
+    const unsub = useUIStore.subscribe((state, prev) => {
+      if (state.language !== prev.language) sync(state.language)
+    })
+    return () => unsub()
+  }, [])
 
   // On startup, open paths passed via CLI arguments / file associations
   useEffect(() => {
@@ -189,7 +219,7 @@ export default function App(): React.ReactElement {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 shadow-lg">
               <span className="text-sm text-[var(--color-text-secondary)]">
-                Preparing to print…
+                {rt('app.preparingPrint')}
               </span>
             </div>
           </div>

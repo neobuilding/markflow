@@ -7,6 +7,7 @@ import { scrollSync } from '../../lib/scrollSync'
 import { debounce } from '../../lib/utils'
 import { sanitizeHtml } from '../../lib/sanitize'
 import { setExportHtml, setExportContent } from '../../lib/exportStore'
+import { useT } from '../../i18n'
 import mermaid from 'mermaid'
 
 let mermaidInitialized = false
@@ -41,8 +42,10 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   const docId = useUIStore((s) => s.activeDocumentId)
   // Tracks whether the preview has rendered at least once, so the parse effect can decide whether to
   // parse immediately (first paint) without reading `renderedHtml` reactively (which would make it a
-  // dependency and cause a re-parse loop). Mirrors the old `renderedHtml === ''` check.
+  // dependency and cause a re-parse loop). This ref gates the "parse immediately on first paint"
+  // path instead of checking `renderedHtml === ''` reactively.
   const hasContentRef = useRef(false)
+  const { t } = useT()
 
   // Parsing: sent to the Worker via comlink, with automatic fallback to the main thread on failure.
   // Parse immediately on first paint / document switch (no debounce); only debounce 150ms for
@@ -78,7 +81,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
                 const out = await renderMermaidSvg(id, m.code)
                 svgs[m.slot] = out.svg
               } catch {
-                svgs[m.slot] = '<div class="mermaid-skeleton">⚠ Mermaid render failed</div>'
+                svgs[m.slot] = `<div class="mermaid-skeleton">⚠ ${t('preview.mermaidFailed')}</div>`
               }
             }
             html = html.replace(
@@ -109,10 +112,10 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     // Document switch uses setTimeout(0): merge the transient double render where "docId changes
     // first, content changes later via useLocalDocument's effect" into a single (docId, content)
     // send to the Worker. For consecutive keystrokes in the same document: debounce 150ms.
-    const t = setTimeout(run, immediate ? 0 : 150)
+    const timer = setTimeout(run, immediate ? 0 : 150)
     return () => {
       cancelled = true
-      clearTimeout(t)
+      clearTimeout(timer)
     }
   }, [content, docId])
 
@@ -132,7 +135,9 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
       const placeholder = document.createElement('span')
       placeholder.className = 'img-error-placeholder'
       const alt = img.getAttribute('alt') ?? ''
-      placeholder.textContent = alt ? `⚠ Image failed to load: ${alt}` : '⚠ Image failed to load'
+      placeholder.textContent = alt
+        ? `⚠ ${t('preview.imageFailedAlt', { alt })}`
+        : `⚠ ${t('preview.imageFailed')}`
       placeholder.style.cssText =
         'display:inline-block;padding:4px 8px;margin:4px 0;border:1px dashed var(--color-border);' +
         'border-radius:6px;color:var(--color-text-tertiary);font-size:12px;background:var(--color-surface-overlay);'
@@ -166,7 +171,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
         className="markdown-preview prose dark:prose-invert max-w-none px-6 py-6 w-full"
       >
         {loading && renderedHtml === '' ? (
-          <div className="text-[var(--color-text-tertiary)] text-sm">Loading preview…</div>
+          <div className="text-[var(--color-text-tertiary)] text-sm">{t('editor.loading')}</div>
         ) : (
           <SafeHtml html={renderedHtml} />
         )}

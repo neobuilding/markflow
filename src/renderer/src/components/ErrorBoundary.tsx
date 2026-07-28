@@ -1,4 +1,5 @@
 import React from 'react'
+import { t } from '../i18n'
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -70,10 +71,10 @@ export class ErrorBoundary extends React.Component<
               ⚠
             </div>
             <h1 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-              Something went wrong
+              {t('error.title')}
             </h1>
             <p style={{ fontSize: '0.875rem', color: '#666', marginBottom: '1rem' }}>
-              The application encountered an unexpected error. Try reloading — your data is safe.
+              {t('error.message')}
             </p>
             <pre
               style={{
@@ -104,7 +105,7 @@ export class ErrorBoundary extends React.Component<
                 cursor: 'pointer',
               }}
             >
-              Reload App
+              {t('error.reload')}
             </button>
           </div>
         </div>

@@ -5,6 +5,7 @@ import { exportDocument, resolveTheme } from '../../lib/export'
 import { getExportHtml } from '../../lib/exportStore'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
+import { useT } from '../../i18n'
 
 type ThemeChoice = 'current' | 'light' | 'dark'
 
@@ -18,6 +19,7 @@ export function ExportDialog(): React.ReactElement {
   const setOpen = useUIStore((s) => s.setExportOpen)
   const uiTheme = useUIStore((s) => s.theme)
   const activeDocumentId = useUIStore((s) => s.activeDocumentId)
+  const { t } = useT()
   const { data: doc } = useDocument(activeDocumentId)
 
   const [themeChoice, setThemeChoice] = useState<ThemeChoice>('current')
@@ -85,7 +87,7 @@ export function ExportDialog(): React.ReactElement {
       setOpen(false)
     } catch (e) {
       console.error('Export failed', e)
-      setError('Export failed. Please try again.')
+      setError(t('export.failed'))
     } finally {
       if (activeDocumentId) {
         try {
@@ -105,7 +107,7 @@ export function ExportDialog(): React.ReactElement {
       return
     }
     if (!getExportHtml()) {
-      setError('Preview is not ready yet. Please switch to the preview or split view first.')
+      setError(t('export.previewNotReady'))
       return
     }
     // When the target file already exists, show the inline confirm first (don't call the native
@@ -129,21 +131,23 @@ export function ExportDialog(): React.ReactElement {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Export as HTML</DialogTitle>
+          <DialogTitle>{t('export.title')}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
           {/* Theme */}
           <div>
-            <label className="block text-2xs text-[var(--color-text-tertiary)] mb-1">Theme</label>
+            <label className="block text-2xs text-[var(--color-text-tertiary)] mb-1">
+              {t('export.theme')}
+            </label>
             <select
               value={themeChoice}
               onChange={(e) => setThemeChoice(e.target.value as ThemeChoice)}
               className="w-full text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
             >
-              <option value="current">Current ({uiTheme})</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
+              <option value="current">{t('export.themeCurrent', { theme: uiTheme })}</option>
+              <option value="light">{t('export.themeLight')}</option>
+              <option value="dark">{t('export.themeDark')}</option>
             </select>
           </div>
 
@@ -155,28 +159,27 @@ export function ExportDialog(): React.ReactElement {
               onChange={(e) => setEmbedImages(e.target.checked)}
               className="accent-[var(--color-accent)]"
             />
-            Inline images into a single file (base64, works offline)
+            {t('export.inlineImages')}
           </label>
 
           {/* Target path */}
           <div>
             <label className="block text-2xs text-[var(--color-text-tertiary)] mb-1">
-              Save location
+              {t('export.saveLocation')}
             </label>
             <div className="flex items-center gap-2">
               <input
                 value={targetPath ?? ''}
                 readOnly
-                placeholder="Not selected"
+                placeholder={t('export.notSelected')}
                 className="flex-1 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 outline-none text-[var(--color-text-secondary)] truncate"
               />
               <Button variant="outline" size="sm" onClick={handlePickPath}>
-                Choose…
+                {t('export.choose')}
               </Button>
             </div>
             <p className="text-2xs text-[var(--color-text-tertiary)] mt-1">
-              When not inlined, local images are rewritten to relative paths (distributed alongside
-              the .html), while remote https images are kept.
+              {t('export.imageNote')}
             </p>
           </div>
 
@@ -186,8 +189,7 @@ export function ExportDialog(): React.ReactElement {
         {showOverwrite ? (
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3 mt-4">
             <p className="text-sm text-[var(--color-text-secondary)]">
-              File &quot;{targetPath}&quot; already exists. Are you sure you want to overwrite it?
-              This action cannot be undone.
+              {t('export.overwritePrompt', { path: targetPath ?? '' })}
             </p>
             <div className="flex items-center justify-end gap-2 mt-3">
               <Button
@@ -196,20 +198,20 @@ export function ExportDialog(): React.ReactElement {
                 onClick={() => setShowOverwrite(false)}
                 disabled={busy}
               >
-                Cancel
+                {t('export.cancel')}
               </Button>
               <Button variant="accent" size="sm" onClick={() => doExport(true)} disabled={busy}>
-                {busy ? 'Exporting…' : 'Overwrite'}
+                {busy ? t('export.exporting') : t('export.overwrite')}
               </Button>
             </div>
           </div>
         ) : (
           <div className="flex items-center justify-end gap-2 mt-5">
             <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
-              Cancel
+              {t('export.cancel')}
             </Button>
             <Button variant="accent" size="sm" onClick={handleConfirm} disabled={busy}>
-              {busy ? 'Exporting…' : 'Export'}
+              {busy ? t('export.exporting') : t('export.export')}
             </Button>
           </div>
         )}

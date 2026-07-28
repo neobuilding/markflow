@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx"],
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "shared/**/*.ts"],
   "compilerOptions": {
     "composite": true,
     "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo-renderer.json",

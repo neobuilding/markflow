@@ -3,11 +3,13 @@ import { Search, X, FileText, Clock } from 'lucide-react'
 import { cn, formatDate } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import { useSearch } from '../../hooks/useSearch'
+import { useT } from '../../i18n'
 
 export function CommandPalette(): React.ReactElement | null {
   const { searchOpen, setSearchOpen, setSearchQuery, searchQuery, setActiveDocumentId } =
     useUIStore()
   const { data: results = [], isFetching } = useSearch()
+  const { t } = useT()
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
 
@@ -77,7 +79,7 @@ export function CommandPalette(): React.ReactElement | null {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search documents…"
+            placeholder={t('palette.placeholder')}
             className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
           />
           {searchQuery && (
@@ -96,16 +98,18 @@ export function CommandPalette(): React.ReactElement | null {
         {/* Results */}
         <div className="max-h-[380px] overflow-y-auto">
           {isFetching && searchQuery && (
-            <div className="px-4 py-3 text-sm text-[var(--color-text-tertiary)]">Searching…</div>
+            <div className="px-4 py-3 text-sm text-[var(--color-text-tertiary)]">
+              {t('palette.searching')}
+            </div>
           )}
           {!isFetching && searchQuery && results.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-[var(--color-text-tertiary)]">
-              No results for "{searchQuery}"
+              {t('palette.noResults', { query: searchQuery })}
             </div>
           )}
           {!searchQuery && (
             <div className="px-4 py-3 text-xs text-[var(--color-text-tertiary)]">
-              Start typing to search your documents…
+              {t('palette.startTyping')}
             </div>
           )}
           {results.length > 0 && (
@@ -153,13 +157,13 @@ export function CommandPalette(): React.ReactElement | null {
             <kbd className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs">
               ↑↓
             </kbd>
-            navigate
+            {t('palette.navigate')}
           </div>
           <div className="flex items-center gap-1 text-xs text-[var(--color-text-tertiary)]">
             <kbd className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs">
               ↵
             </kbd>
-            open
+            {t('palette.open')}
           </div>
         </div>
       </div>

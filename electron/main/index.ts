@@ -20,6 +20,7 @@ import { registerSearchHandlers } from './ipc/search'
 import { registerExportHandlers } from './ipc/export'
 import { initDatabase, getDb } from './db/database'
 import { isSubdir, APPDOC_MIME, parseAppDocUrl } from './lib/security'
+import { MenuLocale, getCurrentLocale, menuT, setMenuLanguage, initMenuI18n } from './i18n'
 
 // __dirname is auto-injected by vite-plugin-electron/plugin esmShim()
 
@@ -311,30 +312,51 @@ function createWindow(): void {
   })
 }
 
+// ─── UI language (i18n) for the native menu ──────────────────────────────
+// The renderer's in-app UI and this native menu share the SAME i18next
+// dictionaries (see ./i18n). English is the fallback. The MenuLocale type,
+// getCurrentLocale(), menuT(), and setMenuLanguage() live in ./i18n and are
+// wired to the shared dictionaries in shared/i18n/{en,zh-CN}.ts.
+
+// Switch the active menu locale, rebuild the menu, and (optionally) notify the
+// renderer so its in-app UI stays in sync. notify=false is used for renderer-
+// driven changes (initial sync / reacting to the menu) to avoid an echo loop.
+function setMenuLocale(locale: MenuLocale, notify: boolean): void {
+  setMenuLanguage(locale)
+  setupMenu()
+  if (notify && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('menu:language', locale)
+  }
+}
+
 // Hold a reference to the app menu so the renderer can dynamically enable/disable the Save
 // menu item when it syncs the editable state.
 let appMenu: Electron.Menu | null = null
 
 function setupMenu(): void {
+  // Menu labels resolve per key via menuT(...) below.
   const template: Electron.MenuItemConstructorOptions[] = [
     {
-      label: 'File',
+      label: menuT('menu.file'),
       submenu: [
         {
-          label: 'New Document',
+          label: menuT('menu.newDocument'),
           accelerator: 'CmdOrCtrl+N',
           click: () => mainWindow?.webContents.send('menu:new-document'),
         },
         { type: 'separator' },
         {
-          label: 'Open File...',
+          label: menuT('menu.openFile'),
           accelerator: 'CmdOrCtrl+O',
           click: async () => {
             const result = await dialog.showOpenDialog({
-              title: 'Open Markdown File',
+              title: menuT('menu.dlgOpenFile'),
               filters: [
-                { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'] },
-                { name: 'All Files', extensions: ['*'] },
+                {
+                  name: menuT('menu.filterMarkdown'),
+                  extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'],
+                },
+                { name: menuT('menu.filterAllFiles'), extensions: ['*'] },
               ],
               properties: ['openFile', 'multiSelections'],
             })
@@ -344,11 +366,11 @@ function setupMenu(): void {
           },
         },
         {
-          label: 'Open Folder...',
+          label: menuT('menu.openFolder'),
           accelerator: 'CmdOrCtrl+Shift+O',
           click: async () => {
             const result = await dialog.showOpenDialog({
-              title: 'Open Folder (batch import .md files)',
+              title: menuT('menu.dlgOpenFolder'),
               properties: ['openDirectory'],
             })
             if (!result.canceled && result.filePaths.length > 0) {
@@ -364,49 +386,49 @@ function setupMenu(): void {
         { type: 'separator' },
         {
           id: 'save',
-          label: 'Save',
+          label: menuT('menu.save'),
           accelerator: 'CmdOrCtrl+S',
           enabled: false, // Read-only by default; enabled by the renderer once it syncs the editable state
           click: () => mainWindow?.webContents.send('menu:save'),
         },
         {
           id: 'save-as',
-          label: 'Save As…',
+          label: menuT('menu.saveAs'),
           accelerator: 'CmdOrCtrl+Shift+S',
           enabled: false,
           click: () => mainWindow?.webContents.send('menu:save-as'),
         },
         {
           id: 'reload',
-          label: 'Reload from Disk',
+          label: menuT('menu.reload'),
           accelerator: 'CmdOrCtrl+Shift+R',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => mainWindow?.webContents.send('menu:reload'),
         },
         {
           id: 'file-details',
-          label: 'File Details…',
+          label: menuT('menu.fileDetails'),
           accelerator: 'CmdOrCtrl+I',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => mainWindow?.webContents.send('menu:file-details'),
         },
         {
           id: 'export-html',
-          label: 'Export as HTML…',
+          label: menuT('menu.exportHtml'),
           accelerator: 'CmdOrCtrl+Shift+E',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => mainWindow?.webContents.send('menu:export-html'),
         },
         {
           id: 'print',
-          label: 'Print…',
+          label: menuT('menu.print'),
           accelerator: 'CmdOrCtrl+P',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => mainWindow?.webContents.send('menu:print'),
         },
         { type: 'separator' },
         {
-          label: 'Close Workspace',
+          label: menuT('menu.closeWorkspace'),
           accelerator: 'CmdOrCtrl+W',
           click: () => mainWindow?.webContents.send('menu:close-workspace'),
         },
@@ -415,7 +437,7 @@ function setupMenu(): void {
       ],
     },
     {
-      label: 'Edit',
+      label: menuT('menu.edit'),
       submenu: [
         { role: 'undo' },
         { role: 'redo' },
@@ -427,15 +449,15 @@ function setupMenu(): void {
       ],
     },
     {
-      label: 'View',
+      label: menuT('menu.view'),
       submenu: [
         {
-          label: 'Toggle Sidebar',
+          label: menuT('menu.toggleSidebar'),
           accelerator: 'CmdOrCtrl+\\',
           click: () => mainWindow?.webContents.send('menu:toggle-sidebar'),
         },
         {
-          label: 'Toggle Preview',
+          label: menuT('menu.togglePreview'),
           accelerator: 'CmdOrCtrl+Shift+P',
           click: () => mainWindow?.webContents.send('menu:toggle-preview'),
         },
@@ -447,7 +469,7 @@ function setupMenu(): void {
         { role: 'togglefullscreen' },
         { type: 'separator' },
         {
-          label: 'Toggle Developer Tools',
+          label: menuT('menu.toggleDevTools'),
           accelerator: 'F12',
           click: () => {
             const wc = mainWindow?.webContents
@@ -462,15 +484,32 @@ function setupMenu(): void {
       ],
     },
     {
-      label: 'Window',
+      label: menuT('menu.window'),
       submenu: [{ role: 'minimize' }, { role: 'zoom' }],
     },
     {
-      label: 'Help',
+      label: menuT('menu.help'),
       submenu: [
         {
-          label: 'About MarkFlow',
+          label: menuT('menu.about'),
           click: () => mainWindow?.webContents.send('menu:about'),
+        },
+      ],
+    },
+    {
+      label: menuT('menu.language'),
+      submenu: [
+        {
+          label: menuT('menu.english'),
+          type: 'radio',
+          checked: getCurrentLocale() === 'en',
+          click: () => setMenuLocale('en', true),
+        },
+        {
+          label: menuT('menu.chinese'),
+          type: 'radio',
+          checked: getCurrentLocale() === 'zh-CN',
+          click: () => setMenuLocale('zh-CN', true),
         },
       ],
     },
@@ -586,10 +625,13 @@ if (!shouldStart) {
     // Let the renderer proactively open a file-picker dialog
     ipcMain.handle('dialog:open-files', async () => {
       const result = await dialog.showOpenDialog({
-        title: 'Open Markdown File',
+        title: menuT('menu.dlgOpenFile'),
         filters: [
-          { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'] },
-          { name: 'All Files', extensions: ['*'] },
+          {
+            name: menuT('menu.filterMarkdown'),
+            extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'],
+          },
+          { name: menuT('menu.filterAllFiles'), extensions: ['*'] },
         ],
         properties: ['openFile', 'multiSelections'],
       })
@@ -599,7 +641,7 @@ if (!shouldStart) {
     // Let the renderer proactively open a folder-picker dialog, returning all .md files under it
     ipcMain.handle('dialog:open-folder', async () => {
       const result = await dialog.showOpenDialog({
-        title: 'Open Folder (batch import .md files)',
+        title: menuT('menu.dlgOpenFolder'),
         properties: ['openDirectory'],
       })
       if (result.canceled || result.filePaths.length === 0) return []
@@ -609,7 +651,7 @@ if (!shouldStart) {
     // Let the renderer proactively open a folder-picker dialog, returning only the chosen folder path
     ipcMain.handle('dialog:select-folder', async () => {
       const result = await dialog.showOpenDialog({
-        title: 'Open Folder',
+        title: menuT('menu.openFolder'),
         properties: ['openDirectory'],
       })
       return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
@@ -618,11 +660,14 @@ if (!shouldStart) {
     // Let the renderer proactively open a "Save As" dialog, returning the chosen path (null if canceled)
     ipcMain.handle('dialog:save-file', async (_event, defaultPath?: string) => {
       const result = await dialog.showSaveDialog({
-        title: 'Save As',
+        title: menuT('menu.saveAs'),
         defaultPath,
         filters: [
-          { name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'] },
-          { name: 'All Files', extensions: ['*'] },
+          {
+            name: menuT('menu.filterMarkdown'),
+            extensions: ['md', 'markdown', 'mdx', 'mdtxt', 'mdtext'],
+          },
+          { name: menuT('menu.filterAllFiles'), extensions: ['*'] },
         ],
       })
       return result.canceled ? null : (result.filePath ?? null)
@@ -631,11 +676,11 @@ if (!shouldStart) {
     // Let the renderer proactively open an "Export as HTML" dialog (R7) with .html filter by default.
     ipcMain.handle('dialog:save-html', async (_event, defaultPath?: string) => {
       const result = await dialog.showSaveDialog({
-        title: 'Export as HTML',
+        title: menuT('menu.exportHtml'),
         defaultPath,
         filters: [
-          { name: 'HTML', extensions: ['html', 'htm'] },
-          { name: 'All Files', extensions: ['*'] },
+          { name: menuT('menu.filterHtml'), extensions: ['html', 'htm'] },
+          { name: menuT('menu.filterAllFiles'), extensions: ['*'] },
         ],
       })
       return result.canceled ? null : (result.filePath ?? null)
@@ -692,12 +737,20 @@ if (!shouldStart) {
     // Renderer's "About" dialog fetches the app version (in production this is the injected rolling version)
     ipcMain.handle('app:get-version', () => app.getVersion())
 
+    // Renderer sends its (persisted or system) UI language so the native menu matches.
+    // notify=false: we must not echo back to the renderer here, or we'd create a sync loop
+    // (renderer → main → menu:language → renderer → main → ...).
+    ipcMain.on('app:set-language', (_event, locale: 'en' | 'zh-CN') => {
+      if (locale === 'en' || locale === 'zh-CN') setMenuLocale(locale, false)
+    })
+
     // ─── Window control ────────────────────────────────────────────
 
     ipcMain.handle('window:maximize', () => mainWindow?.maximize())
     ipcMain.handle('window:unmaximize', () => mainWindow?.unmaximize())
     ipcMain.handle('window:is-maximized', () => !!mainWindow?.isMaximized())
 
+    initMenuI18n()
     createWindow()
     setupMenu()
 

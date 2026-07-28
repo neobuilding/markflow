@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useUIStore } from '../../store/ui'
 import { useDocument, useSetEncoding } from '../../hooks/useDocuments'
+import { useT } from '../../i18n'
 
 // Common encoding list (for manual switching in the status bar, R5).
 const ENCODINGS = [
@@ -16,6 +17,7 @@ const ENCODINGS = [
 
 // Bottom status bar: shows word count, encoding (switchable / low-confidence hint), and save status.
 export function StatusBar(): React.ReactElement {
+  const { t } = useT()
   const activeDocumentId = useUIStore((s) => s.activeDocumentId)
   const dirty = useUIStore((s) => s.dirty)
   const saving = useUIStore((s) => s.saving)
@@ -87,19 +89,23 @@ export function StatusBar(): React.ReactElement {
 
   let status: React.ReactNode = null
   if (printing) {
-    status = <span className="text-2xs text-[var(--color-text-tertiary)]">Printing…</span>
+    status = (
+      <span className="text-2xs text-[var(--color-text-tertiary)]">{t('status.printing')}</span>
+    )
   } else if (saving) {
-    status = <span className="text-2xs text-[var(--color-text-tertiary)]">Saving…</span>
+    status = (
+      <span className="text-2xs text-[var(--color-text-tertiary)]">{t('status.saving')}</span>
+    )
   } else if (dirty) {
-    status = <span className="text-2xs text-amber-500">● Unsaved changes</span>
+    status = <span className="text-2xs text-amber-500">● {t('status.unsaved')}</span>
   } else if (justSaved) {
-    status = <span className="text-2xs text-[var(--color-success)]">✓ Saved</span>
+    status = <span className="text-2xs text-[var(--color-success)]">✓ {t('status.saved')}</span>
   }
 
   return (
     <div className="flex items-center px-4 py-0.5 border-t border-[var(--color-border)] bg-[var(--color-bg)] shrink-0">
       <span className="text-2xs text-[var(--color-text-tertiary)]">
-        {doc ? `${doc.wordCount} words` : ''}
+        {doc ? t('status.words', { wordCount: doc.wordCount }) : ''}
       </span>
 
       {/* Encoding pill (R5): click to switch; show ⚠ on low confidence */}
@@ -108,9 +114,7 @@ export function StatusBar(): React.ReactElement {
           <button
             onClick={() => setEncOpen((v) => !v)}
             title={
-              lowConfidence
-                ? 'Encoding may be inaccurate, click to switch'
-                : `Encoding: ${encoding}`
+              lowConfidence ? t('status.encodingInaccurate') : t('status.encoding', { encoding })
             }
             className={
               'text-2xs px-1.5 py-0.5 rounded border transition-colors ' +
@@ -147,7 +151,7 @@ export function StatusBar(): React.ReactElement {
       {eol && (
         <span
           className="text-2xs px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-tertiary)] ml-3"
-          title="Line ending"
+          title={t('status.lineEnding')}
         >
           {eol === '\r\n' ? 'CRLF' : 'LF'}
         </span>

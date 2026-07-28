@@ -12,6 +12,7 @@ import {
   GripVertical,
 } from 'lucide-react'
 import { cn, formatDate, isInFolder, buildFileTree, type FileTreeNode } from '../../lib/utils'
+import { useT } from '../../i18n'
 import { useUIStore } from '../../store/ui'
 import {
   useDocuments,
@@ -40,6 +41,7 @@ export function Sidebar(): React.ReactElement | null {
     activeFolder,
     closeWorkspace,
   } = useUIStore()
+  const { t } = useT()
   const [sidebarWidth, setSidebarWidth] = useState(240)
   const isResizing = useRef(false)
 
@@ -84,14 +86,10 @@ export function Sidebar(): React.ReactElement | null {
   // Document select / delete / star / details: reused by the doc tree (including subfolders)
   const handleSelectDoc = useCallback(
     (doc: Document) => {
-      if (
-        useUIStore.getState().dirty &&
-        !window.confirm('You have unsaved changes. Discard them and switch files?')
-      )
-        return
+      if (useUIStore.getState().dirty && !window.confirm(t('app.unsavedSwitch'))) return
       setActiveDocumentId(doc.id)
     },
-    [setActiveDocumentId],
+    [setActiveDocumentId, t],
   )
 
   const handleDeleteDoc = useCallback(
@@ -176,7 +174,7 @@ export function Sidebar(): React.ReactElement | null {
                   <Search size={13} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Search (⌘K)</TooltipContent>
+              <TooltipContent>{t('sidebar.search')} (⌘K)</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -189,7 +187,7 @@ export function Sidebar(): React.ReactElement | null {
                   <FolderOpen size={13} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Open File... (⌘O)</TooltipContent>
+              <TooltipContent>{t('sidebar.openFile')} (⌘O)</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -202,7 +200,7 @@ export function Sidebar(): React.ReactElement | null {
                   <Folder size={13} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Open Folder... (⌘⇧O)</TooltipContent>
+              <TooltipContent>{t('sidebar.openFolder')} (⌘⇧O)</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -215,7 +213,7 @@ export function Sidebar(): React.ReactElement | null {
                   <Plus size={13} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>New Document (⌘N)</TooltipContent>
+              <TooltipContent>{t('sidebar.newDocument')} (⌘N)</TooltipContent>
             </Tooltip>
           </div>
         </div>
@@ -240,9 +238,7 @@ export function Sidebar(): React.ReactElement | null {
                 onClick={() => {
                   if (
                     useUIStore.getState().dirty &&
-                    !window.confirm(
-                      'You have unsaved changes. Discard them and close the workspace?',
-                    )
+                    !window.confirm(t('app.unsavedCloseWorkspace'))
                   )
                     return
                   closeWorkspace()
@@ -251,7 +247,7 @@ export function Sidebar(): React.ReactElement | null {
                 <X size={12} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Close (⌘W)</TooltipContent>
+            <TooltipContent>{t('sidebar.close')} (⌘W)</TooltipContent>
           </Tooltip>
         </div>
       )}
@@ -266,7 +262,7 @@ export function Sidebar(): React.ReactElement | null {
           />
         ) : loading ? (
           <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">
-            Loading…
+            {t('editor.loading')}
           </div>
         ) : folderDocs.length === 0 ? (
           <EmptyState onCreate={handleCreate} />
@@ -291,7 +287,7 @@ export function Sidebar(): React.ReactElement | null {
       <div
         className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-accent/30 active:bg-accent/50 transition-colors"
         onMouseDown={startResize}
-        title="Drag to resize sidebar"
+        title={t('sidebar.resizeHint')}
       >
         <GripVertical
           size={12}
@@ -311,24 +307,25 @@ function WelcomeState({
   onOpenFolder: () => void
   onCreate: () => void
 }) {
+  const { t } = useT()
   return (
     <div className="px-4 py-8 text-center">
       <div className="w-12 h-12 rounded-xl bg-[var(--color-accent-muted)] flex items-center justify-center mx-auto mb-3">
         <FileText size={22} className="text-accent" />
       </div>
-      <p className="text-sm font-medium text-[var(--color-text-primary)] mb-1">No folder open</p>
-      <p className="text-xs text-[var(--color-text-tertiary)] mb-4">
-        Open a file or folder to start reading.
+      <p className="text-sm font-medium text-[var(--color-text-primary)] mb-1">
+        {t('sidebar.noFolderOpen')}
       </p>
+      <p className="text-xs text-[var(--color-text-tertiary)] mb-4">{t('sidebar.openToStart')}</p>
       <div className="flex flex-col gap-2">
         <Button variant="accent" size="sm" onClick={onOpenFile}>
-          Open File…
+          {t('sidebar.openFileAction')}
         </Button>
         <Button variant="outline" size="sm" onClick={onOpenFolder}>
-          Open Folder…
+          {t('sidebar.openFolderAction')}
         </Button>
         <Button variant="ghost" size="sm" onClick={onCreate}>
-          New Document
+          {t('sidebar.newDocumentAction')}
         </Button>
       </div>
     </div>
@@ -336,12 +333,13 @@ function WelcomeState({
 }
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
+  const { t } = useT()
   return (
     <div className="px-3 py-8 text-center">
       <FileText size={24} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" />
-      <p className="text-xs text-[var(--color-text-tertiary)]">No documents in this folder</p>
+      <p className="text-xs text-[var(--color-text-tertiary)]">{t('sidebar.emptyFolder')}</p>
       <button onClick={onCreate} className="mt-2 text-xs text-accent hover:underline">
-        Create your first document
+        {t('sidebar.createFirst')}
       </button>
     </div>
   )
@@ -359,6 +357,7 @@ interface DocItemProps {
 function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: DocItemProps) {
   // Controlled bottom-right menu: openable both via the three-dot button and by right-clicking the row
   const [menuOpen, setMenuOpen] = useState(false)
+  const { t } = useT()
   return (
     <li
       className={cn(
@@ -421,7 +420,7 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
               onDetails()
             }}
           >
-            <FileText size={13} /> Details
+            <FileText size={13} /> {t('sidebar.details')}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
@@ -431,7 +430,7 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
               onDelete()
             }}
           >
-            <Trash2 size={13} /> Delete
+            <Trash2 size={13} /> {t('sidebar.delete')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
