@@ -120,8 +120,15 @@
       "markdownlint-cli2 --fix",
       "prettier --write"
     ],
-    "*.{ts,tsx,js,jsx,cjs,mjs,json,json5,html}": [
+    "*.{ts,tsx,js,jsx,cjs,mjs}": [
+      "node scripts/install-eslint-ts6.mjs && eslint --fix",
       "prettier --write"
+    ],
+    "*.{json,json5,html}": [
+      "prettier --write"
+    ],
+    "*.{ts,tsx,js,jsx,cjs,mjs,json,json5,html,md,css,yaml,yml,txt}": [
+      "secretlint"
     ]
   }
 }
