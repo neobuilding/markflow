@@ -333,6 +333,32 @@ function setMenuLocale(locale: MenuLocale, notify: boolean): void {
 // menu item when it syncs the editable state.
 let appMenu: Electron.Menu | null = null
 
+// Renderer-synced states that govern which menu items are enabled. They are kept at module
+// scope so that rebuilding the menu (e.g. on a language switch) can re-apply them instead of
+// resetting every item back to its disabled default.
+let editableState = false
+let hasDocumentState = false
+let printingState = false
+
+// Re-apply the renderer-synced states to the current menu so that a menu rebuild (such as a
+// language switch via setupMenu()) preserves the enabled/disabled state the renderer last sent.
+function applyMenuStates(): void {
+  if (!appMenu) return
+  const saveItem = appMenu.getMenuItemById('save')
+  const saveAsItem = appMenu.getMenuItemById('save-as')
+  const reloadItem = appMenu.getMenuItemById('reload')
+  const detailsItem = appMenu.getMenuItemById('file-details')
+  const exportItem = appMenu.getMenuItemById('export-html')
+  const printItem = appMenu.getMenuItemById('print')
+  if (saveItem) saveItem.enabled = editableState
+  if (saveAsItem) saveAsItem.enabled = editableState
+  if (reloadItem) reloadItem.enabled = hasDocumentState
+  if (detailsItem) detailsItem.enabled = hasDocumentState
+  if (exportItem) exportItem.enabled = hasDocumentState
+  if (printItem) printItem.enabled = hasDocumentState && !printingState
+  Menu.setApplicationMenu(appMenu)
+}
+
 function setupMenu(): void {
   // Menu labels resolve per key via menuT(...) below.
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -520,48 +546,28 @@ function setupMenu(): void {
   const menu = Menu.buildFromTemplate(template)
   appMenu = menu
   Menu.setApplicationMenu(menu)
+  // Re-apply renderer-synced states so a menu rebuild (e.g. on language switch) keeps the
+  // enabled/disabled state the renderer last sent instead of resetting everything to disabled.
+  applyMenuStates()
 }
 
 // Renderer syncs the editable state: disable save-related menu items while read-only.
 ipcMain.on('menu:set-editable', (_event, editable: boolean) => {
-  if (!appMenu) return
-  const saveItem = appMenu.getMenuItemById('save')
-  const saveAsItem = appMenu.getMenuItemById('save-as')
-  if (saveItem) saveItem.enabled = editable
-  if (saveAsItem) saveAsItem.enabled = editable
-  // Re-set the menu so the enabled changes apply (menu item objects must be re-mounted to refresh the UI)
-  Menu.setApplicationMenu(appMenu)
+  editableState = editable
+  applyMenuStates()
 })
-
-// Renderer-synced "has open document" and "is printing" states, used to control the
-// native Print menu item.
-let hasDocumentState = false
-let printingState = false
-function syncPrintMenu(): void {
-  if (!appMenu) return
-  const printItem = appMenu.getMenuItemById('print')
-  if (printItem) printItem.enabled = hasDocumentState && !printingState
-  Menu.setApplicationMenu(appMenu)
-}
 
 // Renderer-synced "has open document" state: disable Reload / File Details / Export / Print
 // when no document is open.
 ipcMain.on('menu:set-has-document', (_event, has: boolean) => {
-  if (!appMenu) return
   hasDocumentState = has
-  const reloadItem = appMenu.getMenuItemById('reload')
-  const detailsItem = appMenu.getMenuItemById('file-details')
-  const exportItem = appMenu.getMenuItemById('export-html')
-  if (reloadItem) reloadItem.enabled = has
-  if (detailsItem) detailsItem.enabled = has
-  if (exportItem) exportItem.enabled = has
-  syncPrintMenu()
+  applyMenuStates()
 })
 
 // Disable the Print menu item during printing to avoid the user triggering it repeatedly.
 ipcMain.on('menu:set-printing', (_event, printing: boolean) => {
   printingState = printing
-  syncPrintMenu()
+  applyMenuStates()
 })
 
 // ─── Single instance + file/protocol open handling ───────────────

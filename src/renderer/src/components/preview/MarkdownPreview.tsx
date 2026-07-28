@@ -46,6 +46,13 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   // path instead of checking `renderedHtml === ''` reactively.
   const hasContentRef = useRef(false)
   const { t } = useT()
+  // Mirror `t` in a ref so effects can read the latest translator without making it a
+  // dependency (which would re-run the parse effect on every language switch). The
+  // assignment happens in an effect (not during render) to satisfy react-hooks/refs.
+  const tRef = useRef(t)
+  useEffect(() => {
+    tRef.current = t
+  }, [t])
 
   // Parsing: sent to the Worker via comlink, with automatic fallback to the main thread on failure.
   // Parse immediately on first paint / document switch (no debounce); only debounce 150ms for
@@ -81,7 +88,8 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
                 const out = await renderMermaidSvg(id, m.code)
                 svgs[m.slot] = out.svg
               } catch {
-                svgs[m.slot] = `<div class="mermaid-skeleton">⚠ ${t('preview.mermaidFailed')}</div>`
+                svgs[m.slot] =
+                  `<div class="mermaid-skeleton">⚠ ${tRef.current('preview.mermaidFailed')}</div>`
               }
             }
             html = html.replace(
@@ -136,8 +144,8 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
       placeholder.className = 'img-error-placeholder'
       const alt = img.getAttribute('alt') ?? ''
       placeholder.textContent = alt
-        ? `⚠ ${t('preview.imageFailedAlt', { alt })}`
-        : `⚠ ${t('preview.imageFailed')}`
+        ? `⚠ ${tRef.current('preview.imageFailedAlt', { alt })}`
+        : `⚠ ${tRef.current('preview.imageFailed')}`
       placeholder.style.cssText =
         'display:inline-block;padding:4px 8px;margin:4px 0;border:1px dashed var(--color-border);' +
         'border-radius:6px;color:var(--color-text-tertiary);font-size:12px;background:var(--color-surface-overlay);'
