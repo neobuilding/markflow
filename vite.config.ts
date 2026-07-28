@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron/simple'
 import { notBundle } from 'vite-plugin-electron/plugin'
 import { fileURLToPath } from 'node:url'
+import checker from 'vite-plugin-checker'
 
 // ROOT CAUSE FIX: Clear ELECTRON_RUN_AS_NODE so Electron runs in full mode
 // (not as pure Node.js). This env var disables Electron's module interception,
@@ -50,6 +51,9 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    // Live type-checking feedback during dev/build (does NOT fail the build;
+    // the hard gate lives in the `quality` script's `typecheck` step).
+    checker({ typescript: { tsconfigPath: 'tsconfig.web.json' } }),
     electron({
       main: {
         entry: 'electron/main/index.ts',

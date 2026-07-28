@@ -36,8 +36,9 @@ jobs:
     # fail fast and don't waste build minutes.
     # Enforced gate (`npm run quality`): Prettier format check + ESLint (TS7 side-by-side via the
     # `postinstall` shim in scripts/install-eslint-ts6.mjs) + Stylelint (CSS) + Markdownlint (docs)
-    # + Secretlint (secrets). ESLint is a hard gate now — typescript-eslint v8 still caps TypeScript
-    # at <6.1.0, so the shim installs the TS6 API alongside the project's TS7 for the linter only.
+    # + Secretlint (secrets) + full TypeScript type check (`typecheck`). ESLint is a hard gate now —
+    # typescript-eslint v8 still caps TypeScript at <6.1.0, so the shim installs the TS6 API alongside
+    # the project's TS7 for the linter only.
     quality:
         name: Lint & Format
         runs-on: ubuntu-latest
@@ -49,7 +50,7 @@ jobs:
             - run: npm run quality
 
     test:
-        name: Typecheck, Test & Build
+        name: Test & Build
         needs: [quality]
         runs-on: ubuntu-latest
         # Single source of truth for the version: only "compute" (never "tag"); after checkout it
@@ -97,7 +98,6 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
-            - run: npm run typecheck
             - run: npm run test
             - run: npm run build
 
