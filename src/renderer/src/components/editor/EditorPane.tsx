@@ -40,6 +40,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useLocalDocument } from '../../hooks/useLocalDocument'
 import type { ViewMode } from '../../types'
+import { useT } from '../../i18n'
 
 export function EditorPane(): React.ReactElement {
   const {
@@ -54,6 +55,7 @@ export function EditorPane(): React.ReactElement {
     externalChange,
     clearExternalChange,
   } = useUIStore()
+  const { t } = useT()
   const { data: doc, isLoading } = useDocument(activeDocumentId)
   const updateMut = useUpdateDocument()
   const saveAsMut = useSaveDocumentAs()
@@ -110,11 +112,11 @@ export function EditorPane(): React.ReactElement {
       }
     } catch (e) {
       console.error('Save failed', e)
-      window.alert('Failed to save the file.')
+      window.alert(t('app.saveFailed'))
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [updateMut, markSaved, doc, getEol, toDiskFormat])
+  }, [updateMut, markSaved, doc, getEol, toDiskFormat, t])
 
   const handleSaveAs = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -152,11 +154,11 @@ export function EditorPane(): React.ReactElement {
       }
     } catch (e) {
       console.error('Save As failed', e)
-      window.alert('Failed to save the file.')
+      window.alert(t('app.saveFailed'))
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat])
+  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat, t])
 
   const handleReload = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -169,7 +171,7 @@ export function EditorPane(): React.ReactElement {
         useUIStore.getState().setJustSaved(true)
         useUIStore.getState().clearExternalChange()
       } else {
-        window.alert('The file no longer exists on disk.')
+        window.alert(t('app.fileGone'))
         useUIStore.getState().clearExternalChange()
       }
     } catch (e) {
@@ -177,14 +179,13 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [reloadMut, markSaved])
+  }, [reloadMut, markSaved, t])
 
   // Close button: confirm first if there are unsaved changes
   const handleClose = useCallback(() => {
-    if (useUIStore.getState().dirty && !window.confirm('You have unsaved changes. Discard them?'))
-      return
+    if (useUIStore.getState().dirty && !window.confirm(t('app.unsavedClose'))) return
     closeDocument()
-  }, [closeDocument])
+  }, [closeDocument, t])
 
   // Menu (Save / Save As / Reload) and file watching: register only once, pull the latest
   // implementation via the ref
@@ -284,7 +285,7 @@ export function EditorPane(): React.ReactElement {
             <FolderOpen size={13} />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Open File... (⌘O)</TooltipContent>
+        <TooltipContent>{t('sidebar.openFile')} (⌘O)</TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -297,7 +298,7 @@ export function EditorPane(): React.ReactElement {
             <Folder size={13} />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Open Folder... (⌘⇧O)</TooltipContent>
+        <TooltipContent>{t('sidebar.openFolder')} (⌘⇧O)</TooltipContent>
       </Tooltip>
 
       <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
@@ -320,9 +321,9 @@ export function EditorPane(): React.ReactElement {
             <TooltipContent>
               {editable
                 ? dirty
-                  ? 'Save (⌘S)'
-                  : 'No changes to save'
-                : 'Save — switch to Edit mode first'}
+                  ? t('editor.saveShortcut')
+                  : t('editor.noChanges')
+                : t('editor.saveSwitchEdit')}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -337,7 +338,7 @@ export function EditorPane(): React.ReactElement {
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {editable ? 'Save As… (⌘⇧S)' : 'Save As… — switch to Edit mode first'}
+              {editable ? t('editor.saveAsShortcut') : t('editor.saveAsSwitchEdit')}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -351,7 +352,7 @@ export function EditorPane(): React.ReactElement {
                 <RotateCcw size={13} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Reload from Disk (⌘⇧R)</TooltipContent>
+            <TooltipContent>{t('editor.reloadShortcut')}</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -364,7 +365,7 @@ export function EditorPane(): React.ReactElement {
                 <Info size={13} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>File details (⌘I)</TooltipContent>
+            <TooltipContent>{t('editor.fileDetailsShortcut')}</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -377,7 +378,7 @@ export function EditorPane(): React.ReactElement {
                 <FileOutput size={13} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Export as HTML… (⌘⇧E)</TooltipContent>
+            <TooltipContent>{t('editor.exportShortcut')}</TooltipContent>
           </Tooltip>
 
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
@@ -390,7 +391,7 @@ export function EditorPane(): React.ReactElement {
             <X size={13} />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Close file</TooltipContent>
+        <TooltipContent>{t('editor.closeFile')}</TooltipContent>
       </Tooltip>
 
       <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
@@ -402,7 +403,7 @@ export function EditorPane(): React.ReactElement {
               <PanelLeft size={14} />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Toggle Sidebar (⌘\)</TooltipContent>
+          <TooltipContent>{t('editor.toggleSidebarShortcut')}</TooltipContent>
         </Tooltip>
       )}
 
@@ -411,19 +412,19 @@ export function EditorPane(): React.ReactElement {
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="ghost" size="sm" onClick={toggleEditable} className="gap-1">
-              <Lock size={12} /> Read-only
+              <Lock size={12} /> {t('editor.readOnly')}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Switch to read-only mode</TooltipContent>
+          <TooltipContent>{t('editor.switchReadOnly')}</TooltipContent>
         </Tooltip>
       ) : (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="accent" size="sm" onClick={toggleEditable} className="gap-1">
-              <PenLine size={12} /> Edit
+              <PenLine size={12} /> {t('editor.edit')}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Switch to edit mode</TooltipContent>
+          <TooltipContent>{t('editor.switchEdit')}</TooltipContent>
         </Tooltip>
       )}
     </div>
@@ -445,17 +446,17 @@ export function EditorPane(): React.ReactElement {
               <Edit3 size={28} className="text-accent" />
             </div>
             <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">
-              No document selected
+              {t('editor.noDocument')}
             </h2>
             <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
-              Open a file or folder to get started
+              {t('editor.openToGetStarted')}
             </p>
             <div className="flex items-center justify-center gap-2">
               <Button variant="accent" size="sm" onClick={handleOpenFile}>
-                Open File…
+                {t('sidebar.openFileAction')}
               </Button>
               <Button variant="outline" size="sm" onClick={handleOpenFolder}>
-                Open Folder…
+                {t('sidebar.openFolderAction')}
               </Button>
             </div>
           </div>
@@ -467,7 +468,7 @@ export function EditorPane(): React.ReactElement {
   if (isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-[var(--color-surface)]">
-        <div className="text-sm text-[var(--color-text-tertiary)]">Loading…</div>
+        <div className="text-sm text-[var(--color-text-tertiary)]">{t('editor.loading')}</div>
       </div>
     )
   }
@@ -475,7 +476,7 @@ export function EditorPane(): React.ReactElement {
   if (!doc) {
     return (
       <div className="flex-1 flex items-center justify-center bg-[var(--color-surface)]">
-        <div className="text-sm text-[var(--color-text-tertiary)]">Document not found</div>
+        <div className="text-sm text-[var(--color-text-tertiary)]">{t('editor.notFound')}</div>
       </div>
     )
   }
@@ -530,13 +531,33 @@ export function EditorPane(): React.ReactElement {
             {viewMode !== 'preview' && editable && (
               <div className="hidden md:flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-[var(--color-border)]">
                 {[
-                  { icon: <Hash size={12} />, before: '# ', after: '', tip: 'H1' },
-                  { icon: <Bold size={12} />, before: '**', after: '**', tip: 'Bold' },
-                  { icon: <Italic size={12} />, before: '_', after: '_', tip: 'Italic' },
-                  { icon: <Code size={12} />, before: '`', after: '`', tip: 'Code' },
-                  { icon: <Link size={12} />, before: '[', after: '](url)', tip: 'Link' },
-                  { icon: <List size={12} />, before: '- ', after: '', tip: 'List' },
-                  { icon: <CheckSquare size={12} />, before: '- [ ] ', after: '', tip: 'Task' },
+                  { icon: <Hash size={12} />, before: '# ', after: '', tip: t('editor.fmt.h1') },
+                  {
+                    icon: <Bold size={12} />,
+                    before: '**',
+                    after: '**',
+                    tip: t('editor.fmt.bold'),
+                  },
+                  {
+                    icon: <Italic size={12} />,
+                    before: '_',
+                    after: '_',
+                    tip: t('editor.fmt.italic'),
+                  },
+                  { icon: <Code size={12} />, before: '`', after: '`', tip: t('editor.fmt.code') },
+                  {
+                    icon: <Link size={12} />,
+                    before: '[',
+                    after: '](url)',
+                    tip: t('editor.fmt.link'),
+                  },
+                  { icon: <List size={12} />, before: '- ', after: '', tip: t('editor.fmt.list') },
+                  {
+                    icon: <CheckSquare size={12} />,
+                    before: '- [ ] ',
+                    after: '',
+                    tip: t('editor.fmt.task'),
+                  },
                 ].map(({ icon, before, after, tip }) => (
                   <Tooltip key={tip}>
                     <TooltipTrigger asChild>
@@ -554,15 +575,25 @@ export function EditorPane(): React.ReactElement {
               </div>
             )}
 
-            {/* Save / Save As / Reload moved to the left file-operations area (see CommonToolbar) */}
-
             {/* View mode */}
             <div className="flex items-center rounded border border-[var(--color-border)] overflow-hidden ml-1">
               {(
                 [
-                  { mode: 'edit' as ViewMode, icon: <Edit3 size={12} />, tip: 'Editor' },
-                  { mode: 'split' as ViewMode, icon: <Columns size={12} />, tip: 'Split' },
-                  { mode: 'preview' as ViewMode, icon: <Eye size={12} />, tip: 'Preview' },
+                  {
+                    mode: 'edit' as ViewMode,
+                    icon: <Edit3 size={12} />,
+                    tip: t('editor.view.editor'),
+                  },
+                  {
+                    mode: 'split' as ViewMode,
+                    icon: <Columns size={12} />,
+                    tip: t('editor.view.split'),
+                  },
+                  {
+                    mode: 'preview' as ViewMode,
+                    icon: <Eye size={12} />,
+                    tip: t('editor.view.preview'),
+                  },
                 ] as const
               ).map(({ mode, icon, tip }) => (
                 <Tooltip key={mode}>
@@ -592,7 +623,7 @@ export function EditorPane(): React.ReactElement {
         <button
           onClick={() => doc.filePath && window.api.app.showInFolder(doc.filePath)}
           className="shrink-0 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
-          title="Show in folder"
+          title={t('editor.showInFolder')}
         >
           <FolderOpen size={12} />
         </button>
@@ -675,16 +706,14 @@ export function EditorPane(): React.ReactElement {
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>File changed on disk</DialogTitle>
+              <DialogTitle>{t('editor.diskChangedTitle')}</DialogTitle>
             </DialogHeader>
             <p className="text-sm text-[var(--color-text-secondary)] mb-5">
-              {dirty
-                ? 'This file was modified by another program. Reloading will discard your unsaved changes.'
-                : 'This file was modified by another program. Reload to load the latest version from disk?'}
+              {dirty ? t('editor.diskChangedDirty') : t('editor.diskChangedClean')}
             </p>
             <div className="flex items-center justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => clearExternalChange()}>
-                Ignore
+                {t('editor.ignore')}
               </Button>
               <Button
                 variant="accent"
@@ -694,7 +723,7 @@ export function EditorPane(): React.ReactElement {
                   handleReload()
                 }}
               >
-                Reload
+                {t('editor.reloadBtn')}
               </Button>
             </div>
           </DialogContent>

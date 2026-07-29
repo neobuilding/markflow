@@ -23,7 +23,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "quality": "npm run format:check && npm run lint && npm run lint:css && npm run lint:md && npm run lint:secret && npm run typecheck",
-    "quality:fix": "npm run format && npm run lint:fix && npm run lint:css:fix && npm run lint:md:fix && npm run lint:secret:fix",
+    "quality:fix": "npm run format && npm run lint:fix && npm run lint:css:fix && npm run lint:md:fix && npm run lint:secret",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/prepare-win-codesign.ps1 && npm run build && electron-builder --win",
@@ -37,6 +37,7 @@
     "franc": "^6.2.0",
     "github-markdown-css": "^5.9.0",
     "highlight.js": "^11.11.1",
+    "i18next": "^26.3.6",
     "iconv-lite": "^0.7.3",
     "jschardet-ultra": "^2.1.0",
     "katex": "^0.18.1",
@@ -47,7 +48,8 @@
     "markdown-it-github-alerts": "^1.0.1",
     "markdown-it-task-lists": "^2.1.1",
     "markdown-it-texmath": "^1.0.0",
-    "mermaid": "^11.16.0"
+    "mermaid": "^11.16.0",
+    "react-i18next": "^17.0.11"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.3",

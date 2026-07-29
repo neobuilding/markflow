@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ViewMode, ThemeMode } from '../types'
+import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n'
 
 interface UIState {
   // Sidebar
@@ -39,6 +40,10 @@ interface UIState {
   // Theme
   theme: ThemeMode
   setTheme: (theme: ThemeMode) => void
+
+  // UI language (default follows the system locale, persisted on change; fallback is English)
+  language: Locale
+  setLanguage: (language: Locale) => void
 
   // New doc dialog
   newDocOpen: boolean
@@ -122,6 +127,12 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   theme: 'light',
   setTheme: (theme) => set({ theme }),
+
+  language: resolveInitialLanguage(),
+  setLanguage: (language) => {
+    setStoredLanguage(language)
+    set({ language })
+  },
 
   newDocOpen: false,
   setNewDocOpen: (open) => set({ newDocOpen: open }),

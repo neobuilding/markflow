@@ -17,5 +17,10 @@
       "@/*": ["./src/renderer/src/*"]
     }
   },
-  "include": ["electron/main/**/*", "electron/preload/**/*"]
+  "include": [
+    "electron/main/**/*",
+    "electron/preload/**/*",
+    "shared/i18n/en.ts",
+    "shared/i18n/zh-CN.ts"
+  ]
 }

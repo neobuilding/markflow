@@ -45,6 +45,7 @@ const api = {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
     getInitialPaths: () => ipcRenderer.invoke('app:get-initial-paths'),
     showInFolder: (filePath: string) => ipcRenderer.invoke('app:show-in-folder', filePath),
+    setLanguage: (locale: 'en' | 'zh-CN') => ipcRenderer.send('app:set-language', locale),
   },
 
   // Files: resolve a list of file/folder paths into markdown files + directories
@@ -107,7 +108,8 @@ const api = {
       | 'file-details'
       | 'about'
       | 'export-html'
-      | 'print',
+      | 'print'
+      | 'language',
     callback: (data?: string | string[]) => void,
   ) => {
     const handler = (_: Electron.IpcRendererEvent, data?: string | string[]) => callback(data)

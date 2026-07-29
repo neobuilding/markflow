@@ -5,15 +5,17 @@ import { useCreateDocument } from '../../hooks/useDocuments'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Input } from '../ui/input'
 import { Button } from '../ui/button'
+import { useT } from '../../i18n'
 
 export function NewDocumentDialog(): React.ReactElement {
+  const { t } = useT()
   const { newDocOpen, setNewDocOpen, setActiveDocumentId, setEditable } = useUIStore()
   const [title, setTitle] = useState('')
   const createMut = useCreateDocument()
 
   const handleCreate = async () => {
-    const t = title.trim() || 'Untitled'
-    const doc = await createMut.mutateAsync({ title: t })
+    const finalTitle = title.trim() || 'Untitled'
+    const doc = await createMut.mutateAsync({ title: finalTitle })
     setActiveDocumentId(doc.id)
     setEditable(true) // new documents are editable by default
     setTitle('')
@@ -26,18 +28,18 @@ export function NewDocumentDialog(): React.ReactElement {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText size={16} className="text-accent" />
-            New Document
+            {t('new.title')}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div>
             <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
-              Document title
+              {t('new.documentTitle')}
             </label>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Untitled"
+              placeholder={t('new.untitled')}
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleCreate()
@@ -47,7 +49,7 @@ export function NewDocumentDialog(): React.ReactElement {
           </div>
           <div className="flex items-center justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setNewDocOpen(false)}>
-              Cancel
+              {t('new.cancel')}
             </Button>
             <Button
               variant="accent"
@@ -55,7 +57,7 @@ export function NewDocumentDialog(): React.ReactElement {
               onClick={handleCreate}
               disabled={createMut.isPending}
             >
-              Create
+              {t('new.create')}
             </Button>
           </div>
         </div>

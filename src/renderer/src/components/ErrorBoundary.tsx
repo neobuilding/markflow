@@ -1,4 +1,6 @@
 import React from 'react'
+import { t } from '../i18n'
+import { useUIStore } from '../store/ui'
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -27,9 +29,24 @@ export class ErrorBoundary extends React.Component<
     console.error('[ErrorBoundary]', error, info.componentStack)
   }
 
+  // Re-render when the UI language changes so a displayed error screen adopts
+  // the new locale immediately (i18next's `t` returns the current language at
+  // call time, but a class component won't re-render unless told to).
+  componentDidMount(): void {
+    this.unsubscribe = useUIStore.subscribe((state, prev) => {
+      if (state.language !== prev.language) this.forceUpdate()
+    })
+  }
+
+  componentWillUnmount(): void {
+    this.unsubscribe?.()
+  }
+
   handleReload = (): void => {
     window.location.reload()
   }
+
+  private unsubscribe?: () => void
 
   render(): React.ReactNode {
     if (this.state.hasError) {
@@ -70,10 +87,10 @@ export class ErrorBoundary extends React.Component<
               ⚠
             </div>
             <h1 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-              Something went wrong
+              {t('error.title')}
             </h1>
             <p style={{ fontSize: '0.875rem', color: '#666', marginBottom: '1rem' }}>
-              The application encountered an unexpected error. Try reloading — your data is safe.
+              {t('error.message')}
             </p>
             <pre
               style={{
@@ -104,7 +121,7 @@ export class ErrorBoundary extends React.Component<
                 cursor: 'pointer',
               }}
             >
-              Reload App
+              {t('error.reload')}
             </button>
           </div>
         </div>

@@ -25,6 +25,7 @@ export type MenuEvent =
   | 'about'
   | 'export-html'
   | 'print'
+  | 'language'
 
 // Electron preload bridge exposed on window.api
 export interface Api {
@@ -58,6 +59,7 @@ export interface Api {
     getVersion: () => Promise<string>
     getInitialPaths: () => Promise<string[]>
     showInFolder: (filePath: string) => Promise<void>
+    setLanguage: (locale: 'en' | 'zh-CN') => void
   }
   files: {
     resolvePaths: (paths: string[]) => Promise<{ directories: string[]; markdownFiles: string[] }>
