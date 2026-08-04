@@ -6,7 +6,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'jsdom',
-    include: ['src/renderer/src/**/*.test.ts', 'electron/main/**/*.test.ts'],
+    include: ['src/renderer/src/**/*.test.ts', 'src/renderer/src/**/*.test.tsx', 'electron/main/**/*.test.ts'],
     // Resolve the same "isomorphic" package aliases used by the Worker (aligned with
     // vite.config.ts), ensuring markdownPipeline also uses DOM-free variants in tests
     // (even though tests don't run in the Worker, this keeps parity with the build and

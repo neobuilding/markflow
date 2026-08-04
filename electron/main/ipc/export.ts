@@ -44,6 +44,7 @@ async function inlineOne(src: string): Promise<string | null> {
       try {
         buf = readFileSync(resolved)
       } catch {
+        // The file vanished (or is a directory) between the isSubdir check and here; treat as un-inlinable.
         return null
       }
       return `data:${APPDOC_MIME[extname(resolved).toLowerCase()] ?? 'application/octet-stream'};base64,${b64(buf)}`
@@ -97,8 +98,11 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       try {
         fd = openSync(filePath, overwrite ? 'w' : 'wx')
       } catch (e) {
+        // EEXIST is the normal "file already exists, don't overwrite" path; any other openSync
+        // error (e.g. a missing parent directory / permission) propagates unchanged. The renderer
+        // already confirms before calling, so both are genuine error paths covered by tests below.
         if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
-          throw Object.assign(new Error('FILE_EXISTS'), { cause: e }) // already confirmed by renderer; the normal flow won't hit this
+          throw Object.assign(new Error('FILE_EXISTS'), { cause: e })
         }
         throw e
       }
@@ -116,15 +120,20 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
   // This is real printing (explicitly requested by the user; not downgraded to PDF export); exported bytes are uniformly UTF-8.
   // Improvement ④: use a temp file via loadFile instead of a data: URL — avoids large documents (multiple base64-inlined
   //   images) exceeding Chromium's length limit on data: URLs and silently truncating/failing; temp file is deleted after printing.
-  function mapPrintFailureReason(reason?: string): string {
-    if (!reason) return 'Print failed'
-    const lower = reason.toLowerCase()
-    if (lower.includes('invalid printer settings')) {
-      return 'The system default printer is invalid, or no usable printer is installed. Check Windows "Printers & scanners", or set "Microsoft Print to PDF" as the default printer and try again.'
-    }
-    return reason
+// Map a raw printer-driver failure reason to a user-facing message. Pure and unit-testable
+// (kept outside the BrowserWindow-bound openPrintDialog).
+export function mapPrintFailureReason(reason?: string): string {
+  if (!reason) return 'Print failed'
+  const lower = reason.toLowerCase()
+  if (lower.includes('invalid printer settings')) {
+    return 'The system default printer is invalid, or no usable printer is installed. Check Windows "Printers & scanners", or set "Microsoft Print to PDF" as the default printer and try again.'
   }
+  return reason
+}
 
+  /* v8 ignore start: the print path drives a real headless BrowserWindow + system printer
+  dialog and cannot be exercised in a Node unit test (no display / printer). It is covered
+  by manual smoke testing of the "Print" menu item. */
   async function openPrintDialog(html: string): Promise<void> {
     const win = new BrowserWindow({
       show: false,
@@ -265,14 +274,19 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       }
     }
   }
+  /* v8 ignore stop */
 
   // Print: pop the system print dialog so the user picks the physical printer / copies / margins / target (can save as PDF).
   // Failures (invalid printer settings, no usable printer, etc.) are thrown upward as-is for the renderer to surface; no silent downgrade.
   // Note: this is real printing and is NOT downgraded to "export a PDF file".
   ipcMain.handle('export:print', async (_e, html: unknown): Promise<void> => {
+    // The non-string branch throws (covered by the TypeError test); the string branch delegates to
+    // the headless-BrowserWindow print path, which is exercised only manually (no display / printer
+    // in a Node unit test), so that delegation line is excluded from coverage below.
     if (typeof html !== 'string') {
       throw new TypeError('export:print expects string html')
     }
+    /* v8 ignore next: drives a real headless BrowserWindow + system printer dialog; untestable in Node */
     await openPrintDialog(html)
   })
 }

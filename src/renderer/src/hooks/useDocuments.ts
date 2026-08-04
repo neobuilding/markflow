@@ -2,8 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Document } from '../types'
 import { dirName } from '../lib/utils'
 import { useUIStore } from '../store/ui'
-
-const DOCS_KEY = ['documents']
+import { DOCS_KEY } from '../lib/queryClient'
 
 export function useDocuments(folderPath?: string) {
   return useQuery({
@@ -25,8 +24,19 @@ export function useDocument(id: string | null) {
 export function useCreateDocument() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (params: { title?: string; folderPath?: string; content?: string }) =>
-      window.api.documents.create(params),
+    mutationFn: (params: {
+      title?: string
+      folderPath?: string
+      content?: string
+      ext?: string
+      memoryOnly?: boolean
+    }) =>
+      window.api.documents.create({
+        ...params,
+        // New documents are memory-only drafts by default: no file is written to disk
+        // until the user explicitly saves (Save As). See PLAN §6.3.
+        memoryOnly: params.memoryOnly ?? true,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: DOCS_KEY })
     },
@@ -166,6 +176,7 @@ export function useOpenPaths() {
       ui.setActiveFolder(folder)
       ui.setActiveDocumentId(imported[0].id)
       ui.setEditable(false) // files open read-only by default
+      ui.setDirty(false) // opening/importing a file clears any stale dirty flag
       return { folder, documentId: imported[0].id }
     },
   })

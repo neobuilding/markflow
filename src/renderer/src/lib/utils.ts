@@ -34,6 +34,18 @@ export function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
   }
 }
 
+// Whether the current platform is macOS (navigator.platform is deprecated; use userAgent)
+export function isMac(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /mac|iphone|ipad/i.test(navigator.userAgent)
+}
+
+// Whether the local draft differs from the saved baseline (i.e. has unsaved changes).
+// Pure helper so the dirty-computation can be unit-tested independently of React.
+export function computeDirty(localContent: string, savedContent: string): boolean {
+  return localContent !== savedContent
+}
+
 // Return the directory part of a file path (cross-platform, normalized to forward slashes)
 export function dirName(filePath: string): string {
   const norm = filePath.replace(/\\/g, '/')

@@ -3,7 +3,7 @@ import type { App } from 'electron'
 import { getDb } from '../db/database'
 
 let _app: App | null = null
-import { join, dirname, basename } from 'node:path'
+import { join, dirname, basename, extname } from 'node:path'
 import {
   readFileSync,
   writeFileSync,
@@ -91,6 +91,10 @@ const ENC_ALIAS = new Map<string, string>([
 export function normEnc(name: string): string {
   return ENC_ALIAS.get(name.toUpperCase()) ?? name.toLowerCase()
 }
+
+// Supported Markdown extensions (kept in sync with the main-process MD_EXTS).
+// Used to validate the extension passed to documents:create.
+const MD_EXTS = new Set(['.md', '.markdown', '.mdx', '.mdtxt', '.mdtext'])
 
 // Count U+FFFD replacement chars produced when decoding with a given encoding (fewer = better match; Infinity = undecodable).
 function countReplacements(sample: Buffer, encName: string): number {
@@ -314,14 +318,41 @@ export function registerDocumentHandlers(
   // Create new document
   ipcMain.handle(
     'documents:create',
-    (_event, params: { title?: string; folderPath?: string; content?: string }) => {
+    (
+      _event,
+      params: {
+        title?: string
+        folderPath?: string
+        content?: string
+        ext?: string
+        memoryOnly?: boolean
+      },
+    ) => {
       const db = getDb()
       const id = randomUUID()
       const now = Date.now()
       const title = params.title || 'Untitled'
       const folderPath = params.folderPath || ''
       const content = params.content || `# ${title}\n\n`
+      // Extension: validated against the known Markdown set; defaults to .md.
+      const ext =
+        params.ext && MD_EXTS.has(params.ext.toLowerCase()) ? params.ext.toLowerCase() : '.md'
       const wordCount = countWords(content)
+
+      // Memory-only mode: a brand-new in-app document must NOT touch the filesystem
+      // until the user explicitly saves it. We insert a draft DB row with an empty
+      // file_path and skip both the disk write and the file watcher. The first Save
+      // (Save As) later writes the file to the user-chosen path and backfills file_path.
+      if (params.memoryOnly) {
+        db.prepare(
+          `
+          INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, encoding, encoding_confidence, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 0, 'utf-8', 1, ?, ?)
+        `,
+        ).run(id, title, folderPath, '', content, wordCount, now, now)
+        const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
+        return toDocument(row)
+      }
 
       const baseDir = folderPath ? join(getDefaultDocsDir(), folderPath) : getDefaultDocsDir()
       mkdirSync(baseDir, { recursive: true })
@@ -333,7 +364,7 @@ export function registerDocumentHandlers(
       let filePath: string
       let counter = 0
       while (true) {
-        const candidate = counter === 0 ? `${safeTitle}.md` : `${safeTitle}-${counter}.md`
+        const candidate = counter === 0 ? `${safeTitle}${ext}` : `${safeTitle}-${counter}${ext}`
         filePath = join(baseDir, candidate)
         try {
           fd = openSync(filePath, 'wx')
@@ -381,12 +412,16 @@ export function registerDocumentHandlers(
 
       // Write to file (suppress the "file changed" notification that this write would otherwise trigger)
       // Write back in the document's original metadata encoding to preserve byte-level fidelity (R5).
-      suppressUntil.set(existing.file_path, Date.now() + 2000)
-      writeFileSync(existing.file_path, iconv.encode(newContent, existing.encoding || 'utf-8'))
+      // A memory-only draft (file_path === '') has no file yet; the first Save is always routed to
+      // Save As, so this branch is defensive only. Skip the disk write to avoid writing to an empty path.
+      if (existing.file_path) {
+        suppressUntil.set(existing.file_path, Date.now() + 2000)
+        writeFileSync(existing.file_path, iconv.encode(newContent, existing.encoding || 'utf-8'))
+      }
 
       // Rename file if title changed
       let newFilePath = existing.file_path
-      if (updates.title && updates.title !== existing.title) {
+      if (updates.title && updates.title !== existing.title && existing.file_path) {
         const dir = dirname(existing.file_path)
         const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
         // Resolve a non-colliding target name atomically: call renameSync directly and, if the
@@ -408,7 +443,7 @@ export function registerDocumentHandlers(
             throw e // any other error (e.g. permission) propagates
           }
         }
-        let target = join(dir, `${safeTitle}.md`)
+        let target = join(dir, `${safeTitle}${extname(existing.file_path).toLowerCase() || '.md'}`)
         let counter = 0
         const MAX_RENAME_ATTEMPTS = 10000
         while (!tryRename(target)) {
@@ -513,7 +548,11 @@ export function registerDocumentHandlers(
     if (!existing) return false
 
     try {
-      unlinkSync(existing.file_path)
+      // A memory-only draft has no file on disk (file_path === ''); skip the unlink so we
+      // neither error nor leave a stray log line. Deleting such a draft just removes the DB row.
+      if (existing.file_path) {
+        unlinkSync(existing.file_path)
+      }
     } catch (e) {
       // A missing file is not a failure here (already removed externally); only log real errors.
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -537,7 +576,7 @@ export function registerDocumentHandlers(
     } catch {
       return null
     }
-    const title = basename(filePath, '.md')
+    const title = basename(filePath).replace(/\.(md|markdown|mdx|mdtxt|mdtext)$/i, '')
     const id = randomUUID()
     const now = Date.now()
     const wordCount = countWords(text)

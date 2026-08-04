@@ -31,6 +31,8 @@
 }
 
 :root {
+  --scrollbar-size: 10px;
+
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 
@@ -90,16 +92,21 @@ body {
 }
 
 /* Scrollbar */
+html,
+body {
+  scrollbar-width: thin; /* Firefox (Gecko) — no ::-webkit-scrollbar support */
+  scrollbar-color: var(--color-border-strong) transparent;
+}
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
-  border-radius: 3px;
+  border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-tertiary);

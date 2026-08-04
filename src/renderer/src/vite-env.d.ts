@@ -21,6 +21,7 @@ export type MenuEvent =
   | 'open-folder'
   | 'open-files'
   | 'close-workspace'
+  | 'close-file'
   | 'file-details'
   | 'about'
   | 'export-html'
@@ -32,7 +33,15 @@ export interface Api {
   documents: {
     list: (folderPath?: string) => Promise<Document[]>
     get: (id: string) => Promise<Document | null>
-    create: (params: { title?: string; folderPath?: string; content?: string }) => Promise<Document>
+    create: (
+      params: {
+        title?: string
+        folderPath?: string
+        content?: string
+        ext?: string
+        memoryOnly?: boolean
+      },
+    ) => Promise<Document>
     update: (id: string, updates: { title?: string; content?: string }) => Promise<Document | null>
     delete: (id: string) => Promise<void>
     import: (filePath: string) => Promise<Document | null>
@@ -60,6 +69,7 @@ export interface Api {
     getInitialPaths: () => Promise<string[]>
     showInFolder: (filePath: string) => Promise<void>
     setLanguage: (locale: 'en' | 'zh-CN') => void
+    allowQuit: () => void
   }
   files: {
     resolvePaths: (paths: string[]) => Promise<{ directories: string[]; markdownFiles: string[] }>
@@ -85,6 +95,7 @@ export interface Api {
   onMenuEvent: (event: MenuEvent, callback: (data?: string | string[]) => void) => () => void
   onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => () => void
   onOpenPaths: (callback: (paths: string[]) => void) => () => void
+  onAppRequestQuit: (callback: () => void) => () => void
 }
 
 declare global {

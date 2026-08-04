@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Document } from '../types'
+import { computeDirty } from '../lib/utils'
 import { useUIStore } from '../store/ui'
 
 export function useLocalDocument(
@@ -46,8 +47,14 @@ export function useLocalDocument(
     }
     // The same document's authoritative content changed (save / reload / reopen / import):
     // if the user has unsaved changes, don't overwrite the local draft; just update the "saved"
-    // baseline for later comparison.
+    // baseline for later comparison. But if the refreshed on-disk content matches the saved
+    // baseline (e.g. an import-many transaction refreshed updated_at while the bytes are
+    // unchanged), there is genuinely nothing dirty — clear the dirty flag.
     if (dirtyRef.current) {
+      if (doc.content === savedContentRef.current && doc.title === savedTitleRef.current) {
+        setDirtyState(false)
+        useUIStore.getState().setDirty(false)
+      }
       savedContentRef.current = doc.content
       savedTitleRef.current = doc.title
       return
@@ -118,7 +125,7 @@ export function useLocalDocument(
   const handleContentChange = useCallback(
     (newContent: string) => {
       setLocalContent(newContent)
-      setDirty(newContent !== savedContentRef.current)
+      setDirty(computeDirty(newContent, savedContentRef.current))
     },
     [setDirty],
   )

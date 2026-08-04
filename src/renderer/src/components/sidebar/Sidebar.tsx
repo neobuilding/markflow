@@ -11,7 +11,7 @@ import {
   X,
   GripVertical,
 } from 'lucide-react'
-import { cn, formatDate, isInFolder, buildFileTree, type FileTreeNode } from '../../lib/utils'
+import { cn, formatDate, isInFolder, buildFileTree, isMac, baseName, type FileTreeNode } from '../../lib/utils'
 import { useT } from '../../i18n'
 import { useUIStore } from '../../store/ui'
 import {
@@ -81,6 +81,7 @@ export function Sidebar(): React.ReactElement | null {
     const doc = await createMut.mutateAsync({ title: 'Untitled' })
     setActiveDocumentId(doc.id)
     useUIStore.getState().setEditable(true) // new documents are editable by default
+    useUIStore.getState().setIsNewUnsaved(true) // first Save will prompt for a path
   }, [createMut, setActiveDocumentId])
 
   // Document select / delete / star / details: reused by the doc tree (including subfolders)
@@ -152,10 +153,7 @@ export function Sidebar(): React.ReactElement | null {
         className="titlebar-drag flex items-center border-b border-[var(--color-border)] shrink-0 pr-2"
         style={{
           height: 'var(--titlebar-height)',
-          paddingLeft:
-            typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.userAgent)
-              ? '5rem'
-              : '0.75rem',
+          paddingLeft: isMac() ? '5rem' : '0.75rem',
         }}
       >
         <div className="titlebar-no-drag flex items-center gap-1.5 flex-1 min-w-0">
@@ -247,7 +245,7 @@ export function Sidebar(): React.ReactElement | null {
                 <X size={12} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t('sidebar.close')} (⌘W)</TooltipContent>
+            <TooltipContent>{t('sidebar.close')} (⌘⇧W)</TooltipContent>
           </Tooltip>
         </div>
       )}
@@ -385,8 +383,15 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1">
           <span className="text-sm font-medium truncate text-[var(--color-text-primary)]">
-            {doc.title}
+            {/* A memory-only new document has no file on disk yet; fall back to its title so
+                the draft is still visible in the sidebar (PLAN §6.3). */}
+            {doc.filePath ? baseName(doc.filePath) : doc.title}
           </span>
+          {!doc.filePath && (
+            <span className="text-2xs font-medium text-accent border border-accent/40 rounded px-1 py-px shrink-0">
+              {t('sidebar.newBadge')}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 mt-0.5">
           <span className="text-2xs text-[var(--color-text-tertiary)]">
@@ -449,7 +454,7 @@ interface TreeRowProps {
 
 // Recursively render the document tree: folders are collapsible, files reuse DocItem.
 function TreeRow({ node, depth, activeId, onSelectDoc, onDeleteDoc, onDetailsDoc }: TreeRowProps) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   if (node.isFolder) {
     return (
       <li>

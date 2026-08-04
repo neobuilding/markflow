@@ -22,13 +22,29 @@ export default function App(): React.ReactElement {
   const openPathsMutRef = useRef(openPathsMut)
   const { t: rt } = useT()
 
+  // Try to close the workspace, running the SAME unsaved-changes prompt used by the
+  // "close workspace" menu item. Returns true if the workspace was actually closed
+  // (or didn't need to be). Used both by the menu and by the app-quit flow below so
+  // quitting the app is identical to closing the workspace — no separate logic / prompt.
+  const tryCloseWorkspace = useCallback((): boolean => {
+    const st = useUIStore.getState()
+    if (st.exportOpen) {
+      st.setExportOpen(false)
+      return false
+    }
+    if (st.exporting) return false
+    if (st.dirty && !window.confirm(t('app.unsavedCloseWorkspace'))) return false
+    closeWorkspace()
+    return true
+  }, [closeWorkspace])
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      const isMac = navigator.platform.includes('Mac')
+      const isMac = /mac|iphone|ipad/i.test(navigator.userAgent)
       const mod = isMac ? e.metaKey : e.ctrlKey
       if (mod && e.key === 'n') {
         e.preventDefault()
@@ -53,18 +69,19 @@ export default function App(): React.ReactElement {
       openPathsMut.mutate(paths)
     })
     const removeClose = window.api.onMenuEvent('close-workspace', () => {
+      tryCloseWorkspace()
+    })
+    const removeCloseFile = window.api.onMenuEvent('close-file', () => {
       const st = useUIStore.getState()
-      // When the export dialog is open, Cmd/Ctrl+W should close the dialog (not the whole workspace):
-      // overwriting an existing file adds a confirmation step, and users often hit the close shortcut
-      // to dismiss the dialog; closing the workspace directly would be harmful.
+      // When the export dialog is open, Cmd/Ctrl+W should close the dialog rather than the file.
       if (st.exportOpen) {
         st.setExportOpen(false)
         return
       }
-      // While writing a file, fully ignore the close-workspace request so no path loses the workspace.
+      // While writing a file, fully ignore the close-file request so no path loses the workspace.
       if (st.exporting) return
-      if (st.dirty && !window.confirm(t('app.unsavedCloseWorkspace'))) return
-      closeWorkspace()
+      if (st.dirty && !window.confirm(t('app.unsavedClose'))) return
+      st.closeDocument()
     })
     const removeFileDetails = window.api.onMenuEvent('file-details', () => {
       const id = useUIStore.getState().activeDocumentId
@@ -104,13 +121,14 @@ export default function App(): React.ReactElement {
       removeSidebar()
       removeOpen()
       removeClose()
+      removeCloseFile()
       removeOpenPaths()
       removeFileDetails()
       removeAbout()
       removeExport()
       removePrint()
     }
-  }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, setPrinting])
+  }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, setPrinting, tryCloseWorkspace])
 
   // ── i18n: keep the UI language in sync with the native menu ─────────────
   // When the user picks a language in the native menu, the main process sends
@@ -182,6 +200,19 @@ export default function App(): React.ReactElement {
     return () => unsub()
   }, [])
 
+  // When the main process wants to quit, run the exact same "close workspace" flow
+  // (with its unified unsaved-changes prompt). If the user confirms (or there's nothing
+  // to save), tell the main process it's safe to quit; otherwise we simply don't reply
+  // and the quit is aborted. New (memory-only) docs and edits to existing files are
+  // treated identically — no special quit prompt.
+  useEffect(() => {
+    if (!window.api?.onAppRequestQuit) return
+    const remove = window.api.onAppRequestQuit(() => {
+      if (tryCloseWorkspace()) window.api.app.allowQuit()
+    })
+    return () => remove()
+  }, [tryCloseWorkspace])
+
   // Open files/folders dragged into the window (cross-platform)
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('Files')) {
@@ -192,11 +223,13 @@ export default function App(): React.ReactElement {
   const handleDrop = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
+    // Don't silently discard unsaved work when a file is dropped onto the window.
+    if (useUIStore.getState().dirty && !window.confirm(t('app.unsavedClose'))) return
     const paths = Array.from(e.dataTransfer.files)
       .map((f) => window.api.files.getPathForFile(f))
       .filter((p): p is string => typeof p === 'string' && p.length > 0)
     if (paths.length > 0) openPathsMutRef.current.mutate(paths)
-  }, [])
+  }, [t])
 
   return (
     <TooltipProvider delayDuration={400}>

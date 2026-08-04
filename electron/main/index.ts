@@ -310,6 +310,18 @@ function createWindow(): void {
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow?.webContents.setZoomLevel(0)
   })
+
+  // Intercept the *window* close (red X / traffic-light close) so it runs the SAME
+  // unsaved prompt as quitting — never destroys a window with unsaved changes silently.
+  // Only once the renderer replies with app:quit-allowed do we set isQuiting and let the
+  // close proceed. This guarantees the prompt always happens while the window is alive,
+  // eliminating the race where before-quit fires after the window is already destroyed.
+  const win = mainWindow
+  win.on('close', (event) => {
+    if (isQuiting) return
+    event.preventDefault()
+    win.webContents.send('app:request-quit')
+  })
 }
 
 // ─── UI language (i18n) for the native menu ──────────────────────────────
@@ -350,12 +362,14 @@ function applyMenuStates(): void {
   const detailsItem = appMenu.getMenuItemById('file-details')
   const exportItem = appMenu.getMenuItemById('export-html')
   const printItem = appMenu.getMenuItemById('print')
+  const closeFileItem = appMenu.getMenuItemById('close-file')
   if (saveItem) saveItem.enabled = editableState
   if (saveAsItem) saveAsItem.enabled = editableState
   if (reloadItem) reloadItem.enabled = hasDocumentState
   if (detailsItem) detailsItem.enabled = hasDocumentState
   if (exportItem) exportItem.enabled = hasDocumentState
   if (printItem) printItem.enabled = hasDocumentState && !printingState
+  if (closeFileItem) closeFileItem.enabled = hasDocumentState
   Menu.setApplicationMenu(appMenu)
 }
 
@@ -454,8 +468,16 @@ function setupMenu(): void {
         },
         { type: 'separator' },
         {
-          label: menuT('menu.closeWorkspace'),
+          id: 'close-file',
+          label: menuT('menu.closeFile'),
           accelerator: 'CmdOrCtrl+W',
+          enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
+          click: () => mainWindow?.webContents.send('menu:close-file'),
+        },
+        {
+          id: 'close-workspace',
+          label: menuT('menu.closeWorkspace'),
+          accelerator: 'CmdOrCtrl+Shift+W',
           click: () => mainWindow?.webContents.send('menu:close-workspace'),
         },
         { type: 'separator' },
@@ -761,13 +783,71 @@ if (!shouldStart) {
     setupMenu()
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      if (BrowserWindow.getAllWindows().length === 0) {
+        // Defensive reset: if a future change makes closing the window keep the
+        // process alive (macOS-style), a rebuilt window must not inherit the stale
+        // quitting flags or it would skip the unsaved-changes prompt on next close.
+        isQuiting = false
+        readyToQuit = false
+        createWindow()
+      }
     })
   })
 }
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
+// ─── Quit flow reuses the "close workspace" prompt (PLAN §6.5) ───────────────
+// Quitting the whole app must behave EXACTLY like closing a file / workspace: the
+// renderer runs the same unified unsaved-changes prompt. So on `before-quit` we ask
+// the renderer to close the workspace; only once it replies (app:quit-allowed) do we
+// proceed. If the user cancels the prompt, the renderer simply doesn't reply and the
+// quit stays aborted. New (memory-only) documents and edits to existing files are
+// treated identically — no special quit prompt. Memory-only drafts (empty file_path)
+// are purged as a safety net so they never survive a restart, but only after the
+// renderer has already run its prompt (never silently discarded).
+let readyToQuit = false
+// Whether the app is actively quitting. Set once the renderer has confirmed the
+// unsaved-changes prompt, so the window 'close' handler and 'before-quit' let the
+// teardown proceed instead of re-prompting.
+let isQuiting = false
+
+function purgeUnsavedDrafts(): void {
+  try {
+    getDb()
+      .prepare("DELETE FROM documents WHERE file_path IS NULL OR file_path = ''")
+      .run()
+  } catch {
+    // Best-effort cleanup; the DB is in-memory so nothing persists regardless.
   }
+}
+
+ipcMain.on('app:quit-allowed', () => {
+  // The renderer has run the unified unsaved prompt and the user confirmed (or there
+  // were no unsaved changes). Mark the app as quitting and quit for real; 'before-quit'
+  // will then purge and let the teardown proceed. Using app.quit() (not mainWindow.close)
+  // makes closing the window and quitting the app behave identically on every platform,
+  // including macOS where close() alone would only hide the window and keep the process.
+  isQuiting = true
+  readyToQuit = true
+  app.quit()
+})
+
+app.on('before-quit', (event) => {
+  if (readyToQuit) {
+    purgeUnsavedDrafts()
+    return
+  }
+  // Fallback for quit paths that bypass the window 'close' handler (e.g. macOS
+  // Cmd+Q / dock Quit, or a quit request with no live window). Ask the renderer to
+  // run the unified prompt; only intercept while a window can actually show it.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:request-quit')
+    event.preventDefault()
+  }
+})
+
+app.on('window-all-closed', () => {
+  // Quit on all platforms once the last window is closed. Combined with app.quit() in
+  // app:quit-allowed, closing the window and quitting the app are identical everywhere
+  // (including macOS, where the default is to keep the process alive in the dock).
+  app.quit()
 })

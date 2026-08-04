@@ -24,6 +24,10 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 - **Folder-aware sidebar** — Open a single file and the whole containing folder loads automatically; open a folder to browse all its Markdown files
 - **Read-only by default** — Files open in read-only mode to prevent accidental edits; toggle to Edit mode anytime
 - **Close workspace** — One-click close of the current file and folder, returning to an empty state
+- **Close file** — Close just the current document (⌘/Ctrl+W) while keeping the opened folder and sidebar
+- **.mdx support** — `.mdx` files open, list, and preview like regular Markdown (extension shown in the sidebar)
+- **New document prompts for a path** — A newly created document lives entirely in memory (no file is created on disk) until you explicitly save it; its first **Save** opens the **Save As** dialog to choose the path, so nothing is ever written to a hidden default location
+- **Sidebar shows file extensions** — File names in the sidebar include their extension (e.g. `foo.md`); subfolders start collapsed
 - **Open anywhere** — Launch via command line, drag-and-drop a file/folder onto the window, or set MarkFlow as the default app for `.md` files
 - **Empty on launch** — No previous file/folder is restored; the app always starts fresh
 - **Full-text search** — SQLite FTS5 powered, instant results with highlighted snippets
@@ -31,7 +35,7 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 - **KaTeX math formulas** — Support for inline `$...$` and block `$$...$$` LaTeX formulas
 - **Mermaid diagrams** — Render flowcharts, sequence diagrams, and more from ` ```mermaid ` code blocks
 - **Dark/Light theme** — Automatic system theme detection with manual toggle
-- **Window size memory** — Remembers window position and size across sessions
+- **Window size** — Launches maximized; window position and size are **not** persisted across sessions (each launch starts fresh)
 
 ## 📸 Screenshots
 
@@ -144,7 +148,8 @@ markflow/
 | `Ctrl/Cmd + K`         | Search documents                              |
 | `Ctrl/Cmd + \`         | Toggle sidebar                                |
 | `Ctrl/Cmd + Shift + P` | Toggle preview mode (edit/preview/split)      |
-| `Ctrl/Cmd + W`         | Close workspace (close current file & folder) |
+| `Ctrl/Cmd + W`         | Close file (keep the opened folder & sidebar) |
+| `Ctrl/Cmd + Shift + W` | Close workspace (close current file & folder)|
 | `Ctrl/Cmd + O`         | Open external `.md` file                      |
 | `Ctrl/Cmd + Shift + O` | Open folder (batch import `.md` files)        |
 | `Ctrl/Cmd + S`         | Save (manual; no auto-save)                   |

@@ -1,6 +1,15 @@
 import { create } from 'zustand'
 import type { ViewMode, ThemeMode } from '../types'
 import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n'
+import { queryClient, DOCS_KEY } from '../lib/queryClient'
+
+// Remove a memory-only draft (never saved to disk) and refresh the document list so the
+// sidebar no longer shows the orphan draft (PLAN §6.4).
+function deleteUnsavedDraft(id: string) {
+  return window.api.documents.delete(id).finally(() => {
+    queryClient.invalidateQueries({ queryKey: DOCS_KEY })
+  })
+}
 
 interface UIState {
   // Sidebar
@@ -26,6 +35,12 @@ interface UIState {
 
   // Close the current file + folder → back to an empty workspace
   closeWorkspace: () => void
+
+  // Whether the current document is an unsaved new document created in-app: the
+  // first Save should prompt for a path (Save As) instead of overwriting the
+  // default-location file. Cleared after a successful Save As.
+  isNewUnsaved: boolean
+  setIsNewUnsaved: (v: boolean) => void
 
   // View mode
   viewMode: ViewMode
@@ -109,12 +124,22 @@ export const useUIStore = create<UIState>((set, get) => ({
   // ensuring "exporting HTML never closes the current file or workspace".
   closeDocument: () => {
     if (get().exporting || get().exportOpen) return
-    set({ activeDocumentId: null, editable: false })
+    // A memory-only draft that was never saved to disk has no file and only a DB row.
+    // Remove that orphan DB row on close so we don't leave a zombie draft (PLAN §6.4).
+    const id = get().activeDocumentId
+    if (id && get().isNewUnsaved) {
+      void deleteUnsavedDraft(id)
+    }
+    set({ activeDocumentId: null, editable: false, isNewUnsaved: false })
   },
 
   closeWorkspace: () => {
     if (get().exporting || get().exportOpen) return
-    set({ activeDocumentId: null, activeFolder: null, editable: false })
+    const id = get().activeDocumentId
+    if (id && get().isNewUnsaved) {
+      void deleteUnsavedDraft(id)
+    }
+    set({ activeDocumentId: null, activeFolder: null, editable: false, isNewUnsaved: false })
   },
 
   viewMode: 'split',
@@ -164,4 +189,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   exporting: false,
   setExporting: (v) => set({ exporting: v }),
+
+  isNewUnsaved: false,
+  setIsNewUnsaved: (v) => set({ isNewUnsaved: v }),
 }))
