@@ -62,6 +62,17 @@ async function inlineOne(src: string): Promise<string | null> {
   }
 }
 
+// Map a raw printer-driver failure reason to a user-facing message. Pure and unit-testable
+// (kept outside the BrowserWindow-bound openPrintDialog, which is excluded from coverage).
+export function mapPrintFailureReason(reason?: string): string {
+  if (!reason) return 'Print failed'
+  const lower = reason.toLowerCase()
+  if (lower.includes('invalid printer settings')) {
+    return 'The system default printer is invalid, or no usable printer is installed. Check Windows "Printers & scanners", or set "Microsoft Print to PDF" as the default printer and try again.'
+  }
+  return reason
+}
+
 export function registerExportHandlers(ipcMain: IpcMain): void {
   // Key pitfall: once String.prototype.replace's callback is marked async it returns a Promise,
   //   and replace will serialize it to "[object Promise]" as the replacement string, corrupting the HTML.
@@ -120,17 +131,6 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
   // This is real printing (explicitly requested by the user; not downgraded to PDF export); exported bytes are uniformly UTF-8.
   // Improvement ④: use a temp file via loadFile instead of a data: URL — avoids large documents (multiple base64-inlined
   //   images) exceeding Chromium's length limit on data: URLs and silently truncating/failing; temp file is deleted after printing.
-// Map a raw printer-driver failure reason to a user-facing message. Pure and unit-testable
-// (kept outside the BrowserWindow-bound openPrintDialog).
-export function mapPrintFailureReason(reason?: string): string {
-  if (!reason) return 'Print failed'
-  const lower = reason.toLowerCase()
-  if (lower.includes('invalid printer settings')) {
-    return 'The system default printer is invalid, or no usable printer is installed. Check Windows "Printers & scanners", or set "Microsoft Print to PDF" as the default printer and try again.'
-  }
-  return reason
-}
-
   /* v8 ignore start: the print path drives a real headless BrowserWindow + system printer
   dialog and cannot be exercised in a Node unit test (no display / printer). It is covered
   by manual smoke testing of the "Print" menu item. */

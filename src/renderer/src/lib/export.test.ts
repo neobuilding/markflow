@@ -1,6 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { exportDocument } from './export'
+import { exportDocument, resolveTheme } from './export'
 import { setExportHtml, setExportContent } from './exportStore'
+
+describe('resolveTheme', () => {
+  it('returns explicit light/dark choices regardless of uiTheme', () => {
+    expect(resolveTheme('light', 'dark')).toBe('light')
+    expect(resolveTheme('dark', 'light')).toBe('dark')
+  })
+
+  it('follows the ui theme for "current"', () => {
+    expect(resolveTheme('current', 'dark')).toBe('dark')
+    expect(resolveTheme('current', 'light')).toBe('light')
+  })
+
+  it('resolves "system" uiTheme via matchMedia when choice is current', () => {
+    const original = window.matchMedia
+    window.matchMedia = (() => ({ matches: true })) as unknown as typeof window.matchMedia
+    expect(resolveTheme('current', 'system')).toBe('dark')
+    window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
+    expect(resolveTheme('current', 'system')).toBe('light')
+    window.matchMedia = original
+  })
+})
 
 describe('export — buildStandaloneHtml (R7)', () => {
   beforeEach(() => {

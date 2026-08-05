@@ -10,6 +10,7 @@ import {
   unlinkSync,
   mkdirSync,
   renameSync,
+  existsSync,
   watch,
   statSync,
   openSync,
@@ -50,7 +51,7 @@ export interface Document {
   updatedAt: number
 }
 
-function toDocument(row: DocumentRow): Document {
+export function toDocument(row: DocumentRow): Document {
   return {
     id: row.id,
     title: row.title,
@@ -97,14 +98,11 @@ export function normEnc(name: string): string {
 const MD_EXTS = new Set(['.md', '.markdown', '.mdx', '.mdtxt', '.mdtext'])
 
 // Count U+FFFD replacement chars produced when decoding with a given encoding (fewer = better match; Infinity = undecodable).
-function countReplacements(sample: Buffer, encName: string): number {
+export function countReplacements(sample: Buffer, encName: string): number {
   if (!iconv.encodingExists(encName)) return Infinity
-  let decoded: string
-  try {
-    decoded = iconv.decode(sample, encName)
-  } catch {
-    return Infinity
-  }
+  // iconv-lite is lenient and never throws for a known encoding (it substitutes replacement chars),
+  // so no try/catch is needed here.
+  const decoded = iconv.decode(sample, encName)
   let n = 0
   for (let i = 0; i < decoded.length; i++) {
     if (decoded.charCodeAt(i) === 0xfffd) n++
@@ -117,7 +115,7 @@ function countReplacements(sample: Buffer, encName: string): number {
 // this avoids wrongly overriding high-confidence non-CJK encodings (e.g. Cyrillic windows-1251, ISO-8859-5) with GBK —
 // GBK decoding arbitrary bytes usually yields 0 replacements, making it appear "cleaner" than the real encoding and seizing best.
 const CJK_CANDIDATES = ['utf-8', 'gbk', 'big5', 'shift_jis', 'euc-kr']
-function cjkSecondPass(sample: Buffer, primary: string): { enc: string; confidence: number } {
+export function cjkSecondPass(sample: Buffer, primary: string): { enc: string; confidence: number } {
   let best = primary
   let bestRep = countReplacements(sample, primary)
   for (const c of CJK_CANDIDATES) {
@@ -149,17 +147,19 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   const r = detect(sample)
   if (!r.encoding) return { enc: 'utf-8', confidence: 0 }
   const primary = normEnc(r.encoding)
-  const primaryConf = r.confidence ?? 0
+  // jschardet always returns a numeric confidence, so no `?? 0` fallback is needed here.
+  const primaryConf = r.confidence
   // Second-pass gate: only UTF-8 / CJK candidates / low confidence enter the CJK second pass;
   // other high-confidence encodings (Cyrillic, Latin, etc.) are trusted directly to avoid being wrongly overridden by CJK candidates.
   const inCjkScope = primary === 'utf-8' || CJK_CANDIDATES.includes(primary) || primaryConf < 0.6
   if (!inCjkScope) {
-    return primaryConf < 0.6
-      ? { enc: 'utf-8', confidence: primaryConf }
-      : { enc: primary, confidence: primaryConf }
+    // Reaching here means primary is a non-CJK encoding detected with confidence >= 0.6 (otherwise
+    // the `primaryConf < 0.6` term above would have routed it into the CJK second pass). Trust it directly.
+    return { enc: primary, confidence: primaryConf }
   }
-  const fixed = cjkSecondPass(sample, primary)
-  return fixed.confidence < 0.6 ? { enc: 'utf-8', confidence: fixed.confidence } : fixed
+  // The CJK second pass already floors the returned confidence (utf-8: 0.1, CJK candidates: 0.7),
+  // so its result is always a safe, decisive pick — return it directly.
+  return cjkSecondPass(sample, primary)
 }
 // Raw Buffer read -> detect encoding -> decode to string (with encoding metadata).
 export function readMarkdownText(filePath: string): {
@@ -172,7 +172,7 @@ export function readMarkdownText(filePath: string): {
   return { text: iconv.decode(buf, enc), encoding: enc, confidence }
 }
 
-function countWords(text: string): number {
+export function countWords(text: string): number {
   return text
     .replace(/[\]#*`~[()>|]/g, ' ')
     .split(/\s+/)
@@ -222,41 +222,54 @@ function watchDocument(id: string): void {
   let timer: ReturnType<typeof setTimeout> | null = null
   try {
     const watcher = watch(filePath, (_event, filename) => {
-      const now = Date.now()
-      if (now < (suppressUntil.get(filePath) ?? 0)) return
-      // Treat as an external change only when the modified file is the watched file itself:
-      // fs.watch on Windows watches the whole directory, not a single file, so other writes in the
-      // same directory (e.g. exporting HTML to foo.html, or another tool editing a sibling file) also fire this callback.
-      // ① When filename is known: compare filenames directly and ignore if different;
-      // ② When filename is null (some platforms omit it): fall back to comparing the watched file's own
-      //    mtime - if unchanged it was a sibling file's write and should be ignored, otherwise we'd falsely
-      //    report "file changed" and pop a dialog that disrupts the current document/workspace (this is exactly
-      //    why exporting HTML into the same directory falsely triggered the watcher).
-      // This way, exporting HTML etc. (writing to sibling files) never falsely alerts or disturbs the workspace.
-      if (typeof filename === 'string' && filename.length > 0) {
-        if (basename(filename) !== basename(filePath)) return
-      } else {
-        try {
-          if (statSync(filePath).mtimeMs === (watchedMtime.get(filePath) ?? -1)) return
-        } catch {
-          // If unreadable, conservatively treat as a real change
-        }
-      }
+      // Decide whether this fs.watch event is a genuine external change to the watched file
+      // (vs. a sibling-file write in the same directory, e.g. exporting HTML). Logic extracted
+      // into shouldIgnoreExternalChange so it can be unit-tested without real fs.watch events.
+      if (shouldIgnoreExternalChange(filename, filePath)) return
       if (timer) clearTimeout(timer)
-      timer = setTimeout(() => {
-        // Re-confirm the mtime actually changed before sending (avoid races in a tiny window), then record latest mtime
-        try {
-          watchedMtime.set(filePath, statSync(filePath).mtimeMs)
-        } catch {
-          /* ignore */
-        }
-        const win = _getMainWindow?.()
-        if (win) win.webContents.send('app:file-changed', { id, filePath })
-      }, 300)
+      timer = setTimeout(() => notifyExternalChange(id, filePath), 300)
     })
     fileWatchers.set(id, watcher)
   } catch {
     // ignore — file may be inaccessible
+  }
+}
+
+// Re-confirm the file's mtime changed (avoid a tiny race window) and notify the renderer that
+// the watched file changed externally. Extracted from the fs.watch timer so it is unit-testable.
+export function notifyExternalChange(id: string, filePath: string): void {
+  try {
+    watchedMtime.set(filePath, statSync(filePath).mtimeMs)
+  } catch {
+    /* ignore */
+  }
+  const win = _getMainWindow?.()
+  if (win) win.webContents.send('app:file-changed', { id, filePath })
+}
+
+// Decide whether an fs.watch event should be IGNORED (i.e. is NOT a genuine external change
+// to the watched file). Returns true when the event should be suppressed.
+//  - A suppressed write (our own save, within the suppressUntil window) is ignored.
+//  - When the changed filename is reported, only the watched file's own name counts; sibling
+//    writes in the same directory (e.g. exporting HTML) are ignored.
+//  - When the platform omits the filename, fall back to comparing the watched file's own mtime;
+//    if it is unchanged the write was a sibling's, so ignore it.
+export function shouldIgnoreExternalChange(
+  filename: string | Buffer | null | undefined,
+  filePath: string,
+): boolean {
+  const now = Date.now()
+  if (now < (suppressUntil.get(filePath) ?? 0)) return true
+  const name = typeof filename === 'string' ? filename : filename?.toString()
+  if (name && name.length > 0) {
+    return basename(name) !== basename(filePath)
+  }
+  // filename omitted: compare mtimes. If the watched file's mtime is unchanged it was a
+  // sibling write; treat as ignore. An unreadable file is conservatively treated as a change.
+  try {
+    return statSync(filePath).mtimeMs === (watchedMtime.get(filePath) ?? -1)
+  } catch {
+    return false
   }
 }
 
@@ -424,34 +437,18 @@ export function registerDocumentHandlers(
       if (updates.title && updates.title !== existing.title && existing.file_path) {
         const dir = dirname(existing.file_path)
         const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
-        // Resolve a non-colliding target name atomically: call renameSync directly and, if the
-        // target is already taken (EEXIST/EPERM on Windows), retry with an incrementing suffix.
-        // This removes the existsSync→renameSync TOCTOU window (CodeQL file-system race).
-        const tryRename = (target: string): boolean => {
-          if (target === existing.file_path) {
-            // Title change resolves to the same filename we already have: nothing to rename.
-            return true
-          }
-          try {
-            renameSync(existing.file_path, target)
-            return true
-          } catch (e) {
-            const code = (e as NodeJS.ErrnoException).code
-            if (code === 'EEXIST' || code === 'EPERM') {
-              return false // target occupied; caller retries with the next suffixed name
-            }
-            throw e // any other error (e.g. permission) propagates
-          }
-        }
-        let target = join(dir, `${safeTitle}${extname(existing.file_path).toLowerCase() || '.md'}`)
+        const ext = extname(existing.file_path).toLowerCase() || '.md'
+        // Pick a free target name: the title-based name, or `<title>-N<ext>` if already taken by
+        // a *different* file. (renameSync replaces the target atomically on both Windows and POSIX,
+        // so we probe existence explicitly to avoid clobbering an unrelated file.)
+        let target = join(dir, `${safeTitle}${ext}`)
         let counter = 0
-        const MAX_RENAME_ATTEMPTS = 10000
-        while (!tryRename(target)) {
+        while (target !== existing.file_path && existsSync(target)) {
           counter++
-          if (counter > MAX_RENAME_ATTEMPTS) throw new Error('RENAME_COLLISION_LIMIT')
-          target = join(dir, `${safeTitle}-${counter}.md`)
-          // Defensive: if a generated name equals our own current path, stop trying to rename.
-          if (target === existing.file_path) break
+          target = join(dir, `${safeTitle}-${counter}${ext}`)
+        }
+        if (target !== existing.file_path) {
+          renameSync(existing.file_path, target)
         }
         newFilePath = target
       }

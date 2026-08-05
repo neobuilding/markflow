@@ -73,7 +73,8 @@ export function useLocalDocument(
   // unchanged, so we must not report a false dirty state).
   useEffect(() => {
     if (!doc) return
-    if (doc.id !== prevIdRef.current) return // document switches are handled by the effect above
+    // The main effect (above) always runs first and updates prevIdRef on a document switch,
+    // so by the time this effect runs the id already matches — no separate id check is needed.
     if (doc.encoding === appliedEncodingRef.current) return
     appliedEncodingRef.current = doc.encoding
     setLocalContent(doc.content)

@@ -18,6 +18,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.emptyFolder': '此文件夹中没有文档',
   'sidebar.createFirst': '创建你的第一个文档',
   'sidebar.newBadge': '新建',
+  'sidebar.unsavedDrafts': '未保存草稿',
   'sidebar.details': '详情',
   'sidebar.delete': '删除',
   'details.unsaved': '未保存（仅存在于内存中）',

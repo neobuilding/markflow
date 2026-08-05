@@ -110,7 +110,11 @@ export const useUIStore = create<UIState>((set, get) => ({
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
 
   activeDocumentId: null,
-  setActiveDocumentId: (id) => set({ activeDocumentId: id }),
+  // Switching documents always returns to read-only mode. This protects files from accidental
+  // edits: every file opens/switches into read-only, and the user must explicitly switch to edit
+  // mode to modify it. New documents opt back into edit mode afterwards (Sidebar/NewDocumentDialog
+  // call setEditable(true) right after setActiveDocumentId).
+  setActiveDocumentId: (id) => set({ activeDocumentId: id, editable: false }),
 
   activeFolder: null,
   setActiveFolder: (folder) => set({ activeFolder: folder }),

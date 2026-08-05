@@ -51,6 +51,14 @@ describe('parseAppDocUrl (R4/R6 appdoc parsing)', () => {
   it('hostname with illegal characters returns null', () => {
     expect(parseAppDocUrl('appdoc://doc 123/a.png')).toBeNull()
   })
+  it('hostname with a dot (not an allowed identifier char) returns null', () => {
+    expect(parseAppDocUrl('appdoc://doc.123/a.png')).toBeNull()
+  })
+
+  it('falls back to the raw path when decodeURIComponent throws (malformed %)', () => {
+    const out = parseAppDocUrl('appdoc://doc1/%E0%A4')
+    expect(out).toEqual({ docId: 'doc1', relPath: '%E0%A4' })
+  })
 })
 
 describe('isSubdir traversal prevention (R4/R6)', () => {

@@ -271,17 +271,32 @@ function createWindow(): void {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: '#f7f7f7',
-    webPreferences: {
-      preload: join(__dirname, 'preload.js'),
-      sandbox: true, // Security gate (P0): even sandboxed, preload still has a polyfilled require (see §4.1 / R9)
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-    },
+      webPreferences: {
+        preload: join(__dirname, 'preload.js'),
+        // NOTE: sandbox was disabled (was true) to work around an Electron 43 / Windows 11
+        // regression where a sandboxed renderer on Win11 fails to report document.hasFocus()
+        // after a document switch / focus change — leaving the editor unable to receive keyboard
+        // input until an Alt-Tab. With sandbox:true the window is foreground (mainWindow.isFocused()
+        // is true) yet document.hasFocus() stays false, which CodeMirror's input path depends on.
+        // Disabling sandbox lets the renderer correctly gain OS focus. The preload still uses
+        // contextIsolation + nodeIntegration:false, so the security boundary with the main process
+        // is preserved (only the Chromium renderer sandbox layer is off).
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+      },
   })
 
   mainWindow.on('ready-to-show', () => {
+    // Ensure the window is NOT stuck "always on top" (a previous buggy focus path could leave it
+    // on top, which interferes with normal foreground focus and typing).
+    try {
+      mainWindow?.setAlwaysOnTop(false)
+    } catch {
+      /* ignore */
+    }
     if (startMaximized) {
       mainWindow?.maximize()
     }
@@ -777,6 +792,38 @@ if (!shouldStart) {
     ipcMain.handle('window:maximize', () => mainWindow?.maximize())
     ipcMain.handle('window:unmaximize', () => mainWindow?.unmaximize())
     ipcMain.handle('window:is-maximized', () => !!mainWindow?.isMaximized())
+    // Give the renderer process (the web CONTENTS / document) OS focus. This is the well-known
+    // Electron fix for `document.hasFocus()` being false while the window itself is foreground:
+    // BrowserWindow.focus() brings the window forward but does NOT necessarily focus the document
+    // inside the webContents, which is exactly why typing was dead until an Alt-Tab. Calling
+    // webContents.focus() is what actually moves OS focus into the page document.
+    //
+    // We deliberately do NOT toggle always-on-top: that raises the window but, in the user's
+    // environment, left the window stuck "always on top" (isAlwaysOnTop stayed true) and still
+    // didn't focus the document — so it only made things worse.
+    ipcMain.handle('window:focus', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      if (!mainWindow.isVisible()) mainWindow.show()
+      try {
+        mainWindow.focus()
+      } catch {
+        /* ignore */
+      }
+      // The part that actually focuses the document (and makes document.hasFocus() true).
+      try {
+        mainWindow.webContents?.focus()
+      } catch {
+        /* ignore */
+      }
+      // Return diagnostics so the renderer can confirm the OS focus state.
+      return {
+        isFocused: mainWindow.isFocused(),
+        isVisible: mainWindow.isVisible(),
+        isAlwaysOnTop: mainWindow.isAlwaysOnTop(),
+        beforeFocused: mainWindow.isFocused(),
+      }
+    })
 
     initMenuI18n()
     createWindow()

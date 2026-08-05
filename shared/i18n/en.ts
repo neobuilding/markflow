@@ -18,6 +18,7 @@ export const en = {
   'sidebar.emptyFolder': 'No documents in this folder',
   'sidebar.createFirst': 'Create your first document',
   'sidebar.newBadge': 'new',
+  'sidebar.unsavedDrafts': 'Unsaved drafts',
   'sidebar.details': 'Details',
   'sidebar.delete': 'Delete',
 

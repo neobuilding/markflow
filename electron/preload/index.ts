@@ -93,6 +93,10 @@ const api = {
     maximize: () => ipcRenderer.invoke('window:maximize'),
     unmaximize: () => ipcRenderer.invoke('window:unmaximize'),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+    // Request the main process to focus the window. Renderer-side window.focus() is often a no-op
+    // in Electron; the main process focus() is the reliable way to give the renderer OS focus so
+    // that programmatic editor focus (and thus typing) works after a document switch.
+    focus: () => ipcRenderer.invoke('window:focus'),
   },
 
   // Window state sync: renderer tells main whether editing is allowed,

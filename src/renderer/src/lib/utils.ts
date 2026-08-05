@@ -150,7 +150,9 @@ export function buildFileTree(docs: Document[], rootFolder: string): FileTreeNod
   // Sort: folders first, then alphabetically by name
   const sortRec = (n: FileTreeNode) => {
     n.children.sort((a, b) => {
-      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1
+      const af = a.isFolder ? 1 : 0
+      const bf = b.isFolder ? 1 : 0
+      if (af !== bf) return bf - af // folders first (symmetric: works whether a or b is the folder)
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
     })
     n.children.forEach(sortRec)

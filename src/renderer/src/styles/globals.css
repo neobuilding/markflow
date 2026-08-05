@@ -125,6 +125,15 @@ body {
   user-select: text;
   caret-color: var(--color-accent);
 }
+/* The CodeMirror root must allow text selection too: body sets user-select:none, and under
+   Electron that can prevent clicking into the editor from focusing/placing the cursor. Re-enable
+   it on the editor root so a click reliably focuses the contenteditable. */
+.cm-editor {
+  user-select: text;
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
 
 /* ─── Markdown Preview (prose takes over layout; keep only a minimal container here, §4.6) ─── */
 .markdown-preview {

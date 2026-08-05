@@ -98,8 +98,18 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
-            - run: npm run test
+            - run: npm run ci
             - run: npm run build
+
+            # Upload the coverage report (text + html + lcov) so it can be inspected from the run.
+            - name: Upload coverage report
+              if: always()
+              uses: actions/upload-artifact@v7
+              with:
+                  name: coverage-report
+                  path: coverage/
+                  if-no-files-found: warn
+                  retention-days: 7
 
     # Always runs (PR / non-main push / main push / tag push / dispatch): three-platform build + dist.
     # This is the only three-platform build in the whole repo — PRs use it for validation, main/tag pushes for shipping,

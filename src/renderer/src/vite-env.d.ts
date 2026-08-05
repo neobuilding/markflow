@@ -86,6 +86,7 @@ export interface Api {
     maximize: () => Promise<void>
     unmaximize: () => Promise<void>
     isMaximized: () => Promise<boolean>
+    focus: () => Promise<void>
   }
   menu: {
     setEditable: (editable: boolean) => void
