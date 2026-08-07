@@ -886,6 +886,29 @@ describe('documents IPC — watch/unwatch lifecycle', () => {
     expect(sentFileChanged).toEqual([])
   })
 
+  it('covers the debounce clearTimeout branch when a second event lands inside the 300ms window', async () => {
+    // Two external writes within the 300ms debounce window: the first arms a setTimeout,
+    // the second hits `if (timer) clearTimeout(timer)` before the timer fires. This is the
+    // only path that exercises that line, so the branch must be reached at least once.
+    const created = await call('documents:create', {
+      title: 'DebounceReset',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    sentFileChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(created.filePath, 'externally changed once')
+    await new Promise((r) => setTimeout(r, 80)) // still inside the 300ms window
+    writeFileSync(created.filePath, 'externally changed twice')
+    await new Promise((r) => setTimeout(r, 900))
+    const mine = sentFileChanged.filter((e) => e.id === created.id)
+    // Both writes collapse into a single debounced notification.
+    expect(mine).toHaveLength(1)
+    expect(mine[0]).toEqual({ id: created.id, filePath: created.filePath })
+    await call('documents:unwatch', created.id)
+  })
+
   it('watching twice reuses the existing watcher and emits a single notification', async () => {
     const created = await call('documents:create', {
       title: 'WatchTwice',
