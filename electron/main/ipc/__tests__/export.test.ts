@@ -117,6 +117,24 @@ describe('export — print (R7)', () => {
   it('throws a TypeError when html is not a string', async () => {
     await expect(handlers['export:print'](null, 123 as never)).rejects.toThrow(TypeError)
   })
+
+  it('rejects every non-string payload shape with a descriptive TypeError', async () => {
+    for (const bad of [undefined, null, 0, {}, [], true] as never[]) {
+      await expect(handlers['export:print'](null, bad)).rejects.toThrow(
+        'export:print expects string html',
+      )
+    }
+  })
+
+  it('accepts a string payload and resolves via the print pipeline', async () => {
+    // The guard must let strings through; the mocked BrowserWindow reports a successful
+    // print, so the handler resolves with undefined instead of throwing.
+    await expect(handlers['export:print'](null, '<h1>hi</h1>')).resolves.toBeUndefined()
+  })
+
+  it('accepts an empty string (a valid, if trivial, payload)', async () => {
+    await expect(handlers['export:print'](null, '')).resolves.toBeUndefined()
+  })
 })
 
 describe('export — mapPrintFailureReason (pure)', () => {

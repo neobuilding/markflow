@@ -219,6 +219,63 @@ describe('useLocalDocument — eol read cleanup', () => {
     expect(eol).not.toHaveBeenCalled()
     unmount()
   })
+
+  it('adopts the disk line ending once the async eol read resolves', async () => {
+    // Disk is the source of truth: CRLF from disk must override the LF inferred from content.
+    const eol = vi.fn().mockResolvedValue('\r\n')
+    ;(window as unknown as { api: { documents: { eol: unknown } } }).api = {
+      documents: { eol },
+    }
+    const { result, unmount } = renderLocalDocument({ ...baseDoc, content: 'a\nb\n' })
+    expect(result.current.getEol()).toBe('\n') // before the async read settles
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(eol).toHaveBeenCalledWith('/a/hi.md')
+    expect(result.current.getEol()).toBe('\r\n')
+    // The restored disk format must use the line ending that came from disk.
+    expect(result.current.toDiskFormat('a\nb')).toBe('a\r\nb')
+    unmount()
+  })
+
+  it('keeps the inferred line ending when the eol read rejects', async () => {
+    // A failed disk probe must be swallowed (no unhandled rejection) and must not
+    // corrupt the line ending already inferred from the document content.
+    const eol = vi.fn().mockRejectedValue(new Error('EACCES'))
+    ;(window as unknown as { api: { documents: { eol: unknown } } }).api = {
+      documents: { eol },
+    }
+    const { result, unmount } = renderLocalDocument({ ...baseDoc, content: 'a\r\nb\r\n' })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(eol).toHaveBeenCalledWith('/a/hi.md')
+    expect(result.current.getEol()).toBe('\r\n')
+    expect(result.current.toDiskFormat('a\nb')).toBe('a\r\nb')
+    unmount()
+  })
+
+  it('ignores a late-resolving eol read after the effect was cancelled', async () => {
+    // Guards the `if (!cancelled)` check: a promise that settles after unmount
+    // must not write into the (now stale) ref.
+    let settle: (v: string) => void = () => {}
+    const eol = vi.fn().mockReturnValue(
+      new Promise<string>((res) => {
+        settle = res
+      }),
+    )
+    ;(window as unknown as { api: { documents: { eol: unknown } } }).api = {
+      documents: { eol },
+    }
+    const { result, unmount } = renderLocalDocument({ ...baseDoc, content: 'a\nb\n' })
+    unmount()
+    settle('\r\n')
+    await act(async () => {
+      await Promise.resolve()
+    })
+    // The ref was never updated, so the last known (inferred) value stands.
+    expect(result.current.getEol()).toBe('\n')
+  })
 })
 
 describe('useLocalDocument — null document', () => {

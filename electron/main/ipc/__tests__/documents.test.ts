@@ -1,9 +1,13 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { writeFileSync, mkdtempSync, readFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, readFileSync, mkdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
-import { registerDocumentHandlers, shouldIgnoreExternalChange, notifyExternalChange } from '../documents'
+import { join, dirname, basename } from 'node:path'
+import {
+  registerDocumentHandlers,
+  shouldIgnoreExternalChange,
+  notifyExternalChange,
+} from '../documents'
 
 // In-memory fake DB standing in for better-sqlite3 (which can't load under system Node).
 // Supports exactly the statements documents.ts issues, matched by substring on the SQL.
@@ -104,9 +108,11 @@ const fakeApp = { getPath: () => stableDocsRoot } as any
 // notifyExternalChange path can be exercised end-to-end.
 const sentFileChanged: Array<{ id: string; filePath: string }> = []
 const fakeMainWindow = {
-  webContents: { send: (channel: string, payload: { id: string; filePath: string }) => {
-    if (channel === 'app:file-changed') sentFileChanged.push(payload)
-  } },
+  webContents: {
+    send: (channel: string, payload: { id: string; filePath: string }) => {
+      if (channel === 'app:file-changed') sentFileChanged.push(payload)
+    },
+  },
 }
 
 beforeAll(() => {
@@ -248,7 +254,10 @@ describe('documents IPC — saveAs', () => {
     })
     const dir = fakeApp.getPath()
     const newPath = join(dir, 'saved.md')
-    const updated = await call('documents:save-as', created.id, newPath, { title: 'S', content: 'saved' })
+    const updated = await call('documents:save-as', created.id, newPath, {
+      title: 'S',
+      content: 'saved',
+    })
     expect(updated.filePath).toBe(newPath)
     expect(readFileSync(newPath, 'utf-8')).toBe('saved')
     expect(readFileSync(created.filePath, 'utf-8')).toBe('orig')
@@ -698,5 +707,284 @@ describe('documents — watch change detection (pure logic)', () => {
     sentFileChanged.length = 0
     notifyExternalChange('doc-id-1', watched)
     expect(sentFileChanged).toEqual([{ id: 'doc-id-1', filePath: watched }])
+  })
+
+  it('notifyExternalChange is a no-op (no throw) when there is no main window', () => {
+    // Re-register the handlers with a getMainWindow that yields null, exercising the
+    // `if (win)` guard. Without the guard this would throw on `win.webContents`.
+    const localHandlers: Record<string, (...a: any[]) => any> = {}
+    registerDocumentHandlers(
+      { handle: (ch: string, fn: (...a: any[]) => any) => (localHandlers[ch] = fn) } as any,
+      fakeApp,
+      () => null,
+    )
+    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
+    const watched = join(dir, 'doc.md')
+    writeFileSync(watched, 'hi')
+    sentFileChanged.length = 0
+    expect(() => notifyExternalChange('doc-id-nowin', watched)).not.toThrow()
+    // Nothing was delivered to the (previously captured) window either.
+    expect(sentFileChanged).toEqual([])
+    // Restore the real window provider for any later tests in this file.
+    registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+  })
+
+  it('notifyExternalChange still notifies when the file is unreadable (stat throws)', () => {
+    // The mtime refresh is best-effort: a missing file must not prevent the renderer
+    // from being told the file changed (it may have just been deleted/replaced).
+    const missing = join(tmpdir(), 'mf-notify-missing-' + Date.now() + '.md')
+    sentFileChanged.length = 0
+    notifyExternalChange('doc-id-2', missing)
+    expect(sentFileChanged).toEqual([{ id: 'doc-id-2', filePath: missing }])
+  })
+
+  it('ignores an event that lands inside the self-write suppression window', async () => {
+    // documents:update sets suppressUntil for the written path (~2s). An fs.watch event
+    // arriving in that window is our own save echoing back and must be suppressed —
+    // even though the reported filename matches the watched file exactly.
+    const created = await call('documents:create', {
+      title: 'SuppressMe',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:update', created.id, { content: 'v2' })
+    expect(shouldIgnoreExternalChange(basename(created.filePath), created.filePath)).toBe(true)
+    // Sanity: the same filename on a path with no suppression entry is NOT ignored.
+    const other = join(dirname(created.filePath), 'not-suppressed.md')
+    writeFileSync(other, 'x')
+    expect(shouldIgnoreExternalChange(basename(other), other)).toBe(false)
+  })
+
+  it('accepts a Buffer filename and compares it by basename', () => {
+    // fs.watch may hand back a Buffer instead of a string; it must be decoded, not stringified
+    // into something like "[object Object]".
+    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
+    const watched = join(dir, 'doc.md')
+    writeFileSync(watched, 'hi')
+    expect(shouldIgnoreExternalChange(Buffer.from('doc.md'), watched)).toBe(false)
+    expect(shouldIgnoreExternalChange(Buffer.from('other.md'), watched)).toBe(true)
+  })
+
+  it('treats an empty filename like an omitted one (falls back to the mtime check)', () => {
+    // '' is falsy, so the name comparison is skipped; with no recorded baseline the
+    // `?? -1` fallback makes the real mtime differ, i.e. a genuine change.
+    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
+    const watched = join(dir, 'doc.md')
+    writeFileSync(watched, 'hi')
+    expect(shouldIgnoreExternalChange('', watched)).toBe(false)
+    expect(shouldIgnoreExternalChange(null, watched)).toBe(false)
+  })
+
+  it('ignores a filename-less event when the watched file mtime is unchanged', async () => {
+    // Start watching to record the mtime baseline, then fire the check without a filename:
+    // the mtime still matches the baseline, so this was a sibling write -> ignore.
+    const created = await call('documents:create', {
+      title: 'MtimeBaseline',
+      content: 'x',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    // Let the self-write suppression window from create/watch elapse conceptually:
+    // create() does not set suppressUntil, so the mtime branch is reached directly.
+    expect(shouldIgnoreExternalChange(undefined, created.filePath)).toBe(true)
+    await call('documents:unwatch', created.id)
+  })
+})
+
+describe('documents IPC — watch/unwatch lifecycle', () => {
+  it('delivers app:file-changed when the watched file is modified externally', async () => {
+    const created = await call('documents:create', {
+      title: 'WatchLive',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    sentFileChanged.length = 0
+    // Simulate an external editor writing the file. The watcher debounces for 300ms.
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(created.filePath, 'externally changed')
+    await new Promise((r) => setTimeout(r, 900))
+    expect(sentFileChanged).toContainEqual({ id: created.id, filePath: created.filePath })
+    await call('documents:unwatch', created.id)
+  })
+
+  it('drops a sibling-file event delivered by the real watcher', async () => {
+    // fs.watch on a file can still fire for activity in the same directory. The callback's
+    // early return must swallow those so an unrelated write (e.g. an HTML export landing
+    // next to the document) never surfaces as "your file changed on disk".
+    const created = await call('documents:create', {
+      title: 'SiblingNoise',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    sentFileChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    // Write a *different* file in the same folder, leaving the watched file untouched.
+    writeFileSync(join(dirname(created.filePath), 'SiblingNoise.export.html'), '<p>x</p>')
+    await new Promise((r) => setTimeout(r, 900))
+    expect(sentFileChanged.filter((e) => e.id === created.id)).toEqual([])
+    await call('documents:unwatch', created.id)
+  })
+
+  it('drops the watcher event echoed back by our own save', async () => {
+    // documents:update writes the file itself and arms the suppression window, so the
+    // watcher event it provokes must be ignored rather than bounced to the renderer.
+    const created = await call('documents:create', {
+      title: 'SelfWriteEcho',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    sentFileChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    await call('documents:update', created.id, { content: 'v2 written by us' })
+    await new Promise((r) => setTimeout(r, 900))
+    expect(sentFileChanged.filter((e) => e.id === created.id)).toEqual([])
+    await call('documents:unwatch', created.id)
+  })
+
+  it('stops delivering notifications after unwatch', async () => {
+    const created = await call('documents:create', {
+      title: 'WatchStop',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    await call('documents:unwatch', created.id)
+    sentFileChanged.length = 0
+    writeFileSync(created.filePath, 'changed after unwatch')
+    await new Promise((r) => setTimeout(r, 700))
+    expect(sentFileChanged).toEqual([])
+  })
+
+  it('watching twice reuses the existing watcher and emits a single notification', async () => {
+    const created = await call('documents:create', {
+      title: 'WatchTwice',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    await call('documents:watch', created.id) // early-return: already watching
+    sentFileChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(created.filePath, 'changed once')
+    await new Promise((r) => setTimeout(r, 900))
+    const mine = sentFileChanged.filter((e) => e.id === created.id)
+    // A duplicate watch must not double-register and double-notify.
+    expect(mine).toHaveLength(1)
+    await call('documents:unwatch', created.id)
+  })
+
+  it('unwatching a document that was never watched is a no-op', () => {
+    expect(() => call('documents:unwatch', 'never-watched')).not.toThrow()
+    expect(call('documents:unwatch', 'never-watched')).toBeUndefined()
+  })
+
+  it('does not watch a memory-only draft (no file_path)', async () => {
+    const created = await call('documents:create', {
+      title: 'WatchDraft',
+      content: 'x',
+      memoryOnly: true,
+    })
+    // watchDocument bails out on an empty file_path, so no watcher is registered and
+    // a subsequent external write cannot produce a notification.
+    expect(() => call('documents:watch', created.id)).not.toThrow()
+    sentFileChanged.length = 0
+    await new Promise((r) => setTimeout(r, 400))
+    expect(sentFileChanged.filter((e) => e.id === created.id)).toEqual([])
+    expect(() => call('documents:unwatch', created.id)).not.toThrow()
+  })
+})
+
+describe('documents IPC — create/update error paths', () => {
+  it('propagates a non-EEXIST failure from the create open loop', () => {
+    // The title sanitizer strips /\:*?"<>| but NOT a NUL byte, so openSync rejects the
+    // path outright. That is not a name collision, so the retry loop must rethrow rather
+    // than spin forever over `-1`, `-2`, ... candidates.
+    const markFlowDir = join(stableDocsRoot, 'MarkFlow')
+    mkdirSync(markFlowDir, { recursive: true })
+    let thrown: unknown
+    try {
+      call('documents:create', { title: 'Bad\0Name', content: 'x', memoryOnly: false })
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    // Node rejects NUL in paths; the error surfaces unchanged (not converted to EEXIST).
+    expect((thrown as NodeJS.ErrnoException).code).not.toBe('EEXIST')
+    // The failure aborts creation outright: no DB row, and no `-N` fallback file on disk.
+    expect([...docs.values()].some((d) => d.title === 'Bad\0Name')).toBe(false)
+    expect(existsSync(join(markFlowDir, 'Bad\0Name-1.md'.replace('\0', '')))).toBe(false)
+  })
+
+  it('falls back to .md when the existing file path has no extension', async () => {
+    // Inject a row whose file_path is extension-less so `extname(...) || '.md'` fires
+    // on the rename branch.
+    const id = 'noext-' + Date.now()
+    const dir = fakeApp.getPath()
+    const srcPath = join(dir, 'noextfile')
+    writeFileSync(srcPath, 'body')
+    docs.set(id, {
+      id,
+      title: 'NoExt',
+      folder_path: '',
+      file_path: srcPath,
+      content: 'body',
+      word_count: 1,
+      is_archived: 0,
+      encoding: 'utf-8',
+    })
+    const updated = await call('documents:update', id, { title: 'NowNamed' })
+    expect(updated.filePath).toBe(join(dir, 'NowNamed.md'))
+    expect(readFileSync(updated.filePath, 'utf-8')).toBe('body')
+    docs.delete(id)
+  })
+
+  it('skips the rename when the sanitized title maps back to the current filename', async () => {
+    // 'A/B' sanitizes to 'A-B', which is exactly the current file name, so the target
+    // equals existing.file_path and renameSync must be skipped (renaming onto itself).
+    const created = await call('documents:create', {
+      title: 'A-B',
+      content: 'same',
+      memoryOnly: false,
+    })
+    expect(created.filePath).toBe(join(dirname(created.filePath), 'A-B.md'))
+    const updated = await call('documents:update', created.id, { title: 'A/B' })
+    // Path unchanged, file still present with its content intact.
+    expect(updated.filePath).toBe(created.filePath)
+    expect(updated.title).toBe('A/B')
+    expect(readFileSync(created.filePath, 'utf-8')).toBe('same')
+  })
+
+  it('does not rename when the title is updated to the same value', async () => {
+    const created = await call('documents:create', {
+      title: 'SameTitle',
+      content: 'c',
+      memoryOnly: false,
+    })
+    const updated = await call('documents:update', created.id, { title: 'SameTitle' })
+    expect(updated.filePath).toBe(created.filePath)
+    expect(readFileSync(created.filePath, 'utf-8')).toBe('c')
+  })
+
+  it('updates a memory-only draft without touching the disk', async () => {
+    const created = await call('documents:create', {
+      title: 'DraftUpd',
+      content: 'v1',
+      memoryOnly: true,
+    })
+    const updated = await call('documents:update', created.id, {
+      title: 'DraftUpd2',
+      content: 'v2',
+    })
+    // No file was ever created, so file_path stays empty and no rename happens.
+    expect(updated.filePath).toBe('')
+    expect(updated.title).toBe('DraftUpd2')
+    expect(updated.content).toBe('v2')
+  })
+
+  it('returns null when updating a document that does not exist', async () => {
+    expect(await call('documents:update', 'ghost', { content: 'x' })).toBeNull()
   })
 })

@@ -125,13 +125,17 @@ export function rewriteImageSrc(src: string | null | undefined, docId: string | 
 
 md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const token = tokens[idx]
-  const src = token.attrGet('src')
+  // markdown-it always sets a src attribute on image tokens (an empty destination such as
+  // `![x]()` yields ""), so attrGet never actually returns null here; the `?? ''` only
+  // satisfies its nullable type and is therefore not reachable in tests.
+  /* v8 ignore next */
+  const src = token.attrGet('src') ?? ''
   const docId = (env as { docId?: string | null }).docId ?? null
   const finalSrc = rewriteImageSrc(src, docId)
-  if (/^https?:/i.test(src ?? '')) {
+  if (/^https?:/i.test(src)) {
     // Remote image: tighten the source site (hide Referer) to avoid leaking the local file path.
     token.attrSet('referrerpolicy', 'no-referrer')
-  } else if (finalSrc !== (src ?? '')) {
+  } else if (finalSrc !== src) {
     token.attrSet('src', finalSrc)
   }
   return defaultImage(tokens, idx, options, env, self)

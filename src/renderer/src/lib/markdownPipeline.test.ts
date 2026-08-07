@@ -168,6 +168,37 @@ describe('markdownPipeline — remote image referrerpolicy (R4)', () => {
     expect(html).toContain('referrerpolicy="no-referrer"')
     expect(html).toContain('src="https://e.com/a.png"')
   })
+
+  it('adds referrerpolicy="no-referrer" to http images too', () => {
+    const { html } = render('![y](http://e.com/a.png)\n', docId)
+    expect(html).toContain('referrerpolicy="no-referrer"')
+    expect(html).toContain('src="http://e.com/a.png"')
+  })
+
+  it('does not add referrerpolicy to a local (rewritten) image', () => {
+    const { html } = render('![y](pic.png)\n', docId)
+    expect(html).not.toContain('referrerpolicy')
+    expect(html).toContain(`src="appdoc://${docId}/pic.png"`)
+  })
+})
+
+describe('markdownPipeline — image with a missing/empty src', () => {
+  it('renders an empty src unchanged and adds no referrerpolicy', () => {
+    // `![x]()` yields an empty src: there is nothing to rewrite, and it is not remote,
+    // so the token must be emitted untouched.
+    const { html } = render('![x]()\n', docId)
+    expect(html).toContain('src=""')
+    expect(html).not.toContain('appdoc://')
+    expect(html).not.toContain('referrerpolicy')
+  })
+
+  it('treats a null/undefined src as empty in the pure rewriter', () => {
+    // Mirrors the `src ?? ''` fallbacks used by the image renderer rule when
+    // attrGet('src') returns null (attribute absent).
+    expect(rewriteImageSrc(null, docId)).toBe('')
+    expect(rewriteImageSrc(undefined, docId)).toBe('')
+    expect(rewriteImageSrc(null, null)).toBe('')
+  })
 })
 
 describe('markdownPipeline — raw HTML passthrough', () => {

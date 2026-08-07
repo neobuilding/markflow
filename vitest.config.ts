@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   test: {
     environment: 'jsdom',
+    // Polyfill Range.getClientRects / getBoundingClientRect for CodeMirror under
+    // jsdom, which otherwise throws unhandled "getClientRects is not a function"
+    // errors from its async layout measurement.
+    setupFiles: ['./test-setup.ts'],
     // Inline local main-process modules so Vite's SSR transform always processes them instead of
     // externalizing them. On Windows, leaving them external makes vitest mis-resolve their absolute
     // paths and try to load them as untransformed CommonJS ("package D:" SyntaxError), even though

@@ -8,16 +8,49 @@ import { useOpenPaths, useCreateDocument } from './useDocuments'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const fakeDocs: Record<string, { id: string; title: string; content: string; filePath: string; encoding: string; updatedAt: number; wordCount: number }> = {
-  a: { id: 'a', title: 'A', content: '# A', filePath: '/a.md', encoding: 'utf-8', updatedAt: 1, wordCount: 1 },
-  b: { id: 'b', title: 'B', content: '# B', filePath: '/b.md', encoding: 'utf-8', updatedAt: 2, wordCount: 1 },
+const fakeDocs: Record<
+  string,
+  {
+    id: string
+    title: string
+    content: string
+    filePath: string
+    encoding: string
+    updatedAt: number
+    wordCount: number
+  }
+> = {
+  a: {
+    id: 'a',
+    title: 'A',
+    content: '# A',
+    filePath: '/a.md',
+    encoding: 'utf-8',
+    updatedAt: 1,
+    wordCount: 1,
+  },
+  b: {
+    id: 'b',
+    title: 'B',
+    content: '# B',
+    filePath: '/b.md',
+    encoding: 'utf-8',
+    updatedAt: 2,
+    wordCount: 1,
+  },
 }
 
-function mountHook<T>(useHook: () => T): { result: { current: T }; root: ReturnType<typeof createRoot>; container: HTMLElement } {
+function mountHook<T>(useHook: () => T): {
+  result: { current: T }
+  root: ReturnType<typeof createRoot>
+  container: HTMLElement
+} {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
   let value!: T
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
@@ -25,14 +58,22 @@ function mountHook<T>(useHook: () => T): { result: { current: T }; root: ReturnT
   act(() => {
     root.render(
       <Wrapper>
-        <HookCapture useHook={useHook} onValue={(v) => (value = v)} />
+        <HookCapture<T> useHook={useHook} onValue={(v) => (value = v)} />
       </Wrapper>,
     )
   })
-  return { result: { get current() { return value } }, root, container }
+  return {
+    result: {
+      get current() {
+        return value
+      },
+    },
+    root,
+    container,
+  }
 }
 
-function HookCapture({ useHook, onValue }: { useHook: () => unknown; onValue: (v: unknown) => void }) {
+function HookCapture<T>({ useHook, onValue }: { useHook: () => T; onValue: (v: T) => void }) {
   const v = useHook()
   onValue(v)
   return null
@@ -40,12 +81,25 @@ function HookCapture({ useHook, onValue }: { useHook: () => unknown; onValue: (v
 
 beforeEach(() => {
   const api = {
-    files: { resolvePaths: vi.fn(async (paths: string[]) => ({ directories: ['/dir'], markdownFiles: paths })) },
+    files: {
+      resolvePaths: vi.fn(async (paths: string[]) => ({
+        directories: ['/dir'],
+        markdownFiles: paths,
+      })),
+    },
     documents: {
       importMany: vi.fn(async (paths: string[]) =>
         paths.map((p) => (p === '/b.md' ? fakeDocs.b : fakeDocs.a)),
       ),
-      create: vi.fn(async () => ({ id: 'new', title: 'Untitled', content: '', filePath: '', encoding: 'utf-8', updatedAt: 3, wordCount: 0 })),
+      create: vi.fn(async () => ({
+        id: 'new',
+        title: 'Untitled',
+        content: '',
+        filePath: '',
+        encoding: 'utf-8',
+        updatedAt: 3,
+        wordCount: 0,
+      })),
       get: vi.fn(async (id: string) => fakeDocs[id]),
       eol: vi.fn(async () => '\n'),
       watch: vi.fn(async () => {}),
