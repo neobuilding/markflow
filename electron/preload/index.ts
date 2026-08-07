@@ -7,15 +7,13 @@ const api = {
   documents: {
     list: (folderPath?: string) => ipcRenderer.invoke('documents:list', folderPath),
     get: (id: string) => ipcRenderer.invoke('documents:get', id),
-    create: (
-      params: {
-        title?: string
-        folderPath?: string
-        content?: string
-        ext?: string
-        memoryOnly?: boolean
-      },
-    ) => ipcRenderer.invoke('documents:create', params),
+    create: (params: {
+      title?: string
+      folderPath?: string
+      content?: string
+      ext?: string
+      memoryOnly?: boolean
+    }) => ipcRenderer.invoke('documents:create', params),
     update: (id: string, updates: { title?: string; content?: string }) =>
       ipcRenderer.invoke('documents:update', id, updates),
     delete: (id: string) => ipcRenderer.invoke('documents:delete', id),
@@ -68,7 +66,9 @@ const api = {
     getPathForFile: (file: File): string => {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const electronModule = require('electron') as { webUtils?: { getPathForFile: (f: File) => string } }
+        const electronModule = require('electron') as {
+          webUtils?: { getPathForFile: (f: File) => string }
+        }
         if (electronModule?.webUtils?.getPathForFile) {
           return electronModule.webUtils.getPathForFile(file)
         }
@@ -93,10 +93,6 @@ const api = {
     maximize: () => ipcRenderer.invoke('window:maximize'),
     unmaximize: () => ipcRenderer.invoke('window:unmaximize'),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
-    // Request the main process to focus the window. Renderer-side window.focus() is often a no-op
-    // in Electron; the main process focus() is the reliable way to give the renderer OS focus so
-    // that programmatic editor focus (and thus typing) works after a document switch.
-    focus: () => ipcRenderer.invoke('window:focus'),
   },
 
   // Window state sync: renderer tells main whether editing is allowed,

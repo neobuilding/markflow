@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useMemo, useCallback } from 'react'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
-import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from '@codemirror/commands'
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  isolateHistory,
+} from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { searchKeymap } from '@codemirror/search'
@@ -40,11 +46,9 @@ export function MarkdownEditor({
 
   const debouncedOnChange = useMemo(() => debounce((val: string) => onChange(val), 400), [onChange])
 
-  // Best-effort: ask the main process for OS focus on the renderer, then focus the editor's
-  // contentDOM, retrying across a few animation frames. This is NOT a guaranteed fix — the root
-  // cause (document.hasFocus() stuck false in Electron 43 / Win11) is investigated in
-  // docs.local/troubleshooting-editor-focus.md. A real pointerdown into the editor
-  // (handlePointerDown) is the reliable fallback for gaining OS focus.
+  // Focus the editor's content DOM directly and retry across a few animation frames as a
+  // best-effort to make the editor typeable immediately. A real pointerdown into the editor
+  // (handlePointerDown) remains the reliable fallback for gaining OS focus.
   const requestFocus = useCallback(() => {
     const view = viewRef.current
     if (!view) return
@@ -62,25 +66,7 @@ export function MarkdownEditor({
       }
     }
 
-    // 1) Ask the main process to focus the document (returns diagnostics for debugging).
-    try {
-      const p = window.api?.window?.focus?.()
-      if (p && typeof (p as Promise<unknown>).then === 'function') {
-        ;(p as Promise<unknown>)
-          .then((info: unknown) => {
-            if (import.meta.env.DEV) {
-              // eslint-disable-next-line no-console
-              console.log('[MarkdownEditor] window:focus →', info)
-            }
-          })
-          .catch(() => {})
-      }
-    } catch {
-      /* ignore */
-    }
-
-    // 2) Focus the content DOM immediately, then retry on a few animation frames in case the
-    //    document OS focus only arrives after the main-process call lands.
+    // Focus the content DOM immediately, then retry on a few animation frames.
     focusDom()
     let frames = 0
     const tick = () => {
@@ -100,7 +86,9 @@ export function MarkdownEditor({
   // EditorState.readOnly locked — contenteditable='true' yet typing was hard-blocked (the exact
   // "toolbar says edit mode but you cannot type" symptom after switching files). Reconfiguring them
   // together makes a split state impossible.
-  const readOnlyFacets = (isEditable: boolean): Parameters<typeof editableCompartment.current.of>[0] => [
+  const readOnlyFacets = (
+    isEditable: boolean,
+  ): Parameters<typeof editableCompartment.current.of>[0] => [
     EditorState.readOnly.of(!isEditable),
     EditorView.editable.of(isEditable),
   ]
@@ -198,31 +186,8 @@ export function MarkdownEditor({
 
     document.addEventListener('markdown:insert', handleInsert)
 
-    // DEV-ONLY diagnostic: confirm whether key events actually reach this document and what the
-    // focus state is. Used to isolate the root cause of "can't type after switching files":
-    // the bug shows keystrokes reaching cm-content with document.hasFocus()===false, which means
-    // the browser isn't dispatching input events. See docs.local/troubleshooting-editor-focus.md.
-    let probeKey: ((e: KeyboardEvent) => void) | null = null
-    if (import.meta.env.DEV) {
-      probeKey = (e: KeyboardEvent) => {
-        if (e.key && e.key.length === 1) {
-          // eslint-disable-next-line no-console
-          console.log(
-            '[MarkdownEditor] keydown reached doc:',
-            'key=', e.key,
-            'target=', (e.target as HTMLElement)?.className || (e.target as HTMLElement)?.tagName,
-            'activeElement=', (document.activeElement as HTMLElement)?.className || document.activeElement?.tagName,
-            'document.hasFocus=', document.hasFocus(),
-            'view.hasFocus=', viewRef.current?.hasFocus,
-          )
-        }
-      }
-      window.addEventListener('keydown', probeKey, true)
-    }
-
     return () => {
       document.removeEventListener('markdown:insert', handleInsert)
-      if (probeKey) window.removeEventListener('keydown', probeKey, true)
       scrollSync.unregister('editor')
       view.destroy()
       viewRef.current = null
@@ -243,29 +208,9 @@ export function MarkdownEditor({
     if (editable) {
       // Under Electron a programmatic view.focus() (fired from a store change, e.g. clicking the
       // edit-mode button) is dropped unless the renderer already has OS focus — that's why typing
-      // only worked after Alt-Tab away and back. requestFocus() asks the main process to focus the
-      // window first, making typing work immediately.
+      // only worked after Alt-Tab away and back. requestFocus() focuses the content DOM directly
+      // (with a few animation-frame retries) so typing works immediately when entering edit mode.
       requestFocus()
-      if (import.meta.env.DEV) {
-        // Defer the probe one tick so the (async) main-process focus + contentDOM focus have run
-        // and CodeMirror's focus handler has updated hasFocus.
-        setTimeout(() => {
-          const ae = document.activeElement
-          // Also probe whether EditorState.readOnly is actually locked (a residual split state
-          // would block even programmatic writes) — this distinguishes a hard lock from a pure
-          // hasFocus problem.
-          const ro = view.state.facet(EditorState.readOnly)
-          // eslint-disable-next-line no-console
-          console.log(
-            '[MarkdownEditor] edit-mode focus:',
-            'view.hasFocus=', view.hasFocus,
-            'document.hasFocus=', typeof document !== 'undefined' ? document.hasFocus() : 'n/a',
-            'readOnly=', ro,
-            'activeElement=',
-            (ae as HTMLElement | null)?.className || ae?.tagName || ae,
-          )
-        }, 60)
-      }
     }
   }, [editable])
 
