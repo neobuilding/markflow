@@ -10,6 +10,9 @@ import {
   countWords,
 } from '../documents'
 import iconv from 'iconv-lite'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
+import * as os from 'node:os'
 
 // Helper to build a real GBK buffer for a CJK string.
 function gbk(s: string): Buffer {
@@ -102,7 +105,9 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
 
   it('trusts a high-confidence non-CJK encoding directly (inCjkScope false)', () => {
     // Latin-1 bytes (invalid as utf-8) are detected as iso-8859-1 with high confidence.
-    const r = detectEncoding(Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x20, 0x61, 0x75, 0x20, 0x6c, 0x61, 0x69, 0x74]))
+    const r = detectEncoding(
+      Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x20, 0x61, 0x75, 0x20, 0x6c, 0x61, 0x69, 0x74]),
+    )
     expect(r.enc).toBe('latin1')
     expect(r.confidence).toBeGreaterThan(0.6)
   })
@@ -122,7 +127,10 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
   it('returns utf-8 when the CJK second pass is uncertain (< 0.6)', () => {
     // A buffer of invalid utf-8 bytes that still decodes (leniently) as utf-8 with many replacements:
     // the second pass yields low confidence and falls back to utf-8.
-    const buf = Buffer.concat([Buffer.from([0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87]), Buffer.from('hello')])
+    const buf = Buffer.concat([
+      Buffer.from([0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87]),
+      Buffer.from('hello'),
+    ])
     const r = detectEncoding(buf)
     // Either the detector routes to the < 0.6 fallback (utf-8) or to a non-CJK encoding; in both
     // cases the result is a valid, non-throwing encoding.
@@ -191,9 +199,9 @@ describe('countWords', () => {
 
 describe('readMarkdownText', () => {
   it('reads a file and reports its detected encoding', () => {
-    const { writeFileSync, mkdtempSync } = require('node:fs')
-    const { join } = require('node:path')
-    const { tmpdir } = require('node:os')
+    const { writeFileSync, mkdtempSync } = fs
+    const { join } = path
+    const { tmpdir } = os
     const dir = mkdtempSync(join(tmpdir(), 'mf-rmt-'))
     const p = join(dir, 'a.md')
     writeFileSync(p, '# hello', 'utf-8')

@@ -115,7 +115,10 @@ export function countReplacements(sample: Buffer, encName: string): number {
 // this avoids wrongly overriding high-confidence non-CJK encodings (e.g. Cyrillic windows-1251, ISO-8859-5) with GBK —
 // GBK decoding arbitrary bytes usually yields 0 replacements, making it appear "cleaner" than the real encoding and seizing best.
 const CJK_CANDIDATES = ['utf-8', 'gbk', 'big5', 'shift_jis', 'euc-kr']
-export function cjkSecondPass(sample: Buffer, primary: string): { enc: string; confidence: number } {
+export function cjkSecondPass(
+  sample: Buffer,
+  primary: string,
+): { enc: string; confidence: number } {
   let best = primary
   let bestRep = countReplacements(sample, primary)
   for (const c of CJK_CANDIDATES) {

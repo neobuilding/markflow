@@ -34,7 +34,10 @@ describe('isMac', () => {
   })
 
   it('returns true for a macOS user agent', () => {
-    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (Macintosh)', configurable: true })
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Macintosh)',
+      configurable: true,
+    })
     expect(isMac()).toBe(true)
   })
 
@@ -103,9 +106,45 @@ describe('isInFolder / buildFileTree', () => {
 
   it('nests subfolders and sorts folders before files alphabetically', () => {
     const docs = [
-      { id: '1', title: 'z', folderPath: '/a', filePath: '/a/z.md', content: '', wordCount: 0, isArchived: false, encoding: 'utf-8', encodingConfidence: 1, createdAt: 0, updatedAt: 0 },
-      { id: '2', title: 'a', folderPath: '/a', filePath: '/a/a.md', content: '', wordCount: 0, isArchived: false, encoding: 'utf-8', encodingConfidence: 1, createdAt: 0, updatedAt: 0 },
-      { id: '3', title: 'deep', folderPath: '/a/sub', filePath: '/a/sub/deep.md', content: '', wordCount: 0, isArchived: false, encoding: 'utf-8', encodingConfidence: 1, createdAt: 0, updatedAt: 0 },
+      {
+        id: '1',
+        title: 'z',
+        folderPath: '/a',
+        filePath: '/a/z.md',
+        content: '',
+        wordCount: 0,
+        isArchived: false,
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      {
+        id: '2',
+        title: 'a',
+        folderPath: '/a',
+        filePath: '/a/a.md',
+        content: '',
+        wordCount: 0,
+        isArchived: false,
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      {
+        id: '3',
+        title: 'deep',
+        folderPath: '/a/sub',
+        filePath: '/a/sub/deep.md',
+        content: '',
+        wordCount: 0,
+        isArchived: false,
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      },
     ] as never
     const tree = buildFileTree(docs, '/a')
     // folders first, then alphabetical
@@ -118,8 +157,32 @@ describe('isInFolder / buildFileTree', () => {
 
   it('reuses an existing folder node when multiple docs share a subfolder', () => {
     const docs = [
-      { id: '1', title: 'one', folderPath: '/a/sub', filePath: '/a/sub/one.md', content: '', wordCount: 0, isArchived: false, encoding: 'utf-8', encodingConfidence: 1, createdAt: 0, updatedAt: 0 },
-      { id: '2', title: 'two', folderPath: '/a/sub', filePath: '/a/sub/two.md', content: '', wordCount: 0, isArchived: false, encoding: 'utf-8', encodingConfidence: 1, createdAt: 0, updatedAt: 0 },
+      {
+        id: '1',
+        title: 'one',
+        folderPath: '/a/sub',
+        filePath: '/a/sub/one.md',
+        content: '',
+        wordCount: 0,
+        isArchived: false,
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      {
+        id: '2',
+        title: 'two',
+        folderPath: '/a/sub',
+        filePath: '/a/sub/two.md',
+        content: '',
+        wordCount: 0,
+        isArchived: false,
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      },
     ] as never
     const tree = buildFileTree(docs, '/a')
     const sub = tree.find((n) => n.name === 'sub')
@@ -130,8 +193,32 @@ describe('isInFolder / buildFileTree', () => {
   it('sorts a file before a sibling folder when the file is inserted first (comparator false-branch)', () => {
     const docs = [
       // file at root inserted BEFORE the subfolder -> sort compares (file, folder)
-      { id: '1', title: 'y', folderPath: '/a', filePath: '/a/y.md', content: '', wordCount: 0, isArchived: false, encoding: 'utf-8', encodingConfidence: 1, createdAt: 0, updatedAt: 0 },
-      { id: '2', title: 'sub', folderPath: '/a/sub', filePath: '/a/sub/x.md', content: '', wordCount: 0, isArchived: false, encoding: 'utf-8', encodingConfidence: 1, createdAt: 0, updatedAt: 0 },
+      {
+        id: '1',
+        title: 'y',
+        folderPath: '/a',
+        filePath: '/a/y.md',
+        content: '',
+        wordCount: 0,
+        isArchived: false,
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      {
+        id: '2',
+        title: 'sub',
+        folderPath: '/a/sub',
+        filePath: '/a/sub/x.md',
+        content: '',
+        wordCount: 0,
+        isArchived: false,
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      },
     ] as never
     const tree = buildFileTree(docs, '/a')
     // folders-first sort still wins overall, but the comparator's `a.isFolder ? -1 : 1` false branch (file vs folder) is exercised
@@ -190,8 +277,9 @@ describe('useCreateDocument memory-only contract', () => {
     await act(async () => {
       await result.current.mutateAsync({ title: 'Untitled', content: '' })
     })
-    const createSpy = (window as unknown as { api: { documents: { create: ReturnType<typeof vi.fn> } } }).api
-      .documents.create
+    const createSpy = (
+      window as unknown as { api: { documents: { create: ReturnType<typeof vi.fn> } } }
+    ).api.documents.create
     expect(createSpy).toHaveBeenCalledTimes(1)
     expect(createSpy.mock.calls[0][0]).toMatchObject({ memoryOnly: true })
   })
@@ -206,8 +294,9 @@ describe('useUIStore discards unsaved drafts on close (PLAN §6.5)', () => {
     act(() => {
       useUIStore.getState().closeDocument()
     })
-    const deleteSpy = (window as unknown as { api: { documents: { delete: ReturnType<typeof vi.fn> } } }).api
-      .documents.delete
+    const deleteSpy = (
+      window as unknown as { api: { documents: { delete: ReturnType<typeof vi.fn> } } }
+    ).api.documents.delete
     expect(deleteSpy).toHaveBeenCalledWith('doc-1')
     expect(useUIStore.getState().isNewUnsaved).toBe(false)
     expect(useUIStore.getState().activeDocumentId).toBeNull()
@@ -222,8 +311,9 @@ describe('useUIStore discards unsaved drafts on close (PLAN §6.5)', () => {
     act(() => {
       useUIStore.getState().closeDocument()
     })
-    const deleteSpy = (window as unknown as { api: { documents: { delete: ReturnType<typeof vi.fn> } } }).api
-      .documents.delete
+    const deleteSpy = (
+      window as unknown as { api: { documents: { delete: ReturnType<typeof vi.fn> } } }
+    ).api.documents.delete
     expect(deleteSpy).not.toHaveBeenCalled()
     expect(useUIStore.getState().activeDocumentId).toBeNull()
   })
@@ -239,8 +329,9 @@ describe('useUIStore discards unsaved drafts on close (PLAN §6.5)', () => {
     act(() => {
       useUIStore.getState().closeDocument()
     })
-    const deleteSpy = (window as unknown as { api: { documents: { delete: ReturnType<typeof vi.fn> } } }).api
-      .documents.delete
+    const deleteSpy = (
+      window as unknown as { api: { documents: { delete: ReturnType<typeof vi.fn> } } }
+    ).api.documents.delete
     expect(deleteSpy).not.toHaveBeenCalled()
     expect(useUIStore.getState().activeDocumentId).toBe('doc-3')
   })
@@ -271,20 +362,13 @@ describe('useUIStore discards unsaved drafts on close (PLAN §6.5)', () => {
 })
 
 // ─── utils.ts pure helpers (no React) ──────────────────────────────────────
-import {
-  cn,
-  formatDate,
-  debounce,
-  dirName,
-  formatFileSize,
-  formatDateTime,
-} from './utils'
+import { cn, formatDate, debounce, dirName, formatFileSize, formatDateTime } from './utils'
 
 describe('cn', () => {
   it('merges class names and resolves tailwind conflicts (last wins)', () => {
     expect(cn('a', 'b')).toBe('a b')
     expect(cn('p-2', 'p-4')).toBe('p-4')
-    expect(cn(false && 'x', null, undefined, 'y')).toBe('y')
+    expect(cn(null, undefined, 'y')).toBe('y')
   })
 })
 
@@ -418,7 +502,11 @@ describe('buildFileTree — nested folders', () => {
   })
 
   it('sorts folders before files and alphabetically within a level', () => {
-    const docs = [makeDoc('z', '/a/zeta.md'), makeDoc('m', '/a/mango.md'), makeDoc('f', '/a/folder/x.md')]
+    const docs = [
+      makeDoc('z', '/a/zeta.md'),
+      makeDoc('m', '/a/mango.md'),
+      makeDoc('f', '/a/folder/x.md'),
+    ]
     const tree = buildFileTree(docs, '/a')
     // folders first: "folder" before the two files
     expect(tree[0].isFolder).toBe(true)

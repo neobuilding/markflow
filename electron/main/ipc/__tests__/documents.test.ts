@@ -17,7 +17,6 @@ const fakeDb = {
     const isInsert = /INSERT INTO documents/.test(sql)
     const isUpdate = /UPDATE documents/.test(sql)
     const isDelete = /DELETE FROM documents/.test(sql)
-    const byId = /WHERE id = \?/.test(sql) && !/file_path = \?/.test(sql)
     const byPath = /WHERE file_path = \?/.test(sql)
     return {
       get(...args: any[]) {

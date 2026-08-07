@@ -99,11 +99,15 @@ describe('MarkdownEditor — read-only/edit facets stay in sync across switches'
 
     // Switch A->B (editable resets to false)
     await act(async () => {
-      root.render(<MarkdownEditor content="# A (stale)" onChange={() => {}} editable={false} docId="b" />)
+      root.render(
+        <MarkdownEditor content="# A (stale)" onChange={() => {}} editable={false} docId="b" />,
+      )
     })
     await flush()
     await act(async () => {
-      root.render(<MarkdownEditor content="# B content" onChange={() => {}} editable={false} docId="b" />)
+      root.render(
+        <MarkdownEditor content="# B content" onChange={() => {}} editable={false} docId="b" />,
+      )
     })
     await flush()
     checkRead('B (read-only)')
@@ -111,18 +115,29 @@ describe('MarkdownEditor — read-only/edit facets stay in sync across switches'
 
     // Edit B
     await act(async () => {
-      root.render(<MarkdownEditor content="# B content" onChange={() => {}} editable={true} docId="b" />)
+      root.render(
+        <MarkdownEditor content="# B content" onChange={() => {}} editable={true} docId="b" />,
+      )
     })
     await flush()
     checkEdit('B (edit)')
 
     // Switch B->C (2nd edit-mode switch)
     await act(async () => {
-      root.render(<MarkdownEditor content="# B content (stale)" onChange={() => {}} editable={false} docId="c" />)
+      root.render(
+        <MarkdownEditor
+          content="# B content (stale)"
+          onChange={() => {}}
+          editable={false}
+          docId="c"
+        />,
+      )
     })
     await flush()
     await act(async () => {
-      root.render(<MarkdownEditor content="# C content" onChange={() => {}} editable={false} docId="c" />)
+      root.render(
+        <MarkdownEditor content="# C content" onChange={() => {}} editable={false} docId="c" />,
+      )
     })
     await flush()
     checkRead('C (read-only)')
@@ -130,7 +145,9 @@ describe('MarkdownEditor — read-only/edit facets stay in sync across switches'
 
     // Edit C — this is where the bug recurred
     await act(async () => {
-      root.render(<MarkdownEditor content="# C content" onChange={() => {}} editable={true} docId="c" />)
+      root.render(
+        <MarkdownEditor content="# C content" onChange={() => {}} editable={true} docId="c" />,
+      )
     })
     await flush()
     checkEdit('C (edit)') // MUST be editable

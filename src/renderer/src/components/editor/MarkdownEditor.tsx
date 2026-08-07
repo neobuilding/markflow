@@ -212,7 +212,7 @@ export function MarkdownEditor({
       // (with a few animation-frame retries) so typing works immediately when entering edit mode.
       requestFocus()
     }
-  }, [editable])
+  }, [editable, requestFocus])
 
   // Sync external content changes (e.g., doc switch / reload / external file change)
   useEffect(() => {

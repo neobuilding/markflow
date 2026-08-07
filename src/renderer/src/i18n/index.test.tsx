@@ -11,7 +11,6 @@ import {
   t,
   useT,
   FALLBACK_LOCALE,
-  type Locale,
 } from './index'
 import { useUIStore } from '../store/ui'
 

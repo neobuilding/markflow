@@ -89,7 +89,7 @@ const doc = {
 describe('useDocuments list/detail queries', () => {
   it('useDocuments queries the list with the folder key', () => {
     api.documents.list.mockResolvedValue([doc])
-    const { result } = renderHook(() => useDocuments('/f'))
+    renderHook(() => useDocuments('/f'))
     expect(api.documents.list).toHaveBeenCalledWith('/f')
   })
 
@@ -101,7 +101,7 @@ describe('useDocuments list/detail queries', () => {
 
   it('useDocument is disabled when id is null', () => {
     api.documents.get.mockResolvedValue(doc)
-    const { result } = renderHook(() => useDocument(null))
+    renderHook(() => useDocument(null))
     expect(api.documents.get).not.toHaveBeenCalled()
   })
 
@@ -123,9 +123,7 @@ describe('useCreateDocument', () => {
     await act(async () => {
       await result.current.mutateAsync({ title: 'T', content: 'c' })
     })
-    expect(api.documents.create).toHaveBeenCalledWith(
-      expect.objectContaining({ memoryOnly: true }),
-    )
+    expect(api.documents.create).toHaveBeenCalledWith(expect.objectContaining({ memoryOnly: true }))
     // list cache invalidated
     expect(client.getQueryData(['documents'])).toBeUndefined()
   })
@@ -230,13 +228,13 @@ describe('mutation onSuccess null guards (if (data))', () => {
 describe('useFileStat', () => {
   it('is disabled when path is null', () => {
     api.documents.stat.mockResolvedValue({ exists: true })
-    const { result } = renderHook(() => useFileStat(null))
+    renderHook(() => useFileStat(null))
     expect(api.documents.stat).not.toHaveBeenCalled()
   })
 
   it('queries stat when path present', () => {
     api.documents.stat.mockResolvedValue({ exists: true, size: 1 })
-    const { result } = renderHook(() => useFileStat('/a/t.md'))
+    renderHook(() => useFileStat('/a/t.md'))
     expect(api.documents.stat).toHaveBeenCalledWith('/a/t.md')
   })
 })
@@ -271,7 +269,6 @@ describe('useImportDocument / useImportDocuments', () => {
 
   it('does NOT invalidate the list when batch import returns empty', async () => {
     api.documents.importMany.mockResolvedValue([])
-    const invalidate = vi.fn()
     const client = new QueryClient()
     const spy = vi.spyOn(client, 'invalidateQueries')
     const { result } = renderHookWith(() => useImportDocuments(), client)

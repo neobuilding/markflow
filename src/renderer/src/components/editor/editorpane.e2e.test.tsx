@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { describe, it, expect } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
@@ -128,7 +128,15 @@ describe('EditorPane-style editing across doc switches', () => {
     // EditorPane mounts a NEW doc key, but localContent is still the PREVIOUS doc's content for
     // one render (useLocalDocument updates async). So the editor is created with stale content.
     await act(async () => {
-      root.render(<MarkdownEditor key="b" content="# A (stale)" onChange={() => {}} editable={false} docId="b" />)
+      root.render(
+        <MarkdownEditor
+          key="b"
+          content="# A (stale)"
+          onChange={() => {}}
+          editable={false}
+          docId="b"
+        />,
+      )
     })
     await flush()
     expect(container.querySelector('.cm-content')?.textContent).toBe('# A (stale)')
@@ -137,14 +145,24 @@ describe('EditorPane-style editing across doc switches', () => {
     // content prop changes -> content effect runs. Editor is read-only here, so the write must not
     // be rejected and must not leave isApplyingExternal stuck.
     await act(async () => {
-      root.render(<MarkdownEditor key="b" content="# B real" onChange={() => {}} editable={false} docId="b" />)
+      root.render(
+        <MarkdownEditor
+          key="b"
+          content="# B real"
+          onChange={() => {}}
+          editable={false}
+          docId="b"
+        />,
+      )
     })
     await flush()
     expect(container.querySelector('.cm-content')?.textContent).toBe('# B real')
 
     // Now switch to edit mode
     await act(async () => {
-      root.render(<MarkdownEditor key="b" content="# B real" onChange={() => {}} editable={true} docId="b" />)
+      root.render(
+        <MarkdownEditor key="b" content="# B real" onChange={() => {}} editable={true} docId="b" />,
+      )
     })
     await flush()
     expect(ce(container)).toBe('true')
@@ -205,11 +223,15 @@ describe('EditorPane-style editing across doc switches', () => {
 
     // Switch to B: editable resets to false. Content arrives one render later (stale then real).
     await act(async () => {
-      root.render(<MarkdownEditor content="# A (stale)" onChange={() => {}} editable={false} docId="b" />)
+      root.render(
+        <MarkdownEditor content="# A (stale)" onChange={() => {}} editable={false} docId="b" />,
+      )
     })
     await flush()
     await act(async () => {
-      root.render(<MarkdownEditor content="# B content" onChange={() => {}} editable={false} docId="b" />)
+      root.render(
+        <MarkdownEditor content="# B content" onChange={() => {}} editable={false} docId="b" />,
+      )
     })
     await flush()
     expect(ce(container)).toBe('false')
@@ -217,7 +239,9 @@ describe('EditorPane-style editing across doc switches', () => {
 
     // Click edit on B -> editable
     await act(async () => {
-      root.render(<MarkdownEditor content="# B content" onChange={() => {}} editable={true} docId="b" />)
+      root.render(
+        <MarkdownEditor content="# B content" onChange={() => {}} editable={true} docId="b" />,
+      )
     })
     await flush()
     expect(ce(container)).toBe('true')
@@ -225,11 +249,20 @@ describe('EditorPane-style editing across doc switches', () => {
     // --- SECOND editing-mode switch: B(edit) -> C ---
     // User was editing B, now switches to C (editable resets to false), content async.
     await act(async () => {
-      root.render(<MarkdownEditor content="# B content (stale)" onChange={() => {}} editable={false} docId="c" />)
+      root.render(
+        <MarkdownEditor
+          content="# B content (stale)"
+          onChange={() => {}}
+          editable={false}
+          docId="c"
+        />,
+      )
     })
     await flush()
     await act(async () => {
-      root.render(<MarkdownEditor content="# C content" onChange={() => {}} editable={false} docId="c" />)
+      root.render(
+        <MarkdownEditor content="# C content" onChange={() => {}} editable={false} docId="c" />,
+      )
     })
     await flush()
     expect(ce(container)).toBe('false')
@@ -237,7 +270,9 @@ describe('EditorPane-style editing across doc switches', () => {
 
     // Click edit on C -> MUST be editable (this is where the bug recurs on the 2nd switch)
     await act(async () => {
-      root.render(<MarkdownEditor content="# C content" onChange={() => {}} editable={true} docId="c" />)
+      root.render(
+        <MarkdownEditor content="# C content" onChange={() => {}} editable={true} docId="c" />,
+      )
     })
     await flush()
     expect(ce(container)).toBe('true')

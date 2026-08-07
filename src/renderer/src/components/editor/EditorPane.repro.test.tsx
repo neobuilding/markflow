@@ -14,10 +14,45 @@ vi.mock('../preview/MarkdownPreview', () => ({
   MarkdownPreview: () => <div data-testid="preview-stub" />,
 }))
 
-const docs: Record<string, { id: string; title: string; content: string; filePath: string; encoding: string; updatedAt: number; wordCount: number }> = {
-  a: { id: 'a', title: 'A', content: '# A content', filePath: '/a.md', encoding: 'utf-8', updatedAt: 1, wordCount: 1 },
-  b: { id: 'b', title: 'B', content: '# B content', filePath: '/b.md', encoding: 'utf-8', updatedAt: 2, wordCount: 1 },
-  c: { id: 'c', title: 'C', content: '# C content', filePath: '/c.md', encoding: 'utf-8', updatedAt: 3, wordCount: 1 },
+const docs: Record<
+  string,
+  {
+    id: string
+    title: string
+    content: string
+    filePath: string
+    encoding: string
+    updatedAt: number
+    wordCount: number
+  }
+> = {
+  a: {
+    id: 'a',
+    title: 'A',
+    content: '# A content',
+    filePath: '/a.md',
+    encoding: 'utf-8',
+    updatedAt: 1,
+    wordCount: 1,
+  },
+  b: {
+    id: 'b',
+    title: 'B',
+    content: '# B content',
+    filePath: '/b.md',
+    encoding: 'utf-8',
+    updatedAt: 2,
+    wordCount: 1,
+  },
+  c: {
+    id: 'c',
+    title: 'C',
+    content: '# C content',
+    filePath: '/c.md',
+    encoding: 'utf-8',
+    updatedAt: 3,
+    wordCount: 1,
+  },
 }
 
 function flush(): Promise<void> {
@@ -32,7 +67,9 @@ function mount(): { container: HTMLElement; root: ReturnType<typeof createRoot> 
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
   act(() => {
     root.render(
       <QueryClientProvider client={qc}>
@@ -54,12 +91,19 @@ beforeEach(() => {
         watch: vi.fn(async () => {}),
         unwatch: vi.fn(async () => {}),
         eol: vi.fn(async () => '\n'),
-        update: vi.fn(async (id: string, u: { title?: string; content?: string }) => ({ ...docs[id], ...u })),
+        update: vi.fn(async (id: string, u: { title?: string; content?: string }) => ({
+          ...docs[id],
+          ...u,
+        })),
         list: vi.fn(async () => Object.values(docs)),
         create: vi.fn(async () => ({ ...docs.a, id: 'new' })),
         importMany: vi.fn(async (p: string[]) => p.map((x) => docs[x.replace('/', '')] ?? docs.a)),
         reload: vi.fn(async (id: string) => docs[id] ?? null),
-        saveAs: vi.fn(async (id: string, fp: string, u: { title?: string; content?: string }) => ({ ...docs[id], ...u, filePath: fp })),
+        saveAs: vi.fn(async (id: string, fp: string, u: { title?: string; content?: string }) => ({
+          ...docs[id],
+          ...u,
+          filePath: fp,
+        })),
         setEncoding: vi.fn(async (id: string, e: string) => ({ ...docs[id], encoding: e })),
         delete: vi.fn(async () => {}),
         stat: vi.fn(async () => ({ exists: true, size: 1, createdAt: 1, updatedAt: 1 })),

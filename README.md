@@ -149,7 +149,7 @@ markflow/
 | `Ctrl/Cmd + \`         | Toggle sidebar                                |
 | `Ctrl/Cmd + Shift + P` | Toggle preview mode (edit/preview/split)      |
 | `Ctrl/Cmd + W`         | Close file (keep the opened folder & sidebar) |
-| `Ctrl/Cmd + Shift + W` | Close workspace (close current file & folder)|
+| `Ctrl/Cmd + Shift + W` | Close workspace (close current file & folder) |
 | `Ctrl/Cmd + O`         | Open external `.md` file                      |
 | `Ctrl/Cmd + Shift + O` | Open folder (batch import `.md` files)        |
 | `Ctrl/Cmd + S`         | Save (manual; no auto-save)                   |
