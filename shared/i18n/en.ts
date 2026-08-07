@@ -140,6 +140,8 @@ export const en = {
   'app.unsavedSwitch': 'You have unsaved changes. Discard them and switch files?',
   'app.unsavedCloseWorkspace': 'You have unsaved changes. Discard them and close the workspace?',
   'app.unsavedClose': 'You have unsaved changes. Discard them?',
+  'app.confirmDiscard': 'Discard',
+  'app.confirmKeep': 'Keep editing',
   'app.saveFailed': 'Failed to save the file.',
   'app.fileGone': 'The file no longer exists on disk.',
   'app.printNotReady':

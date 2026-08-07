@@ -33,9 +33,26 @@ export default function App(): React.ReactElement {
       return false
     }
     if (st.exporting) return false
-    if (st.dirty && !window.confirm(t('app.unsavedCloseWorkspace'))) return false
-    closeWorkspace()
-    return true
+    if (!st.dirty) {
+      closeWorkspace()
+      return true
+    }
+    // Dirty: keep this synchronous contract (before-quit needs an immediate boolean) by
+    // returning false and firing an async app-modal confirm instead of blocking. If the user
+    // accepts, close the workspace and tell the main process it is safe to quit. Replaces the
+    // old window.confirm, whose OS-modal close triggered a window blur that broke typing.
+    void window.api.dialog
+      .confirm({
+        message: t('app.unsavedCloseWorkspace'),
+        okText: t('app.confirmDiscard'),
+        cancelText: t('app.confirmKeep'),
+      })
+      .then((ok: boolean) => {
+        if (!ok) return
+        closeWorkspace()
+        window.api.app.allowQuit()
+      })
+    return false
   }, [closeWorkspace])
 
   useEffect(() => {
@@ -71,7 +88,7 @@ export default function App(): React.ReactElement {
     const removeClose = window.api.onMenuEvent('close-workspace', () => {
       tryCloseWorkspace()
     })
-    const removeCloseFile = window.api.onMenuEvent('close-file', () => {
+    const removeCloseFile = window.api.onMenuEvent('close-file', async () => {
       const st = useUIStore.getState()
       // When the export dialog is open, Cmd/Ctrl+W should close the dialog rather than the file.
       if (st.exportOpen) {
@@ -80,7 +97,14 @@ export default function App(): React.ReactElement {
       }
       // While writing a file, fully ignore the close-file request so no path loses the workspace.
       if (st.exporting) return
-      if (st.dirty && !window.confirm(t('app.unsavedClose'))) return
+      if (st.dirty) {
+        const ok = await window.api.dialog.confirm({
+          message: t('app.unsavedClose'),
+          okText: t('app.confirmDiscard'),
+          cancelText: t('app.confirmKeep'),
+        })
+        if (!ok) return
+      }
       st.closeDocument()
     })
     const removeFileDetails = window.api.onMenuEvent('file-details', () => {
@@ -220,16 +244,23 @@ export default function App(): React.ReactElement {
     }
   }, [])
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     // Don't silently discard unsaved work when a file is dropped onto the window.
-    if (useUIStore.getState().dirty && !window.confirm(t('app.unsavedClose'))) return
+    if (useUIStore.getState().dirty) {
+      const ok = await window.api.dialog.confirm({
+        message: t('app.unsavedClose'),
+        okText: t('app.confirmDiscard'),
+        cancelText: t('app.confirmKeep'),
+      })
+      if (!ok) return
+    }
     const paths = Array.from(e.dataTransfer.files)
       .map((f) => window.api.files.getPathForFile(f))
       .filter((p): p is string => typeof p === 'string' && p.length > 0)
     if (paths.length > 0) openPathsMutRef.current.mutate(paths)
-  }, [t])
+  }, [])
 
   return (
     <TooltipProvider delayDuration={400}>

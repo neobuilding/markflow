@@ -716,6 +716,28 @@ if (!shouldStart) {
       return result.canceled ? null : (result.filePath ?? null)
     })
 
+    // App-modal confirm box used by the renderer to replace window.confirm. Being app-modal (not
+    // OS-modal like window.confirm), Electron returns focus to the renderer after it closes, so it
+    // does not trigger the OS window-blur that window.confirm does — which is what previously left
+    // document.hasFocus() stuck false and broke typing after switching dirty files.
+    ipcMain.handle(
+      'dialog:confirm',
+      async (
+        _event,
+        opts: { message: string; detail?: string; okText?: string; cancelText?: string },
+      ): Promise<boolean> => {
+        const result = await dialog.showMessageBox({
+          type: 'question',
+          buttons: [opts.cancelText ?? 'Cancel', opts.okText ?? 'OK'],
+          defaultId: 1,
+          cancelId: 0,
+          message: opts.message,
+          detail: opts.detail,
+        })
+        return result.response === 1
+      },
+    )
+
     // Let the renderer proactively open an "Export as HTML" dialog (R7) with .html filter by default.
     ipcMain.handle('dialog:save-html', async (_event, defaultPath?: string) => {
       const result = await dialog.showSaveDialog({

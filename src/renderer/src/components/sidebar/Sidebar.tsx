@@ -11,7 +11,15 @@ import {
   X,
   GripVertical,
 } from 'lucide-react'
-import { cn, formatDate, isInFolder, buildFileTree, isMac, baseName, type FileTreeNode } from '../../lib/utils'
+import {
+  cn,
+  formatDate,
+  isInFolder,
+  buildFileTree,
+  isMac,
+  baseName,
+  type FileTreeNode,
+} from '../../lib/utils'
 import { splitMemoryOnlyDocs, memoryOnlyLeaf } from '../../lib/sidebarDrafts'
 import { useT } from '../../i18n'
 import { useUIStore } from '../../store/ui'
@@ -98,8 +106,15 @@ export function Sidebar(): React.ReactElement | null {
 
   // Document select / delete / star / details: reused by the doc tree (including subfolders)
   const handleSelectDoc = useCallback(
-    (doc: Document) => {
-      if (useUIStore.getState().dirty && !window.confirm(t('app.unsavedSwitch'))) return
+    async (doc: Document) => {
+      if (useUIStore.getState().dirty) {
+        const ok = await window.api.dialog.confirm({
+          message: t('app.unsavedSwitch'),
+          okText: t('app.confirmDiscard'),
+          cancelText: t('app.confirmKeep'),
+        })
+        if (!ok) return
+      }
       setActiveDocumentId(doc.id)
     },
     [setActiveDocumentId, t],
@@ -245,12 +260,15 @@ export function Sidebar(): React.ReactElement | null {
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6"
-                onClick={() => {
-                  if (
-                    useUIStore.getState().dirty &&
-                    !window.confirm(t('app.unsavedCloseWorkspace'))
-                  )
-                    return
+                onClick={async () => {
+                  if (useUIStore.getState().dirty) {
+                    const ok = await window.api.dialog.confirm({
+                      message: t('app.unsavedCloseWorkspace'),
+                      okText: t('app.confirmDiscard'),
+                      cancelText: t('app.confirmKeep'),
+                    })
+                    if (!ok) return
+                  }
                   closeWorkspace()
                 }}
               >

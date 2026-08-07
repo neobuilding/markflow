@@ -191,8 +191,15 @@ export function EditorPane(): React.ReactElement {
   }, [reloadMut, markSaved, t])
 
   // Close button: confirm first if there are unsaved changes
-  const handleClose = useCallback(() => {
-    if (useUIStore.getState().dirty && !window.confirm(t('app.unsavedClose'))) return
+  const handleClose = useCallback(async () => {
+    if (useUIStore.getState().dirty) {
+      const ok = await window.api.dialog.confirm({
+        message: t('app.unsavedClose'),
+        okText: t('app.confirmDiscard'),
+        cancelText: t('app.confirmKeep'),
+      })
+      if (!ok) return
+    }
     closeDocument()
   }, [closeDocument, t])
 

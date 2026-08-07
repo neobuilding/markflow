@@ -135,6 +135,8 @@ export const zhCN: Record<TranslationKey, string> = {
   'app.unsavedSwitch': '你有未保存的更改。要丢弃并切换文件吗？',
   'app.unsavedCloseWorkspace': '你有未保存的更改。要丢弃并关闭工作区吗？',
   'app.unsavedClose': '你有未保存的更改。要丢弃吗？',
+  'app.confirmDiscard': '丢弃',
+  'app.confirmKeep': '继续编辑',
   'app.saveFailed': '保存文件失败。',
   'app.fileGone': '该文件在磁盘上已不存在。',
   'app.printNotReady': '预览尚未就绪。请先切换到预览或分屏视图。',

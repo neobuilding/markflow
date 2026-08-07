@@ -81,6 +81,13 @@ export interface Api {
     openFolderPath: () => Promise<string | null>
     saveFile: (defaultPath?: string) => Promise<string | null>
     saveHtmlFile: (defaultPath?: string) => Promise<string | null>
+    // App-modal confirm box (replaces window.confirm). Returns true when the user accepts.
+    confirm: (opts: {
+      message: string
+      detail?: string
+      okText?: string
+      cancelText?: string
+    }) => Promise<boolean>
   }
   window: {
     maximize: () => Promise<void>
