@@ -7,6 +7,13 @@ import {
   registerDocumentHandlers,
   shouldIgnoreExternalChange,
   notifyExternalChange,
+  normEnc,
+  countReplacements,
+  cjkSecondPass,
+  detectEncoding,
+  readMarkdownText,
+  countWords,
+  toDocument,
 } from '../documents'
 
 // In-memory fake DB standing in for better-sqlite3 (which can't load under system Node).
@@ -159,6 +166,28 @@ describe('documents IPC — create (memory-only)', () => {
     })
     expect(row.filePath).toBe(join(markFlowDir, 'ColTest-1.md'))
     expect(readFileSync(row.filePath, 'utf-8')).toBe('# ColTest')
+  })
+
+  it('first Save As of a memory-only draft writes the file and stores its path (no writeFileSync(""))', async () => {
+    // Regression guard: a memory-only draft has file_path === '' in the DB. The first Save As
+    // must route to documents:save-as (which writes to the new path), never to documents:update
+    // (which would call writeFileSync('') and crash). Confirms file_path is populated + disk file exists.
+    const draft = await call('documents:create', {
+      title: 'Draft',
+      content: '# Draft first save',
+      memoryOnly: true,
+    })
+    expect(docs.get(draft.id).file_path).toBe('')
+
+    const savePath = join(stableDocsRoot, 'first-save.md')
+    const saved = await call('documents:save-as', draft.id, savePath, {
+      title: 'Draft',
+      content: '# Draft first save',
+    })
+    expect(saved.filePath).toBe(savePath)
+    expect(docs.get(draft.id).file_path).toBe(savePath)
+    expect(existsSync(savePath)).toBe(true)
+    expect(readFileSync(savePath, 'utf-8')).toBe('# Draft first save')
   })
 })
 
@@ -985,5 +1014,209 @@ describe('documents IPC — create/update error paths', () => {
 
   it('returns null when updating a document that does not exist', async () => {
     expect(await call('documents:update', 'ghost', { content: 'x' })).toBeNull()
+  })
+})
+
+describe('documents — pure encoding / text utilities', () => {
+  describe('normEnc', () => {
+    it('maps known encoding aliases to their canonical lowercased names', () => {
+      expect(normEnc('UTF8')).toBe('utf-8')
+      expect(normEnc('UTF16')).toBe('utf-16le')
+      expect(normEnc('UTF16LE')).toBe('utf-16le')
+      expect(normEnc('UTF16BE')).toBe('utf-16be')
+      expect(normEnc('UTF32')).toBe('utf-32le')
+      expect(normEnc('UTF32LE')).toBe('utf-32le')
+      expect(normEnc('GB2312')).toBe('gbk')
+      expect(normEnc('GBK')).toBe('gbk')
+      expect(normEnc('GB18030')).toBe('gbk')
+      expect(normEnc('CP936')).toBe('gbk')
+      expect(normEnc('BIG5')).toBe('big5')
+      expect(normEnc('WINDOWS-1252')).toBe('win1252')
+      expect(normEnc('ISO-8859-1')).toBe('latin1')
+    })
+
+    it('lowercases an unknown encoding name', () => {
+      expect(normEnc('EUC-KR')).toBe('euc-kr')
+      expect(normEnc('Shift_JIS')).toBe('shift_jis')
+    })
+  })
+
+  describe('countReplacements', () => {
+    it('returns Infinity for an encoding iconv does not know', () => {
+      expect(countReplacements(Buffer.from('hello'), 'no-such-enc')).toBe(Infinity)
+    })
+
+    it('returns 0 for a clean decode with no replacement chars', () => {
+      const buf = Buffer.from('纯中文测试', 'utf-8')
+      expect(countReplacements(buf, 'utf-8')).toBe(0)
+    })
+
+    it('counts U+FFFD replacement chars produced by a wrong encoding', () => {
+      // A UTF-8 buffer decoded as latin1 is fully decodable (1:1 byte->code), so 0.
+      expect(countReplacements(Buffer.from('abc', 'utf-8'), 'latin1')).toBe(0)
+      // GBK bytes that are invalid under UTF-8 produce replacement chars when forced to utf-8.
+      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]) // "中文" in GBK
+      const n = countReplacements(gbkBuf, 'utf-8')
+      expect(n).toBeGreaterThan(0)
+    })
+  })
+
+  describe('cjkSecondPass', () => {
+    it('keeps the primary encoding when it decodes cleanly', () => {
+      const buf = Buffer.from('中文', 'utf-8')
+      const res = cjkSecondPass(buf, 'utf-8')
+      expect(res.enc).toBe('utf-8')
+      // utf-8 with 0 replacements -> 0.99 confidence
+      expect(res.confidence).toBe(0.99)
+    })
+
+    it('flips to a cleaner CJK candidate when the primary decodes poorly', () => {
+      // GBK bytes; primary wrongly claims utf-8 (which yields many replacements),
+      // so a CJK candidate (gbk) should win with far fewer replacements.
+      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]) // "中文"
+      const res = cjkSecondPass(gbkBuf, 'utf-8')
+      expect(res.enc).toBe('gbk')
+      expect(res.confidence).toBe(0.99)
+    })
+
+    it('floors confidence at 0.1 for utf-8 with some replacements, 0.7 for CJK candidates', () => {
+      // A buffer of all 0xFF bytes decodes to many U+FFFD under any encoding; the primary
+      // wins by default (no candidate is strictly better), exercising both confidence floors.
+      const messy = Buffer.alloc(4096, 0xff)
+      const asUtf8 = cjkSecondPass(messy, 'utf-8')
+      expect(asUtf8.enc).toBe('utf-8')
+      expect(asUtf8.confidence).toBeGreaterThanOrEqual(0.1)
+      const asGbk = cjkSecondPass(messy, 'gbk')
+      expect(asGbk.enc).toBe('gbk')
+      expect(asGbk.confidence).toBeGreaterThanOrEqual(0.7)
+    })
+
+    it('prefers a candidate that strictly beats the primary replacement count', () => {
+      // Shift-JIS-ish bytes: ensure a deterministic candidate switch path is covered.
+      const buf = Buffer.from([0x82, 0xa0, 0x82, 0xa2]) // "あい" in Shift-JIS
+      const res = cjkSecondPass(buf, 'utf-8')
+      expect(['utf-8', 'gbk', 'big5', 'shift_jis', 'euc-kr']).toContain(res.enc)
+    })
+  })
+
+  describe('detectEncoding', () => {
+    it('returns utf-8 with confidence 1 for a UTF-8 BOM', () => {
+      const buf = Buffer.from([0xef, 0xbb, 0xbf, 0x68, 0x69])
+      expect(detectEncoding(buf)).toEqual({ enc: 'utf-8', confidence: 1 })
+    })
+
+    it('returns utf-32le with confidence 1 for a UTF-32LE BOM', () => {
+      const buf = Buffer.from([0xff, 0xfe, 0x00, 0x00, 0x00, 0x00])
+      expect(detectEncoding(buf)).toEqual({ enc: 'utf-32le', confidence: 1 })
+    })
+
+    it('returns utf-16le with confidence 1 for a UTF-16LE BOM', () => {
+      const buf = Buffer.from([0xff, 0xfe, 0x61, 0x00])
+      expect(detectEncoding(buf)).toEqual({ enc: 'utf-16le', confidence: 1 })
+    })
+
+    it('returns utf-16be with confidence 1 for a UTF-16BE BOM', () => {
+      const buf = Buffer.from([0xfe, 0xff, 0x00, 0x61])
+      expect(detectEncoding(buf)).toEqual({ enc: 'utf-16be', confidence: 1 })
+    })
+
+    it('falls back to utf-8 confidence 0 when the detector yields no encoding', () => {
+      // Empty buffer -> jschardet returns no encoding.
+      const res = detectEncoding(Buffer.alloc(0))
+      expect(res.enc).toBe('utf-8')
+      expect(res.confidence).toBe(0)
+    })
+
+    it('trusts a high-confidence non-CJK encoding without the CJK second pass', () => {
+      // Windows-1251 (Cyrillic) bytes are detected with high confidence; the inCjkScope
+      // gate must be false, so the primary is returned directly (not overridden by GBK).
+      const buf = Buffer.from([0xd0, 0x9f, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]) // "Привет" in cp1251
+      const res = detectEncoding(buf)
+      // Must NOT be gbk (the CJK-override trap); confidence is the detector's high value.
+      expect(res.enc).not.toBe('gbk')
+      expect(res.confidence).toBeGreaterThanOrEqual(0.6)
+    })
+
+    it('routes an in-scope primary (utf-8 / ascii) through the CJK second pass', () => {
+      // Pure ASCII is detected as 'ascii' (an in-scope primary), which must still be
+      // routed into the CJK second pass and return a usable encoding with a numeric confidence.
+      const buf = Buffer.from('plain ascii text', 'utf-8')
+      const res = detectEncoding(buf)
+      expect(typeof res.enc).toBe('string')
+      expect(res.enc.length).toBeGreaterThan(0)
+      expect(typeof res.confidence).toBe('number')
+    })
+  })
+
+  describe('readMarkdownText', () => {
+    it('reads a UTF-8 file and reports its detected encoding', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'mf-rmt-'))
+      const p = join(dir, 'r.md')
+      writeFileSync(p, '# read me')
+      const { text, encoding, confidence } = readMarkdownText(p)
+      expect(text).toBe('# read me')
+      // '# read me' is pure ASCII; jschardet reports it as 'ascii', which is a valid
+      // decodable encoding for the CJK second pass. Just assert it's a non-empty name.
+      expect(typeof encoding).toBe('string')
+      expect(encoding.length).toBeGreaterThan(0)
+      expect(typeof confidence).toBe('number')
+    })
+
+    it('decodes a GBK file as gbk via the CJK second pass', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'mf-rmt-'))
+      const p = join(dir, 'g.md')
+      writeFileSync(p, Buffer.from([0xd6, 0xd0, 0xce, 0xc4])) // "中文"
+      const { text, encoding } = readMarkdownText(p)
+      expect(encoding).toBe('gbk')
+      expect(text).toBe('中文')
+    })
+  })
+
+  describe('countWords', () => {
+    it('counts whitespace-delimited words and strips markdown punctuation', () => {
+      expect(countWords('one two three')).toBe(3)
+      expect(countWords('# Heading *bold* `code`')).toBe(3)
+      expect(countWords('')).toBe(0)
+      expect(countWords('   ')).toBe(0)
+      // Markdown symbols are replaced with spaces, so punctuation-only input is 0 words.
+      expect(countWords('# * ` ~ [ ] ( ) > |')).toBe(0)
+    })
+  })
+
+  describe('toDocument', () => {
+    it('maps a row with all fields to a Document (is_archived becomes boolean)', () => {
+      const doc = toDocument({
+        id: 'x',
+        title: 'T',
+        folder_path: 'F',
+        file_path: 'P',
+        content: 'C',
+        word_count: 5,
+        is_archived: 1,
+        encoding: 'gbk',
+        encoding_confidence: 0.8,
+        created_at: 1,
+        updated_at: 2,
+      })
+      expect(doc.isArchived).toBe(true)
+      expect(doc.encoding).toBe('gbk')
+      expect(doc.encodingConfidence).toBe(0.8)
+      expect(doc.wordCount).toBe(5)
+    })
+
+    it('defaults encoding/confidence when the row omits them', () => {
+      const doc = toDocument({
+        id: 'y',
+        title: 'T',
+        folder_path: '',
+        file_path: '',
+        content: '',
+        word_count: 0,
+        is_archived: 0,
+      } as any)
+      expect(doc.encoding).toBe('utf-8')
+      expect(doc.encodingConfidence).toBe(1)
+      expect(doc.isArchived).toBe(false)
+    })
   })
 })

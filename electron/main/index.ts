@@ -886,6 +886,11 @@ app.on('before-quit', (event) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('app:request-quit')
     event.preventDefault()
+    // Safety net: if the renderer never replies (crashed / detached), force quit
+    // after a grace period so the app can never get stuck un-exitable.
+    setTimeout(() => {
+      if (!readyToQuit) app.quit()
+    }, 5000)
   }
 })
 
