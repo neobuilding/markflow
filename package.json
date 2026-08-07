@@ -1,6 +1,6 @@
 {
   "name": "markflow",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A cross-platform Markdown editor with Linear-style UI",
   "main": "dist-electron/index.js",
   "author": "MarkFlow Team",
@@ -116,6 +116,9 @@
     "vite-plugin-electron": "^1.1.0",
     "vitest": "^4.1.10",
     "zustand": "^5.0.14"
+  },
+  "overrides": {
+    "fast-uri": "3.1.5"
   },
   "lint-staged": {
     "*.css": [
