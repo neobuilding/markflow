@@ -1,7 +1,13 @@
-import React, { useEffect, useRef, useMemo } from 'react'
+import React, { useEffect, useRef, useMemo, useCallback } from 'react'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  isolateHistory,
+} from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { searchKeymap } from '@codemirror/search'
@@ -40,17 +46,61 @@ export function MarkdownEditor({
 
   const debouncedOnChange = useMemo(() => debounce((val: string) => onChange(val), 400), [onChange])
 
+  // Focus the editor's content DOM directly and retry across a few animation frames as a
+  // best-effort to make the editor typeable immediately. A real pointerdown into the editor
+  // (handlePointerDown) remains the reliable fallback for gaining OS focus.
+  const requestFocus = useCallback(() => {
+    const view = viewRef.current
+    if (!view) return
+
+    const focusDom = () => {
+      try {
+        view.contentDOM.focus()
+      } catch {
+        /* ignore */
+      }
+      try {
+        view.focus()
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Focus the content DOM immediately, then retry on a few animation frames.
+    focusDom()
+    let frames = 0
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.hasFocus() && view.hasFocus) return
+      focusDom()
+      frames += 1
+      if (frames < 5) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  }, [])
+
+  // Build the read-only/edit facet array. We use BOTH facets together:
+  //   - EditorState.readOnly: hard lock that blocks any document change (user OR programmatic)
+  //   - EditorView.editable:  controls the DOM contenteditable attribute (user input only)
+  // CRITICAL: both must ALWAYS be set to the SAME value in the SAME place. The original bug was that
+  // they lived in separate effects, so toggling edit flipped EditorView.editable but left
+  // EditorState.readOnly locked — contenteditable='true' yet typing was hard-blocked (the exact
+  // "toolbar says edit mode but you cannot type" symptom after switching files). Reconfiguring them
+  // together makes a split state impossible.
+  const readOnlyFacets = (
+    isEditable: boolean,
+  ): Parameters<typeof editableCompartment.current.of>[0] => [
+    EditorState.readOnly.of(!isEditable),
+    EditorView.editable.of(isEditable),
+  ]
+
   useEffect(() => {
     if (!containerRef.current) return
 
     const startState = EditorState.create({
       doc: content,
       extensions: [
-        // Read-only mode: disable editing and input (can be reconfigured dynamically via editable)
-        editableCompartment.current.of([
-          EditorState.readOnly.of(!editable),
-          EditorView.editable.of(editable),
-        ]),
+        // Read-only / edit mode, reconfigurable via the editable compartment.
+        editableCompartment.current.of(readOnlyFacets(editable)),
         history(),
         highlightActiveLine(),
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
@@ -102,8 +152,14 @@ export function MarkdownEditor({
     // (ratio mapping, no getView needed).
     scrollSync.register('editor', view.scrollDOM)
 
-    if (autoFocus) {
-      view.focus()
+    // Focus on mount when already editable (e.g. a freshly opened editable doc, or a document
+    // switch that lands in edit mode). Without this, a key-remounted editor has no focus and —
+    // especially under Electron — clicking into it may fail to focus, so typing appears dead until
+    // the window loses and regains focus. autoFocus covers the explicit "open and focus" case.
+    // window.focus() first helps Electron give the renderer process OS focus (a bare view.focus()
+    // fired during a programmatic remount, with no user gesture, is silently dropped otherwise).
+    if (autoFocus || editable) {
+      requestFocus()
       view.dispatch({
         selection: { anchor: view.state.doc.length },
       })
@@ -140,17 +196,23 @@ export function MarkdownEditor({
   }, [])
 
   // When toggling read-only / edit mode, reconfigure the editor dynamically (no rebuild,
-  // preserving cursor and scroll)
+  // preserving cursor and scroll). BOTH facets are reconfigured together so they can never split.
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    view.dispatch({
-      effects: editableCompartment.current.reconfigure([
-        EditorState.readOnly.of(!editable),
-        EditorView.editable.of(editable),
-      ]),
-    })
-  }, [editable])
+    view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(editable)) })
+    // Entering edit mode: take focus so the user can type immediately without first clicking into
+    // the editor. This is the real fix for "switched to edit mode but couldn't type" — the editor
+    // was editable (facet=true) but simply had no focus, and under Electron a click didn't always
+    // re-focus it. Leaving edit mode must NOT steal focus, so only focus when becoming editable.
+    if (editable) {
+      // Under Electron a programmatic view.focus() (fired from a store change, e.g. clicking the
+      // edit-mode button) is dropped unless the renderer already has OS focus — that's why typing
+      // only worked after Alt-Tab away and back. requestFocus() focuses the content DOM directly
+      // (with a few animation-frame retries) so typing works immediately when entering edit mode.
+      requestFocus()
+    }
+  }, [editable, requestFocus])
 
   // Sync external content changes (e.g., doc switch / reload / external file change)
   useEffect(() => {
@@ -166,23 +228,69 @@ export function MarkdownEditor({
       return
     }
     isInternalChange.current = false
+
+    // A document switch must always re-apply the current editable state, otherwise the editor
+    // can stay stuck in the previous document's read-only/edit mode after switching files
+    // (editable is a global flag that the switch itself doesn't change, so its dedicated effect
+    // may not re-run — leaving the editor out of sync with the toolbar). Reconfigure BOTH facets
+    // together so read-only and editable can never diverge.
+    if (isDocSwitch) {
+      // On a doc switch the target is read-only (the store resets editable to false), so the hard
+      // readOnly lock would be ON. But we still must write the new content programmatically, and
+      // EditorState.readOnly blocks programmatic dispatches too. So: first flip readOnly OFF (and
+      // editable ON) to allow the write below, then re-apply the real read-only state afterwards.
+      view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(true)) })
+    }
+
     const currentContent = view.state.doc.toString()
-    if (currentContent !== content) {
+    if (isDocSwitch || currentContent !== content) {
       // Mark as a programmatic write: suppress this frame's updateListener echo so the 400ms
       // debounce doesn't mistake the normalized content for "unsaved changes" (dirty flag)
       // after a document switch.
       isApplyingExternal.current = true
-      view.dispatch({
-        changes: { from: 0, to: currentContent.length, insert: content },
-        selection: { anchor: 0 },
-      })
-      isApplyingExternal.current = false
+      try {
+        const tr = {
+          changes: { from: 0, to: currentContent.length, insert: content },
+          selection: { anchor: 0 },
+          scrollIntoView: true,
+          // Isolate undo history at the document boundary so edits to the previous document can't
+          // be undone from the new one (we keep a single persistent EditorView instead of remounting
+          // per document, which is what fixed the "can't type after switching files" focus bug).
+          annotations: isDocSwitch ? (isolateHistory as any).of(undefined) : undefined,
+        }
+        view.dispatch(tr as Parameters<typeof view.dispatch>[0])
+      } finally {
+        isApplyingExternal.current = false
+      }
     }
-  }, [content, docId])
+
+    // After a document switch, apply the REAL read-only/edit state (the write above happened with
+    // readOnly temporarily OFF so it wouldn't be rejected). Skipped when not a switch because the
+    // dedicated editable effect already handles toggle changes.
+    if (isDocSwitch) {
+      view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(editable)) })
+    }
+  }, [content, docId, editable])
+
+  // Focus the editor on a REAL user gesture (pointerdown into the editor area). This runs
+  // synchronously inside the browser's user-activation context, so the browser WILL grant the
+  // webContents OS focus and dispatch a focus event — making CodeMirror's hasFocus=true and
+  // keystrokes reach the editor. A programmatic focus() (e.g. from a store change / setTimeout) is
+  // dropped by Windows' foreground-lock, which is exactly why typing only worked after Alt-Tab.
+  const handlePointerDown = useCallback(() => {
+    const view = viewRef.current
+    if (!view) return
+    try {
+      view.focus()
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   return (
     <div
       ref={containerRef}
+      onPointerDown={handlePointerDown}
       className="h-full overflow-auto editor-content"
       style={{ background: 'var(--color-surface)' }}
     />

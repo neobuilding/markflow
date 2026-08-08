@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
-import { render } from './markdownPipeline'
+import { describe, it, expect, vi } from 'vitest'
+import hljs from 'highlight.js'
+import { render, rewriteImageSrc } from './markdownPipeline'
 
 const docId = 'doc-123'
 
@@ -113,6 +114,18 @@ describe('markdownPipeline — GitHub alerts & containers', () => {
   })
 })
 
+describe('markdownPipeline — syntax highlighting', () => {
+  it('highlights a fenced code block with a known language', () => {
+    const { html } = render('```js\nconst x = 1;\n```\n', docId)
+    expect(html).toContain('class="hljs"')
+  })
+
+  it('auto-detects highlighting for a code block with an unknown language', () => {
+    const { html } = render('```unknowndef\nconst x = 1;\n```\n', docId)
+    expect(html).toContain('class="hljs"')
+  })
+})
+
 describe('markdownPipeline — frontmatter', () => {
   it('strips YAML frontmatter from preview', () => {
     const { html } = render('---\ntitle: x\n---\n\n# Body\n', docId)
@@ -141,6 +154,12 @@ describe('markdownPipeline — image rewrite (appdoc://)', () => {
     const { html } = render('![d](data:image/png;base64,AAA)\n', docId)
     expect(html).toContain('src="data:image/png;base64,AAA"')
   })
+
+  it('does NOT rewrite relative images when docId is null', () => {
+    const { html } = render('![x](pic.png)\n', null)
+    expect(html).toContain('src="pic.png"')
+    expect(html).not.toContain('appdoc://')
+  })
 })
 
 describe('markdownPipeline — remote image referrerpolicy (R4)', () => {
@@ -149,11 +168,86 @@ describe('markdownPipeline — remote image referrerpolicy (R4)', () => {
     expect(html).toContain('referrerpolicy="no-referrer"')
     expect(html).toContain('src="https://e.com/a.png"')
   })
+
+  it('adds referrerpolicy="no-referrer" to http images too', () => {
+    const { html } = render('![y](http://e.com/a.png)\n', docId)
+    expect(html).toContain('referrerpolicy="no-referrer"')
+    expect(html).toContain('src="http://e.com/a.png"')
+  })
+
+  it('does not add referrerpolicy to a local (rewritten) image', () => {
+    const { html } = render('![y](pic.png)\n', docId)
+    expect(html).not.toContain('referrerpolicy')
+    expect(html).toContain(`src="appdoc://${docId}/pic.png"`)
+  })
+})
+
+describe('markdownPipeline — image with a missing/empty src', () => {
+  it('renders an empty src unchanged and adds no referrerpolicy', () => {
+    // `![x]()` yields an empty src: there is nothing to rewrite, and it is not remote,
+    // so the token must be emitted untouched.
+    const { html } = render('![x]()\n', docId)
+    expect(html).toContain('src=""')
+    expect(html).not.toContain('appdoc://')
+    expect(html).not.toContain('referrerpolicy')
+  })
+
+  it('treats a null/undefined src as empty in the pure rewriter', () => {
+    // Mirrors the `src ?? ''` fallbacks used by the image renderer rule when
+    // attrGet('src') returns null (attribute absent).
+    expect(rewriteImageSrc(null, docId)).toBe('')
+    expect(rewriteImageSrc(undefined, docId)).toBe('')
+    expect(rewriteImageSrc(null, null)).toBe('')
+  })
 })
 
 describe('markdownPipeline — raw HTML passthrough', () => {
   it('passes raw HTML through to the sanitize step', () => {
     const { html } = render('<div onclick="x()">hi</div>\n', docId)
     expect(html).toContain('<div')
+  })
+})
+
+describe('markdownPipeline — rewriteImageSrc (pure)', () => {
+  it('rewrites a relative src to appdoc://<docId>/<rel>', () => {
+    expect(rewriteImageSrc('pic.png', 'doc-9')).toBe('appdoc://doc-9/pic.png')
+  })
+
+  it('strips a leading ./ from the relative path', () => {
+    expect(rewriteImageSrc('./sub/pic.png', 'doc-9')).toBe('appdoc://doc-9/sub/pic.png')
+  })
+
+  it('leaves a null/undefined src as an empty relative (no rewrite)', () => {
+    expect(rewriteImageSrc(null, 'doc-9')).toBe('')
+    expect(rewriteImageSrc(undefined, 'doc-9')).toBe('')
+  })
+
+  it('leaves https: src untouched (caller adds referrerpolicy)', () => {
+    expect(rewriteImageSrc('https://e.com/a.png', 'doc-9')).toBe('https://e.com/a.png')
+  })
+
+  it('leaves data:/appdoc: src untouched', () => {
+    expect(rewriteImageSrc('data:image/png;base64,AAA', 'doc-9')).toBe('data:image/png;base64,AAA')
+    expect(rewriteImageSrc('appdoc://other/p.png', 'doc-9')).toBe('appdoc://other/p.png')
+  })
+
+  it('does not rewrite relative images when docId is null', () => {
+    expect(rewriteImageSrc('pic.png', null)).toBe('pic.png')
+  })
+})
+
+describe('markdownPipeline — highlightAuto fallback', () => {
+  it('degrades to escaped plain text when highlightAuto throws', () => {
+    const spy = vi.spyOn(hljs, 'highlightAuto')
+    spy.mockImplementation(() => {
+      throw new Error('boom')
+    })
+    try {
+      const { html } = render('```\nconst x = 1;\n```\n', docId)
+      expect(html).toContain('class="hljs"')
+      expect(html).toContain('const x = 1;')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

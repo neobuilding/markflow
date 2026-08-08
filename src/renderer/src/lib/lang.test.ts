@@ -40,6 +40,11 @@ describe('extractFrontmatterLang', () => {
     expect(extractFrontmatterLang("---\nlang: 'ko'\n---\n")).toBe('ko')
   })
 
+  it('returns null when the lang tag is not a permissive BCP 47 tag', () => {
+    expect(extractFrontmatterLang('---\nlang: 123\n---\n')).toBeNull()
+    expect(extractFrontmatterLang('---\nlang: "not-a-lang!!"\n---\n')).toBeNull()
+  })
+
   it('returns null for non-BCP47 junk values', () => {
     expect(extractFrontmatterLang('---\nlang: 123\n---\n')).toBeNull()
     expect(extractFrontmatterLang('---\nlang: 你好\n---\n')).toBeNull()

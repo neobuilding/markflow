@@ -7,8 +7,13 @@ const api = {
   documents: {
     list: (folderPath?: string) => ipcRenderer.invoke('documents:list', folderPath),
     get: (id: string) => ipcRenderer.invoke('documents:get', id),
-    create: (params: { title?: string; folderPath?: string; content?: string }) =>
-      ipcRenderer.invoke('documents:create', params),
+    create: (params: {
+      title?: string
+      folderPath?: string
+      content?: string
+      ext?: string
+      memoryOnly?: boolean
+    }) => ipcRenderer.invoke('documents:create', params),
     update: (id: string, updates: { title?: string; content?: string }) =>
       ipcRenderer.invoke('documents:update', id, updates),
     delete: (id: string) => ipcRenderer.invoke('documents:delete', id),
@@ -46,26 +51,31 @@ const api = {
     getInitialPaths: () => ipcRenderer.invoke('app:get-initial-paths'),
     showInFolder: (filePath: string) => ipcRenderer.invoke('app:show-in-folder', filePath),
     setLanguage: (locale: 'en' | 'zh-CN') => ipcRenderer.send('app:set-language', locale),
+    // Main asks the renderer to close the workspace (running the unified unsaved-changes
+    // prompt) before quitting; renderer calls allowQuit() once it's safe to exit.
+    allowQuit: () => ipcRenderer.send('app:quit-allowed'),
   },
 
   // Files: resolve a list of file/folder paths into markdown files + directories
   files: {
     resolvePaths: (paths: string[]) => ipcRenderer.invoke('files:resolve-paths', paths),
     // Electron 32+ removed the File.path property in the renderer.
-    // Use electron.webUtils.getPathForFile (official API, available in the
-    // preload context via require('electron')) to recover the real path.
-    getPathForFile: (file: File) => {
+    // Use electron.webUtils.getPathForFile (official API, stable since Electron 32,
+    // available in the preload context via require('electron')) to recover the real path.
+    // The pre-32 File.path fallback has been dropped (no longer supported).
+    getPathForFile: (file: File): string => {
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const electronModule = require('electron') as any
+        const electronModule = require('electron') as {
+          webUtils?: { getPathForFile: (f: File) => string }
+        }
         if (electronModule?.webUtils?.getPathForFile) {
           return electronModule.webUtils.getPathForFile(file)
         }
       } catch {
-        // ignore and fall through to the fallback below
+        // ignore and return empty string below
       }
-      // Fallback for older Electron versions (pre-32) that still expose File.path
-      return (file as any).path ?? ''
+      return ''
     },
   },
 
@@ -76,6 +86,12 @@ const api = {
     openFolderPath: () => ipcRenderer.invoke('dialog:select-folder'),
     saveFile: (defaultPath?: string) => ipcRenderer.invoke('dialog:save-file', defaultPath),
     saveHtmlFile: (defaultPath?: string) => ipcRenderer.invoke('dialog:save-html', defaultPath),
+    // App-modal confirm box. Unlike window.confirm (a blocking OS-modal dialog that, on close,
+    // triggers a real OS window blur and can leave document.hasFocus() stuck false in Electron),
+    // dialog.showMessageBox is app-modal and Electron returns focus to the renderer afterwards,
+    // so it does not break typing. Returns true when the user accepts (clicks the OK button).
+    confirm: (opts: { message: string; detail?: string; okText?: string; cancelText?: string }) =>
+      ipcRenderer.invoke('dialog:confirm', opts),
   },
 
   // Window control
@@ -105,6 +121,7 @@ const api = {
       | 'open-folder'
       | 'open-files'
       | 'close-workspace'
+      | 'close-file'
       | 'file-details'
       | 'about'
       | 'export-html'
@@ -130,6 +147,14 @@ const api = {
     const handler = (_: Electron.IpcRendererEvent, paths: string[]) => callback(paths)
     ipcRenderer.on('app:open-paths', handler)
     return () => ipcRenderer.removeListener('app:open-paths', handler)
+  },
+
+  // Main requests the renderer to close the workspace (running the unified unsaved
+  // prompt) before quitting the app.
+  onAppRequestQuit: (callback: () => void) => {
+    const handler = (_: Electron.IpcRendererEvent) => callback()
+    ipcRenderer.on('app:request-quit', handler)
+    return () => ipcRenderer.removeListener('app:request-quit', handler)
   },
 }
 

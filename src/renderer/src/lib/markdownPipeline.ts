@@ -49,6 +49,7 @@ const md: MarkdownIt = new MarkdownIt({
     try {
       return '<pre class="hljs"><code>' + hljs.highlightAuto(str).value + '</code></pre>'
     } catch {
+      // highlightAuto can throw on pathological input; degrade gracefully to escaped plain text.
       return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>'
     }
   },
@@ -88,9 +89,8 @@ md.use(texmath, {
 
 // ─── Mermaid extraction: replace ```mermaid fences with placeholder <div data-mermaid-slot="{i}">,
 //   and collect the source into env.mermaid (plain string, no DOM needed). The renderer bakes SVG before injection. ───
-const defaultFence =
-  md.renderer.rules.fence ||
-  ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options))
+// markdown-it always provides a built-in fence rule, so no fallback is needed.
+const defaultFence = md.renderer.rules.fence!
 
 md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   const token = tokens[idx]
@@ -106,20 +106,37 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 }
 
 // ─── Rewrite relative images to appdoc://<docId>/<relativePath> (leave external/data/already-appdoc: alone) ───
-const defaultImage =
-  md.renderer.rules.image ||
-  ((tokens, idx, options, env, self) => self.renderToken(tokens, idx, options))
+// markdown-it always provides a built-in image rule, so no fallback is needed.
+const defaultImage = md.renderer.rules.image!
+
+// Rewrite a (possibly null) image src into its final form:
+//  - null/empty: returned unchanged (no point rewriting a non-existent path);
+//  - remote (http/https): keep as-is but tighten the referrer policy;
+//  - data:/appdoc:/already-absolute: leave untouched;
+//  - relative: prefix with appdoc://<docId>/ when a docId is known.
+export function rewriteImageSrc(src: string | null | undefined, docId: string | null): string {
+  const s = src ?? ''
+  if (!s) return s
+  if (/^https?:/i.test(s)) return s
+  if (/^(https?:|data:|appdoc:)/i.test(s) || !docId) return s
+  const rel = s.replace(/^\.\//, '')
+  return `appdoc://${docId}/${rel}`
+}
 
 md.renderer.rules.image = (tokens, idx, options, env, self) => {
   const token = tokens[idx]
-  const src = token.attrGet('src') || ''
+  // markdown-it always sets a src attribute on image tokens (an empty destination such as
+  // `![x]()` yields ""), so attrGet never actually returns null here; the `?? ''` only
+  // satisfies its nullable type and is therefore not reachable in tests.
+  /* v8 ignore next */
+  const src = token.attrGet('src') ?? ''
+  const docId = (env as { docId?: string | null }).docId ?? null
+  const finalSrc = rewriteImageSrc(src, docId)
   if (/^https?:/i.test(src)) {
     // Remote image: tighten the source site (hide Referer) to avoid leaking the local file path.
     token.attrSet('referrerpolicy', 'no-referrer')
-  } else if (!/^(https?:|data:|appdoc:)/i.test(src)) {
-    const docId = (env as { docId?: string | null }).docId
-    const rel = src.replace(/^\.\//, '')
-    if (docId) token.attrSet('src', `appdoc://${docId}/${rel}`)
+  } else if (finalSrc !== src) {
+    token.attrSet('src', finalSrc)
   }
   return defaultImage(tokens, idx, options, env, self)
 }

@@ -31,6 +31,8 @@
 }
 
 :root {
+  --scrollbar-size: 10px;
+
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 
@@ -81,6 +83,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   user-select: none;
+  scrollbar-width: thin; /* Firefox (Gecko) — no ::-webkit-scrollbar support */
+  scrollbar-color: var(--color-border-strong) transparent;
 }
 
 #root {
@@ -88,18 +92,16 @@ body {
   display: flex;
   flex-direction: column;
 }
-
-/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
-  border-radius: 3px;
+  border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-tertiary);
@@ -118,6 +120,10 @@ body {
   user-select: text;
   caret-color: var(--color-accent);
 }
+/* The CodeMirror root must allow text selection too: body sets user-select:none, and under
+   Electron that can prevent clicking into the editor from focusing/placing the cursor. Re-enable
+   it on the editor root so a click reliably focuses the contenteditable. (Full theme override
+   lives further down in "CodeMirror theme overrides".) */
 
 /* ─── Markdown Preview (prose takes over layout; keep only a minimal container here, §4.6) ─── */
 .markdown-preview {
@@ -376,6 +382,7 @@ svg[id^='mermaid-'] {
 /* CodeMirror theme overrides */
 .cm-editor {
   height: 100%;
+  user-select: text;
   background: transparent !important;
   font-family: var(--font-mono) !important;
   font-size: 14px !important;

@@ -1,6 +1,6 @@
 {
   "name": "markflow",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A cross-platform Markdown editor with Linear-style UI",
   "main": "dist-electron/index.js",
   "author": "MarkFlow Team",
@@ -10,9 +10,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "ci": "npm run typecheck && npm run test:coverage",
     "lint": "node scripts/install-eslint-ts6.mjs && eslint .",
     "lint:fix": "node scripts/install-eslint-ts6.mjs && eslint . --fix",
     "lint:css": "stylelint \"**/*.css\"",
@@ -81,6 +83,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
+    "@vitest/coverage-v8": "^4.1.10",
     "7zip-bin": "^5.2.0",
     "autoprefixer": "^10.5.4",
     "class-variance-authority": "^0.7.1",
@@ -113,6 +116,9 @@
     "vite-plugin-electron": "^1.1.0",
     "vitest": "^4.1.10",
     "zustand": "^5.0.14"
+  },
+  "overrides": {
+    "fast-uri": "3.1.5"
   },
   "lint-staged": {
     "*.css": [

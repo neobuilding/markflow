@@ -11,7 +11,16 @@ import {
   X,
   GripVertical,
 } from 'lucide-react'
-import { cn, formatDate, isInFolder, buildFileTree, type FileTreeNode } from '../../lib/utils'
+import {
+  cn,
+  formatDate,
+  isInFolder,
+  buildFileTree,
+  isMac,
+  baseName,
+  type FileTreeNode,
+} from '../../lib/utils'
+import { splitMemoryOnlyDocs, memoryOnlyLeaf } from '../../lib/sidebarDrafts'
 import { useT } from '../../i18n'
 import { useUIStore } from '../../store/ui'
 import {
@@ -47,6 +56,11 @@ export function Sidebar(): React.ReactElement | null {
 
   const { data: allDocs = [], isLoading: loading } = useDocuments()
 
+  // Split memory-only drafts (filePath === '') from folder documents. Drafts are shown in a
+  // dedicated "Unsaved drafts" group above the tree, never via isInFolder (which is always false
+  // for empty paths). PLAN §6.3 (G2).
+  const memoryOnlyDocs = useMemo(() => splitMemoryOnlyDocs(allDocs).memoryOnly, [allDocs])
+
   // Only show documents within the "current folder" (empty when no folder is open, the welcome
   // page takes over). Memoized so it's a stable dependency for the tree useMemo below.
   const folderDocs = useMemo(
@@ -58,6 +72,12 @@ export function Sidebar(): React.ReactElement | null {
   const tree = useMemo(
     () => (activeFolder ? buildFileTree(folderDocs, activeFolder) : []),
     [folderDocs, activeFolder],
+  )
+
+  // All deletable docs for "switch to next after delete" logic, including drafts. PLAN §6.3 (G2).
+  const allListedDocs = useMemo(
+    () => [...memoryOnlyDocs, ...folderDocs],
+    [memoryOnlyDocs, folderDocs],
   )
 
   const deleteMut = useDeleteDocument()
@@ -81,12 +101,20 @@ export function Sidebar(): React.ReactElement | null {
     const doc = await createMut.mutateAsync({ title: 'Untitled' })
     setActiveDocumentId(doc.id)
     useUIStore.getState().setEditable(true) // new documents are editable by default
+    useUIStore.getState().setIsNewUnsaved(true) // first Save will prompt for a path
   }, [createMut, setActiveDocumentId])
 
   // Document select / delete / star / details: reused by the doc tree (including subfolders)
   const handleSelectDoc = useCallback(
-    (doc: Document) => {
-      if (useUIStore.getState().dirty && !window.confirm(t('app.unsavedSwitch'))) return
+    async (doc: Document) => {
+      if (useUIStore.getState().dirty) {
+        const ok = await window.api.dialog.confirm({
+          message: t('app.unsavedSwitch'),
+          okText: t('app.confirmDiscard'),
+          cancelText: t('app.confirmKeep'),
+        })
+        if (!ok) return
+      }
       setActiveDocumentId(doc.id)
     },
     [setActiveDocumentId, t],
@@ -96,11 +124,11 @@ export function Sidebar(): React.ReactElement | null {
     (doc: Document) => {
       deleteMut.mutate(doc.id)
       if (activeDocumentId === doc.id) {
-        const next = folderDocs.find((d) => d.id !== doc.id)
+        const next = allListedDocs.find((d) => d.id !== doc.id)
         setActiveDocumentId(next?.id ?? null)
       }
     },
-    [deleteMut, activeDocumentId, folderDocs, setActiveDocumentId],
+    [deleteMut, activeDocumentId, allListedDocs, setActiveDocumentId],
   )
 
   const handleDetailsDoc = useCallback((doc: Document) => {
@@ -152,10 +180,7 @@ export function Sidebar(): React.ReactElement | null {
         className="titlebar-drag flex items-center border-b border-[var(--color-border)] shrink-0 pr-2"
         style={{
           height: 'var(--titlebar-height)',
-          paddingLeft:
-            typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.userAgent)
-              ? '5rem'
-              : '0.75rem',
+          paddingLeft: isMac() ? '5rem' : '0.75rem',
         }}
       >
         <div className="titlebar-no-drag flex items-center gap-1.5 flex-1 min-w-0">
@@ -235,26 +260,30 @@ export function Sidebar(): React.ReactElement | null {
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6"
-                onClick={() => {
-                  if (
-                    useUIStore.getState().dirty &&
-                    !window.confirm(t('app.unsavedCloseWorkspace'))
-                  )
-                    return
+                onClick={async () => {
+                  if (useUIStore.getState().dirty) {
+                    const ok = await window.api.dialog.confirm({
+                      message: t('app.unsavedCloseWorkspace'),
+                      okText: t('app.confirmDiscard'),
+                      cancelText: t('app.confirmKeep'),
+                    })
+                    if (!ok) return
+                  }
                   closeWorkspace()
                 }}
               >
                 <X size={12} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t('sidebar.close')} (⌘W)</TooltipContent>
+            <TooltipContent>{t('sidebar.close')} (⌘⇧W)</TooltipContent>
           </Tooltip>
         </div>
       )}
 
       {/* Document list / welcome */}
       <div className="flex-1 overflow-y-auto">
-        {!activeFolder ? (
+        {!activeFolder && memoryOnlyDocs.length === 0 ? (
+          // No folder open and no drafts: show the welcome/empty guidance. PLAN §6.3 (G2)
           <WelcomeState
             onOpenFile={handleImportFile}
             onOpenFolder={handleImportFolder}
@@ -264,22 +293,46 @@ export function Sidebar(): React.ReactElement | null {
           <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">
             {t('editor.loading')}
           </div>
-        ) : folderDocs.length === 0 ? (
+        ) : memoryOnlyDocs.length === 0 && folderDocs.length === 0 ? (
           <EmptyState onCreate={handleCreate} />
         ) : (
-          <ul className="py-1">
-            {tree.map((node) => (
-              <TreeRow
-                key={node.path}
-                node={node}
-                depth={0}
-                activeId={activeDocumentId}
-                onSelectDoc={handleSelectDoc}
-                onDeleteDoc={handleDeleteDoc}
-                onDetailsDoc={handleDetailsDoc}
-              />
-            ))}
-          </ul>
+          <>
+            {memoryOnlyDocs.length > 0 && (
+              <>
+                <div className="px-3 pt-2 pb-1 text-2xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                  {t('sidebar.unsavedDrafts')}
+                </div>
+                <ul className="pb-1">
+                  {memoryOnlyDocs.map((doc) => (
+                    <TreeRow
+                      key={doc.id}
+                      node={memoryOnlyLeaf(doc)}
+                      depth={0}
+                      activeId={activeDocumentId}
+                      onSelectDoc={handleSelectDoc}
+                      onDeleteDoc={handleDeleteDoc}
+                      onDetailsDoc={handleDetailsDoc}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
+            {folderDocs.length > 0 && (
+              <ul className="py-1">
+                {tree.map((node) => (
+                  <TreeRow
+                    key={node.path}
+                    node={node}
+                    depth={0}
+                    activeId={activeDocumentId}
+                    onSelectDoc={handleSelectDoc}
+                    onDeleteDoc={handleDeleteDoc}
+                    onDetailsDoc={handleDetailsDoc}
+                  />
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </div>
 
@@ -385,8 +438,15 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1">
           <span className="text-sm font-medium truncate text-[var(--color-text-primary)]">
-            {doc.title}
+            {/* A memory-only new document has no file on disk yet; it is listed in the dedicated
+                "Unsaved drafts" group (PLAN §6.3), falling back to its title here. */}
+            {doc.filePath ? baseName(doc.filePath) : doc.title}
           </span>
+          {!doc.filePath && (
+            <span className="text-2xs font-medium text-accent border border-accent/40 rounded px-1 py-px shrink-0">
+              {t('sidebar.newBadge')}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 mt-0.5">
           <span className="text-2xs text-[var(--color-text-tertiary)]">
@@ -449,7 +509,7 @@ interface TreeRowProps {
 
 // Recursively render the document tree: folders are collapsible, files reuse DocItem.
 function TreeRow({ node, depth, activeId, onSelectDoc, onDeleteDoc, onDetailsDoc }: TreeRowProps) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   if (node.isFolder) {
     return (
       <li>

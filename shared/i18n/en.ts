@@ -17,6 +17,8 @@ export const en = {
   'sidebar.newDocumentAction': 'New Document',
   'sidebar.emptyFolder': 'No documents in this folder',
   'sidebar.createFirst': 'Create your first document',
+  'sidebar.newBadge': 'new',
+  'sidebar.unsavedDrafts': 'Unsaved drafts',
   'sidebar.details': 'Details',
   'sidebar.delete': 'Delete',
 
@@ -118,6 +120,7 @@ export const en = {
   'details.path': 'Path',
   'details.copyPath': 'Copy path',
   'details.showInFolder': 'Show in folder',
+  'details.unsaved': 'Unsaved (kept in memory only)',
   'details.size': 'Size',
   'details.created': 'Created',
   'details.modified': 'Modified',
@@ -128,6 +131,7 @@ export const en = {
   // ── New document dialog ────────────────────────────────────────────────
   'new.title': 'New Document',
   'new.documentTitle': 'Document title',
+  'new.extension': 'Extension',
   'new.untitled': 'Untitled',
   'new.cancel': 'Cancel',
   'new.create': 'Create',
@@ -136,6 +140,8 @@ export const en = {
   'app.unsavedSwitch': 'You have unsaved changes. Discard them and switch files?',
   'app.unsavedCloseWorkspace': 'You have unsaved changes. Discard them and close the workspace?',
   'app.unsavedClose': 'You have unsaved changes. Discard them?',
+  'app.confirmDiscard': 'Discard',
+  'app.confirmKeep': 'Keep editing',
   'app.saveFailed': 'Failed to save the file.',
   'app.fileGone': 'The file no longer exists on disk.',
   'app.printNotReady':
@@ -172,6 +178,7 @@ export const en = {
   'menu.fileDetails': 'File Details…',
   'menu.exportHtml': 'Export as HTML…',
   'menu.print': 'Print…',
+  'menu.closeFile': 'Close File',
   'menu.closeWorkspace': 'Close Workspace',
   'menu.toggleSidebar': 'Toggle Sidebar',
   'menu.togglePreview': 'Toggle Preview',

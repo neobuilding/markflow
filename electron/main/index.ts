@@ -273,7 +273,15 @@ function createWindow(): void {
     backgroundColor: '#f7f7f7',
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
-      sandbox: true, // Security gate (P0): even sandboxed, preload still has a polyfilled require (see §4.1 / R9)
+      // NOTE: sandbox was disabled (was true) to work around an Electron 43 / Windows 11
+      // regression where a sandboxed renderer on Win11 fails to report document.hasFocus()
+      // after a document switch / focus change — leaving the editor unable to receive keyboard
+      // input until an Alt-Tab. With sandbox:true the window is foreground (mainWindow.isFocused()
+      // is true) yet document.hasFocus() stays false, which CodeMirror's input path depends on.
+      // Disabling sandbox lets the renderer correctly gain OS focus. The preload still uses
+      // contextIsolation + nodeIntegration:false, so the security boundary with the main process
+      // is preserved (only the Chromium renderer sandbox layer is off).
+      sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
@@ -282,6 +290,13 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
+    // Ensure the window is NOT stuck "always on top" (a previous buggy focus path could leave it
+    // on top, which interferes with normal foreground focus and typing).
+    try {
+      mainWindow?.setAlwaysOnTop(false)
+    } catch {
+      /* ignore */
+    }
     if (startMaximized) {
       mainWindow?.maximize()
     }
@@ -309,6 +324,18 @@ function createWindow(): void {
   // Reset the zoom to the default level after each load so the leftover zoom can't affect layout.
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow?.webContents.setZoomLevel(0)
+  })
+
+  // Intercept the *window* close (red X / traffic-light close) so it runs the SAME
+  // unsaved prompt as quitting — never destroys a window with unsaved changes silently.
+  // Only once the renderer replies with app:quit-allowed do we set isQuiting and let the
+  // close proceed. This guarantees the prompt always happens while the window is alive,
+  // eliminating the race where before-quit fires after the window is already destroyed.
+  const win = mainWindow
+  win.on('close', (event) => {
+    if (isQuiting) return
+    event.preventDefault()
+    win.webContents.send('app:request-quit')
   })
 }
 
@@ -350,12 +377,14 @@ function applyMenuStates(): void {
   const detailsItem = appMenu.getMenuItemById('file-details')
   const exportItem = appMenu.getMenuItemById('export-html')
   const printItem = appMenu.getMenuItemById('print')
+  const closeFileItem = appMenu.getMenuItemById('close-file')
   if (saveItem) saveItem.enabled = editableState
   if (saveAsItem) saveAsItem.enabled = editableState
   if (reloadItem) reloadItem.enabled = hasDocumentState
   if (detailsItem) detailsItem.enabled = hasDocumentState
   if (exportItem) exportItem.enabled = hasDocumentState
   if (printItem) printItem.enabled = hasDocumentState && !printingState
+  if (closeFileItem) closeFileItem.enabled = hasDocumentState
   Menu.setApplicationMenu(appMenu)
 }
 
@@ -454,8 +483,16 @@ function setupMenu(): void {
         },
         { type: 'separator' },
         {
-          label: menuT('menu.closeWorkspace'),
+          id: 'close-file',
+          label: menuT('menu.closeFile'),
           accelerator: 'CmdOrCtrl+W',
+          enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
+          click: () => mainWindow?.webContents.send('menu:close-file'),
+        },
+        {
+          id: 'close-workspace',
+          label: menuT('menu.closeWorkspace'),
+          accelerator: 'CmdOrCtrl+Shift+W',
           click: () => mainWindow?.webContents.send('menu:close-workspace'),
         },
         { type: 'separator' },
@@ -679,6 +716,28 @@ if (!shouldStart) {
       return result.canceled ? null : (result.filePath ?? null)
     })
 
+    // App-modal confirm box used by the renderer to replace window.confirm. Being app-modal (not
+    // OS-modal like window.confirm), Electron returns focus to the renderer after it closes, so it
+    // does not trigger the OS window-blur that window.confirm does — which is what previously left
+    // document.hasFocus() stuck false and broke typing after switching dirty files.
+    ipcMain.handle(
+      'dialog:confirm',
+      async (
+        _event,
+        opts: { message: string; detail?: string; okText?: string; cancelText?: string },
+      ): Promise<boolean> => {
+        const result = await dialog.showMessageBox({
+          type: 'question',
+          buttons: [opts.cancelText ?? 'Cancel', opts.okText ?? 'OK'],
+          defaultId: 1,
+          cancelId: 0,
+          message: opts.message,
+          detail: opts.detail,
+        })
+        return result.response === 1
+      },
+    )
+
     // Let the renderer proactively open an "Export as HTML" dialog (R7) with .html filter by default.
     ipcMain.handle('dialog:save-html', async (_event, defaultPath?: string) => {
       const result = await dialog.showSaveDialog({
@@ -755,19 +814,89 @@ if (!shouldStart) {
     ipcMain.handle('window:maximize', () => mainWindow?.maximize())
     ipcMain.handle('window:unmaximize', () => mainWindow?.unmaximize())
     ipcMain.handle('window:is-maximized', () => !!mainWindow?.isMaximized())
+    // Give the renderer process (the web CONTENTS / document) OS focus. This is the well-known
+    // Electron fix for `document.hasFocus()` being false while the window itself is foreground:
+    // BrowserWindow.focus() brings the window forward but does NOT necessarily focus the document
+    // inside the webContents, which is exactly why typing was dead until an Alt-Tab. Calling
+    // webContents.focus() is what actually moves OS focus into the page document.
+    //
+    // We deliberately do NOT toggle always-on-top: that raises the window but, in the user's
+    // environment, left the window stuck "always on top" (isAlwaysOnTop stayed true) and still
+    // didn't focus the document — so it only made things worse.
 
     initMenuI18n()
     createWindow()
     setupMenu()
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      if (BrowserWindow.getAllWindows().length === 0) {
+        // Defensive reset: if a future change makes closing the window keep the
+        // process alive (macOS-style), a rebuilt window must not inherit the stale
+        // quitting flags or it would skip the unsaved-changes prompt on next close.
+        isQuiting = false
+        readyToQuit = false
+        createWindow()
+      }
     })
   })
 }
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
+// ─── Quit flow reuses the "close workspace" prompt (PLAN §6.5) ───────────────
+// Quitting the whole app must behave EXACTLY like closing a file / workspace: the
+// renderer runs the same unified unsaved-changes prompt. So on `before-quit` we ask
+// the renderer to close the workspace; only once it replies (app:quit-allowed) do we
+// proceed. If the user cancels the prompt, the renderer simply doesn't reply and the
+// quit stays aborted. New (memory-only) documents and edits to existing files are
+// treated identically — no special quit prompt. Memory-only drafts (empty file_path)
+// are purged as a safety net so they never survive a restart, but only after the
+// renderer has already run its prompt (never silently discarded).
+let readyToQuit = false
+// Whether the app is actively quitting. Set once the renderer has confirmed the
+// unsaved-changes prompt, so the window 'close' handler and 'before-quit' let the
+// teardown proceed instead of re-prompting.
+let isQuiting = false
+
+function purgeUnsavedDrafts(): void {
+  try {
+    getDb().prepare("DELETE FROM documents WHERE file_path IS NULL OR file_path = ''").run()
+  } catch {
+    // Best-effort cleanup; the DB is in-memory so nothing persists regardless.
   }
+}
+
+ipcMain.on('app:quit-allowed', () => {
+  // The renderer has run the unified unsaved prompt and the user confirmed (or there
+  // were no unsaved changes). Mark the app as quitting and quit for real; 'before-quit'
+  // will then purge and let the teardown proceed. Using app.quit() (not mainWindow.close)
+  // makes closing the window and quitting the app behave identically on every platform,
+  // including macOS where close() alone would only hide the window and keep the process.
+  isQuiting = true
+  readyToQuit = true
+  app.quit()
+})
+
+app.on('before-quit', (event) => {
+  if (readyToQuit) {
+    purgeUnsavedDrafts()
+    return
+  }
+  // Fallback for quit paths that bypass the window 'close' handler (e.g. macOS
+  // Cmd+Q / dock Quit, or a quit request with no live window). Ask the renderer to
+  // run the unified prompt; only intercept while a window can actually show it.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:request-quit')
+    event.preventDefault()
+    // Safety net: if the renderer never replies (crashed / detached), force quit
+    // after a grace period so the app can never get stuck un-exitable.
+    setTimeout(() => {
+      if (!readyToQuit) app.quit()
+    }, 5000)
+  }
+})
+
+app.on('window-all-closed', () => {
+  // Quit on all platforms once the last window is closed. Combined with app.quit() in
+  // app:quit-allowed, closing the window and quitting the app are identical everywhere
+  // (including macOS, where the default is to keep the process alive in the dock).
+  app.quit()
 })

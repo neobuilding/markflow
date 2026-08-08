@@ -1,5 +1,13 @@
 # MarkFlow — 快速启动参考
 
+## 环境要求
+
+- Node.js >= 22
+- npm >= 9
+- Electron 43（随 `npm install` 一同安装）
+
+> **TypeScript 7 过渡期说明**：当前项目使用 TypeScript 7，而 `typescript-eslint` 的官方支持尚未覆盖 TS7。因此 `postinstall` 与 `lint` 会通过 `scripts/install-eslint-ts6.mjs` 并行安装 TS6 的 side-by-side shim 仅供 ESLint 使用（不影响应用运行）。待 `typescript-eslint` 官方支持 TS7 后可移除该过渡方案。
+
 ## 开发
 
 ```bash

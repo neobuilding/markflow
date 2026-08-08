@@ -2,8 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Document } from '../types'
 import { dirName } from '../lib/utils'
 import { useUIStore } from '../store/ui'
-
-const DOCS_KEY = ['documents']
+import { DOCS_KEY } from '../lib/queryClient'
 
 export function useDocuments(folderPath?: string) {
   return useQuery({
@@ -25,8 +24,19 @@ export function useDocument(id: string | null) {
 export function useCreateDocument() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (params: { title?: string; folderPath?: string; content?: string }) =>
-      window.api.documents.create(params),
+    mutationFn: (params: {
+      title?: string
+      folderPath?: string
+      content?: string
+      ext?: string
+      memoryOnly?: boolean
+    }) =>
+      window.api.documents.create({
+        ...params,
+        // New documents are memory-only drafts by default: no file is written to disk
+        // until the user explicitly saves (Save As). See PLAN §6.3.
+        memoryOnly: params.memoryOnly ?? true,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: DOCS_KEY })
     },
@@ -165,7 +175,12 @@ export function useOpenPaths() {
       const ui = useUIStore.getState()
       ui.setActiveFolder(folder)
       ui.setActiveDocumentId(imported[0].id)
-      ui.setEditable(false) // files open read-only by default
+      // NOTE: do NOT force `editable` to false here. `editable` is a workspace-wide mode that
+      // defaults to false only when there is no document open (store default + closeWorkspace/
+      // closeDocument reset it). Forcing it false on every open would clobber the user's current
+      // edit mode — e.g. after switching to edit, opening/switching another file would silently
+      // revert to read-only and the editor could not be edited ("switch file -> can't edit" bug).
+      ui.setDirty(false) // opening/importing a file clears any stale dirty flag
       return { folder, documentId: imported[0].id }
     },
   })

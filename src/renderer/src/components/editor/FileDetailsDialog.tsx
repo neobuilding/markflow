@@ -81,15 +81,23 @@ export function FileDetailsDialog(): React.ReactElement | null {
             </Row>
 
             <Row icon={<FileText size={14} />} label={t('details.path')}>
-              <span className="font-mono text-xs">{doc.filePath}</span>
-              <div className="flex items-center gap-2 mt-1.5">
-                <Button variant="outline" size="sm" onClick={copyPath} className="gap-1">
-                  <Copy size={12} /> {copied ? t('about.copied') : t('details.copyPath')}
-                </Button>
-                <Button variant="outline" size="sm" onClick={showInFolder} className="gap-1">
-                  <FolderOpen size={12} /> {t('details.showInFolder')}
-                </Button>
-              </div>
+              {doc.filePath ? (
+                <>
+                  <span className="font-mono text-xs">{doc.filePath}</span>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <Button variant="outline" size="sm" onClick={copyPath} className="gap-1">
+                      <Copy size={12} /> {copied ? t('about.copied') : t('details.copyPath')}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={showInFolder} className="gap-1">
+                      <FolderOpen size={12} /> {t('details.showInFolder')}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <span className="text-xs text-[var(--color-text-tertiary)] italic">
+                  {t('details.unsaved')}
+                </span>
+              )}
             </Row>
 
             <Row icon={<Hash size={14} />} label={t('details.size')}>

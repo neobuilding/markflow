@@ -77,46 +77,13 @@ export function EditorPane(): React.ReactElement {
     getEol,
   } = useLocalDocument(doc, activeDocumentId)
 
-  // Save / Save As / Reload: hold the latest draft in a ref so menu / keyboard shortcuts don't capture a stale closure
+  // Save / Save As / Reload: hold the latest draft in a ref so callbacks don't capture a stale closure.
+  // Initialized once; the effect keeps the fields in sync (mutating fields avoids reassigning the ref).
   const draftRef = useRef({ localContent, localTitle })
   useEffect(() => {
-    draftRef.current = { localContent, localTitle }
+    draftRef.current.localContent = localContent
+    draftRef.current.localTitle = localTitle
   })
-
-  const handleSave = useCallback(async () => {
-    const id = useUIStore.getState().activeDocumentId
-    if (!id) return
-    // In read-only mode, block saving and prompt the user to switch to edit mode
-    if (!useUIStore.getState().editable) return
-    const { localContent, localTitle } = draftRef.current
-    // Re-read the on-disk line ending at save time as the final source of truth (don't depend on
-    // whether the async effect finished or the DB is clean)
-    const eol = doc?.filePath
-      ? await window.api.documents.eol(doc.filePath).catch(() => getEol())
-      : getEol()
-    useUIStore.getState().setSaving(true)
-    try {
-      const updated = await updateMut.mutateAsync({
-        id,
-        updates: {
-          title: localTitle.trim() || 'Untitled',
-          content: toDiskFormat(localContent, eol),
-        },
-      })
-      if (updated) {
-        markSaved(updated.content, updated.title)
-        useUIStore.getState().setJustSaved(true)
-        // Re-watch (the file name may have changed due to a title edit)
-        window.api.documents.unwatch(id)
-        window.api.documents.watch(id)
-      }
-    } catch (e) {
-      console.error('Save failed', e)
-      window.alert(t('app.saveFailed'))
-    } finally {
-      useUIStore.getState().setSaving(false)
-    }
-  }, [updateMut, markSaved, doc, getEol, toDiskFormat, t])
 
   const handleSaveAs = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -149,6 +116,7 @@ export function EditorPane(): React.ReactElement {
       if (updated) {
         markSaved(updated.content, updated.title)
         useUIStore.getState().setJustSaved(true)
+        useUIStore.getState().setIsNewUnsaved(false) // document now lives at the chosen path
         window.api.documents.unwatch(id)
         window.api.documents.watch(id)
       }
@@ -159,6 +127,47 @@ export function EditorPane(): React.ReactElement {
       useUIStore.getState().setSaving(false)
     }
   }, [doc, saveAsMut, markSaved, getEol, toDiskFormat, t])
+
+  const handleSave = useCallback(async () => {
+    const id = useUIStore.getState().activeDocumentId
+    if (!id) return
+    // In read-only mode, block saving and prompt the user to switch to edit mode
+    if (!useUIStore.getState().editable) return
+    // A brand-new in-app document hasn't been placed at a user-chosen path yet: the first Save
+    // must prompt for a path (Save As) instead of silently overwriting the default-location file.
+    if (useUIStore.getState().isNewUnsaved) {
+      await handleSaveAs()
+      return
+    }
+    const { localContent, localTitle } = draftRef.current
+    // Re-read the on-disk line ending at save time as the final source of truth (don't depend on
+    // whether the async effect finished or the DB is clean)
+    const eol = doc?.filePath
+      ? await window.api.documents.eol(doc.filePath).catch(() => getEol())
+      : getEol()
+    useUIStore.getState().setSaving(true)
+    try {
+      const updated = await updateMut.mutateAsync({
+        id,
+        updates: {
+          title: localTitle.trim() || 'Untitled',
+          content: toDiskFormat(localContent, eol),
+        },
+      })
+      if (updated) {
+        markSaved(updated.content, updated.title)
+        useUIStore.getState().setJustSaved(true)
+        // Re-watch (the file name may have changed due to a title edit)
+        window.api.documents.unwatch(id)
+        window.api.documents.watch(id)
+      }
+    } catch (e) {
+      console.error('Save failed', e)
+      window.alert(t('app.saveFailed'))
+    } finally {
+      useUIStore.getState().setSaving(false)
+    }
+  }, [updateMut, handleSaveAs, markSaved, doc, getEol, toDiskFormat, t])
 
   const handleReload = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -182,28 +191,31 @@ export function EditorPane(): React.ReactElement {
   }, [reloadMut, markSaved, t])
 
   // Close button: confirm first if there are unsaved changes
-  const handleClose = useCallback(() => {
-    if (useUIStore.getState().dirty && !window.confirm(t('app.unsavedClose'))) return
+  const handleClose = useCallback(async () => {
+    if (useUIStore.getState().dirty) {
+      const ok = await window.api.dialog.confirm({
+        message: t('app.unsavedClose'),
+        okText: t('app.confirmDiscard'),
+        cancelText: t('app.confirmKeep'),
+      })
+      if (!ok) return
+    }
     closeDocument()
   }, [closeDocument, t])
 
-  // Menu (Save / Save As / Reload) and file watching: register only once, pull the latest
-  // implementation via the ref
-  const handlersRef = useRef({ handleSave, handleSaveAs, handleReload })
+  // Menu (Save / Save As / Reload): register the listeners with the current handler closures.
+  // Re-register whenever a handler identity changes (they depend on doc / mutation fns), which
+  // keeps the menu actions in sync without holding the latest implementation in a mutable ref.
   useEffect(() => {
-    handlersRef.current = { handleSave, handleSaveAs, handleReload }
-  })
-
-  useEffect(() => {
-    const rmSave = window.api.onMenuEvent('save', () => handlersRef.current.handleSave())
-    const rmSaveAs = window.api.onMenuEvent('save-as', () => handlersRef.current.handleSaveAs())
-    const rmReload = window.api.onMenuEvent('reload', () => handlersRef.current.handleReload())
+    const rmSave = window.api.onMenuEvent('save', () => void handleSave())
+    const rmSaveAs = window.api.onMenuEvent('save-as', () => void handleSaveAs())
+    const rmReload = window.api.onMenuEvent('reload', () => void handleReload())
     return () => {
       rmSave()
       rmSaveAs()
       rmReload()
     }
-  }, [])
+  }, [handleSave, handleSaveAs, handleReload])
 
   // Watch the current document's file for on-disk changes
   useEffect(() => {

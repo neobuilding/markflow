@@ -17,8 +17,11 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.newDocumentAction': '新建文档',
   'sidebar.emptyFolder': '此文件夹中没有文档',
   'sidebar.createFirst': '创建你的第一个文档',
+  'sidebar.newBadge': '新建',
+  'sidebar.unsavedDrafts': '未保存草稿',
   'sidebar.details': '详情',
   'sidebar.delete': '删除',
+  'details.unsaved': '未保存（仅存在于内存中）',
 
   // ── Editor pane ────────────────────────────────────────────────────────
   'editor.save': '保存',
@@ -123,6 +126,7 @@ export const zhCN: Record<TranslationKey, string> = {
   // ── New document dialog ────────────────────────────────────────────────
   'new.title': '新建文档',
   'new.documentTitle': '文档标题',
+  'new.extension': '扩展名',
   'new.untitled': '未命名',
   'new.cancel': '取消',
   'new.create': '创建',
@@ -131,6 +135,8 @@ export const zhCN: Record<TranslationKey, string> = {
   'app.unsavedSwitch': '你有未保存的更改。要丢弃并切换文件吗？',
   'app.unsavedCloseWorkspace': '你有未保存的更改。要丢弃并关闭工作区吗？',
   'app.unsavedClose': '你有未保存的更改。要丢弃吗？',
+  'app.confirmDiscard': '丢弃',
+  'app.confirmKeep': '继续编辑',
   'app.saveFailed': '保存文件失败。',
   'app.fileGone': '该文件在磁盘上已不存在。',
   'app.printNotReady': '预览尚未就绪。请先切换到预览或分屏视图。',
@@ -165,6 +171,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.fileDetails': '文件详情…',
   'menu.exportHtml': '导出为 HTML…',
   'menu.print': '打印…',
+  'menu.closeFile': '关闭文件',
   'menu.closeWorkspace': '关闭工作区',
   'menu.toggleSidebar': '切换侧边栏',
   'menu.togglePreview': '切换预览',
