@@ -1,29 +1,45 @@
 # .github/dependabot.yml
 version: 2
+
 updates:
-  # npm dependencies (includes devDependencies)
+  # ======================
+  # npm / yarn dependencies
+  # ======================
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5          # Only limits version updates; security updates are unaffected
     labels:
       - "dependencies"
     groups:
-      # Group all npm updates (major / minor / patch) into a single PR to minimize branch noise
+      # All regular version updates → combined into 1 PR
       npm-all:
         patterns: ["*"]
+        # Defaults to applies-to: version-updates (can be omitted)
 
-  # GitHub Actions versions
+      # All security updates → combined into a separate PR (important)
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ======================
+  # GitHub Actions
+  # ======================
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"
       - "github-actions"
     groups:
-      # Group all GitHub Actions updates into a single PR
+      # All Actions version updates → 1 PR
       actions-all:
+        patterns: ["*"]
+
+      # All Actions security updates → 1 PR
+      actions-security:
+        applies-to: security-updates
         patterns: ["*"]
