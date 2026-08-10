@@ -1,4 +1,4 @@
-/// <reference path="../../src/renderer/src/vite-env.d.ts" />
+import type {} from '../../src/renderer/src/vite-env.d.ts'
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 

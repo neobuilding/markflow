@@ -35,6 +35,28 @@ npm run quality       # Prettier 格式检查 + Stylelint + Markdownlint + Secre
 
 `pre-commit` 钩子会自动对暂存文件运行 lint-staged（Stylelint + Markdownlint + Prettier）。
 
+## 测试与 CI
+
+两层测试可在本地与 CI 中运行：
+
+```bash
+npm run test:coverage   # 单元测试（Vitest + jsdom）+ 覆盖率，无需构建 Electron
+npm run e2e             # 端到端：用 Playwright 驱动真实的 Electron 应用
+```
+
+- **单元测试**（`npm run test:coverage`）在 jsdom 下运行，不会触发 Electron 构建，速度快、无需显示服务。
+- **端到端测试**（`npm run e2e`）会启动真实的 Electron 应用：`e2e/global-setup.ts` 启动共享的 Vite dev server 并等待 `dist-electron/index.js` 编译完成，因此需先 `npm run build`；每个 spec 再各自启动一个 Electron 实例。在无显示的 Linux（如 CI）上需借助虚拟显示运行：
+
+  ```bash
+  xvfb-run --auto-servernum -- npm run e2e
+  ```
+
+### CI 流水线（`.github/workflows/ci.yml`）
+
+`Test, Build & E2E` 任务（ubuntu）依次执行：类型检查 + 单元测试 + 覆盖率 → 安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e`。e2e 步骤刻意合并进该任务，复用同一 runner、一次 `npm ci` 安装与一次 `npm run build`，避免额外启动一个 runner（省一次完整安装 + 一次构建）。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。
+
+三平台 `build` 任务（`Build (macos|windows|ubuntu)`）在该测试任务之后运行，是全仓库唯一的三平台构建，既用于 PR 校验也用于发布。
+
 ## 文件说明
 
 | 文件/目录                                | 用途                                                   |

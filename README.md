@@ -204,6 +204,55 @@ A Husky `pre-commit` hook runs **lint-staged**, applying Stylelint + Markdownlin
 staged `*.css` / `*.md` / source files. Run `npm run quality` before opening a PR so the CI
 `quality` job stays green.
 
+## 🧪 Testing & CI
+
+Two test layers run locally and in CI:
+
+```bash
+npm run test:coverage   # Unit tests (Vitest, jsdom) + coverage — *no* electron build needed
+npm run e2e             # End-to-end: drives the REAL Electron app via Playwright
+```
+
+- **Unit tests** (`npm run test:coverage`) use Vitest in jsdom and do **not** trigger the Electron
+  build, so they run fast and need no display server.
+- **E2E tests** (`npm run e2e`) launch the real Electron app. `e2e/global-setup.ts` starts a shared
+  Vite dev server and waits for `dist-electron/index.js`, so the main process must be built first
+  (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you must
+  run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e`.
+
+### CI pipeline (`.github/workflows/ci.yml`)
+
+The `Test, Build & E2E` job (ubuntu) chains: typecheck + unit tests + coverage → Playwright browser
+install → `npm run build` → `npm run e2e` (under `xvfb-run`). The e2e steps are merged into the test
+job on purpose — they share the same runner, one `npm ci` install, and a single `npm run build`,
+avoiding a separate runner (saves one full install + one build). The Playwright HTML report and
+`test-results/` are uploaded as artifacts on every run (even on failure) for inspection.
+
+The three-platform `build` job (`Build (macos|windows|ubuntu)`) runs after the test job and is the
+only three-platform build in the repo, used for both PR validation and releases.
+
+### Viewing test results
+
+Test results are surfaced in three complementary ways (no manual artifact download needed for
+day-to-day triage):
+
+1. **PR / Checks summary (Vitest + Playwright)** — both suites emit JUnit XML. CI renders them with
+   [`dorny/test-reporter`](https://github.com/dorny/test-reporter), producing a **test summary on the
+   run's Checks tab** and a **collapsible comment on the PR** listing passed/failed/flaky cases with
+   one-click expand to the failure. Playwright's native `github` reporter additionally shows per-spec
+   status, failure screenshots, traces and videos directly in the Checks UI.
+2. **Coverage on Codecov** — `npm run test:coverage` writes `coverage/lcov.info`, which CI uploads to
+   Codecov. The PR shows a **coverage diff** and **patch coverage**; the project dashboard tracks
+   trends over time. (Public repo, free. A `CODECOV_TOKEN` repo secret is used if set; the step is
+   non-blocking either way.)
+3. **Downloadable HTML reports (archived 7 days)** — the full `coverage/` (text + HTML + lcov) and
+   `playwright-report/` + `test-results/` (HTML report, screenshots, videos, traces) are still
+   uploaded as artifacts, so you can inspect the rich HTML view or grab artifacts for offline
+   debugging after the run.
+
+Quick links once a run finishes: open the workflow run → **Checks** tab for the summaries, or the
+**Artifacts** panel on the right for the HTML reports.
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please read the [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before getting started.

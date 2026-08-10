@@ -117,3 +117,7 @@ test-results/
 playwright-report/
 .playwright/
 e2e/.dev-url
+
+# Test result XML (JUnit) produced by Vitest / Playwright for CI reporting
+coverage/junit.xml
+test-results/junit.xml

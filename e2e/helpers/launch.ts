@@ -14,7 +14,6 @@ import { mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { _electron as electron, ElectronApplication, Page } from 'playwright'
-import { expect } from '@playwright/test'
 
 const PROJECT_ROOT = join(__dirname, '..', '..')
 const DEV_URL_FILE = join(__dirname, '..', '.dev-url')

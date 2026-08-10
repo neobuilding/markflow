@@ -20,6 +20,10 @@ export const DOCS_KEY = ['documents'] as const
 
 // e2e test hook: expose the real query client (dev only, tree-shaken from prod builds)
 // so end-to-end tests can invalidate caches the same way the app does.
+// The `false` branch (production builds) is unreachable under unit tests because
+// `import.meta.env.DEV` is inlined to `true` in the test environment; it is
+// exercised by the production build instead, so we exclude it from branch coverage.
+/* v8 ignore next 3 */
 if (import.meta.env.DEV) {
   ;(window as unknown as { __queryClient?: QueryClient }).__queryClient = queryClient
 }

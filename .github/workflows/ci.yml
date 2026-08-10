@@ -50,9 +50,15 @@ jobs:
             - run: npm run quality
 
     test:
-        name: Test & Build
+        name: Test, Build & E2E
         needs: [quality]
         runs-on: ubuntu-latest
+        # Elevated from the workflow-wide `contents: read` so dorny/test-reporter can
+        # publish the JUnit summaries as a PR comment and Checks annotations.
+        permissions:
+            contents: read
+            pull-requests: write
+            checks: write
         # Single source of truth for the version: only "compute" (never "tag"); after checkout it
         # calculates the tag/version and emits them as outputs for downstream jobs.
         outputs:
@@ -99,7 +105,6 @@ jobs:
               with: { node-version: 22, cache: npm }
             - run: npm ci
             - run: npm run ci
-            - run: npm run build
 
             # Upload the coverage report (text + html + lcov) so it can be inspected from the run.
             - name: Upload coverage report
@@ -110,6 +115,67 @@ jobs:
                   path: coverage/
                   if-no-files-found: warn
                   retention-days: 7
+
+            # ── Scheme 1: render unit-test (Vitest JUnit) results into the PR/Checks UI ──
+            # dorny/test-reporter turns the JUnit XML produced by Vitest into a rich
+            # test summary on the run's Checks tab and a collapsible PR comment, so
+            # failures are visible without downloading artifacts.
+            - name: Publish unit test report
+              if: always()
+              continue-on-error: true # Reporting must never block the pipeline; a missing/failed report is non-fatal.
+              uses: dorny/test-reporter@v2
+              with:
+                  name: Unit Tests (Vitest)
+                  path: coverage/junit.xml
+                  reporter: java-junit
+                  fail-on-error: false
+
+            # ── Scheme 3: upload coverage to Codecov for PR coverage diffs ──
+            # Public repos are free; the lcov file is produced by `test:coverage`.
+            - name: Upload coverage to Codecov
+              if: always()
+              uses: codecov/codecov-action@v5
+              with:
+                  files: coverage/lcov.info
+                  fail_ci_if_error: false
+                  token: ${{ secrets.CODECOV_TOKEN }}
+
+            # ── E2E: drive the REAL Electron app via Playwright ──────────────────
+            # global-setup.ts starts a shared Vite dev server and waits for
+            # dist-electron/index.js (globalSetup + launch.ts consume it), so the
+            # main process must be built first. Electron runs headful, so a virtual
+            # display (xvfb) is required on headless Linux runners. These steps are
+            # merged into the test job to reuse its single `npm ci` + one build
+            # instead of spinning up a separate runner (saves one full install + build).
+            - name: Install Playwright browsers + OS deps
+              run: npx playwright install --with-deps
+            - run: npm run build
+            - name: Run e2e
+              run: xvfb-run --auto-servernum -- npm run e2e
+            - name: Upload e2e report
+              if: always()
+              uses: actions/upload-artifact@v7
+              with:
+                  name: playwright-report
+                  path: |
+                      playwright-report/
+                      test-results/
+                  if-no-files-found: warn
+                  retention-days: 7
+
+            # ── Scheme 1: render e2e (Playwright JUnit) results into the PR/Checks UI ──
+            # Mirrors the unit-test report above for the end-to-end suite. (Playwright's
+            # own `github` reporter already adds a native Checks view; this adds the
+            # PR comment + historical run list in the test-reporter UI.)
+            - name: Publish e2e report
+              if: always()
+              continue-on-error: true # Reporting must never block the pipeline; a missing/failed report is non-fatal.
+              uses: dorny/test-reporter@v2
+              with:
+                  name: E2E Tests (Playwright)
+                  path: test-results/junit.xml
+                  reporter: java-junit
+                  fail-on-error: false
 
     # Always runs (PR / non-main push / main push / tag push / dispatch): three-platform build + dist.
     # This is the only three-platform build in the whole repo — PRs use it for validation, main/tag pushes for shipping,

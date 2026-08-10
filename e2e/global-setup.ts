@@ -3,7 +3,7 @@
 // via MARKFLOW_DEV_URL so every test can launch Electron against it.
 import { spawn, ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
-import { writeFileSync, existsSync, unlinkSync } from 'node:fs'
+import { writeFileSync, existsSync, unlinkSync, accessSync } from 'node:fs'
 
 const PROJECT_ROOT = join(__dirname, '..')
 const DEV_SERVER_URL = 'http://localhost:5174'
@@ -14,7 +14,7 @@ function getViteBin(): { command: string; args: string[] } {
   // or a `.bin/vite` shell script (which doesn't spawn directly on Windows).
   const viteJs = join(PROJECT_ROOT, 'node_modules', 'vite', 'bin', 'vite.js')
   try {
-    require('fs').accessSync(viteJs)
+    accessSync(viteJs)
     return { command: process.execPath, args: [viteJs] }
   } catch {
     return { command: 'npx', args: ['vite'] }

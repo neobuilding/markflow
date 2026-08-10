@@ -11,6 +11,14 @@ export default defineConfig({
     // jsdom, which otherwise throws unhandled "getClientRects is not a function"
     // errors from its async layout measurement.
     setupFiles: ['./test-setup.ts'],
+    // Emit a JUnit XML report so CI can render test results in the Checks/PR UI
+    // (dorny/test-reporter) and in GitHub's native test summary.
+    reporter: process.env.CI
+      ? [
+          ['default', { isTTY: false }],
+          ['junit', { outputFile: './coverage/junit.xml', suiteName: 'unit' }],
+        ]
+      : 'default',
     // Inline local main-process modules so Vite's SSR transform always processes them instead of
     // externalizing them. On Windows, leaving them external makes vitest mis-resolve their absolute
     // paths and try to load them as untransformed CommonJS ("package D:" SyntaxError), even though

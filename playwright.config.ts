@@ -24,7 +24,14 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: 1, // one Electron app at a time keeps the single-instance lock happy
-  reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : 'list',
+  reporter: process.env.CI
+    ? [
+        ['github'],
+        ['html', { open: 'never' }],
+        ['list'],
+        ['junit', { outputFile: 'test-results/junit.xml', flatten: true }],
+      ]
+    : 'list',
   timeout: 90_000, // first launch also compiles the main process via Vite
   expect: { timeout: 10_000 },
 
