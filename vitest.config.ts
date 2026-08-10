@@ -13,28 +13,20 @@ export default defineConfig({
     setupFiles: ['./test-setup.ts'],
     // Emit a JUnit XML report so CI can render test results in the Checks/PR UI
     // (dorny/test-reporter) and in GitHub's native test summary.
-    reporter: process.env.CI
-      ? [
-          ['default', { isTTY: false }],
-          ['junit', { outputFile: './coverage/junit.xml', suiteName: 'unit' }],
-        ]
-      : 'default',
-    // Inline local main-process modules so Vite's SSR transform always processes them instead of
-    // externalizing them. On Windows, leaving them external makes vitest mis-resolve their absolute
-    // paths and try to load them as untransformed CommonJS ("package D:" SyntaxError), even though
-    // tsc confirms the sources are valid ESM. These patterns match the optimizer request ids.
-    deps: {
-      inline: [
-        /electron/,
-        /electron\/main/,
-        /electron\/main\/ipc/,
-        /export\.ts/,
-        /documents\.ts/,
-        /security/,
-        /database/,
-        /shared/,
-      ],
+    // NOTE: vitest v4 (rolldown/oxc) cannot resolve reporter entries written as
+    // `[name, options]` arrays — it throws `StringExpected` when loading the custom
+    // reporter module. Use the plural `reporters` field with plain string names and
+    // configure per-reporter output via the `outputFile` map instead.
+    reporters: ['default', 'junit'],
+    outputFile: {
+      junit: './coverage/junit.xml',
     },
+    // NOTE: vitest v4 removed `test.deps.inline` (and `test.deps.external`). In v3 these regex
+    // patterns forced local main-process modules to be inlined through Vite's SSR transform instead
+    // of being externalized as CommonJS — on Windows externalizing made vitest mis-resolve absolute
+    // paths and try to load them as untransformed CJS ("package D:" SyntaxError). v4's rolldown-based
+    // module runner transforms project sources by default, so this workaround is no longer needed.
+    // If a module must be excluded from dependency pre-bundling, use `deps.optimizer` instead.
     include: [
       'src/renderer/src/**/*.test.ts',
       'src/renderer/src/**/*.test.tsx',
@@ -51,7 +43,9 @@ export default defineConfig({
       provider: 'v8',
       reportsDirectory: './coverage',
       reporter: ['text', 'html', 'lcov'],
-      all: true,
+      // NOTE: vitest v4 removed `coverage.all`. The provider now automatically includes untested
+      // files matched by `include` whenever a full test run executes (i.e. not a per-file rerun),
+      // so the previous `all: true` behavior is preserved by the `include` list below.
       include: [
         'src/renderer/src/lib/**/*.{ts,tsx}',
         'src/renderer/src/store/**/*.ts',
