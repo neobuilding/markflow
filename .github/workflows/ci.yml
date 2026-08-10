@@ -150,8 +150,26 @@ jobs:
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
             - run: npm run build
+            # Run e2e under a virtual display *with* a real window manager (openbox).
+            # A bare Xvfb has no window manager, so BrowserWindow.maximize()/isMaximized()
+            # do not behave like a real desktop — `isMaximized()` stays false and the
+            # window:maximize e2e test fails. openbox provides the WM Electron needs.
+            - name: Install window manager (openbox)
+              run: sudo apt-get update && sudo apt-get install -y openbox
             - name: Run e2e
-              run: xvfb-run --auto-servernum -- npm run e2e
+              run: |
+                  set -e
+                  # Start a virtual display on :99 in the background.
+                  Xvfb :99 -screen 0 1920x1080x24 >/dev/null 2>&1 &
+                  XVFB_PID=$!
+                  # Start a lightweight window manager on that display so maximize works.
+                  DISPLAY=:99 openbox --replace >/dev/null 2>&1 &
+                  # Give X + WM a moment to come up.
+                  sleep 3
+                  DISPLAY=:99 npm run e2e
+                  E2E_EXIT=$?
+                  kill $XVFB_PID 2>/dev/null || true
+                  exit $E2E_EXIT
             - name: Upload e2e report
               if: always()
               uses: actions/upload-artifact@v7
