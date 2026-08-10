@@ -17,3 +17,9 @@ export const queryClient = new QueryClient({
 // Centralised query keys. Kept here (import-cycle-free) so both the UI store and the
 // document hooks can reference them without creating a ui.ts <-> useDocuments.ts cycle.
 export const DOCS_KEY = ['documents'] as const
+
+// e2e test hook: expose the real query client (dev only, tree-shaken from prod builds)
+// so end-to-end tests can invalidate caches the same way the app does.
+if (import.meta.env.DEV) {
+  ;(window as unknown as { __queryClient?: QueryClient }).__queryClient = queryClient
+}

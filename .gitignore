@@ -111,3 +111,9 @@ electron-builder-cache/
 
 # Vite
 vite.config.ts.timestamp-*
+
+# Playwright e2e test artifacts
+test-results/
+playwright-report/
+.playwright/
+e2e/.dev-url

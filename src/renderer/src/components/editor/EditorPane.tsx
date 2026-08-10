@@ -386,6 +386,7 @@ export function EditorPane(): React.ReactElement {
                 variant="ghost"
                 size="icon"
                 onClick={() => useUIStore.getState().setExportOpen(true)}
+                data-testid="export-btn"
               >
                 <FileOutput size={13} />
               </Button>
@@ -423,7 +424,13 @@ export function EditorPane(): React.ReactElement {
       {editable ? (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" onClick={toggleEditable} className="gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={toggleEditable}
+              className="gap-1"
+              data-testid="toggle-editable-btn"
+            >
               <Lock size={12} /> {t('editor.readOnly')}
             </Button>
           </TooltipTrigger>
@@ -432,7 +439,13 @@ export function EditorPane(): React.ReactElement {
       ) : (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="accent" size="sm" onClick={toggleEditable} className="gap-1">
+            <Button
+              variant="accent"
+              size="sm"
+              onClick={toggleEditable}
+              className="gap-1"
+              data-testid="toggle-editable-btn"
+            >
               <PenLine size={12} /> {t('editor.edit')}
             </Button>
           </TooltipTrigger>
@@ -612,6 +625,7 @@ export function EditorPane(): React.ReactElement {
                   <TooltipTrigger asChild>
                     <button
                       onClick={() => setViewMode(mode)}
+                      data-testid={`view-${mode}`}
                       className={cn(
                         'px-2 py-1 text-xs transition-colors',
                         viewMode === mode

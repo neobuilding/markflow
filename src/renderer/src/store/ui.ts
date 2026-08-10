@@ -197,3 +197,9 @@ export const useUIStore = create<UIState>((set, get) => ({
   isNewUnsaved: false,
   setIsNewUnsaved: (v) => set({ isNewUnsaved: v }),
 }))
+
+// e2e test hook: expose the real UI store (dev only, tree-shaken from prod builds)
+// so end-to-end tests can drive the same store instance the app uses.
+if (import.meta.env.DEV) {
+  ;(window as unknown as { __uiStore?: typeof useUIStore }).__uiStore = useUIStore
+}

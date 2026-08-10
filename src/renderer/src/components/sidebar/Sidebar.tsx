@@ -234,6 +234,7 @@ export function Sidebar(): React.ReactElement | null {
                   size="icon"
                   onClick={handleCreate}
                   disabled={createMut.isPending}
+                  data-testid="new-document-btn"
                 >
                   <Plus size={13} />
                 </Button>
@@ -413,6 +414,7 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
   const { t } = useT()
   return (
     <li
+      data-testid="doc-item"
       className={cn(
         'group relative flex items-start gap-2 px-3 py-2 mx-1 rounded cursor-pointer transition-colors',
         isActive
