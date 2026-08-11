@@ -29,7 +29,7 @@ export default defineConfig({
         ['github'],
         ['html', { open: 'never' }],
         ['list'],
-        ['junit', { outputFile: 'test-results/junit.xml', flatten: true }],
+        ['junit', { outputFile: 'reports/e2e/junit.xml', flatten: true }],
       ]
     : 'list',
   timeout: 90_000, // first launch also compiles the main process via Vite

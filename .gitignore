@@ -112,12 +112,13 @@ electron-builder-cache/
 # Vite
 vite.config.ts.timestamp-*
 
-# Playwright e2e test artifacts
+# Playwright e2e test artifacts (traces / screenshots / videos — NOT the JUnit XML,
+# which now lives in reports/e2e/junit.xml so the suite type is self-describing).
 test-results/
 playwright-report/
 .playwright/
 e2e/.dev-url
 
-# Test result XML (JUnit) produced by Vitest / Playwright for CI reporting
-coverage/junit.xml
-test-results/junit.xml
+# Test result XML (JUnit) produced by Vitest (unit) / Playwright (e2e) for CI reporting.
+# Both suites emit into reports/<suite>/junit.xml so the type is self-describing.
+reports/

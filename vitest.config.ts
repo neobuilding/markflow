@@ -19,7 +19,7 @@ export default defineConfig({
     // configure per-reporter output via the `outputFile` map instead.
     reporters: ['default', 'junit'],
     outputFile: {
-      junit: './coverage/junit.xml',
+      junit: './reports/unit/junit.xml',
     },
     // NOTE: vitest v4 removed `test.deps.inline` (and `test.deps.external`). In v3 these regex
     // patterns forced local main-process modules to be inlined through Vite's SSR transform instead
