@@ -83,19 +83,22 @@ export default defineConfig({
         },
       },
     },
-    // Resolve the same "isomorphic" package aliases used by the Worker (aligned with
-    // vite.config.ts), ensuring markdownPipeline also uses DOM-free variants in tests
-    // (even though tests don't run in the Worker, this keeps parity with the build and
-    // avoids potential resolution differences).
-    resolve: {
-      alias: {
-        'decode-named-character-reference': fileURLToPath(
-          new URL('./node_modules/decode-named-character-reference/index.js', import.meta.url),
-        ),
-        'hast-util-from-html-isomorphic': fileURLToPath(
-          new URL('./node_modules/hast-util-from-html-isomorphic/index.js', import.meta.url),
-        ),
-      },
+  },
+  // Resolve the same "isomorphic" package aliases used by the Worker (aligned with
+  // vite.config.ts), ensuring markdownPipeline also uses DOM-free variants in tests
+  // (even though tests don't run in the Worker, this keeps parity with the build and
+  // avoids potential resolution differences).
+  // NOTE: in Vitest v4 `resolve` is no longer a valid field under `test` — it must live
+  // at the top level (it is a Vite resolve option, merged into the Vite/Rolldown config),
+  // otherwise TS reports TS2769 ("resolve does not exist in type ...") in the IDE.
+  resolve: {
+    alias: {
+      'decode-named-character-reference': fileURLToPath(
+        new URL('./node_modules/decode-named-character-reference/index.js', import.meta.url),
+      ),
+      'hast-util-from-html-isomorphic': fileURLToPath(
+        new URL('./node_modules/hast-util-from-html-isomorphic/index.js', import.meta.url),
+      ),
     },
   },
 })

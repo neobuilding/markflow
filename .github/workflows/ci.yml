@@ -154,8 +154,10 @@ jobs:
             # A bare Xvfb has no window manager, so BrowserWindow.maximize()/isMaximized()
             # do not behave like a real desktop — `isMaximized()` stays false and the
             # window:maximize e2e test fails. openbox provides the WM Electron needs.
-            - name: Install window manager (openbox)
-              run: sudo apt-get update && sudo apt-get install -y openbox
+            # We install x11-utils so we can *verify* the WM actually took over :99
+            # before launching e2e (a racy/late WM is what made this flaky before).
+            - name: Install window manager (openbox) + WM probe (x11-utils)
+              run: sudo apt-get update && sudo apt-get install -y openbox x11-utils
             - name: Run e2e
               run: |
                   set -e
@@ -164,8 +166,19 @@ jobs:
                   XVFB_PID=$!
                   # Start a lightweight window manager on that display so maximize works.
                   DISPLAY=:99 openbox --replace >/dev/null 2>&1 &
-                  # Give X + WM a moment to come up.
-                  sleep 3
+                  # Poll (up to ~15s) until openbox has actually registered as the WM
+                  # for :99. A bare Xvfb sets _NET_SUPPORTING_WM_CHECK only once a WM
+                  # is present; if we launch e2e before that, maximize() is a no-op and
+                  # the window:maximize test flakes.
+                  for i in $(seq 1 30); do
+                    if DISPLAY=:99 xprop -root _NET_SUPPORTING_WM_CHECK >/dev/null 2>&1; then
+                      echo "WM ready after ${i} tries"
+                      break
+                    fi
+                    sleep 0.5
+                  done
+                  echo "--- WM probe ---"
+                  DISPLAY=:99 xprop -root _NET_SUPPORTING_WM_CHECK 2>&1 || echo "no WM found"
                   DISPLAY=:99 npm run e2e
                   E2E_EXIT=$?
                   kill $XVFB_PID 2>/dev/null || true
