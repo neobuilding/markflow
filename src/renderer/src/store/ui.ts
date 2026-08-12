@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ViewMode, ThemeMode } from '../types'
-import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n'
+import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/storage'
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
 
 // Remove a memory-only draft (never saved to disk) and refresh the document list so the
