@@ -114,14 +114,14 @@ if (!shouldStart) {
   // Another instance is already running; quit this one (the existing instance handles the open request)
   app.quit()
 } else {
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     if (process.platform === 'win32') {
       app.setAppUserModelId(app.isPackaged ? 'com.mark-flow.app' : process.execPath)
     }
 
     setupCSP(VITE_DEV_SERVER_URL)
 
-    initDatabase()
+    await initDatabase()
 
     // appdoc: protocol handling (must be registered inside whenReady; ② and
     // registerSchemesAsPrivileged happen at two different times)

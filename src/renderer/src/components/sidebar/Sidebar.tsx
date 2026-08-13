@@ -195,7 +195,12 @@ export function Sidebar(): React.ReactElement | null {
           <div className="flex items-center gap-0.5">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={() => setSearchOpen(true)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('sidebar.search')}
+                  onClick={() => setSearchOpen(true)}
+                >
                   <Search size={13} />
                 </Button>
               </TooltipTrigger>
@@ -206,6 +211,7 @@ export function Sidebar(): React.ReactElement | null {
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label={t('sidebar.openFile')}
                   onClick={handleImportFile}
                   disabled={openPathsMut.isPending}
                 >
@@ -219,6 +225,7 @@ export function Sidebar(): React.ReactElement | null {
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label={t('sidebar.openFolder')}
                   onClick={handleImportFolder}
                   disabled={openFolderMut.isPending}
                 >
@@ -232,6 +239,7 @@ export function Sidebar(): React.ReactElement | null {
                 <Button
                   variant="ghost"
                   size="icon"
+                  aria-label={t('sidebar.newDocument')}
                   onClick={handleCreate}
                   disabled={createMut.isPending}
                   data-testid="new-document-btn"

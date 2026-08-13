@@ -1,3 +1,19 @@
+// Register jest-dom custom matchers (toBeInTheDocument, toHaveClass, ...) for
+// React Testing Library assertions in *.test.tsx component suites.
+import '@testing-library/jest-dom/vitest'
+
+// React Testing Library does not auto-unmount between tests unless Vitest's
+// global `afterEach` is in scope. This project keeps `globals` off for the
+// main-process suites, so register cleanup explicitly to avoid DOM from one
+// test leaking into the next (which would otherwise accumulate duplicate
+// elements and break `getBy*` queries).
+import { afterEach } from 'vitest'
+import { cleanup } from '@testing-library/react'
+
+afterEach(() => {
+  cleanup()
+})
+
 // Global test setup for jsdom environment.
 //
 // CodeMirror's `@codemirror/view` measures text layout by calling
@@ -31,5 +47,23 @@ if (typeof Range !== 'undefined' && !Range.prototype.getClientRects) {
         return {}
       },
     } as DOMRect
+  }
+}
+
+// Radix UI primitives (Dialog / DropdownMenu / Tooltip) call pointer-capture and
+// scroll-into-view APIs that jsdom does not implement. Polyfill them so the
+// component suites can render / open these primitives without throwing.
+if (typeof Element !== 'undefined') {
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false
+  }
+  if (!Element.prototype.setPointerCapture) {
+    Element.prototype.setPointerCapture = () => {}
+  }
+  if (!Element.prototype.releasePointerCapture) {
+    Element.prototype.releasePointerCapture = () => {}
+  }
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {}
   }
 }

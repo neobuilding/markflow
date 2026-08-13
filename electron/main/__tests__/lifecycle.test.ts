@@ -233,4 +233,15 @@ describe('main process — before-quit safety net', () => {
     vi.advanceTimersByTime(5000)
     expect(h.fakeQuit).not.toHaveBeenCalled()
   })
+
+  it('quits when the last window is closed (window-all-closed)', async () => {
+    h.fakeWindow.isDestroyed = () => true
+    const state = await import('../state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
+
+    h.fakeQuit.mockClear()
+    h.appHandlers['window-all-closed']()
+    expect(h.fakeQuit).toHaveBeenCalledTimes(1)
+  })
 })

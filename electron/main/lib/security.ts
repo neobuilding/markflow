@@ -2,7 +2,7 @@
 // containment" checks. Extracted into a standalone module so the main process
 // (index.ts) and ipc/export.ts can share it without export.ts importing index.ts
 // and re-triggering its top-level side effects (registerSchemesAsPrivileged).
-import { sep } from 'node:path'
+import { sep, resolve } from 'node:path'
 import { realpathSync } from 'node:fs'
 
 // MIME map for images the appdoc:// protocol may return.
@@ -23,7 +23,16 @@ export const APPDOC_MIME: Record<string, string> = {
 // escapes, see §4.5).
 export function isSubdir(parent: string, child: string): boolean {
   const realParent = realpathSync(parent)
-  const realChild = realpathSync(child)
+  let realChild: string
+  try {
+    realChild = realpathSync(child)
+  } catch {
+    // The child may not exist yet (e.g. a still-missing image, or a path that
+    // escapes the base dir entirely). Fall back to a non-failing resolve so we
+    // can still judge containment by lexical comparison below — this keeps the
+    // traversal check robust when realpathSync would otherwise throw ENOENT.
+    realChild = resolve(child)
+  }
   return realChild === realParent || realChild.startsWith(realParent + sep)
 }
 

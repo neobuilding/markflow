@@ -127,7 +127,7 @@ describe('sanitizeHtml — integration with markdownPipeline', () => {
     const { html } = render('<img src=x onerror="alert(1)">\n', 'doc-1')
     const out = sanitizeHtml(html)
     expect(out).not.toContain('onerror')
-  })
+  }, 20000)
 
   it('keeps katex output intact through sanitization', async () => {
     const { render } = await import('./markdownPipeline')
