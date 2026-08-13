@@ -123,7 +123,7 @@ jobs:
             - name: Publish unit test report
               if: always()
               continue-on-error: true # Reporting must never block the pipeline; a missing/failed report is non-fatal.
-              uses: dorny/test-reporter@v2
+              uses: dorny/test-reporter@v3
               with:
                   name: Unit Tests (Vitest)
                   path: reports/unit/junit.xml
@@ -134,7 +134,7 @@ jobs:
             # Public repos are free; the lcov file is produced by `test:coverage`.
             - name: Upload coverage to Codecov
               if: always()
-              uses: codecov/codecov-action@v5
+              uses: codecov/codecov-action@v7
               with:
                   files: coverage/lcov.info
                   fail_ci_if_error: false
@@ -170,7 +170,7 @@ jobs:
             - name: Publish e2e report
               if: always()
               continue-on-error: true # Reporting must never block the pipeline; a missing/failed report is non-fatal.
-              uses: dorny/test-reporter@v2
+              uses: dorny/test-reporter@v3
               with:
                   name: E2E Tests (Playwright)
                   path: reports/e2e/junit.xml
