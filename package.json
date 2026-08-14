@@ -3,6 +3,7 @@
   "version": "2.2.0",
   "description": "A cross-platform Markdown editor with Linear-style UI",
   "main": "dist-electron/index.js",
+  "type": "module",
   "author": "MarkFlow Team",
   "scripts": {
     "postinstall": "electron-builder install-app-deps && node scripts/install-eslint-ts6.mjs",
