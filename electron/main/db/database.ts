@@ -1,10 +1,18 @@
 import type Database from 'better-sqlite3'
 
-// Use dynamic require wrapped in a function so Rollup won't hoist it to top level.
-// better-sqlite3 depends on 'bindings' which is bundled in the asar.
-function loadBetterSqlite3(): typeof import('better-sqlite3') {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require('better-sqlite3')
+// Load better-sqlite3 via an ESM dynamic import wrapped in an async function.
+//
+// Why dynamic (instead of a top-level static import)?
+//   1. Native module: better-sqlite3 ships a platform-specific `.node` binary. The main
+//      process build uses `notBundle()`, which keeps it as an external require (never
+//      inlined by Rollup), and electron-builder `asarUnpack`s it to a real on-disk path —
+//      so a runtime import resolves the native binding correctly.
+//   2. Graceful failure: loading is wrapped in try/catch so a missing/broken native
+//      binding surfaces a friendly error instead of crashing the whole process at import.
+//   3. Testability: unlike `require()`, a dynamic `import()` IS interceptable by
+//      `vi.mock('better-sqlite3')`, so the failure path above can be unit-tested.
+async function loadBetterSqlite3(): Promise<any> {
+  return import('better-sqlite3')
 }
 
 let db: Database.Database | null = null
@@ -16,17 +24,23 @@ export function getDb(): Database.Database {
   return db
 }
 
-export function initDatabase(): void {
+export async function initDatabase(): Promise<void> {
   // Privacy by design: the database is intentionally in-memory (':memory:'), so no
   // document content, metadata, or search index is ever written to disk. Once the
   // process exits, everything is gone — there is nothing to persist or clean up.
 
-  // Require better-sqlite3 at runtime inside a try/catch to show a friendly error
+  // Import better-sqlite3 at runtime inside a try/catch to show a friendly error
   // instead of crashing the entire process.
   let DatabaseConstructor: any
   try {
-    DatabaseConstructor = loadBetterSqlite3()
+    const mod = await loadBetterSqlite3()
+    DatabaseConstructor = mod.default
   } catch (err) {
+    // The `String(err)` arm (non-Error rejection) is unreachable in unit tests: Vitest
+    // always wraps a throwing `vi.mock` factory into an Error, so a dynamic import can
+    // never reject with a non-Error value under test. Tell v8 to ignore this branch so
+    // the coverage gate reflects only what is actually exercisable.
+    /* v8 ignore next */
     const msg = err instanceof Error ? err.message : String(err)
     // Attached via Object.assign so the original error is preserved as `cause` (satisfies the
     // `preserve-caught-error` rule at runtime) while still type-checking under TypeScript 7, whose

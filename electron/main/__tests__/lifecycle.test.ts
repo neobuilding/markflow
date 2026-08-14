@@ -7,7 +7,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => {
   const appHandlers: Record<string, (...a: unknown[]) => void> = {}
   const ipcOn: Record<string, (...a: unknown[]) => void> = {}
-  const ipcHandle: Record<string, (...a: unknown[]) => void> = {}
   const fakeQuit = vi.fn()
   const fakeWebContentsSend = vi.fn()
   const fakeWindow: Record<string, unknown> = {
@@ -32,9 +31,11 @@ const h = vi.hoisted(() => {
       closeDevTools: vi.fn(),
     },
   }
-  return { appHandlers, ipcOn, ipcHandle, fakeQuit, fakeWebContentsSend, fakeWindow }
+  return { appHandlers, ipcOn, fakeQuit, fakeWebContentsSend, fakeWindow }
 })
 
+// Mock `electron` FIRST (before importing lifecycle), so the module-top-level
+// setupLifecycle() registrations are captured when lifecycle.ts is imported.
 vi.mock('electron', () => {
   const app = {
     setPath: vi.fn(),
@@ -51,18 +52,12 @@ vi.mock('electron', () => {
     requestSingleInstanceLock: () => true,
   }
   const ipcMain = {
-    handle: (ch: string, fn: (...a: unknown[]) => void) => {
-      h.ipcHandle[ch] = fn
+    handle: (_ch: string, _fn: (...a: unknown[]) => void) => {
+      // lifecycle.ts only uses ipcMain.on
     },
     on: (ch: string, fn: (...a: unknown[]) => void) => {
       h.ipcOn[ch] = fn
     },
-  }
-  class BrowserWindow {
-    // Return the shared fake window instance so `mainWindow` is assignable/inspectable.
-    constructor() {
-      return h.fakeWindow as unknown as Electron.BrowserWindow
-    }
   }
   const session = {
     defaultSession: {
@@ -91,7 +86,7 @@ vi.mock('electron', () => {
   return {
     app,
     ipcMain,
-    BrowserWindow,
+    BrowserWindow: class {},
     session,
     screen,
     Menu,
@@ -102,8 +97,31 @@ vi.mock('electron', () => {
   }
 })
 
-// The following module-level mocks use paths relative to THIS test file
-// (vi.mock resolves the specifier from the test file location).
+// Mock the shared state module so the test controls getMainWindow() (the window
+// instance lifecycle.ts reads in before-quit). The same mock instance is shared by
+// lifecycle.ts because it resolves to the same absolute path. The quit flags are
+// tracked for real so app:quit-allowed -> before-quit interactions behave correctly.
+vi.mock('../state', () => {
+  let mainWindow: unknown = null
+  let isQuiting = false
+  let readyToQuit = false
+  return {
+    getMainWindow: () => mainWindow,
+    setMainWindow: (w: unknown) => {
+      mainWindow = w
+    },
+    getIsQuiting: () => isQuiting,
+    setIsQuiting: (v: boolean) => {
+      isQuiting = v
+    },
+    getReadyToQuit: () => readyToQuit,
+    setReadyToQuit: (v: boolean) => {
+      readyToQuit = v
+    },
+    pendingInitialPaths: [] as string[],
+  }
+})
+
 vi.mock('../db/database', () => ({
   initDatabase: vi.fn(),
   getDb: () => ({
@@ -113,27 +131,14 @@ vi.mock('../db/database', () => ({
     }),
   }),
 }))
-vi.mock('../ipc/documents', () => ({ registerDocumentHandlers: vi.fn() }))
-vi.mock('../ipc/search', () => ({ registerSearchHandlers: vi.fn() }))
-vi.mock('../ipc/export', () => ({ registerExportHandlers: vi.fn() }))
-vi.mock('../lib/security', () => ({
-  isSubdir: () => true,
-  APPDOC_MIME: {},
-  parseAppDocUrl: () => null,
-}))
-vi.mock('../i18n', () => ({
-  getCurrentLocale: () => 'en',
-  menuT: (k: string) => k,
-  setMenuLanguage: vi.fn(),
-  initMenuI18n: vi.fn(),
-}))
 
-// Load the module and let `app.whenReady().then(...)` microtasks settle so that
-// `createWindow()` assigns the module-internal `mainWindow`.
-async function loadIndex(): Promise<void> {
-  await import('../index.js')
-  await Promise.resolve()
-  await Promise.resolve()
+async function loadLifecycle(): Promise<void> {
+  // lifecycle.ts registers its handlers via an explicit setupLifecycle() call
+  // (the module does NOT self-execute on import, so it is not tree-shaken away
+  // by Rollup). We must invoke it here for the app_before-quit / app:quit-allowed
+  // handlers to be registered on the mocked app/ipcMain.
+  const lifecycle = await import('../lifecycle.js')
+  lifecycle.setupLifecycle()
 }
 
 beforeEach(() => {
@@ -152,7 +157,9 @@ afterEach(() => {
 describe('main process — before-quit safety net', () => {
   it('forces app.quit() after the 5s grace period when the renderer never replies', async () => {
     h.fakeWindow.isDestroyed = () => false
-    await loadIndex()
+    const state = await import('../state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
 
     const evt = { preventDefault: vi.fn() }
     h.appHandlers['before-quit'](evt)
@@ -170,7 +177,9 @@ describe('main process — before-quit safety net', () => {
 
   it('does NOT force quit from the safety net when the renderer replies before the grace period', async () => {
     h.fakeWindow.isDestroyed = () => false
-    await loadIndex()
+    const state = await import('../state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
 
     // The before-quit prompt is sent and the safety-net timer is armed.
     const evt = { preventDefault: vi.fn() }
@@ -190,7 +199,9 @@ describe('main process — before-quit safety net', () => {
 
   it('purges drafts and quits immediately when readyToQuit is already set', async () => {
     h.fakeWindow.isDestroyed = () => false
-    await loadIndex()
+    const state = await import('../state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
 
     // Renderer already allowed the previous quit attempt.
     h.ipcOn['app:quit-allowed']()
@@ -209,7 +220,9 @@ describe('main process — before-quit safety net', () => {
 
   it('does nothing (no prompt, no forced quit) when the window is already destroyed', async () => {
     h.fakeWindow.isDestroyed = () => true
-    await loadIndex()
+    const state = await import('../state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
 
     const evt = { preventDefault: vi.fn() }
     h.appHandlers['before-quit'](evt)
@@ -219,5 +232,16 @@ describe('main process — before-quit safety net', () => {
 
     vi.advanceTimersByTime(5000)
     expect(h.fakeQuit).not.toHaveBeenCalled()
+  })
+
+  it('quits when the last window is closed (window-all-closed)', async () => {
+    h.fakeWindow.isDestroyed = () => true
+    const state = await import('../state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
+
+    h.fakeQuit.mockClear()
+    h.appHandlers['window-all-closed']()
+    expect(h.fakeQuit).toHaveBeenCalledTimes(1)
   })
 })

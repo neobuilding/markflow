@@ -62,34 +62,39 @@ export function registerSearchHandlers(ipcMain: IpcMain): void {
     } catch (e) {
       console.error('FTS search error:', e)
       // Fallback: LIKE search
-      const likeQuery = `%${query.trim()}%`
-      const rows = db
-        .prepare(
-          `
-          SELECT id, title, folder_path, updated_at,
-            SUBSTR(content, 1, 200) AS snippet
-          FROM documents
-          WHERE (title LIKE ? OR content LIKE ?) AND is_archived = 0
-          ORDER BY updated_at DESC
-          LIMIT 20
-        `,
-        )
-        .all(likeQuery, likeQuery) as Array<{
-        id: string
-        title: string
-        folder_path: string
-        updated_at: number
-        snippet: string
-      }>
+      try {
+        const likeQuery = `%${query.trim()}%`
+        const rows = db
+          .prepare(
+            `
+            SELECT id, title, folder_path, updated_at,
+              SUBSTR(content, 1, 200) AS snippet
+            FROM documents
+            WHERE (title LIKE ? OR content LIKE ?) AND is_archived = 0
+            ORDER BY updated_at DESC
+            LIMIT 20
+          `,
+          )
+          .all(likeQuery, likeQuery) as Array<{
+          id: string
+          title: string
+          folder_path: string
+          updated_at: number
+          snippet: string
+        }>
 
-      return rows.map((r) => ({
-        id: r.id,
-        title: r.title,
-        folderPath: r.folder_path,
-        snippet: r.snippet || '',
-        score: 0,
-        updatedAt: r.updated_at,
-      }))
+        return rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          folderPath: r.folder_path,
+          snippet: r.snippet || '',
+          score: 0,
+          updatedAt: r.updated_at,
+        }))
+      } catch (e2) {
+        console.error('LIKE fallback search error:', e2)
+        return []
+      }
     }
   })
 }

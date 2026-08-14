@@ -1,0 +1,30 @@
+# Codecov configuration for markflow.
+#
+# Strategy:
+# - Project coverage check is ENABLED but CONSERVATIVE (auto baseline = main,
+#   allow a small relative drop). It complements Vitest's strict 100% unit-test
+#   gate by giving a whole-repo visibility surface.
+# - Patch (per-PR incremental) check is intentionally NOT a hard gate: the repo
+#   validates React/Electron-native/Worker/CodeMirror via E2E + manual, not unit
+#   tests, so a strict patch target would false-fail normal UI PRs.
+# - CI keeps `codecov-action` with `fail_ci_if_error: false`, so Codecov upload
+#   issues never block the release pipeline. The real coverage gate remains
+#   Vitest's 100% threshold in `npm run ci`.
+
+coverage:
+  # Master is the default base branch; `target: auto` uses main's current
+  # coverage as the moving baseline so the gate tracks the repo over time.
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%   # Allow up to a 1% relative drop vs main before flagging.
+        informational: true   # Surface as a check, but never fail the CI run.
+    # NOTE: no `patch:` block. Incremental coverage is shown in the PR comment
+    # (see `comment:` below) but is NOT enforced as a gate.
+
+comment:
+  # Show reach, diff vs base, flag breakdown, and per-file list in the PR comment.
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false   # Comment even when coverage is unchanged (consistent visibility).

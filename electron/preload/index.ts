@@ -1,161 +1,31 @@
 // electron/preload/index.ts - Preload script (ESM)
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge } from 'electron'
+import { documentsApi } from './api/documents'
+import { exportApi } from './api/export'
+import { searchApi } from './api/search'
+import { appApi } from './api/app'
+import { filesApi } from './api/files'
+import { dialogApi } from './api/dialog'
+import { windowApi } from './api/window'
+import { menuApi } from './api/menu'
+import { onMenuEvent, onFileChanged, onOpenPaths, onAppRequestQuit } from './api/events'
 
-// Custom APIs exposed to renderer
+// Custom APIs exposed to renderer. Each group is assembled from the per-domain
+// modules under ./api so this file only does composition, not implementation.
 const api = {
-  // Document operations
-  documents: {
-    list: (folderPath?: string) => ipcRenderer.invoke('documents:list', folderPath),
-    get: (id: string) => ipcRenderer.invoke('documents:get', id),
-    create: (params: {
-      title?: string
-      folderPath?: string
-      content?: string
-      ext?: string
-      memoryOnly?: boolean
-    }) => ipcRenderer.invoke('documents:create', params),
-    update: (id: string, updates: { title?: string; content?: string }) =>
-      ipcRenderer.invoke('documents:update', id, updates),
-    delete: (id: string) => ipcRenderer.invoke('documents:delete', id),
-    import: (filePath: string) => ipcRenderer.invoke('documents:import', filePath),
-    importMany: (filePaths: string[]) => ipcRenderer.invoke('documents:import-many', filePaths),
-    saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) =>
-      ipcRenderer.invoke('documents:save-as', id, filePath, params),
-    reload: (id: string) => ipcRenderer.invoke('documents:reload', id),
-    setEncoding: (id: string, encoding: string) =>
-      ipcRenderer.invoke('documents:set-encoding', id, encoding),
-    stat: (filePath: string) => ipcRenderer.invoke('documents:stat', filePath),
-    eol: (filePath: string) => ipcRenderer.invoke('documents:eol', filePath),
-    watch: (id: string) => ipcRenderer.invoke('documents:watch', id),
-    unwatch: (id: string) => ipcRenderer.invoke('documents:unwatch', id),
-  },
-
-  // Export: md -> standalone html (reuse the sanitized preview HTML as the single source of truth, R7)
-  export: {
-    embedImages: (html: string) => ipcRenderer.invoke('export:embed-images', html),
-    write: (path: string, html: string, overwrite = false) =>
-      ipcRenderer.invoke('export:write', path, html, overwrite),
-    print: (html: string) => ipcRenderer.invoke('export:print', html),
-  },
-
-  // Search
-  search: {
-    query: (q: string) => ipcRenderer.invoke('search:query', q),
-  },
-
-  // App settings
-  app: {
-    getTheme: () => ipcRenderer.invoke('app:get-theme'),
-    setTheme: (theme: 'light' | 'dark' | 'system') => ipcRenderer.invoke('app:set-theme', theme),
-    getVersion: () => ipcRenderer.invoke('app:get-version'),
-    getInitialPaths: () => ipcRenderer.invoke('app:get-initial-paths'),
-    showInFolder: (filePath: string) => ipcRenderer.invoke('app:show-in-folder', filePath),
-    setLanguage: (locale: 'en' | 'zh-CN') => ipcRenderer.send('app:set-language', locale),
-    // Main asks the renderer to close the workspace (running the unified unsaved-changes
-    // prompt) before quitting; renderer calls allowQuit() once it's safe to exit.
-    allowQuit: () => ipcRenderer.send('app:quit-allowed'),
-  },
-
-  // Files: resolve a list of file/folder paths into markdown files + directories
-  files: {
-    resolvePaths: (paths: string[]) => ipcRenderer.invoke('files:resolve-paths', paths),
-    // Electron 32+ removed the File.path property in the renderer.
-    // Use electron.webUtils.getPathForFile (official API, stable since Electron 32,
-    // available in the preload context via require('electron')) to recover the real path.
-    // The pre-32 File.path fallback has been dropped (no longer supported).
-    getPathForFile: (file: File): string => {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const electronModule = require('electron') as {
-          webUtils?: { getPathForFile: (f: File) => string }
-        }
-        if (electronModule?.webUtils?.getPathForFile) {
-          return electronModule.webUtils.getPathForFile(file)
-        }
-      } catch {
-        // ignore and return empty string below
-      }
-      return ''
-    },
-  },
-
-  // Dialog: let renderer trigger native file/folder pickers
-  dialog: {
-    openFiles: () => ipcRenderer.invoke('dialog:open-files'),
-    openFolder: () => ipcRenderer.invoke('dialog:open-folder'),
-    openFolderPath: () => ipcRenderer.invoke('dialog:select-folder'),
-    saveFile: (defaultPath?: string) => ipcRenderer.invoke('dialog:save-file', defaultPath),
-    saveHtmlFile: (defaultPath?: string) => ipcRenderer.invoke('dialog:save-html', defaultPath),
-    // App-modal confirm box. Unlike window.confirm (a blocking OS-modal dialog that, on close,
-    // triggers a real OS window blur and can leave document.hasFocus() stuck false in Electron),
-    // dialog.showMessageBox is app-modal and Electron returns focus to the renderer afterwards,
-    // so it does not break typing. Returns true when the user accepts (clicks the OK button).
-    confirm: (opts: { message: string; detail?: string; okText?: string; cancelText?: string }) =>
-      ipcRenderer.invoke('dialog:confirm', opts),
-  },
-
-  // Window control
-  window: {
-    maximize: () => ipcRenderer.invoke('window:maximize'),
-    unmaximize: () => ipcRenderer.invoke('window:unmaximize'),
-    isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
-  },
-
-  // Window state sync: renderer tells main whether editing is allowed,
-  // so the native menu can enable/disable Save & Save As accordingly.
-  menu: {
-    setEditable: (editable: boolean) => ipcRenderer.send('menu:set-editable', editable),
-    setHasDocument: (has: boolean) => ipcRenderer.send('menu:set-has-document', has),
-    setPrinting: (printing: boolean) => ipcRenderer.send('menu:set-printing', printing),
-  },
-
-  // Menu event listeners
-  onMenuEvent: (
-    event:
-      | 'new-document'
-      | 'save'
-      | 'save-as'
-      | 'reload'
-      | 'toggle-sidebar'
-      | 'toggle-preview'
-      | 'open-folder'
-      | 'open-files'
-      | 'close-workspace'
-      | 'close-file'
-      | 'file-details'
-      | 'about'
-      | 'export-html'
-      | 'print'
-      | 'language',
-    callback: (data?: string | string[]) => void,
-  ) => {
-    const handler = (_: Electron.IpcRendererEvent, data?: string | string[]) => callback(data)
-    ipcRenderer.on(`menu:${event}`, handler)
-    return () => ipcRenderer.removeListener(`menu:${event}`, handler)
-  },
-
-  // A file open in the editor was modified on disk by another program
-  onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => {
-    const handler = (_: Electron.IpcRendererEvent, data: { id: string; filePath: string }) =>
-      callback(data)
-    ipcRenderer.on('app:file-changed', handler)
-    return () => ipcRenderer.removeListener('app:file-changed', handler)
-  },
-
-  // Paths opened via CLI args / file association / drag-onto-dock
-  onOpenPaths: (callback: (paths: string[]) => void) => {
-    const handler = (_: Electron.IpcRendererEvent, paths: string[]) => callback(paths)
-    ipcRenderer.on('app:open-paths', handler)
-    return () => ipcRenderer.removeListener('app:open-paths', handler)
-  },
-
-  // Main requests the renderer to close the workspace (running the unified unsaved
-  // prompt) before quitting the app.
-  onAppRequestQuit: (callback: () => void) => {
-    const handler = (_: Electron.IpcRendererEvent) => callback()
-    ipcRenderer.on('app:request-quit', handler)
-    return () => ipcRenderer.removeListener('app:request-quit', handler)
-  },
+  documents: documentsApi,
+  export: exportApi,
+  search: searchApi,
+  app: appApi,
+  files: filesApi,
+  dialog: dialogApi,
+  window: windowApi,
+  menu: menuApi,
+  // Event subscriptions are spread to the top level (window.api.onMenuEvent, ...)
+  onMenuEvent,
+  onFileChanged,
+  onOpenPaths,
+  onAppRequestQuit,
 }
 
 contextBridge.exposeInMainWorld('api', api)

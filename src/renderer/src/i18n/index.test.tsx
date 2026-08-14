@@ -71,6 +71,17 @@ describe('i18n — stored language persistence', () => {
     expect(getStoredLanguage()).toBeNull()
   })
 
+  it('getStoredLanguage returns null when localStorage access throws', () => {
+    const spy = vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    try {
+      expect(getStoredLanguage()).toBeNull()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('resolveInitialLanguage prefers a stored preference over the system locale', () => {
     localStorage.setItem('markflow.language', 'zh-CN')
     const original = navigator.language

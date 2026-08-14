@@ -51,9 +51,20 @@ export default defineConfig({
         'src/renderer/src/store/**/*.ts',
         'src/renderer/src/i18n/**/*.ts',
         'src/renderer/src/hooks/**/*.{ts,tsx}',
+        'src/renderer/src/components/**/*.{ts,tsx}',
+        'electron/main/ipc/**/*.ts',
         'electron/main/ipc/documents.ts',
         'electron/main/ipc/export.ts',
+        'electron/main/ipc/search.ts',
+        'electron/main/ipc/appdoc.ts',
+        'electron/main/handlers/**/*.ts',
         'electron/main/lib/**/*.ts',
+        'electron/main/state.ts',
+        'electron/main/window.ts',
+        'electron/main/i18n.ts',
+        'electron/main/menu.ts',
+        'electron/main/lifecycle.ts',
+        'electron/main/db/database.ts',
         'shared/**/*.ts',
       ],
       exclude: [
@@ -65,11 +76,27 @@ export default defineConfig({
         'src/renderer/src/lib/scrollSync.ts',
       ],
       thresholds: {
-        statements: 100,
-        branches: 100,
-        functions: 100,
-        lines: 100,
-        'electron/main/lib/**': {
+        // No global gate: the project mixes pure logic with DOM / native
+        // integration surface, so coverage is enforced per-tier below.
+        'src/renderer/src/lib/**': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'src/renderer/src/store/**': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'src/renderer/src/i18n/**': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'src/renderer/src/hooks/**': {
           statements: 100,
           branches: 100,
           functions: 100,
@@ -80,6 +107,99 @@ export default defineConfig({
           branches: 100,
           functions: 100,
           lines: 100,
+        },
+        'electron/main/lib/**': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'electron/main/ipc/documents.ts': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'electron/main/ipc/export.ts': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        // Integration-facing surface (UI components, Electron handlers/IPC, native
+        // menu) depends on DOM / native APIs and is validated more loosely.
+        // Fallback for any ipc file not listed explicitly above.
+        'electron/main/ipc/**': {
+          statements: 80,
+          branches: 80,
+          functions: 80,
+          lines: 80,
+        },
+        'electron/main/ipc/search.ts': {
+          statements: 92,
+          branches: 72,
+          functions: 80,
+          lines: 92,
+        },
+        'electron/main/ipc/appdoc.ts': {
+          statements: 90,
+          branches: 85,
+          functions: 90,
+          lines: 90,
+        },
+        'electron/main/handlers/**': {
+          statements: 85,
+          branches: 85,
+          functions: 85,
+          lines: 85,
+        },
+        'electron/main/state.ts': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'electron/main/window.ts': {
+          statements: 70,
+          branches: 70,
+          functions: 70,
+          lines: 70,
+        },
+        'electron/main/db/database.ts': {
+          // statements/functions/lines and all reachable branches are fully covered.
+          // The unreachable `String(err)` arm of the `err instanceof Error ? … : …`
+          // guard (database.ts:39) is excluded from v8 coverage via a `/* v8 ignore
+          // next */` comment, because Vitest always wraps a throwing `vi.mock` factory
+          // into an Error and a dynamic import can never reject with a non-Error value
+          // under test. The gate is therefore held at 100%.
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'electron/main/i18n.ts': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'electron/main/menu.ts': {
+          statements: 60,
+          branches: 60,
+          functions: 60,
+          lines: 60,
+        },
+        'electron/main/lifecycle.ts': {
+          statements: 90,
+          branches: 85,
+          functions: 80,
+          lines: 90,
+        },
+        'src/renderer/src/components/**': {
+          statements: 55,
+          branches: 55,
+          functions: 55,
+          lines: 55,
         },
       },
     },
