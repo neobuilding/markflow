@@ -11,12 +11,13 @@
 // isolated (prevents the UNIQUE(file_path) collision when multiple memory-only
 // drafts are created across tests, and keeps tests from polluting real data).
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { _electron as electron, ElectronApplication, Page } from 'playwright'
 
-const PROJECT_ROOT = join(__dirname, '..', '..')
-const DEV_URL_FILE = join(__dirname, '..', '.dev-url')
+const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const DEV_URL_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '.dev-url')
 
 export interface AppHandle {
   electronApp: ElectronApplication

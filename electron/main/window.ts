@@ -43,7 +43,7 @@ export function createWindow(): void {
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: '#f7f7f7',
     webPreferences: {
-      preload: join(__dirname, 'preload.js'),
+      preload: join(__dirname, 'preload.cjs'),
       // NOTE: sandbox was disabled (was true) to work around an Electron 43 / Windows 11
       // regression where a sandboxed renderer on Win11 fails to report document.hasFocus()
       // after a document switch / focus change — leaving the editor unable to receive keyboard
