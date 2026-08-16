@@ -245,7 +245,13 @@ day-to-day triage):
    Codecov. The PR shows a **coverage diff** and **patch coverage**; the project dashboard tracks
    trends over time. (Public repo, free. A `CODECOV_TOKEN` repo secret is used if set; the step is
    non-blocking either way.)
-3. **Downloadable HTML reports (archived 7 days)** — the full `coverage/` (text + HTML + lcov) and
+3. **Test Analytics on Codecov** — both the unit (`reports/unit/junit.xml`) and e2e
+   (`reports/e2e/junit.xml`) JUnit XML files are uploaded via `codecov/test-results-action@v1`, so
+   Codecov surfaces **test run times**, **failure rates**, and **flaky-test detection** on the
+   Test Analytics dashboard. This reuses the same Vitest/Playwright JUnit output (no extra test run),
+   and is non-blocking — a failed upload never breaks the pipeline. (A `CODECOV_TOKEN` repo secret is
+   used if set; without it the upload is skipped gracefully.)
+4. **Downloadable HTML reports (archived 7 days)** — the full `coverage/` (text + HTML + lcov) and
    `playwright-report/` + `test-results/` (HTML report, screenshots, videos, traces) are still
    uploaded as artifacts, so you can inspect the rich HTML view or grab artifacts for offline
    debugging after the run.

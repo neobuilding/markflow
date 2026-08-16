@@ -130,6 +130,19 @@ jobs:
                   reporter: java-junit
                   fail-on-error: false
 
+            # ── Scheme 2: upload test results to Codecov for Test Analytics ──
+            # Codecov Test Analytics surfaces test run times, failure rates, and
+            # flaky-test detection. It reuses the SAME Vitest JUnit XML (above),
+            # downloading the Codecov CLI itself to perform the upload.
+            # Non-blocking: a failed upload must never break the pipeline.
+            - name: Upload test results to Codecov
+              if: always()
+              continue-on-error: true # Test Analytics is diagnostic; never fail CI on its account.
+              uses: codecov/test-results-action@v1
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
+                  files: reports/unit/junit.xml
+
             # ── Scheme 3: upload coverage to Codecov for PR coverage diffs ──
             # Public repos are free; the lcov file is produced by `test:coverage`.
             - name: Upload coverage to Codecov
@@ -176,6 +189,17 @@ jobs:
                   path: reports/e2e/junit.xml
                   reporter: java-junit
                   fail-on-error: false
+
+            # ── Scheme 2 (E2E): upload Playwright test results to Codecov too ──
+            # Feed the E2E JUnit XML into Codecov Test Analytics so end-to-end
+            # run times / failures / flaky detection are tracked alongside unit tests.
+            - name: Upload e2e results to Codecov
+              if: always()
+              continue-on-error: true # Test Analytics is diagnostic; never fail CI on its account.
+              uses: codecov/test-results-action@v1
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
+                  files: reports/e2e/junit.xml
 
     # Always runs (PR / non-main push / main push / tag push / dispatch): three-platform build + dist.
     # This is the only three-platform build in the whole repo — PRs use it for validation, main/tag pushes for shipping,
