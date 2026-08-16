@@ -12,7 +12,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { registerFilesHandlers } from '../files'
+import { registerFilesHandlers } from './files'
 
 describe('files handlers', () => {
   let root: string

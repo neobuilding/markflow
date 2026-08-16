@@ -8,7 +8,7 @@ import {
   toDocument,
   readMarkdownText,
   countWords,
-} from '../documents'
+} from './documents'
 import iconv from 'iconv-lite'
 import * as fs from 'node:fs'
 import * as path from 'node:path'

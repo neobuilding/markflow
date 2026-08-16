@@ -18,12 +18,12 @@ vi.mock('electron', () => ({
     showMessageBox: vi.fn(async () => h.confirm),
   },
 }))
-vi.mock('../../lib/md-files', () => ({
+vi.mock('../lib/md-files', () => ({
   collectMarkdownFiles: (dir: string) => [`${dir}/x.md`],
   MD_EXTS: new Set(['.md']),
 }))
 
-import { registerDialogHandlers } from '../dialog'
+import { registerDialogHandlers } from './dialog'
 
 describe('dialog handlers', () => {
   beforeEach(() => {

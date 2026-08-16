@@ -18,7 +18,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { registerThemeHandlers } from '../theme'
+import { registerThemeHandlers } from './theme'
 
 describe('theme handlers', () => {
   beforeEach(() => {

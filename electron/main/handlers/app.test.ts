@@ -17,8 +17,8 @@ vi.mock('electron', () => ({
   app: { getVersion: () => h.version },
 }))
 
-import { registerAppHandlers } from '../app'
-import { pendingInitialPaths } from '../../state'
+import { registerAppHandlers } from './app'
+import { pendingInitialPaths } from '../state'
 
 describe('app handlers', () => {
   beforeEach(() => {

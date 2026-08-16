@@ -18,7 +18,6 @@
     "src/renderer/src/**/*.ts",
     "src/renderer/src/**/*.tsx",
     "electron/main/**/*.ts",
-    "electron/main/**/__tests__/**/*.ts",
     "electron/preload/**/*.ts",
     "shared/**/*.ts",
     "test-setup.ts"

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach } from 'vitest'
-import { parseAppDocUrl, isSubdir } from '../security'
+import { parseAppDocUrl, isSubdir } from './security'
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // so no runtime electron is needed. Stub it to be safe.
 vi.mock('electron', () => ({}))
 
-const state = await import('../state')
+const state = await import('./state')
 
 beforeEach(() => {
   // reset module-level mutable state between tests

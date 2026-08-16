@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const rows: unknown[] = []
 const likeRows: unknown[] = []
 const h = vi.hoisted(() => ({ mode: 'fts' as 'fts' | 'like' | 'error' }))
-vi.mock('../../db/database', () => ({
+vi.mock('../db/database', () => ({
   getDb: () => ({
     prepare: () => ({
       all: () => {
@@ -16,7 +16,7 @@ vi.mock('../../db/database', () => ({
   }),
 }))
 
-import { registerSearchHandlers } from '../search'
+import { registerSearchHandlers } from './search'
 
 describe('search handlers', () => {
   const handlers: Record<string, (...a: unknown[]) => unknown> = {}

@@ -51,19 +51,19 @@ vi.mock('electron', () => ({
   },
 }))
 
-vi.mock('../state', () => ({
+vi.mock('./state', () => ({
   setMainWindow: vi.fn(),
   getIsQuiting: () => h.isQuiting,
 }))
 
-vi.mock('../lib/app-paths', () => ({
+vi.mock('./lib/app-paths', () => ({
   get VITE_DEV_SERVER_URL() {
     return h.devUrl
   },
   RENDERER_DIST: '/app/dist',
 }))
 
-const window = await import('../window')
+const window = await import('./window')
 
 beforeEach(() => {
   for (const k of Object.keys(events)) delete events[k]

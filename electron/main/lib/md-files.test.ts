@@ -19,7 +19,7 @@ vi.mock('electron', () => ({
 
 // Re-import the module under test.
 async function loadMdFiles() {
-  return import('../md-files.js')
+  return import('./md-files.js')
 }
 
 describe('md-files — MD_EXTS', () => {

@@ -101,7 +101,7 @@ vi.mock('electron', () => {
 // instance lifecycle.ts reads in before-quit). The same mock instance is shared by
 // lifecycle.ts because it resolves to the same absolute path. The quit flags are
 // tracked for real so app:quit-allowed -> before-quit interactions behave correctly.
-vi.mock('../state', () => {
+vi.mock('./state', () => {
   let mainWindow: unknown = null
   let isQuiting = false
   let readyToQuit = false
@@ -122,7 +122,7 @@ vi.mock('../state', () => {
   }
 })
 
-vi.mock('../db/database', () => ({
+vi.mock('./db/database', () => ({
   initDatabase: vi.fn(),
   getDb: () => ({
     prepare: () => ({
@@ -137,7 +137,7 @@ async function loadLifecycle(): Promise<void> {
   // (the module does NOT self-execute on import, so it is not tree-shaken away
   // by Rollup). We must invoke it here for the app_before-quit / app:quit-allowed
   // handlers to be registered on the mocked app/ipcMain.
-  const lifecycle = await import('../lifecycle.js')
+  const lifecycle = await import('./lifecycle.js')
   lifecycle.setupLifecycle()
 }
 
@@ -157,7 +157,7 @@ afterEach(() => {
 describe('main process — before-quit safety net', () => {
   it('forces app.quit() after the 5s grace period when the renderer never replies', async () => {
     h.fakeWindow.isDestroyed = () => false
-    const state = await import('../state.js')
+    const state = await import('./state.js')
     state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
     await loadLifecycle()
 
@@ -177,7 +177,7 @@ describe('main process — before-quit safety net', () => {
 
   it('does NOT force quit from the safety net when the renderer replies before the grace period', async () => {
     h.fakeWindow.isDestroyed = () => false
-    const state = await import('../state.js')
+    const state = await import('./state.js')
     state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
     await loadLifecycle()
 
@@ -199,7 +199,7 @@ describe('main process — before-quit safety net', () => {
 
   it('purges drafts and quits immediately when readyToQuit is already set', async () => {
     h.fakeWindow.isDestroyed = () => false
-    const state = await import('../state.js')
+    const state = await import('./state.js')
     state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
     await loadLifecycle()
 
@@ -220,7 +220,7 @@ describe('main process — before-quit safety net', () => {
 
   it('does nothing (no prompt, no forced quit) when the window is already destroyed', async () => {
     h.fakeWindow.isDestroyed = () => true
-    const state = await import('../state.js')
+    const state = await import('./state.js')
     state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
     await loadLifecycle()
 
@@ -236,7 +236,7 @@ describe('main process — before-quit safety net', () => {
 
   it('quits when the last window is closed (window-all-closed)', async () => {
     h.fakeWindow.isDestroyed = () => true
-    const state = await import('../state.js')
+    const state = await import('./state.js')
     state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
     await loadLifecycle()
 

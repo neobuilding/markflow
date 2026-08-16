@@ -13,7 +13,7 @@ async function loadAppPathsWithEnv(value: string | undefined) {
   vi.resetModules()
   if (value === undefined) delete process.env['VITE_DEV_SERVER_URL']
   else process.env['VITE_DEV_SERVER_URL'] = value
-  return import('../app-paths.js')
+  return import('./app-paths')
 }
 
 describe('app-paths — runtime path constants', () => {

@@ -8,7 +8,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-const i18n = await import('../i18n')
+const i18n = await import('./i18n')
 
 beforeEach(async () => {
   h.locale = 'en-US'

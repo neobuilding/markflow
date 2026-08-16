@@ -15,11 +15,11 @@ vi.mock('electron', () => ({
     },
   },
 }))
-vi.mock('../../state', () => ({
+vi.mock('../state', () => ({
   getMainWindow: () => h.win,
 }))
 
-import { registerWindowHandlers } from '../window'
+import { registerWindowHandlers } from './window'
 
 describe('window handlers', () => {
   beforeEach(() => {

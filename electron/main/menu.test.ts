@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const menuItems: Record<string, { id?: string; enabled: boolean }> = {}
 const setAppMenuCalls: unknown[] = []
@@ -58,21 +58,21 @@ vi.mock('electron', () => ({
   },
 }))
 
-vi.mock('../state', () => ({
+vi.mock('./state', () => ({
   getMainWindow: () => h.mainWindow,
 }))
 
-vi.mock('../i18n', () => ({
+vi.mock('./i18n', () => ({
   menuT: (key: string) => key,
   getCurrentLocale: () => 'en' as const,
   setMenuLanguage: vi.fn(),
 }))
 
-vi.mock('../lib/md-files', () => ({
+vi.mock('./lib/md-files', () => ({
   collectMarkdownFiles: vi.fn(() => ['/x/a.md', '/x/b.md']),
 }))
 
-const menu = await import('../menu')
+const menu = await import('./menu')
 
 function setWindow(
   opts: Partial<{

@@ -1,15 +1,15 @@
-﻿import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 describe('database', () => {
   it('throws when accessed before initialization', async () => {
     vi.resetModules()
-    const mod = await import('../database')
+    const mod = await import('./database')
     expect(() => mod.getDb()).toThrow(/not initialized/i)
   })
 
   it('initializes an in-memory database and exposes it via getDb', async () => {
     vi.resetModules()
-    const mod = await import('../database')
+    const mod = await import('./database')
     await mod.initDatabase()
     const db = mod.getDb()
     expect(db).toBeTruthy()
@@ -19,7 +19,7 @@ describe('database', () => {
 
   it('creates the schema and round-trips a document row', async () => {
     vi.resetModules()
-    const mod = await import('../database')
+    const mod = await import('./database')
     await mod.initDatabase()
     const db = mod.getDb()
     const now = Date.now()
@@ -36,7 +36,7 @@ describe('database', () => {
 
   it('enforces the unique file_path constraint', async () => {
     vi.resetModules()
-    const mod = await import('../database')
+    const mod = await import('./database')
     await mod.initDatabase()
     const db = mod.getDb()
     const now = Date.now()

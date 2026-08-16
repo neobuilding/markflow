@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
     },
   },
 }))
-vi.mock('../../db/database', () => ({
+vi.mock('../db/database', () => ({
   getDb: () => ({
     prepare: () => ({
       get: () => (h.filePath === '__NONE__' ? undefined : { file_path: h.filePath }),
@@ -24,7 +24,7 @@ vi.mock('../../db/database', () => ({
   }),
 }))
 
-import { registerAppDocProtocol } from '../appdoc'
+import { registerAppDocProtocol } from './appdoc'
 
 describe('appdoc protocol', () => {
   let root: string

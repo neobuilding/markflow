@@ -19,7 +19,7 @@ vi.mock('electron', () => ({
 }))
 
 async function loadCsp() {
-  return import('../csp.js')
+  return import('./csp')
 }
 
 describe('csp — setupCSP', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { registerExportHandlers, mapPrintFailureReason } from '../export'
+import { registerExportHandlers, mapPrintFailureReason } from './export'
 import { writeFileSync, mkdtempSync, readFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,7 @@ import { join } from 'node:path'
 // long time). The export test uses vi.mock to provide a fake DB, avoiding the
 // initDatabase → better-sqlite3 load.
 const hoist = vi.hoisted(() => ({ imgDocPath: '' }))
-vi.mock('../../db/database', () => ({
+vi.mock('../db/database', () => ({
   getDb: () => ({
     prepare: () => ({
       get: () => (hoist.imgDocPath === '__NONE__' ? undefined : { file_path: hoist.imgDocPath }),

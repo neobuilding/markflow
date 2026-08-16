@@ -14,7 +14,7 @@ vi.mock('better-sqlite3', () => {
 describe('database — native module load failure', () => {
   it('surfaces a friendly error when better-sqlite3 cannot load', async () => {
     vi.resetModules()
-    const mod = await import('../database')
+    const mod = await import('./database')
     let thrown: unknown
     try {
       await mod.initDatabase()

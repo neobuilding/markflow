@@ -14,7 +14,7 @@ import {
   readMarkdownText,
   countWords,
   toDocument,
-} from '../documents'
+} from './documents'
 
 // In-memory fake DB standing in for better-sqlite3 (which can't load under system Node).
 // Supports exactly the statements documents.ts issues, matched by substring on the SQL.
@@ -92,7 +92,7 @@ const fakeDb = {
     return ((...a: any[]) => fn(...a)) as T
   },
 }
-vi.mock('../../db/database', () => ({ getDb: () => fakeDb }))
+vi.mock('../db/database', () => ({ getDb: () => fakeDb }))
 
 // When true, the fake DB's SELECT-by-id get() throws, exercising the defensive
 // catch block in watchDocument (the DB read failing should not crash watching).

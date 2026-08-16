@@ -28,7 +28,7 @@ vi.mock('node:fs', async (importOriginal) => {
 })
 
 async function loadMdFiles() {
-  return import('../md-files.js')
+  return import('./md-files.js')
 }
 
 describe('md-files — non-dir/non-file entries are skipped', () => {
