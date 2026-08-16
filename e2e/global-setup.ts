@@ -2,12 +2,13 @@
 // Starts the Vite dev server ONCE for the whole e2e run and publishes its URL
 // via MARKFLOW_DEV_URL so every test can launch Electron against it.
 import { spawn, ChildProcess } from 'node:child_process'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { writeFileSync, existsSync, unlinkSync, accessSync } from 'node:fs'
 
-const PROJECT_ROOT = join(__dirname, '..')
+const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DEV_SERVER_URL = 'http://localhost:5174'
-const DEV_URL_FILE = join(__dirname, '.dev-url')
+const DEV_URL_FILE = join(dirname(fileURLToPath(import.meta.url)), '.dev-url')
 
 function getViteBin(): { command: string; args: string[] } {
   // Resolve the local Vite JS entry so we don't depend on `npx` shell behaviour

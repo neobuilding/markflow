@@ -12,6 +12,11 @@ import hljs from 'highlight.js'
 import katex from 'katex'
 import texmath from 'markdown-it-texmath'
 
+// `markdown-it` v15 ships its own types and exposes the instance type as a named export
+// (`type MarkdownIt`) while the default import is the constructor value only. Import the
+// instance type explicitly rather than relying on the default import doubling as a type.
+import type { MarkdownIt as MarkdownItInstance } from 'markdown-it'
+
 export interface MermaidSlot {
   slot: number
   code: string
@@ -30,7 +35,7 @@ export function hashCode(s: string): string {
   return (h >>> 0).toString(36)
 }
 
-const md: MarkdownIt = new MarkdownIt({
+const md: MarkdownItInstance = new MarkdownIt({
   html: true,
   linkify: true,
   typographer: true,
@@ -56,7 +61,9 @@ const md: MarkdownIt = new MarkdownIt({
 })
 
 // Heading anchor ids (for TOC / navigation; does not generate clickable permalinks).
-md.use(anchor, { permalink: false })
+// `markdown-it-anchor` v9 types narrow `permalink` to a generator, but omitting the option
+// yields the same "no permalink" behavior we want, so we pass no options.
+md.use(anchor)
 
 // Frontmatter stripping (discarded, not rendered into preview).
 md.use(frontMatter, () => {})
@@ -129,7 +136,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   // `![x]()` yields ""), so attrGet never actually returns null here; the `?? ''` only
   // satisfies its nullable type and is therefore not reachable in tests.
   /* v8 ignore next */
-  const src = token.attrGet('src') ?? ''
+  const src = String(token.attrGet('src') ?? '')
   const docId = (env as { docId?: string | null }).docId ?? null
   const finalSrc = rewriteImageSrc(src, docId)
   if (/^https?:/i.test(src)) {

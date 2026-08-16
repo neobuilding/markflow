@@ -15,10 +15,11 @@
 // Run:
 //   npm run e2e   # auto-starts Vite + Electron, runs e2e specs
 import { defineConfig } from '@playwright/test'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
-  testDir: join(__dirname, 'e2e', 'specs'),
+  testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'specs'),
   testMatch: /.*\.e2e\.spec\.ts/,
   fullyParallel: false, // Electron app is a single shared instance per worker
   forbidOnly: !!process.env.CI,
@@ -37,7 +38,7 @@ export default defineConfig({
 
   // The global setup starts ONE shared Vite dev server and writes its URL to
   // e2e/.dev-url; every spec launches its own Electron instance against it.
-  globalSetup: join(__dirname, 'e2e', 'global-setup.ts'),
+  globalSetup: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'global-setup.ts'),
 
   use: {
     trace: 'on-first-retry',

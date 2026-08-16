@@ -1,9 +1,15 @@
 // createWindow: builds the main BrowserWindow. Extracted from index.ts.
 import { BrowserWindow, screen, shell } from 'electron'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { join, dirname } from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST } from './lib/app-paths'
 import { setMainWindow, getIsQuiting } from './state'
+
+// ESM shim for __dirname: under "type": "module" vite-plugin-electron no longer
+// injects __dirname via esmShim() (that path only runs for CJS output), so we
+// derive it from import.meta.url ourselves. This keeps preload path resolution
+// working in both dev and bundled ESM main process.
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export function createWindow(): void {
   const isDev = !!VITE_DEV_SERVER_URL
@@ -37,7 +43,7 @@ export function createWindow(): void {
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: '#f7f7f7',
     webPreferences: {
-      preload: join(__dirname, 'preload.js'),
+      preload: join(__dirname, 'preload.cjs'),
       // NOTE: sandbox was disabled (was true) to work around an Electron 43 / Windows 11
       // regression where a sandboxed renderer on Win11 fails to report document.hasFocus()
       // after a document switch / focus change — leaving the editor unable to receive keyboard

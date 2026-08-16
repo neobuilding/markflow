@@ -29,6 +29,13 @@ export default defineConfig({
   // no side effects). The alias takes effect in both dev pre-bundling and build, and is
   // the most reliable fix.
   resolve: {
+    // Prefer the `worker` export condition ahead of `browser` for the whole build
+    // (including the Parse Worker). The unified ecosystem widely ships a DOM-free
+    // `worker` variant; selecting it first keeps DOM-dependent code out of the
+    // Web Worker (which lacks `document`/`DOMParser`), preventing runtime
+    // "document is not defined" crashes there. The two aliases below provide the
+    // same guarantee for the packages that don't expose a `worker` condition.
+    conditions: ['worker', 'browser', 'module', 'import', 'default'],
     alias: {
       'decode-named-character-reference': fileURLToPath(
         new URL('./node_modules/decode-named-character-reference/index.js', import.meta.url),
@@ -38,16 +45,10 @@ export default defineConfig({
       ),
     },
   },
-  // Resolve the Worker (parse.worker.ts) build as an ES module (R1/G5).
+  // Build the Worker (parse.worker.ts) as an ES module (R1/G5).
   // Do NOT add a renderer option to the electron plugin for this (see comment below).
-  // Additionally: let the Worker build prefer the `worker` export condition (instead of
-  // the default `browser`), covering any missed sibling packages (unified ecosystem widely
-  // provides the worker condition) and keeping DOM dependencies out of the Worker.
   worker: {
     format: 'es',
-    resolve: {
-      conditions: ['worker', 'browser', 'module', 'import', 'default'],
-    },
   },
   plugins: [
     react(),
@@ -77,7 +78,13 @@ export default defineConfig({
           build: {
             rollupOptions: {
               output: {
-                entryFileNames: 'preload.js',
+                // Force CommonJS output. Under "type": "module" in package.json,
+                // Node treats bare `.js` files as ESM and `require` is undefined,
+                // so the preload would fail to load ("require is not defined") and
+                // window.api would be undefined — crashing the renderer. Emitting
+                // a `.cjs` entry keeps it CommonJS regardless of the package type.
+                entryFileNames: 'preload.cjs',
+                format: 'cjs',
               },
             },
           },

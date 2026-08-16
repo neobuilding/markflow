@@ -25,7 +25,10 @@ import { initDatabase } from './db/database'
 import { initMenuI18n } from './i18n'
 import { getMainWindow, setIsQuiting, setReadyToQuit, pendingInitialPaths } from './state'
 
-// __dirname is auto-injected by vite-plugin-electron/plugin esmShim()
+// NOTE: This module must not reference __dirname. Under "type": "module" the
+// main process is ESM, where __dirname is undefined; vite-plugin-electron's
+// esmShim() only injects it for CJS output. Any code needing the module
+// directory should derive it from import.meta.url (see window.ts).
 
 // ─── Redirect runtime data directory to the system temp folder ──────────────
 // By default Electron / Chromium write caches, Local Storage, lock files, etc. into
