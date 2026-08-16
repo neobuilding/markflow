@@ -138,9 +138,10 @@ jobs:
             - name: Upload test results to Codecov
               if: always()
               continue-on-error: true # Test Analytics is diagnostic; never fail CI on its account.
-              uses: codecov/test-results-action@v1
+              uses: codecov/codecov-action@v7
               with:
                   token: ${{ secrets.CODECOV_TOKEN }}
+                  report_type: test_results
                   files: reports/unit/junit.xml
 
             # ── Scheme 3: upload coverage to Codecov for PR coverage diffs ──
@@ -149,6 +150,7 @@ jobs:
               if: always()
               uses: codecov/codecov-action@v7
               with:
+                  report_type: coverage
                   files: coverage/lcov.info
                   fail_ci_if_error: false
                   token: ${{ secrets.CODECOV_TOKEN }}
@@ -196,9 +198,10 @@ jobs:
             - name: Upload e2e results to Codecov
               if: always()
               continue-on-error: true # Test Analytics is diagnostic; never fail CI on its account.
-              uses: codecov/test-results-action@v1
+              uses: codecov/codecov-action@v7
               with:
                   token: ${{ secrets.CODECOV_TOKEN }}
+                  report_type: test_results
                   files: reports/e2e/junit.xml
 
     # Always runs (PR / non-main push / main push / tag push / dispatch): three-platform build + dist.
