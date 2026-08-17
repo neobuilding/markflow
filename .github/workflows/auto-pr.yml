@@ -1,0 +1,39 @@
+name: Auto Create PR
+# Automatically open (or keep up to date) a Pull Request from any `feature/*`
+# branch into `main` when that branch is pushed.
+#
+# All PR logic lives in scripts/create-pr.mjs (the single source of truth, also
+# used by the local `npm run pr` command), so CI and local stay in sync.
+#   - First push: opens a PR using the repo's PR template, with a generated
+#     "## Commits" list.
+#   - Later pushes: if a PR already exists, its description is refreshed to
+#     reflect the latest commits (idempotent — re-running on the same commits
+#     is a no-op, never fails the workflow).
+on:
+    push:
+        branches: ['feature/**']
+    workflow_dispatch:
+
+permissions:
+    contents: read
+    pull-requests: write # `gh pr create` / `gh pr edit` need write to manage PRs.
+
+concurrency:
+    group: auto-pr-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    create-pr:
+        name: Create / refresh PR to main
+        runs-on: ubuntu-latest
+        # Never act on the base branch itself.
+        if: github.ref != 'refs/heads/main'
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  # Full history so `git log main..HEAD` is accurate.
+                  fetch-depth: 0
+            - name: Create / refresh PR
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: node scripts/create-pr.mjs --base main --head "${{ github.ref_name }}"

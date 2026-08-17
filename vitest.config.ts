@@ -31,6 +31,7 @@ export default defineConfig({
       'src/renderer/src/**/*.test.ts',
       'src/renderer/src/**/*.test.tsx',
       'electron/main/**/*.test.ts',
+      'scripts/**/*.test.mjs',
     ],
     // Report coverage for the ENTIRE project (every source file), not only the files
     // that happened to be imported by a test. This surfaces untested modules instead of
