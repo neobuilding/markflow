@@ -202,7 +202,7 @@ npm run format    # Auto-format everything with Prettier
 
 A Husky `pre-commit` hook runs **lint-staged**, applying Stylelint + Markdownlint + Prettier to
 staged `*.css` / `*.md` / source files. Run `npm run quality` before opening a PR so the CI
-`quality` job stays green.
+`Test, Build & E2E` job stays green.
 
 ## 🧪 Testing & CI
 
@@ -222,10 +222,12 @@ npm run e2e             # End-to-end: drives the REAL Electron app via Playwrigh
 
 ### CI pipeline (`.github/workflows/ci.yml`)
 
-The `Test, Build & E2E` job (ubuntu) chains: typecheck + unit tests + coverage → Playwright browser
-install → `npm run build` → `npm run e2e` (under `xvfb-run`). The e2e steps are merged into the test
-job on purpose — they share the same runner, one `npm ci` install, and a single `npm run build`,
-avoiding a separate runner (saves one full install + one build). The Playwright HTML report and
+The `Test, Build & E2E` job (ubuntu) chains: `npm run quality` (Prettier + ESLint + Stylelint +
+Markdownlint + Secretlint + typecheck, enforced as a fast-fail gate) → unit tests + coverage →
+Playwright browser install → `npm run build` → `npm run e2e` (under `xvfb-run`). The e2e steps are
+merged into the test job on purpose — they share the same runner, one `npm ci` install, and a single
+`npm run build`, avoiding a separate runner (saves one full install + one build). The Playwright HTML
+report and
 `test-results/` are uploaded as artifacts on every run (even on failure) for inspection.
 
 The three-platform `build` job (`Build (macos|windows|ubuntu)`) runs after the test job and is the
