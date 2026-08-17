@@ -184,10 +184,10 @@ export default defineConfig({
           lines: 100,
         },
         'electron/main/menu.ts': {
-          statements: 60,
+          statements: 90,
           branches: 60,
-          functions: 60,
-          lines: 60,
+          functions: 95,
+          lines: 90,
         },
         'electron/main/lifecycle.ts': {
           statements: 90,
@@ -196,10 +196,10 @@ export default defineConfig({
           lines: 90,
         },
         'src/renderer/src/components/**': {
-          statements: 55,
-          branches: 55,
-          functions: 55,
-          lines: 55,
+          statements: 90,
+          branches: 65,
+          functions: 95,
+          lines: 95,
         },
       },
     },

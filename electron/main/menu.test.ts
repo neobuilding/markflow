@@ -58,6 +58,8 @@ vi.mock('electron', () => ({
   },
 }))
 
+import { dialog } from 'electron'
+
 vi.mock('./state', () => ({
   getMainWindow: () => h.mainWindow,
 }))
@@ -101,6 +103,10 @@ beforeEach(() => {
   allClicks.length = 0
   h.openFilesSent.length = 0
   h.mainWindow = null
+  vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+    canceled: true,
+    filePaths: [],
+  })
 })
 
 describe('native menu', () => {
@@ -269,5 +275,46 @@ describe('native menu', () => {
       }
     }
     expect(notified).toBe(false)
+  })
+
+  it('sends selected files when the open-file dialog is confirmed', async () => {
+    setWindow()
+    menu.setupMenu()
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+      canceled: false,
+      filePaths: ['/docs/a.md', '/docs/b.md'],
+    })
+    h.openFilesSent.length = 0
+    // Find the open-file click (the one whose dialog result is not a directory).
+    let sent = false
+    for (const c of [...allClicks]) {
+      if (!c) continue
+      const before = h.openFilesSent.length
+      await c()
+      if (h.openFilesSent.length > before) sent = true
+    }
+    expect(sent).toBe(true)
+    expect(h.openFilesSent).toContainEqual(['menu:open-files', ['/docs/a.md', '/docs/b.md']])
+  })
+
+  it('collects and sends markdown files when the open-folder dialog is confirmed', async () => {
+    setWindow()
+    menu.setupMenu()
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+      canceled: false,
+      filePaths: ['/some/folder'],
+    })
+    h.openFilesSent.length = 0
+    // The open-folder click reads filePaths[0], collects markdown files, and
+    // sends them only when at least one .md is found.
+    let sent = false
+    for (const c of [...allClicks]) {
+      if (!c) continue
+      const before = h.openFilesSent.length
+      await c()
+      if (h.openFilesSent.length > before) sent = true
+    }
+    expect(sent).toBe(true)
+    expect(h.openFilesSent).toContainEqual(['menu:open-files', ['/x/a.md', '/x/b.md']])
   })
 })

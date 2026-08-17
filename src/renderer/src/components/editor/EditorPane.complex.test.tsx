@@ -1,0 +1,612 @@
+import React from 'react'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { TooltipProvider } from '../ui/tooltip'
+import { useUIStore } from '../../store/ui'
+import { EditorPane } from './EditorPane'
+import '../../i18n'
+
+;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+// Stub MarkdownPreview (uses a Worker) so we only exercise the editor pane path.
+vi.mock('../preview/MarkdownPreview', () => ({
+  MarkdownPreview: () => <div data-testid="preview-stub" />,
+}))
+
+const docs: Record<
+  string,
+  {
+    id: string
+    title: string
+    content: string
+    filePath: string
+    encoding: string
+    updatedAt: number
+    wordCount: number
+  }
+> = {
+  a: {
+    id: 'a',
+    title: 'A',
+    content: '# A content',
+    filePath: '/a.md',
+    encoding: 'utf-8',
+    updatedAt: 1,
+    wordCount: 1,
+  },
+}
+
+function flush(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0))
+}
+
+interface ApiShape {
+  documents: Record<string, ReturnType<typeof vi.fn>>
+  export: Record<string, ReturnType<typeof vi.fn>>
+  search: Record<string, ReturnType<typeof vi.fn>>
+  app: Record<string, ReturnType<typeof vi.fn>>
+  files: Record<string, ReturnType<typeof vi.fn>>
+  dialog: Record<string, ReturnType<typeof vi.fn>>
+  window: Record<string, ReturnType<typeof vi.fn>>
+  menu: Record<string, ReturnType<typeof vi.fn>>
+  onMenuEvent: ReturnType<typeof vi.fn>
+  onFileChanged: ReturnType<typeof vi.fn>
+  onOpenPaths: ReturnType<typeof vi.fn>
+  onAppRequestQuit: ReturnType<typeof vi.fn>
+}
+
+let api: ApiShape
+
+// Wrap a store mutation in React act + a macrotask flush.
+async function storeAct(fn: () => void): Promise<void> {
+  const { act } = await import('react')
+  act(fn)
+  await flush()
+}
+
+beforeEach(() => {
+  cleanup()
+  const noopUnsub = () => {}
+  api = {
+    documents: {
+      get: vi.fn(async (id: string) => docs[id] ?? null),
+      watch: vi.fn(async () => {}),
+      unwatch: vi.fn(async () => {}),
+      eol: vi.fn(async () => '\n'),
+      update: vi.fn(async (id: string, u: { title?: string; content?: string }) => ({
+        ...docs[id],
+        ...u,
+      })),
+      list: vi.fn(async () => Object.values(docs)),
+      create: vi.fn(async () => ({ ...docs.a, id: 'new' })),
+      importMany: vi.fn(async (p: string[]) => p.map((x) => docs[x.replace('/', '')] ?? docs.a)),
+      reload: vi.fn(async (id: string) => docs[id] ?? null),
+      saveAs: vi.fn(async (id: string, fp: string, u: { title?: string; content?: string }) => ({
+        ...docs[id],
+        ...u,
+        filePath: fp,
+      })),
+      setEncoding: vi.fn(async (id: string, e: string) => ({ ...docs[id], encoding: e })),
+      delete: vi.fn(async () => {}),
+      stat: vi.fn(async () => ({ exists: true, size: 1, createdAt: 1, updatedAt: 1 })),
+      import: vi.fn(async (fp: string) => docs[fp.replace('/', '')] ?? docs.a),
+    },
+    export: {
+      embedImages: vi.fn(async (h: string) => h),
+      write: vi.fn(async () => {}),
+      print: vi.fn(async () => {}),
+    },
+    search: { query: vi.fn(async () => []) },
+    app: {
+      getTheme: vi.fn(async () => 'system' as const),
+      setTheme: vi.fn(async () => {}),
+      getVersion: vi.fn(async () => '0.0.0'),
+      getInitialPaths: vi.fn(async () => []),
+      showInFolder: vi.fn(async () => {}),
+      setLanguage: vi.fn(),
+      allowQuit: vi.fn(),
+    },
+    files: {
+      resolvePaths: vi.fn(async (p: string[]) => ({ directories: ['/d'], markdownFiles: p })),
+      getPathForFile: vi.fn((f: File) => f.name),
+    },
+    dialog: {
+      openFiles: vi.fn(async () => []),
+      openFolder: vi.fn(async () => null),
+      openFolderPath: vi.fn(async () => null),
+      saveFile: vi.fn(async () => null),
+      saveHtmlFile: vi.fn(async () => null),
+      confirm: vi.fn(async () => true),
+    },
+    window: {
+      maximize: vi.fn(async () => {}),
+      unmaximize: vi.fn(async () => {}),
+      isMaximized: vi.fn(async () => false),
+    },
+    menu: { setEditable: vi.fn(), setHasDocument: vi.fn(), setPrinting: vi.fn() },
+    onMenuEvent: vi.fn(() => noopUnsub),
+    onFileChanged: vi.fn(() => noopUnsub),
+    onOpenPaths: vi.fn(() => noopUnsub),
+    onAppRequestQuit: vi.fn(() => noopUnsub),
+  }
+  ;(window as unknown as { api: ApiShape }).api = api
+  vi.spyOn(window, 'alert').mockImplementation(() => {})
+  useUIStore.getState().setActiveDocumentId(null)
+  useUIStore.getState().setEditable(false)
+  useUIStore.getState().setActiveFolder(null)
+  useUIStore.getState().setViewMode('edit')
+  useUIStore.getState().setIsNewUnsaved(false)
+  useUIStore.getState().setExternalChange(null)
+  useUIStore.getState().setExportOpen(false)
+  useUIStore.getState().setFileDetailsId(null)
+  useUIStore.getState().setDirty(false)
+})
+
+function mount() {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  return render(
+    <QueryClientProvider client={qc}>
+      <TooltipProvider>
+        <EditorPane />
+      </TooltipProvider>
+    </QueryClientProvider>,
+  )
+}
+
+async function openDoc(id = 'a'): Promise<void> {
+  await storeAct(() => useUIStore.getState().setActiveDocumentId(id))
+  // Wait until useDocument resolves and the per-document toolbar (save-btn) renders.
+  await waitFor(() => screen.getByTestId('save-btn'))
+}
+
+async function setEditable(editable: boolean): Promise<void> {
+  await storeAct(() => useUIStore.getState().setEditable(editable))
+}
+
+// Make the open document dirty via the title field, so Save/Save-As buttons enable.
+async function makeDirty(
+  user: ReturnType<typeof userEvent.setup>,
+  container: HTMLElement,
+): Promise<void> {
+  await user.click(screen.getByText('A')) // title button → edit mode
+  await flush()
+  const input = container.querySelector('input') as HTMLInputElement
+  await user.clear(input)
+  await user.type(input, 'Renamed')
+  await user.click(container) // blur → handleTitleSave marks dirty
+  await flush()
+}
+
+describe('EditorPane — file operations (save / save-as / reload)', () => {
+  it('Save writes the draft through update and marks just-saved', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+
+    await user.click(screen.getByTestId('save-btn'))
+    await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
+    expect(useUIStore.getState().justSaved).toBe(true)
+    expect(api.documents.unwatch).toHaveBeenCalled()
+    expect(api.documents.watch).toHaveBeenCalled()
+  })
+
+  it('read-only mode disables the Save and Save-As buttons', async () => {
+    const user = userEvent.setup()
+    mount()
+    await openDoc()
+    // stay read-only
+    const saveBtn = screen.getByTestId('save-btn') as HTMLButtonElement
+    const saveAsBtn = screen.getByTestId('save-as-btn') as HTMLButtonElement
+    expect(saveBtn.disabled).toBe(true)
+    expect(saveAsBtn.disabled).toBe(true)
+    // clicking a disabled button is a no-op
+    await user.click(saveBtn)
+    await flush()
+    expect(api.documents.update).not.toHaveBeenCalled()
+  })
+
+  it('Save As writes to a chosen path via saveAs', async () => {
+    const user = userEvent.setup()
+    api.dialog.saveFile = vi.fn(async () => '/chosen/new.md')
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+
+    await user.click(screen.getByTestId('save-as-btn'))
+    await waitFor(() =>
+      expect(api.documents.saveAs).toHaveBeenCalledWith('a', '/chosen/new.md', expect.any(Object)),
+    )
+    expect(useUIStore.getState().isNewUnsaved).toBe(false)
+  })
+
+  it('Save As cancelled (null path) does nothing', async () => {
+    const user = userEvent.setup()
+    api.dialog.saveFile = vi.fn(async () => null)
+    mount()
+    await openDoc()
+    await setEditable(true)
+
+    await user.click(screen.getByTestId('save-as-btn'))
+    await flush()
+    expect(api.documents.saveAs).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a save failure without crashing', async () => {
+    const user = userEvent.setup()
+    api.documents.update = vi.fn(async () => {
+      throw new Error('disk full')
+    })
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+
+    await user.click(screen.getByTestId('save-btn'))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled())
+    alertSpy.mockRestore()
+  })
+
+  it('shows file-gone alert when reload returns nothing', async () => {
+    const user = userEvent.setup()
+    api.documents.reload = vi.fn(async () => null)
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    mount()
+    await openDoc()
+
+    await user.click(screen.getByTestId('reload-btn'))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled())
+    alertSpy.mockRestore()
+  })
+
+  it('surfaces a reload failure without crashing', async () => {
+    const user = userEvent.setup()
+    api.documents.reload = vi.fn(async () => {
+      throw new Error('read error')
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mount()
+    await openDoc()
+
+    await user.click(screen.getByTestId('reload-btn'))
+    await waitFor(() => expect(errorSpy).toHaveBeenCalled())
+    errorSpy.mockRestore()
+  })
+
+  it('external-change dialog "reload" refreshes content and clears the change', async () => {
+    const user = userEvent.setup()
+    mount()
+    await openDoc()
+    await storeAct(() => useUIStore.getState().setExternalChange({ id: 'a', filePath: '/a.md' }))
+
+    await user.click(screen.getByTestId('external-reload-btn'))
+    await waitFor(() => expect(api.documents.reload).toHaveBeenCalledWith('a'))
+    expect(useUIStore.getState().externalChange).toBeNull()
+  })
+
+  it('external-change dialog "ignore" clears the prompt', async () => {
+    const user = userEvent.setup()
+    mount()
+    await openDoc()
+    await storeAct(() => useUIStore.getState().setExternalChange({ id: 'a', filePath: '/a.md' }))
+
+    await user.click(screen.getByTestId('external-ignore-btn'))
+    await flush()
+    expect(useUIStore.getState().externalChange).toBeNull()
+  })
+
+  it('routes the first Save of a new document through Save As', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+    await storeAct(() => useUIStore.getState().setIsNewUnsaved(true))
+
+    await user.click(screen.getByTestId('save-btn'))
+    // isNewUnsaved → handleSave() delegates to handleSaveAs() (which prompts for a path).
+    await waitFor(() => expect(api.dialog.saveFile).toHaveBeenCalled())
+    expect(api.documents.update).not.toHaveBeenCalled()
+  })
+
+  it('Save As does nothing when the save-file dialog throws', async () => {
+    const user = userEvent.setup()
+    api.dialog.saveFile = vi.fn(async () => {
+      throw new Error('denied')
+    })
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+    await storeAct(() => useUIStore.getState().setIsNewUnsaved(true))
+
+    await user.click(screen.getByTestId('save-btn'))
+    await flush()
+    expect(api.documents.saveAs).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a Save As failure without crashing', async () => {
+    const user = userEvent.setup()
+    api.dialog.saveFile = vi.fn(async () => '/chosen/new.md')
+    api.documents.saveAs = vi.fn(async () => {
+      throw new Error('write error')
+    })
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+    await storeAct(() => useUIStore.getState().setIsNewUnsaved(true))
+
+    await user.click(screen.getByTestId('save-btn'))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled())
+    alertSpy.mockRestore()
+  })
+
+  it('falls back to the default line ending when eol read fails', async () => {
+    const user = userEvent.setup()
+    api.documents.eol = vi.fn(async () => {
+      throw new Error('no eol')
+    })
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+
+    await user.click(screen.getByTestId('save-btn'))
+    await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
+  })
+})
+
+describe('EditorPane — close & open', () => {
+  it('Close with unsaved changes prompts confirm and keeps doc when cancelled', async () => {
+    const user = userEvent.setup()
+    api.dialog.confirm = vi.fn(async () => false)
+    mount()
+    await openDoc()
+    await storeAct(() => useUIStore.getState().setDirty(true))
+    expect(useUIStore.getState().dirty).toBe(true)
+
+    await user.click(screen.getByTestId('close-btn'))
+    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
+    expect(useUIStore.getState().activeDocumentId).toBe('a')
+  })
+
+  it('Close without unsaved changes closes immediately', async () => {
+    const user = userEvent.setup()
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTestId('close-btn'))
+    await flush()
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+  })
+
+  it('Open file forwards selected paths to openPaths mutation', async () => {
+    const user = userEvent.setup()
+    api.dialog.openFiles = vi.fn(async () => ['/x.md'])
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTestId('open-file-btn'))
+    await flush()
+    expect(api.dialog.openFiles).toHaveBeenCalled()
+    expect(api.files.resolvePaths).toHaveBeenCalledWith(['/x.md'])
+  })
+
+  it('Open folder forwards the folder path to openFolder mutation', async () => {
+    const user = userEvent.setup()
+    api.dialog.openFolderPath = vi.fn(async () => '/some/folder')
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTestId('open-folder-btn'))
+    await flush()
+    expect(api.dialog.openFolderPath).toHaveBeenCalled()
+    expect(api.files.resolvePaths).toHaveBeenCalledWith(['/some/folder'])
+  })
+
+  it('does not watch a file when no document is active', async () => {
+    // activeDocumentId stays null (beforeEach default) → the watch effect returns early.
+    mount()
+    await flush()
+    expect(api.documents.watch).not.toHaveBeenCalled()
+  })
+})
+
+describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
+  it('switches view mode between edit / split / preview', async () => {
+    const user = userEvent.setup()
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTestId('view-split'))
+    expect(useUIStore.getState().viewMode).toBe('split')
+    await user.click(screen.getByTestId('view-preview'))
+    expect(useUIStore.getState().viewMode).toBe('preview')
+    await user.click(screen.getByTestId('view-edit'))
+    expect(useUIStore.getState().viewMode).toBe('edit')
+  })
+
+  it('edits the title and saves it on blur (marks dirty)', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await flush()
+
+    await user.click(screen.getByText('A'))
+    await flush()
+    const input = container.querySelector('input') as HTMLInputElement
+    expect(input).toBeTruthy()
+    await user.clear(input)
+    await user.type(input, 'Renamed')
+    await user.click(container) // blur
+    await flush()
+    expect(useUIStore.getState().dirty).toBe(true)
+  })
+
+  it('clicking a formatting button dispatches a markdown:insert event', async () => {
+    const user = userEvent.setup()
+    mount()
+    await openDoc()
+    await setEditable(true)
+    await flush()
+
+    const boldBtn = screen.getByTestId('fmt-**-**')
+    const listener = vi.fn()
+    document.addEventListener('markdown:insert', listener)
+    await user.click(boldBtn)
+    await flush()
+    expect(listener).toHaveBeenCalled()
+    expect(listener.mock.calls[0][0].detail).toEqual({ before: '**', after: '**' })
+    document.removeEventListener('markdown:insert', listener)
+  })
+
+  it('opens the file-details dialog', async () => {
+    const user = userEvent.setup()
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTestId('file-details-btn'))
+    await flush()
+    expect(useUIStore.getState().fileDetailsId).toBe('a')
+  })
+
+  it('opens the export dialog', async () => {
+    const user = userEvent.setup()
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTestId('export-btn'))
+    await flush()
+    expect(useUIStore.getState().exportOpen).toBe(true)
+  })
+
+  it('toggles the sidebar when it is closed', async () => {
+    const user = userEvent.setup()
+    useUIStore.getState().setSidebarOpen(false)
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTestId('toggle-sidebar-btn'))
+    await flush()
+    expect(useUIStore.getState().sidebarOpen).toBe(true)
+  })
+})
+
+describe('EditorPane — split-view drag', () => {
+  it('dragging the divider does not throw', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await storeAct(() => useUIStore.getState().setViewMode('split'))
+    await flush()
+
+    const divider = container.querySelector('.group\\/divider') as HTMLElement
+    expect(divider).toBeTruthy()
+
+    await user.pointer({ keys: '[MouseLeft>]', target: divider })
+    await user.pointer({ coords: { x: 400, y: 300 } })
+    await user.pointer({ keys: '[/MouseLeft]' })
+    await flush()
+    expect(useUIStore.getState().viewMode).toBe('split')
+  })
+})
+
+describe('EditorPane — title editing & breadcrumb & external dialog', () => {
+  it('commits the title on Enter and marks dirty', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await flush()
+
+    await user.click(screen.getByText('A'))
+    await flush()
+    const input = container.querySelector('input') as HTMLInputElement
+    await user.clear(input)
+    await user.type(input, 'Renamed')
+    await user.keyboard('{Enter}')
+    await flush()
+    expect(useUIStore.getState().dirty).toBe(true)
+  })
+
+  it('cancels the title edit on Escape (reverts to the original title)', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await flush()
+
+    await user.click(screen.getByText('A'))
+    await flush()
+    const input = container.querySelector('input') as HTMLInputElement
+    await user.clear(input)
+    await user.type(input, 'Renamed')
+    await user.keyboard('{Escape}')
+    await flush()
+    // original title button is shown again, no dirty flag
+    expect(screen.getByText('A')).toBeInTheDocument()
+    expect(useUIStore.getState().dirty).toBe(false)
+  })
+
+  it('opens the file location from the breadcrumb', async () => {
+    const showInFolder = vi.fn()
+    const prevApi = (window as unknown as { api: ApiShape }).api
+    ;(window as unknown as { api: ApiShape }).api = {
+      ...prevApi,
+      app: { ...prevApi.app, showInFolder, getTheme: vi.fn(), setTheme: vi.fn() },
+    }
+    mount()
+    await openDoc()
+    await flush()
+
+    await userEvent.click(screen.getByTitle(/show in folder/i))
+    expect(showInFolder).toHaveBeenCalledWith('/a.md')
+  })
+
+  it('dismisses the external-change dialog when closed via onOpenChange', async () => {
+    mount()
+    await openDoc()
+    await storeAct(() => useUIStore.getState().setExternalChange({ id: 'a', filePath: '/a.md' }))
+    // Escape fires the Dialog's onOpenChange(false), which clears the external change.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(useUIStore.getState().externalChange).toBeNull())
+  })
+
+  it('shows the not-found screen when the document is missing', async () => {
+    mount()
+    await storeAct(() => useUIStore.getState().setActiveDocumentId('ghost'))
+    // documents.get('ghost') resolves to null in the stub → editor shows "not found".
+    await waitFor(() => expect(screen.getByText(/not ?found/i)).toBeInTheDocument())
+  })
+
+  it('registers the on-file-changed handler and sets the external change', async () => {
+    let cb: ((data: { id: string; filePath: string }) => void) | null = null
+    api.onFileChanged = vi.fn((handler) => {
+      cb = handler
+      return () => {}
+    }) as unknown as ApiShape['onFileChanged']
+    mount()
+    await openDoc()
+    expect(cb).not.toBeNull()
+    // Simulate the main process reporting the file changed on disk.
+    act(() => cb!({ id: 'a', filePath: '/a.md' }))
+    expect(useUIStore.getState().externalChange).toEqual({ id: 'a', filePath: '/a.md' })
+  })
+})

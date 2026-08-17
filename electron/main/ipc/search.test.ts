@@ -3,11 +3,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Mock the DB so we can drive FTS + LIKE fallback paths without better-sqlite3.
 const rows: unknown[] = []
 const likeRows: unknown[] = []
-const h = vi.hoisted(() => ({ mode: 'fts' as 'fts' | 'like' | 'error' }))
+const h = vi.hoisted(() => ({
+  mode: 'fts' as 'fts' | 'like' | 'error',
+  ftsError: false,
+  callCount: 0,
+}))
 vi.mock('../db/database', () => ({
   getDb: () => ({
     prepare: () => ({
       all: () => {
+        h.callCount += 1
+        // The first call is the FTS query. If ftsError is set, it throws so
+        // the handler falls through to the LIKE fallback (a second call).
+        if (h.callCount === 1 && h.ftsError) throw new Error('fts failed')
         if (h.mode === 'error') throw new Error('boom')
         if (h.mode === 'like') return likeRows
         return rows
@@ -28,6 +36,8 @@ describe('search handlers', () => {
 
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k]
+    h.ftsError = false
+    h.callCount = 0
     registerSearchHandlers(ipcMain)
   })
 
@@ -74,6 +84,7 @@ describe('search handlers', () => {
 
   it('falls back to LIKE search when FTS throws', () => {
     h.mode = 'like'
+    h.ftsError = true
     likeRows.length = 0
     likeRows.push({
       id: 'd2',
@@ -136,6 +147,7 @@ describe('search handlers', () => {
 
   it('defaults the LIKE fallback snippet to empty when absent', () => {
     h.mode = 'like'
+    h.ftsError = true
     likeRows.length = 0
     likeRows.push({
       id: 'd5',
@@ -160,6 +172,7 @@ describe('search handlers', () => {
 
   it('maps a LIKE fallback row with a real snippet', () => {
     h.mode = 'like'
+    h.ftsError = true
     likeRows.length = 0
     likeRows.push({
       id: 'd6',

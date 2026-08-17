@@ -1,7 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "shared/**/*.ts"],
-  "exclude": ["src/renderer/src/**/*.test.ts", "src/renderer/src/**/*.test.tsx"],
+  "exclude": [
+    "src/renderer/src/**/*.test.ts",
+    "src/renderer/src/**/*.test.tsx",
+    "shared/**/*.test.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo-renderer.json",
