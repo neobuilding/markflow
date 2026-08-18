@@ -67,6 +67,7 @@ export default defineConfig({
         'electron/main/lifecycle.ts',
         'electron/main/db/database.ts',
         'shared/**/*.ts',
+        'scripts/create-pr.mjs',
       ],
       exclude: [
         '**/*.test.ts',
@@ -201,6 +202,19 @@ export default defineConfig({
           branches: 65,
           functions: 95,
           lines: 95,
+        },
+        // CI / PR-automation scripts: create-pr.mjs's pure functions
+        // (deriveTitle / buildCtx / fillTemplate / buildBody / buildBodyFor /
+        // classifyChange / extractFixes / extractAutoSection) are fully unit-tested
+        // (100% on those functions). The side-effecting runMain (gh/git
+        // orchestration, process.exit) and its process-executing helpers cannot be
+        // exercised by unit tests, so the file-level gate is held at a realistic
+        // bar rather than 100% — see the uncovered `runMain()` invocation line.
+        'scripts/create-pr.mjs': {
+          statements: 96,
+          branches: 90,
+          functions: 100,
+          lines: 98,
         },
       },
     },

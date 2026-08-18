@@ -14,6 +14,7 @@ import {
   extractFixes,
   fillTemplate,
   buildBody,
+  buildBodyFor,
   extractAutoSection,
 } from './create-pr.mjs'
 
@@ -26,11 +27,12 @@ describe('PR template integrity', () => {
     expect(tpl.match(/<!-- AUTO-GENERATED-END -->/g) || []).toHaveLength(1)
   })
 
-  it('the auto section spans the whole template (Checklist included)', () => {
+  it('the auto section spans the whole template (Checklist + commits included)', () => {
     const section = extractAutoSection(tpl)
     expect(section).not.toBe(null)
     expect(section).toContain('## Checklist')
     expect(section).toContain('- [ ] My code follows the style guidelines')
+    expect(section).toContain('{{commits}}')
   })
 })
 
@@ -172,21 +174,26 @@ Fixes #(issue number):
 - [ ] My code follows the style guidelines of this project
 - [ ] I have added tests that prove my fix is effective or that my feature works
 
+{{commits}}
+
 <!-- AUTO-GENERATED-END -->`
 
-  it('fills title, description, issue and tested placeholders', () => {
+  it('fills title, description, issue, tested and commits placeholders', () => {
     const out = fillTemplate(auto, {
       title: 'My PR',
       description: '- did a thing\n',
       fixes: '42',
       tested: 'ran tests',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+      commits: '## Commits\n\n- abc1234 did a thing\n',
     })
     expect(out).toContain('# My PR')
     expect(out).toContain('- did a thing')
     expect(out).toContain('Fixes #(issue number):')
     expect(out).toContain('42')
     expect(out).toContain('ran tests')
+    expect(out).toContain('## Commits')
+    expect(out).toContain('- abc1234 did a thing')
   })
 
   it('ticks the Bug fix box and leaves others unticked', () => {
@@ -196,22 +203,62 @@ Fixes #(issue number):
       fixes: '',
       tested: 't',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+      commits: '',
     })
     expect(out).toContain('- [x] Bug fix (non-breaking change which fixes an issue)')
     expect(out).toContain('- [ ] New feature (non-breaking change which adds functionality)')
   })
 
-  it('shows "--" as the issue value when none is referenced', () => {
+  it('ticks the Documentation box when docs flag is set', () => {
+    const out = fillTemplate(auto, {
+      title: 'T',
+      description: '',
+      fixes: '',
+      tested: 't',
+      typeFlags: { bug: false, feature: false, breaking: false, docs: true },
+      commits: '',
+    })
+    expect(out).toContain('- [x] Documentation update')
+  })
+
+  it('ticks the New feature box when feature flag is set', () => {
+    const out = fillTemplate(auto, {
+      title: 'T',
+      description: '',
+      fixes: '',
+      tested: 't',
+      typeFlags: { bug: false, feature: true, breaking: false, docs: false },
+      commits: '',
+    })
+    expect(out).toContain('- [x] New feature (non-breaking change which adds functionality)')
+  })
+
+  it('ticks the Breaking change box when breaking flag is set', () => {
+    const out = fillTemplate(auto, {
+      title: 'T',
+      description: '',
+      fixes: '',
+      tested: 't',
+      typeFlags: { bug: false, feature: false, breaking: true, docs: false },
+      commits: '',
+    })
+    expect(out).toContain(
+      '- [x] Breaking change (fix or feature that would cause existing functionality to not work as expected)',
+    )
+  })
+
+  it('shows "N/A" as the issue value when none is referenced', () => {
     const out = fillTemplate(auto, {
       title: 'T',
       description: '',
       fixes: '',
       tested: 't',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+      commits: '',
     })
     expect(out).not.toContain('{{issue}}')
     expect(out).toContain('Fixes #(issue number):')
-    expect(out).toContain('--')
+    expect(out).toContain('N/A')
   })
 })
 
@@ -248,5 +295,31 @@ describe('buildBody', () => {
     expect(out).toContain('- x')
     expect(out).toContain('- [x] reviewed')
     expect(out).toContain('Some human context here')
+  })
+})
+
+// --- buildBodyFor -------------------------------------------------------
+describe('buildBodyFor', () => {
+  it('builds a first-creation body from the template (no existing body)', () => {
+    const START = '<!-- AUTO-GENERATED-START -->'
+    const END = '<!-- AUTO-GENERATED-END -->'
+    const out = buildBodyFor('feature/auto-pr', 'origin/main', '')
+    expect(out).toContain('# Auto pr')
+    expect(out).toContain(`${START}`)
+    expect(out).toContain(`${END}`)
+    expect(out).toContain('## Checklist')
+  })
+
+  it('replaces only the auto section when an existing partitioned body is given', () => {
+    const START = '<!-- AUTO-GENERATED-START -->'
+    const END = '<!-- AUTO-GENERATED-END -->'
+    const existing =
+      `human above\n\n${START}\n# Stale Title\n\n## Description\n\n- old\n${END}\n\n` +
+      `human below`
+    const out = buildBodyFor('feature/auto-pr', 'origin/main', existing)
+    expect(out).toContain('human above')
+    expect(out).toContain('human below')
+    expect(out).toContain('# Auto pr')
+    expect(out).not.toContain('# Stale Title')
   })
 })
