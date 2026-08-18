@@ -142,6 +142,15 @@ async function runMain() {
     )
   }
 
+  // Resolve the base ref to compare against. Prefer `origin/<base>` (fresh after
+  // the fetch above, and present in CI even when the local `<base>` branch is
+  // absent); fall back to the bare `<base>` only if the remote ref is missing.
+  // Using the correct base ref is what makes `git log <base>..HEAD` return the
+  // branch's commits instead of an empty range.
+  const baseRef = tryRun('git', ['rev-parse', '--verify', `origin/${BASE}`])
+    ? `origin/${BASE}`
+    : BASE
+
   // Idempotency: find an existing open PR for this head -> base.
   const existing = tryRun('gh', [
     'pr',
@@ -164,7 +173,7 @@ async function runMain() {
 
   if (existingPrs.length > 0) {
     const { number, url, body = '' } = existingPrs[0]
-    const newBody = refreshCommitsSection(body, buildCommitsSection(head, BASE))
+    const newBody = refreshCommitsSection(body, buildCommitsSection(head, baseRef))
     if (newBody === body) {
       console.log(`create-pr: PR already up to date for ${head} → ${BASE}: ${url}`)
       process.exit(0)
@@ -192,7 +201,7 @@ async function runMain() {
   }
 
   const title = deriveTitle(head)
-  const commitsSection = buildCommitsSection(head, BASE)
+  const commitsSection = buildCommitsSection(head, baseRef)
   let templateBody
   try {
     templateBody = readFileSync(TEMPLATE, 'utf8').trimEnd()
