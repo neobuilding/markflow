@@ -84,8 +84,12 @@ function resolveHead() {
 export function buildCommitsSection(
   head,
   base,
-  gitLogFn = (h, b) =>
-    tryRun('git', ['log', '--no-merges', '--pretty=format:- %h %s', `${b}..${h}`]),
+  // Use `HEAD` (not the branch name) for the git-log range. In CI, checkout
+  // is typically detached, so the local branch name may not exist; HEAD always
+  // points to the correct feature-branch tip. Locally, HEAD is the current
+  // branch tip, so this is equivalent.
+  gitLogFn = (_h, b) =>
+    tryRun('git', ['log', '--no-merges', '--pretty=format:- %h %s', `${b}..HEAD`]),
 ) {
   const log = gitLogFn(head, base)
   if (!log) return ''
