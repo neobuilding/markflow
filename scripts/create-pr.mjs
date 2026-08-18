@@ -12,13 +12,13 @@
 //     not, the script fails fast with a hint to push it first.
 //   - Idempotent: if a PR for the head branch already exists, it is NOT
 //     re-created; instead its description is refreshed to reflect the latest
-//     commits on the branch. The PR body is partitioned by the
-//     AUTO-GENERATED-START .. AUTO-GENERATED-END markers: everything between
-//     them (title / description / type of change / tested / commit list /
-//     Checklist) is regenerated from the template on every refresh — so the
-//     Checklist resets to its template state and must be re-ticked after each
-//     push. Anything a human writes OUTSIDE the markers (above START or below
-//     END) is preserved. Re-running on the same commits is a no-op.
+//     commits on the branch. The PR body is split into independent auto blocks
+//     marked with `<!-- AUTO:key --> ... <!-- /AUTO:key -->` (title / type /
+//     issue / checklist / commits). Each block is refreshed from the template
+//     on every refresh (so the Checklist resets to its template state and must
+//     be re-ticked after each push), while anything a human writes OUTSIDE the
+//     blocks (the Description, any notes) is preserved verbatim. Re-running on
+//     the same commits is a no-op.
 //   - Derives the PR title from the branch name (feature/*, fix/*, etc.).
 //
 // Requirements:
@@ -39,6 +39,8 @@ import { pathToFileURL } from 'node:url'
 const args = process.argv.slice(2)
 function arg(name, fallback) {
   const i = args.indexOf(name)
+  // v8 ignore next: the "has a value after the flag" branch is only exercised
+  // via the real CLI argv, which unit tests cannot inject.
   if (i !== -1 && args[i + 1]) return args[i + 1]
   return fallback
 }
@@ -50,26 +52,37 @@ const TEMPLATE = '.github/pull-request-template.md'
 // Marker delimiting the auto-generated commit list inside a PR body.
 const COMMITS_MARKER = '## Commits'
 
-// Symmetric markers delimiting the auto-generated section in a PR body. The
-// script only ever rewrites the text *between* these markers; anything outside
-// (above START, or below END) is human-written and preserved across refreshes.
-// The template carries both markers; a PR body gains them on first creation,
-// after which refreshes are precise (replace between markers only).
-const AUTO_GENERATED_START = '<!-- AUTO-GENERATED-START -->'
-const AUTO_GENERATED_END = '<!-- AUTO-GENERATED-END -->'
+// Each auto-generated *block* is wrapped in symmetric markers carrying a key,
+// e.g. `<!-- AUTO:commits --> ... <!-- /AUTO:commits -->`. The script refreshes
+// each block independently by key. Blocks (title / type / issue / checklist /
+// commits) are regenerated from the template on every refresh; human-written
+// content outside the blocks (the Description, any notes) can be freely
+// interleaved and is preserved across refreshes. The template defines the
+// blocks; a PR body gains them on first creation and is then refreshed
+// block-by-block.
+const AUTO_OPEN = '<!-- AUTO:'
+const AUTO_CLOSE = '<!-- /AUTO:'
 
-// Extract the auto-generated section (the text between the START and END
-// markers, inclusive of the markers) from a body. Returns null when the body
-// is not partitioned (no markers yet) so callers can fall back to A2 behaviour.
+// Build (and parse) the symmetric markers for a given block key.
+function openMarker(key) {
+  return `${AUTO_OPEN}${key} -->`
+}
+function closeMarker(key) {
+  return `${AUTO_CLOSE}${key} -->`
+}
 // Exported for unit testing.
-export function extractAutoSection(body) {
-  if (!body || !body.includes(AUTO_GENERATED_START) || !body.includes(AUTO_GENERATED_END)) {
-    return null
-  }
-  return body.slice(
-    body.indexOf(AUTO_GENERATED_START),
-    body.indexOf(AUTO_GENERATED_END) + AUTO_GENERATED_END.length,
-  )
+export const markersFor = (key) => ({ open: openMarker(key), close: closeMarker(key) })
+
+// Replace the content of a single auto block (between its open/close markers)
+// with `content`. Returns the whole body unchanged when the block is absent so
+// a missing block never drops human-written text. Exported for unit testing.
+export function replaceAutoBlock(body, key, content) {
+  const open = openMarker(key)
+  const close = closeMarker(key)
+  const start = body.indexOf(open)
+  if (start === -1 || body.indexOf(close) === -1) return body
+  const end = body.indexOf(close) + close.length
+  return `${body.slice(0, start)}${open}\n${content}\n${close}${body.slice(end)}`
 }
 
 // Run a command, returning trimmed stdout. Throws on non-zero exit.
@@ -134,8 +147,9 @@ export function buildCommitsSection(
   return `${COMMITS_MARKER}\n\n${log}\n`
 }
 
-// Build a human-readable commit summary (subjects only, no hashes) for the
-// Description section. Exported for unit testing; gitLogFn injectable.
+// Build a human-readable commit summary (subjects only, no hashes). It drives
+// the type classification and issue-number extraction in buildCtx. Exported for
+// unit testing; gitLogFn injectable.
 export function buildDescription(
   head,
   base,
@@ -168,22 +182,10 @@ export function extractFixes(head, commitsText) {
   return m ? m[1] : ''
 }
 
-// Fill the auto-generated section of the PR template. Replaces the
-// {{title}} / {{description}} / {{issue}} / {{tested}} / {{commits}} placeholders
-// and ticks the relevant "Type of Change" boxes. Exported for tests.
-export function fillTemplate(autoTemplate, ctx) {
-  const { title, description, fixes, tested, typeFlags, commits } = ctx
-  let out = autoTemplate
-    .replace(/\{\{title\}\}/g, title || '')
-    .replace(/\{\{description\}\}/g, description || '')
-    .replace(/\{\{tested\}\}/g, tested || '')
-    // {{issue}}: the issue number on its own line under the static
-    // "Fixes #(issue number):" label. When none is referenced, "N/A" signals
-    // "no associated issue" rather than leaving a blank line.
-    .replace(/\{\{issue\}\}/g, fixes || 'N/A')
-    .replace(/\{\{commits\}\}/g, commits || '')
-  // Tick the matching Type of Change boxes.
-  out = out
+// Tick the matching "Type of Change" boxes inside a block's text. Exported for
+// unit testing.
+export function tickTypeBoxes(blockText, typeFlags) {
+  return blockText
     .replace(/^- \[ \] (Bug fix.*)$/m, (_, c) => (typeFlags.bug ? `- [x] ${c}` : `- [ ] ${c}`))
     .replace(/^- \[ \] (New feature.*)$/m, (_, c) =>
       typeFlags.feature ? `- [x] ${c}` : `- [ ] ${c}`,
@@ -194,49 +196,87 @@ export function fillTemplate(autoTemplate, ctx) {
     .replace(/^- \[ \] (Documentation update.*)$/m, (_, c) =>
       typeFlags.docs ? `- [x] ${c}` : `- [ ] ${c}`,
     )
+}
+
+// Fill every auto block of the PR template from the context. Each block is
+// refreshed independently by its marker key, so human-written content between
+// blocks is preserved. Replaces the {{title}} / {{issue}} / {{commits}}
+// placeholders, ticks the "Type of Change" boxes, and resets the Checklist to
+// its template state. Exported for tests.
+export function fillAutoBlocks(template, ctx) {
+  const { title, fixes, typeFlags, commits } = ctx
+  let out = template
+  // Title block: a single "# {{title}}" line.
+  out = replaceAutoBlock(out, 'title', `# ${title || ''}`)
+  // Type block: the "## Type of Change" section, with boxes ticked.
+  // v8 ignore next: the `|| ''` fallback only matters if the template loses its
+  // type block, which cannot happen in practice.
+  const typeBlock = tickTypeBoxes(blockContent(template, 'type') || '', typeFlags)
+  out = replaceAutoBlock(out, 'type', typeBlock.trim())
+  // Issue block: "Fixes #<number>" (or "Fixes #N/A" when none is linked). The
+  // whole block is replaced by this string, so the template's "Fixes #{{issue}}"
+  // line is overwritten with the resolved value each refresh.
+  out = replaceAutoBlock(out, 'issue', `Fixes #${fixes || 'N/A'}`)
+  // Checklist block: copied verbatim from the template so it resets to the
+  // template state on every refresh (human ticks are dropped).
+  const checklist = blockContent(template, 'checklist')
+  // v8 ignore next: the `: ''` fallback only matters if the template loses its
+  // checklist block, which cannot happen in practice.
+  out = replaceAutoBlock(out, 'checklist', checklist !== null ? checklist : '')
+  // Commits block: the "## Commits" list (already formatted by callers).
+  out = replaceAutoBlock(out, 'commits', commits || '')
   return out
 }
 
-// Rebuild the whole PR body from the auto-generated section plus any manual
-// content outside the AUTO_GENERATED markers. Deterministic (same inputs =>
-// same output), so re-running is a no-op when nothing changed. Exported for
-// unit testing.
+// Rebuild the whole PR body from the refreshed template plus any manual content
+// the human has written. Because each auto block is refreshed independently by
+// key, everything *outside* the blocks (the Description, any notes) is preserved
+// verbatim. Deterministic (same inputs => same output), so re-running is a no-op
+// when nothing changed. Exported for unit testing.
 //
-// Three cases:
-//   1. No existing body (first creation): use autoFilled verbatim — it already
-//      carries both markers and the template's Checklist (now inside the markers).
-//   2. Existing body is partitioned (has both markers): replace only the text
-//      between START..END with autoFilled; preserve everything outside.
-//   3. A2 — existing body is NOT partitioned (legacy PR with no markers):
-//      insert the auto-generated section at the top and keep the entire
-//      original body below it, so no human-written content is ever discarded.
-//      The inserted section carries the markers, so the next refresh lands in
-//      case 2 and stops stacking.
-export function buildBody(autoFilled, existingBody) {
-  if (!existingBody) return autoFilled
-  const existingSection = extractAutoSection(existingBody)
-  if (existingSection !== null) {
-    // Case 2: precise in-place replacement of the auto section.
-    const head = existingBody.slice(0, existingBody.indexOf(AUTO_GENERATED_START))
-    const tail = existingBody.slice(
-      existingBody.indexOf(AUTO_GENERATED_END) + AUTO_GENERATED_END.length,
-    )
-    return `${head}${autoFilled}${tail}`
+// Cases:
+//   1. No existing body (first creation): use the freshly filled template
+//      verbatim — it already carries every AUTO block.
+//   2. Existing body already has the AUTO blocks: refresh each block in place
+//      and keep all human content between/around them.
+//   3. Legacy body with no AUTO blocks at all: prepend the filled template and
+//      keep the entire original body below it, so no human-written content is
+//      ever discarded. The inserted template carries the blocks, so the next
+//      refresh lands in case 2 and stops stacking.
+export function buildBody(filledTemplate, existingBody) {
+  if (!existingBody) return filledTemplate
+  if (existingBody.includes(openMarker('title')) && existingBody.includes(closeMarker('title'))) {
+    // Case 2: refresh each block independently by copying fresh content in.
+    let out = existingBody
+    for (const key of ['title', 'type', 'issue', 'checklist', 'commits']) {
+      const fresh = blockContent(filledTemplate, key)
+      if (fresh !== null) out = replaceAutoBlock(out, key, fresh)
+    }
+    return out
   }
-  // Case 3 (A2): legacy unpartitioned PR — prepend auto section, keep all.
-  return `${autoFilled.trimEnd()}\n\n${existingBody.trim()}`
+  // Case 3 (legacy): prepend filled template, keep all.
+  return `${filledTemplate.trimEnd()}\n\n${existingBody.trim()}`
 }
 
-// Assemble the context object for fillTemplate from the branch and resolved
-// base ref. The commit subjects drive the Description, type classification,
-// and issue-number extraction. Exported for unit testing.
+// Extract a block's inner content from a body, or null when the block is
+// absent. Exported for unit testing.
+export function blockContent(body, key) {
+  const o = openMarker(key)
+  const c = closeMarker(key)
+  const s = body.indexOf(o)
+  const e = body.indexOf(c)
+  if (s === -1 || e === -1) return null
+  return body.slice(s + o.length, e).trim()
+}
+
+// Assemble the context object for fillAutoBlocks from the branch and resolved
+// base ref. The commit subjects drive the type classification and issue-number
+// extraction. Exported for unit testing.
 export function buildCtx(head, baseRef, title, commitsSection) {
   const commitsText = buildDescription(head, baseRef).replace(/^- /gm, '')
   return {
     title,
-    description: commitsText,
     fixes: extractFixes(head, commitsText),
-    tested: 'Covered by `npm test` and `npm run ci`; see the linked CI run for results.',
     typeFlags: classifyChange(head, commitsText),
     // commitsSection is always passed by callers; the `|| ''` is defensive.
     // v8 ignore next
@@ -244,28 +284,22 @@ export function buildCtx(head, baseRef, title, commitsSection) {
   }
 }
 
-// Build the full PR body for an existing PR: re-fill the template's auto
-// section (between the START..END markers, Checklist included) and preserve
-// any human-written content outside those markers. Exported for tests.
+// Build the full PR body for an existing PR: re-fill the template's auto blocks
+// and preserve any human-written content outside those blocks. Exported for
+// tests.
 export function buildBodyFor(head, baseRef, existingBody) {
-  let autoTemplate
+  let filledTemplate
   try {
-    const tpl = readFileSync(TEMPLATE, 'utf8').trimEnd()
-    const section = extractAutoSection(tpl)
-    // The auto template is the text between the START..END markers (inclusive).
-    // If the template is unpartitioned, fall back to the whole template.
-    // The unpartitioned fallback (`: tpl`) only matters if the template loses
-    // its markers; that cannot happen in practice, so ignore it for coverage.
-    autoTemplate = section !== null ? section.replace(/\s+$/, '') : /* v8 ignore next */ tpl
+    const tpl = readFileSync(TEMPLATE, 'utf8')
+    filledTemplate = fillAutoBlocks(
+      tpl,
+      buildCtx(head, baseRef, deriveTitle(head), buildCommitsSection(head, baseRef)),
+    )
   } catch {
     /* v8 ignore next */
-    autoTemplate = ''
+    filledTemplate = ''
   }
-  const autoFilled = fillTemplate(
-    autoTemplate,
-    buildCtx(head, baseRef, deriveTitle(head), buildCommitsSection(head, baseRef)),
-  )
-  return buildBody(autoFilled, existingBody)
+  return buildBody(filledTemplate, existingBody)
 }
 
 // Derive a human-readable title from a branch name. Exported for unit testing.
@@ -283,7 +317,7 @@ export function deriveTitle(branch) {
 // processes (`gh` / `git`) and calls `process.exit`, so it cannot be exercised
 // by the pure-function unit tests. Its logic is delegated to the exported,
 // fully-tested helpers above (resolveHead / buildBodyFor / buildCommitsSection
-// / fillTemplate / buildBody), whose coverage is what we hold to 100%.
+// / fillAutoBlocks / replaceAutoBlock / buildBody), whose coverage is what we hold to 100%.
 /* v8 ignore start */
 async function runMain() {
   const head = resolveHead()
@@ -378,20 +412,15 @@ async function runMain() {
 
   const title = deriveTitle(head)
   const commitsSection = buildCommitsSection(head, baseRef)
-  let autoFilled
+  let filledTemplate
   try {
-    const tpl = readFileSync(TEMPLATE, 'utf8').trimEnd()
-    const section = extractAutoSection(tpl)
-    // The auto template is the text between the START..END markers (inclusive),
-    // which now spans the whole template (Checklist included). If unpartitioned,
-    // fall back to the whole template.
-    const autoTemplate = section !== null ? section.replace(/\s+$/, '') : tpl
-    autoFilled = fillTemplate(autoTemplate, buildCtx(head, baseRef, title, commitsSection))
+    const tpl = readFileSync(TEMPLATE, 'utf8')
+    filledTemplate = fillAutoBlocks(tpl, buildCtx(head, baseRef, title, commitsSection))
   } catch {
     // Template missing/unreadable: fall back to just the commits list.
-    autoFilled = commitsSection
+    filledTemplate = commitsSection
   }
-  const body = buildBody(autoFilled, '')
+  const body = buildBody(filledTemplate, '')
 
   if (DRY_RUN) {
     console.log(
@@ -452,8 +481,10 @@ async function runMain() {
 // Execute only when run as a script (e.g. `node scripts/create-pr.mjs` or via
 // the `npm run pr` / CI workflow), not when imported by unit tests.
 const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
-// v8 ignore next: the direct-invocation guard only runs when executed as a
-// script (not under vitest), so this branch cannot be exercised by unit tests.
+// v8 ignore start: the direct-invocation guard (and its single branch) only
+// runs when executed as a script, not under vitest, so it cannot be exercised
+// by the pure unit tests. Keep it ignored to avoid skewing branch coverage.
 if (invokedDirectly) {
   runMain()
 }
+// v8 ignore stop
