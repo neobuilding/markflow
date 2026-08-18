@@ -6,9 +6,10 @@
 //     script with --head set to the pushed branch)
 //
 // Behaviour:
-//   - Pushes the head branch to origin (sets upstream on first push).
-//   - Opens a PR via the GitHub CLI (`gh`), using the repo's PR template
-//     (.github/pull-request-template.md).
+//   - Opens (or refreshes) a PR via the GitHub CLI (`gh`), using the repo's PR
+//     template (.github/pull-request-template.md).
+//   - Does NOT push. The head branch must already exist on origin; if it does
+//     not, the script fails fast with a hint to push it first.
 //   - Idempotent: if a PR for the head branch already exists, it is NOT
 //     re-created; instead its description is refreshed to reflect the latest
 //     commits on the branch. The template/manually-written content above the
@@ -66,7 +67,7 @@ function fail(msg) {
   process.exit(1)
 }
 
-// Resolve the head branch: explicit --head, else the current branch.
+// Resolve the head branch: explicit --head (e.g. CI), else the current branch.
 function resolveHead() {
   const explicit = arg('--head')
   if (explicit) return explicit
@@ -171,11 +172,15 @@ async function runMain() {
     process.exit(0)
   }
 
-  // No existing PR: push and create.
-  console.log(`create-pr: pushing '${head}' to origin...`)
-  if (tryRun('git', ['push', '-u', 'origin', head]) === null) {
+  // This script only manages the PR — it never pushes. The head branch must
+  // already exist on origin (push it yourself, or let the CI trigger do it).
+  // Fail fast with a clear message if it is missing remotely.
+  console.log(`create-pr: verifying '${head}' exists on origin...`)
+  const remoteRef = tryRun('git', ['ls-remote', '--heads', 'origin', head])
+  if (!remoteRef) {
     fail(
-      `failed to push '${head}' to origin. Check your network/auth and that the branch does not have divergent history.`,
+      `branch '${head}' is not found on origin. Push it first ` +
+        `(e.g. \`git push -u origin ${head}\`), then re-run. This script does not push.`,
     )
   }
 

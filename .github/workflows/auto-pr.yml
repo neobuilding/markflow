@@ -4,9 +4,9 @@ name: Auto Create PR
 #
 # All PR logic lives in scripts/create-pr.mjs (the single source of truth, also
 # used by the local `npm run pr` command), so CI and local stay in sync.
-#   - First push: opens a PR using the repo's PR template, with a generated
-#     "## Commits" list.
-#   - Later pushes: if a PR already exists, its description is refreshed to
+#   - On the first triggering push: opens a PR using the repo's PR template,
+#     with a generated "## Commits" list.
+#   - On later pushes: if a PR already exists, its description is refreshed to
 #     reflect the latest commits (idempotent — re-running on the same commits
 #     is a no-op, never fails the workflow).
 on:
