@@ -165,8 +165,11 @@ async function runMain() {
       console.log(`create-pr: PR already up to date for ${head} → ${BASE}: ${url}`)
       process.exit(0)
     }
-    if (tryRun('gh', ['pr', 'edit', String(number), '--body', newBody]) === null) {
-      fail(`failed to update the existing PR description: ${url}`)
+    try {
+      run('gh', ['pr', 'edit', String(number), '--body', newBody])
+    } catch (err) {
+      const detail = (err && (err.stderr || err.stdout)) || err?.message || err
+      fail(`failed to update the existing PR description (${url}):\n${detail}`)
     }
     console.log(`create-pr: updated PR description with latest commits: ${url}`)
     process.exit(0)
@@ -195,20 +198,26 @@ async function runMain() {
   const body = (templateBody ? templateBody + '\n\n' : '') + commitsSection
 
   console.log(`create-pr: creating PR '${head}' → ${BASE} ...`)
-  const out = tryRun('gh', [
-    'pr',
-    'create',
-    '--base',
-    BASE,
-    '--head',
-    head,
-    '--title',
-    title || head,
-    '--body',
-    body,
-  ])
-  if (out === null) {
-    // A concurrent run may have just created it; treat as success if present.
+  let out = null
+  try {
+    out = run('gh', [
+      'pr',
+      'create',
+      '--base',
+      BASE,
+      '--head',
+      head,
+      '--title',
+      title || head,
+      '--body',
+      body,
+    ])
+  } catch (err) {
+    // Surface the real `gh` error (it is on stderr) instead of swallowing it,
+    // so the failure is diagnosable. A concurrent run may have just created the
+    // PR; only treat as failure if no open PR for this head exists.
+    const detail = (err && (err.stderr || err.stdout)) || err?.message || err
+    console.error(`create-pr: gh pr create failed:\n${detail}`)
     const concurrent = tryRun('gh', [
       'pr',
       'list',
@@ -227,7 +236,7 @@ async function runMain() {
       console.log(`create-pr: PR created concurrently: ${concurrent}`)
       process.exit(0)
     }
-    fail('failed to create the PR. Run `gh pr create` manually to inspect the error.')
+    fail('failed to create the PR. See the gh error above.')
   }
   console.log(`create-pr: created PR → ${out}`)
 }
