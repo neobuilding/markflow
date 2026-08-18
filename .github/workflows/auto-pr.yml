@@ -16,7 +16,13 @@ on:
 
 permissions:
     contents: read
-    pull-requests: write # `gh pr create` / `gh pr edit` need write to manage PRs.
+    # NOTE: GitHub forbids the default GITHUB_TOKEN from creating/approving PRs
+    # in the same repo ("GitHub Actions is not permitted to create or approve
+    # pull requests"). We authenticate `gh` with a Personal Access Token stored
+    # as the PR_TOKEN secret instead. The PAT must have the `repo` scope. The
+    # workflow-level `pull-requests: write` below is harmless but does NOT lift
+    # the GITHUB_TOKEN restriction — the PAT is what makes `gh pr create` work.
+    pull-requests: write
 
 concurrency:
     group: auto-pr-${{ github.ref }}
@@ -35,5 +41,8 @@ jobs:
                   fetch-depth: 0
             - name: Create / refresh PR
               env:
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  # Authenticate `gh` with a PAT (the default GITHUB_TOKEN cannot
+                  # create PRs). Configure PR_TOKEN in repo Settings > Secrets with
+                  # the `repo` scope.
+                  GH_TOKEN: ${{ secrets.PR_TOKEN }}
               run: node scripts/create-pr.mjs --base main --head "${{ github.ref_name }}"
