@@ -12,9 +12,13 @@
 //     not, the script fails fast with a hint to push it first.
 //   - Idempotent: if a PR for the head branch already exists, it is NOT
 //     re-created; instead its description is refreshed to reflect the latest
-//     commits on the branch. The template/manually-written content above the
-//     generated "## Commits" marker is preserved; only the commit list is
-//     regenerated. Re-running on the same commits is a no-op.
+//     commits on the branch. The PR body is partitioned by the
+//     AUTO-GENERATED-START .. AUTO-GENERATED-END markers: everything between
+//     them (title / description / type of change / tested / commit list /
+//     Checklist) is regenerated from the template on every refresh — so the
+//     Checklist resets to its template state and must be re-ticked after each
+//     push. Anything a human writes OUTSIDE the markers (above START or below
+//     END) is preserved. Re-running on the same commits is a no-op.
 //   - Derives the PR title from the branch name (feature/*, fix/*, etc.).
 //
 // Requirements:
@@ -26,6 +30,7 @@
 //   node scripts/create-pr.mjs                       # current branch -> main
 //   node scripts/create-pr.mjs --base dev            # target a different base
 //   node scripts/create-pr.mjs --head feature/foo    # explicit head (CI)
+//   node scripts/create-pr.mjs --dry-run             # print the body, write nothing
 import { execFileSync } from 'node:child_process'
 import process from 'node:process'
 import { readFileSync } from 'node:fs'
@@ -39,10 +44,33 @@ function arg(name, fallback) {
 }
 
 const BASE = arg('--base', 'main')
+const DRY_RUN = args.includes('--dry-run')
 const TEMPLATE = '.github/pull-request-template.md'
 
 // Marker delimiting the auto-generated commit list inside a PR body.
 const COMMITS_MARKER = '## Commits'
+
+// Symmetric markers delimiting the auto-generated section in a PR body. The
+// script only ever rewrites the text *between* these markers; anything outside
+// (above START, or below END) is human-written and preserved across refreshes.
+// The template carries both markers; a PR body gains them on first creation,
+// after which refreshes are precise (replace between markers only).
+const AUTO_GENERATED_START = '<!-- AUTO-GENERATED-START -->'
+const AUTO_GENERATED_END = '<!-- AUTO-GENERATED-END -->'
+
+// Extract the auto-generated section (the text between the START and END
+// markers, inclusive of the markers) from a body. Returns null when the body
+// is not partitioned (no markers yet) so callers can fall back to A2 behaviour.
+// Exported for unit testing.
+export function extractAutoSection(body) {
+  if (!body || !body.includes(AUTO_GENERATED_START) || !body.includes(AUTO_GENERATED_END)) {
+    return null
+  }
+  return body.slice(
+    body.indexOf(AUTO_GENERATED_START),
+    body.indexOf(AUTO_GENERATED_END) + AUTO_GENERATED_END.length,
+  )
+}
 
 // Run a command, returning trimmed stdout. Throws on non-zero exit.
 function run(cmd, cmdArgs, opts = {}) {
@@ -96,15 +124,128 @@ export function buildCommitsSection(
   return `${COMMITS_MARKER}\n\n${log}\n`
 }
 
-// Replace (or append) the generated commits section, preserving content above
-// the marker. Deterministic: same commits => same output (idempotent).
-// Exported for unit testing.
-export function refreshCommitsSection(body, commitsSection) {
-  if (!commitsSection) return body
-  const stripped = body.includes(COMMITS_MARKER)
-    ? body.slice(0, body.indexOf(COMMITS_MARKER))
-    : body
-  return stripped.replace(/\s+$/, '') + '\n\n' + commitsSection
+// Build a human-readable commit summary (subjects only, no hashes) for the
+// Description section. Exported for unit testing; gitLogFn injectable.
+export function buildDescription(
+  head,
+  base,
+  gitLogFn = (_h, b) => tryRun('git', ['log', '--no-merges', '--pretty=format:- %s', `${b}..HEAD`]),
+) {
+  const log = gitLogFn(head, base)
+  return log ? `${log}\n` : ''
+}
+
+// Classify the change type from the branch name and commit subjects, so the
+// PR template's "Type of Change" boxes can be auto-ticked. Exported for tests.
+export function classifyChange(head, commitsText) {
+  const hay = `${head}\n${commitsText}`.toLowerCase()
+  const flags = {
+    bug: /\bfix\b|fix\//.test(hay),
+    feature: /\bfeat\b|feature\//.test(hay),
+    breaking: /break|breaking/.test(hay),
+    docs: /\bdocs?\b|doc\//.test(hay),
+  }
+  // Guarantee at least one box is ticked (bug fix is the safe default).
+  if (!flags.bug && !flags.feature && !flags.breaking && !flags.docs) flags.bug = true
+  return flags
+}
+
+// Extract the first referenced issue number (e.g. "fix #123", "fixes #45") from
+// the branch name and commit subjects. Exported for tests. Returns '' if none.
+export function extractFixes(head, commitsText) {
+  const hay = `${head}\n${commitsText}`
+  const m = hay.match(/#(\d+)/)
+  return m ? m[1] : ''
+}
+
+// Fill the auto-generated (upper) part of the PR template. Replaces the
+// {{title}} / {{description}} / {{issue}} / {{tested}} placeholders and ticks
+// the relevant "Type of Change" boxes. Exported for tests.
+export function fillTemplate(autoTemplate, ctx) {
+  const { title, description, fixes, tested, typeFlags } = ctx
+  let out = autoTemplate
+    .replace(/\{\{title\}\}/g, title || '')
+    .replace(/\{\{description\}\}/g, description || '')
+    .replace(/\{\{tested\}\}/g, tested || '')
+    // {{issue}}: the issue number on its own line under the static
+    // "Fixes #(issue number):" label. When none is referenced, "--" signals
+    // "no associated issue" rather than leaving a blank line.
+    .replace(/\{\{issue\}\}/g, fixes || '--')
+  // Tick the matching Type of Change boxes.
+  out = out
+    .replace(/^- \[ \] (Bug fix.*)$/m, (_, c) => (typeFlags.bug ? `- [x] ${c}` : `- [ ] ${c}`))
+    .replace(/^- \[ \] (New feature.*)$/m, (_, c) =>
+      typeFlags.feature ? `- [x] ${c}` : `- [ ] ${c}`,
+    )
+    .replace(/^- \[ \] (Breaking change.*)$/m, (_, c) =>
+      typeFlags.breaking ? `- [x] ${c}` : `- [ ] ${c}`,
+    )
+    .replace(/^- \[ \] (Documentation update.*)$/m, (_, c) =>
+      typeFlags.docs ? `- [x] ${c}` : `- [ ] ${c}`,
+    )
+  return out
+}
+
+// Rebuild the whole PR body from the auto-generated section plus any manual
+// content outside the AUTO_GENERATED markers. Deterministic (same inputs =>
+// same output), so re-running is a no-op when nothing changed. Exported for
+// unit testing.
+//
+// Three cases:
+//   1. No existing body (first creation): use autoFilled verbatim — it already
+//      carries both markers and the template's Checklist (now inside the markers).
+//   2. Existing body is partitioned (has both markers): replace only the text
+//      between START..END with autoFilled; preserve everything outside.
+//   3. A2 — existing body is NOT partitioned (legacy PR with no markers):
+//      insert the auto-generated section at the top and keep the entire
+//      original body below it, so no human-written content is ever discarded.
+//      The inserted section carries the markers, so the next refresh lands in
+//      case 2 and stops stacking.
+export function buildBody(autoFilled, existingBody) {
+  if (!existingBody) return autoFilled
+  const existingSection = extractAutoSection(existingBody)
+  if (existingSection !== null) {
+    // Case 2: precise in-place replacement of the auto section.
+    const head = existingBody.slice(0, existingBody.indexOf(AUTO_GENERATED_START))
+    const tail = existingBody.slice(
+      existingBody.indexOf(AUTO_GENERATED_END) + AUTO_GENERATED_END.length,
+    )
+    return `${head}${autoFilled}${tail}`
+  }
+  // Case 3 (A2): legacy unpartitioned PR — prepend auto section, keep all.
+  return `${autoFilled.trimEnd()}\n\n${existingBody.trim()}`
+}
+
+// Assemble the context object for fillTemplate from the branch and resolved
+// base ref. The commit subjects drive the Description, type classification,
+// and issue-number extraction. Exported for unit testing.
+export function buildCtx(head, baseRef, title) {
+  const commitsText = buildDescription(head, baseRef).replace(/^- /gm, '')
+  return {
+    title,
+    description: commitsText,
+    fixes: extractFixes(head, commitsText),
+    tested: 'Covered by `npm test` and `npm run ci`; see the linked CI run for results.',
+    typeFlags: classifyChange(head, commitsText),
+  }
+}
+
+// Build the full PR body for an existing PR: re-fill the template's auto
+// section (between the START..END markers, Checklist included) and preserve
+// any human-written content outside those markers. Exported for tests.
+export function buildBodyFor(head, baseRef, existingBody) {
+  let autoTemplate
+  try {
+    const tpl = readFileSync(TEMPLATE, 'utf8').trimEnd()
+    const section = extractAutoSection(tpl)
+    // The auto template is the text between the START..END markers (inclusive).
+    // If the template is unpartitioned, fall back to the whole template.
+    autoTemplate = section !== null ? section.replace(/\s+$/, '') : tpl
+  } catch {
+    autoTemplate = ''
+  }
+  const autoFilled = fillTemplate(autoTemplate, buildCtx(head, baseRef, deriveTitle(head)))
+  return buildBody(autoFilled, existingBody)
 }
 
 // Derive a human-readable title from a branch name. Exported for unit testing.
@@ -173,9 +314,18 @@ async function runMain() {
 
   if (existingPrs.length > 0) {
     const { number, url, body = '' } = existingPrs[0]
-    const newBody = refreshCommitsSection(body, buildCommitsSection(head, baseRef))
+    const newBody = buildBodyFor(head, baseRef, body)
     if (newBody === body) {
       console.log(`create-pr: PR already up to date for ${head} → ${BASE}: ${url}`)
+      process.exit(0)
+    }
+    if (DRY_RUN) {
+      console.log(
+        `create-pr: [dry-run] would update PR #${number} (${url}) with body:\n` +
+          '────────────────────────────────────────\n' +
+          newBody +
+          '\n────────────────────────────────────────',
+      )
       process.exit(0)
     }
     try {
@@ -202,13 +352,31 @@ async function runMain() {
 
   const title = deriveTitle(head)
   const commitsSection = buildCommitsSection(head, baseRef)
-  let templateBody
+  let autoFilled
   try {
-    templateBody = readFileSync(TEMPLATE, 'utf8').trimEnd()
+    const tpl = readFileSync(TEMPLATE, 'utf8').trimEnd()
+    const section = extractAutoSection(tpl)
+    // The auto template is the text between the START..END markers (inclusive),
+    // which now spans the whole template (Checklist included). If unpartitioned,
+    // fall back to the whole template.
+    const autoTemplate = section !== null ? section.replace(/\s+$/, '') : tpl
+    autoFilled = fillTemplate(autoTemplate, buildCtx(head, baseRef, title))
   } catch {
-    templateBody = ''
+    // Template missing/unreadable: fall back to just the commits list.
+    autoFilled = commitsSection
   }
-  const body = (templateBody ? templateBody + '\n\n' : '') + commitsSection
+  const body = buildBody(autoFilled, '')
+
+  if (DRY_RUN) {
+    console.log(
+      `create-pr: [dry-run] would create PR '${head}' → ${BASE} with title ` +
+        `'${title || head}' and body:\n` +
+        '────────────────────────────────────────\n' +
+        body +
+        '\n────────────────────────────────────────',
+    )
+    process.exit(0)
+  }
 
   console.log(`create-pr: creating PR '${head}' → ${BASE} ...`)
   let out = null
