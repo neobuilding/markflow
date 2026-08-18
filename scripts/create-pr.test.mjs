@@ -85,10 +85,10 @@ describe('deriveTitle', () => {
 
 // --- buildCommitsSection (inject a fake git-log) -------------------------
 describe('buildCommitsSection', () => {
-  it('wraps git-log output in a "## Commits" markdown list', () => {
+  it('returns the commit list without a "## Commits" heading (heading is static in the template)', () => {
     const fakeLog = () => '- abc1234 add auto pr script\n- def5678 wire up workflow\n'
     const out = buildCommitsSection('feature/x', 'origin/main', fakeLog)
-    expect(out).toContain('## Commits')
+    expect(out).not.toContain('## Commits')
     expect(out).toContain('- abc1234 add auto pr script')
     expect(out).toContain('- def5678 wire up workflow')
   })
@@ -238,10 +238,10 @@ describe('fillAutoBlocks', () => {
       title: 'My PR',
       fixes: '42',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '## Commits\n\n- abc1234 did a thing\n',
+      commits: '- abc1234 did a thing\n',
     })
     expect(blockContent(out, 'title')).toBe('# My PR')
-    expect(blockContent(out, 'issue')).toBe('Fixes #42')
+    expect(blockContent(out, 'issue')).toBe('42')
     expect(blockContent(out, 'commits')).toContain('- abc1234 did a thing')
     expect(blockContent(out, 'type')).toContain(
       '- [x] Bug fix (non-breaking change which fixes an issue)',
@@ -255,7 +255,7 @@ describe('fillAutoBlocks', () => {
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
       commits: '',
     })
-    expect(blockContent(out, 'issue')).toBe('Fixes #N/A')
+    expect(blockContent(out, 'issue')).toBe('N/A')
   })
 
   it('preserves the human Description region but resets the Checklist block to template state', () => {
@@ -297,7 +297,7 @@ describe('buildBody', () => {
       title: 'Auto pr',
       fixes: '7',
       typeFlags: { bug: false, feature: true, breaking: false, docs: false },
-      commits: '## Commits\n\n- a1 add\n',
+      commits: '- a1 add\n',
     })
     expect(buildBody(filled, '')).toBe(filled)
   })
@@ -307,7 +307,7 @@ describe('buildBody', () => {
       title: 'Fresh Title',
       fixes: '99',
       typeFlags: { bug: false, feature: true, breaking: false, docs: false },
-      commits: '## Commits\n\n- a1 add\n',
+      commits: '- a1 add\n',
     })
     // Build a realistic existing body: take the template, fill with STALE values,
     // and inject human notes outside the blocks.
@@ -315,14 +315,14 @@ describe('buildBody', () => {
       title: 'Stale Title',
       fixes: '1',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '## Commits\n\n- old commit\n',
+      commits: '- old commit\n',
     })
     const existingBody = `human note above\n\n${stale}\n\nhuman note below`
     const out = buildBody(filled, existingBody)
     expect(out).toContain('human note above')
     expect(out).toContain('human note below')
     expect(blockContent(out, 'title')).toBe('# Fresh Title')
-    expect(blockContent(out, 'issue')).toBe('Fixes #99')
+    expect(blockContent(out, 'issue')).toBe('99')
     expect(blockContent(out, 'commits')).toContain('- a1 add')
     expect(out).not.toContain('Stale Title')
     expect(out).not.toContain('- old commit')
@@ -337,7 +337,7 @@ describe('buildBody', () => {
       title: 'Auto pr',
       fixes: '',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '## Commits\n\n- a1 add\n',
+      commits: '- a1 add\n',
     })
     const legacy = '## Checklist\n\n- [x] reviewed\n\nSome human context here'
     const out = buildBody(filled, legacy)
@@ -351,7 +351,7 @@ describe('buildBody', () => {
       title: 'Auto pr',
       fixes: '',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '## Commits\n\n- a1 add\n',
+      commits: '- a1 add\n',
     })
     // Simulate a fresh template missing the 'commits' block.
     const filledNoCommits = filled.replace(
@@ -381,7 +381,7 @@ describe('buildBodyFor', () => {
       `human above\n\n${readFileSync('.github/pull-request-template.md', 'utf8')
         .replace('{{title}}', 'Stale')
         .replace('{{issue}}', '1')
-        .replace('{{commits}}', '## Commits\n\n- old commit\n')}\n\n` + `human below`
+        .replace('{{commits}}', '- old commit\n')}\n\n` + `human below`
     const out = buildBodyFor('feature/auto-pr', 'origin/main', existing)
     expect(out).toContain('human above')
     expect(out).toContain('human below')

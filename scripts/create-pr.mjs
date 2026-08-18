@@ -49,9 +49,6 @@ const BASE = arg('--base', 'main')
 const DRY_RUN = args.includes('--dry-run')
 const TEMPLATE = '.github/pull-request-template.md'
 
-// Marker delimiting the auto-generated commit list inside a PR body.
-const COMMITS_MARKER = '## Commits'
-
 // Each auto-generated *block* is wrapped in symmetric markers carrying a key,
 // e.g. `<!-- AUTO:commits --> ... <!-- /AUTO:commits -->`. The script refreshes
 // each block independently by key. Blocks (title / type / issue / checklist /
@@ -129,9 +126,11 @@ function resolveHead() {
 }
 /* v8 ignore stop */
 
-// Build the "## Commits" section from commits on head that are not in base.
-// Exported for unit testing. The git-log executor can be injected (gitLogFn)
-// so tests run without a real repository; it defaults to the real `git log`.
+// Build the commit list (subjects with hashes) for commits on head that are
+// not in base. The "## Commits" heading is a static line OUTSIDE the auto block
+// in the template, so this helper returns only the list body. Exported for unit
+// testing. The git-log executor can be injected (gitLogFn) so tests run without
+// a real repository; it defaults to the real `git log`.
 export function buildCommitsSection(
   head,
   base,
@@ -144,7 +143,7 @@ export function buildCommitsSection(
 ) {
   const log = gitLogFn(head, base)
   if (!log) return ''
-  return `${COMMITS_MARKER}\n\n${log}\n`
+  return `${log}\n`
 }
 
 // Build a human-readable commit summary (subjects only, no hashes). It drives
@@ -213,17 +212,18 @@ export function fillAutoBlocks(template, ctx) {
   // type block, which cannot happen in practice.
   const typeBlock = tickTypeBoxes(blockContent(template, 'type') || '', typeFlags)
   out = replaceAutoBlock(out, 'type', typeBlock.trim())
-  // Issue block: "Fixes #<number>" (or "Fixes #N/A" when none is linked). The
-  // whole block is replaced by this string, so the template's "Fixes #{{issue}}"
-  // line is overwritten with the resolved value each refresh.
-  out = replaceAutoBlock(out, 'issue', `Fixes #${fixes || 'N/A'}`)
+  // Issue block: the issue number on its own line (the static "Fixes #(issue
+  // number):" label sits OUTSIDE the block, in the template). "N/A" signals no
+  // linked issue rather than leaving a blank line.
+  out = replaceAutoBlock(out, 'issue', fixes || 'N/A')
   // Checklist block: copied verbatim from the template so it resets to the
   // template state on every refresh (human ticks are dropped).
   const checklist = blockContent(template, 'checklist')
   // v8 ignore next: the `: ''` fallback only matters if the template loses its
   // checklist block, which cannot happen in practice.
   out = replaceAutoBlock(out, 'checklist', checklist !== null ? checklist : '')
-  // Commits block: the "## Commits" list (already formatted by callers).
+  // Commits block: the commit list body (the "## Commits" heading is a static
+  // line outside the block in the template, so callers pass only the list).
   out = replaceAutoBlock(out, 'commits', commits || '')
   return out
 }

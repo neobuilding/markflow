@@ -30,10 +30,13 @@ Please delete options that are not relevant.
 - [ ] New and existing unit tests pass locally with my changes
 <!-- /AUTO:checklist -->
 
-Fixes #(issue number):
+## Fixes #(issue number)
+
 <!-- AUTO:issue -->
 {{issue}}
 <!-- /AUTO:issue -->
+
+## Commits
 
 <!-- AUTO:commits -->
 {{commits}}
