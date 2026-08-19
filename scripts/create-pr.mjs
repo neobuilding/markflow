@@ -203,31 +203,46 @@ export function tickTypeBoxes(blockText, typeFlags) {
 // blocks is preserved. Replaces the {{title}} / {{issue}} / {{commits}}
 // placeholders, ticks the "Type of Change" boxes, and resets the Checklist to
 // its template state. Exported for tests.
+// Fill one auto block from the template: copy the block verbatim (so any extra
+// content inside it survives every refresh), swap its {{placeholder}} for
+// `value` (falling back to `fallback` when `value` is empty), and write it back
+// into `body`. Shared by every block that carries a single {{placeholder}};
+// blocks with bespoke logic (type's checkbox ticks, checklist's verbatim copy)
+// call replaceAutoBlock directly. Exported for unit testing.
+export function fillPlaceholderBlock(body, template, key, placeholder, value, fallback = '') {
+  const block = (blockContent(template, key) || '').replace(
+    new RegExp(`\\{\\{${placeholder}\\}\\}`, 'g'),
+    value || fallback,
+  )
+  return replaceAutoBlock(body, key, block.trim())
+}
+
 export function fillAutoBlocks(template, ctx) {
   const { title, fixes, typeFlags, commits } = ctx
   let out = template
-  // Title block: a single "# {{title}}" line.
-  out = replaceAutoBlock(out, 'title', `# ${title || ''}`)
+  // Title block: the {{title}} placeholder is swapped for the actual PR title;
+  // any other content inside the block is preserved on every refresh.
+  out = fillPlaceholderBlock(out, template, 'title', 'title', title)
   // Type block: the "## Type of Change" section, with boxes ticked.
   /* v8 ignore next: the `|| ''` fallback only matters if the template loses its
      type block, which cannot happen in practice. */
   const typeBlock = tickTypeBoxes(blockContent(template, 'type') || '', typeFlags)
   out = replaceAutoBlock(out, 'type', typeBlock.trim())
-  // Issue block: the issue number on its own line. The "Fixes #(issue number):"
-  // label lives INSIDE the block (above the {{issue}} placeholder), so it is
-  // rewritten together with the rest of the block on every refresh. "N/A"
-  // signals no linked issue rather than leaving a blank line.
-  out = replaceAutoBlock(out, 'issue', fixes || 'N/A')
+  // Issue block: the {{issue}} placeholder is swapped for the extracted issue
+  // number; the "## Fixes #(issue number)" heading (and any other content
+  // inside the block) is regenerated from the template on every refresh. "N/A"
+  // signals no linked issue.
+  out = fillPlaceholderBlock(out, template, 'issue', 'issue', fixes, 'N/A')
   // Checklist block: copied verbatim from the template so it resets to the
   // template state on every refresh (human ticks are dropped).
   const checklist = blockContent(template, 'checklist')
   /* v8 ignore next: the `: ''` fallback only matters if the template loses its
      checklist block, which cannot happen in practice. */
   out = replaceAutoBlock(out, 'checklist', checklist !== null ? checklist : '')
-  // Commits block: the commit list body (the "## Commits" heading lives inside
-  // the block, above the {{commits}} placeholder, so callers pass only the
-  // list).
-  out = replaceAutoBlock(out, 'commits', commits || '')
+  // Commits block: the {{commits}} placeholder is swapped for the commit list
+  // body; the "## Commits" heading (and any other content inside the block) is
+  // regenerated from the template on every refresh.
+  out = fillPlaceholderBlock(out, template, 'commits', 'commits', commits)
   return out
 }
 

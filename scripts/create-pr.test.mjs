@@ -13,6 +13,7 @@ import {
   classifyChange,
   extractFixes,
   fillAutoBlocks,
+  fillPlaceholderBlock,
   replaceAutoBlock,
   blockContent,
   tickTypeBoxes,
@@ -185,6 +186,38 @@ describe('auto block markers', () => {
   })
 })
 
+describe('fillPlaceholderBlock', () => {
+  it('replaces the {{placeholder}} and preserves other content inside the block', () => {
+    const template = '<!-- AUTO:title -->\n# {{title}}\n> subtitle line\n<!-- /AUTO:title -->'
+    const out = fillPlaceholderBlock(template, template, 'title', 'title', 'My Title')
+    expect(blockContent(out, 'title')).toBe('# My Title\n> subtitle line')
+  })
+
+  it('replaces every occurrence of the placeholder (global)', () => {
+    const template = '<!-- AUTO:x -->\n{{v}} and {{v}}\n<!-- /AUTO:x -->'
+    const out = fillPlaceholderBlock(template, template, 'x', 'v', 'VAL')
+    expect(blockContent(out, 'x')).toBe('VAL and VAL')
+  })
+
+  it('falls back to fallback when value is empty', () => {
+    const template = '<!-- AUTO:issue -->\n## Fixes #(n)\n\n{{issue}}\n<!-- /AUTO:issue -->'
+    const out = fillPlaceholderBlock(template, template, 'issue', 'issue', '', 'N/A')
+    expect(blockContent(out, 'issue')).toBe('## Fixes #(n)\n\nN/A')
+  })
+
+  it('is a no-op (never drops human text) when the block is absent from the body', () => {
+    const body = 'human paragraph outside blocks'
+    const template = '<!-- AUTO:title -->\n# {{title}}\n<!-- /AUTO:title -->'
+    expect(fillPlaceholderBlock(body, template, 'title', 'title', 'X')).toBe(body)
+  })
+
+  it('covers the null block fallback when the block is absent from the template', () => {
+    const body = 'human paragraph'
+    const template = 'no auto blocks here'
+    expect(fillPlaceholderBlock(body, template, 'title', 'title', 'X')).toBe(body)
+  })
+})
+
 // --- tickTypeBoxes -------------------------------------------------------
 describe('tickTypeBoxes', () => {
   const block = `## Type of Change
@@ -241,7 +274,8 @@ describe('fillAutoBlocks', () => {
       commits: '- abc1234 did a thing\n',
     })
     expect(blockContent(out, 'title')).toBe('# My PR')
-    expect(blockContent(out, 'issue')).toBe('42')
+    expect(blockContent(out, 'issue')).toBe('## Fixes #(issue number)\n\n42')
+    expect(blockContent(out, 'commits')).toContain('## Commits')
     expect(blockContent(out, 'commits')).toContain('- abc1234 did a thing')
     expect(blockContent(out, 'type')).toContain(
       '- [x] Bug fix (non-breaking change which fixes an issue)',
@@ -255,7 +289,7 @@ describe('fillAutoBlocks', () => {
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
       commits: '',
     })
-    expect(blockContent(out, 'issue')).toBe('N/A')
+    expect(blockContent(out, 'issue')).toBe('## Fixes #(issue number)\n\nN/A')
   })
 
   it('preserves the human Description region but resets the Checklist block to template state', () => {
@@ -322,7 +356,8 @@ describe('buildBody', () => {
     expect(out).toContain('human note above')
     expect(out).toContain('human note below')
     expect(blockContent(out, 'title')).toBe('# Fresh Title')
-    expect(blockContent(out, 'issue')).toBe('99')
+    expect(blockContent(out, 'issue')).toBe('## Fixes #(issue number)\n\n99')
+    expect(blockContent(out, 'commits')).toContain('## Commits')
     expect(blockContent(out, 'commits')).toContain('- a1 add')
     expect(out).not.toContain('Stale Title')
     expect(out).not.toContain('- old commit')
