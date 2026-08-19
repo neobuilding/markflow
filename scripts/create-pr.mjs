@@ -127,9 +127,10 @@ function resolveHead() {
 /* v8 ignore stop */
 
 // Build the commit list (subjects with hashes) for commits on head that are
-// not in base. The "## Commits" heading is a static line OUTSIDE the auto block
-// in the template, so this helper returns only the list body. Exported for unit
-// testing. The git-log executor can be injected (gitLogFn) so tests run without
+// not in base. The "## Commits" heading lives INSIDE the auto block in the
+// template (above the {{commits}} placeholder), so this helper returns only the
+// list body. Exported for unit testing. The git-log executor can be injected
+// (gitLogFn) so tests run without
 // a real repository; it defaults to the real `git log`.
 export function buildCommitsSection(
   head,
@@ -212,9 +213,10 @@ export function fillAutoBlocks(template, ctx) {
   // type block, which cannot happen in practice.
   const typeBlock = tickTypeBoxes(blockContent(template, 'type') || '', typeFlags)
   out = replaceAutoBlock(out, 'type', typeBlock.trim())
-  // Issue block: the issue number on its own line (the static "Fixes #(issue
-  // number):" label sits OUTSIDE the block, in the template). "N/A" signals no
-  // linked issue rather than leaving a blank line.
+  // Issue block: the issue number on its own line. The "Fixes #(issue number):"
+  // label lives INSIDE the block (above the {{issue}} placeholder), so it is
+  // rewritten together with the rest of the block on every refresh. "N/A"
+  // signals no linked issue rather than leaving a blank line.
   out = replaceAutoBlock(out, 'issue', fixes || 'N/A')
   // Checklist block: copied verbatim from the template so it resets to the
   // template state on every refresh (human ticks are dropped).
@@ -222,8 +224,9 @@ export function fillAutoBlocks(template, ctx) {
   // v8 ignore next: the `: ''` fallback only matters if the template loses its
   // checklist block, which cannot happen in practice.
   out = replaceAutoBlock(out, 'checklist', checklist !== null ? checklist : '')
-  // Commits block: the commit list body (the "## Commits" heading is a static
-  // line outside the block in the template, so callers pass only the list).
+  // Commits block: the commit list body (the "## Commits" heading lives inside
+  // the block, above the {{commits}} placeholder, so callers pass only the
+  // list).
   out = replaceAutoBlock(out, 'commits', commits || '')
   return out
 }

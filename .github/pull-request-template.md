@@ -28,14 +28,14 @@ Please include a summary of the change and which issue is fixed. Please also inc
 - [ ] New and existing unit tests pass locally with my changes
 <!-- /AUTO:checklist -->
 
+<!-- AUTO:issue -->
 ## Fixes #(issue number)
 
-<!-- AUTO:issue -->
 {{issue}}
 <!-- /AUTO:issue -->
 
+<!-- AUTO:commits -->
 ## Commits
 
-<!-- AUTO:commits -->
 {{commits}}
 <!-- /AUTO:commits -->
