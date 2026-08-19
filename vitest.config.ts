@@ -203,18 +203,20 @@ export default defineConfig({
           functions: 95,
           lines: 95,
         },
-        // CI / PR-automation scripts: create-pr.mjs's pure functions
-        // (deriveTitle / buildCtx / fillAutoBlocks / replaceAutoBlock / buildBody /
-        // buildBodyFor / classifyChange / extractFixes) are fully unit-tested
-        // (100% on those functions). The side-effecting runMain (gh/git
-        // orchestration, process.exit) and its process-executing helpers cannot be
-        // exercised by unit tests, so the file-level gate is held at a realistic
-        // bar rather than 100% — see the uncovered `runMain()` invocation line.
+        // CI / PR-automation scripts: every branch in create-pr.mjs is now
+        // accounted for. Its pure functions (deriveTitle / buildCtx /
+        // fillAutoBlocks / replaceAutoBlock / buildBody / buildBodyFor /
+        // classifyChange / extractFixes) are fully unit-tested (100%), and the
+        // side-effecting runMain (gh/git orchestration, process.exit) plus the
+        // direct-invocation guard and the process-executing helpers are wrapped in
+        // `/* v8 ignore */` blocks because they cannot be exercised by unit tests.
+        // The defensive fallbacks inside fillAutoBlocks are likewise ignored, so
+        // the file-level gate is held at 100%.
         'scripts/create-pr.mjs': {
-          statements: 96,
-          branches: 90,
+          statements: 100,
+          branches: 100,
           functions: 100,
-          lines: 98,
+          lines: 100,
         },
       },
     },

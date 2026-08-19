@@ -39,8 +39,8 @@ import { pathToFileURL } from 'node:url'
 const args = process.argv.slice(2)
 function arg(name, fallback) {
   const i = args.indexOf(name)
-  // v8 ignore next: the "has a value after the flag" branch is only exercised
-  // via the real CLI argv, which unit tests cannot inject.
+  /* v8 ignore next 2: the "has a value after the flag" branch is only exercised
+     via the real CLI argv, which unit tests cannot inject. */
   if (i !== -1 && args[i + 1]) return args[i + 1]
   return fallback
 }
@@ -209,8 +209,8 @@ export function fillAutoBlocks(template, ctx) {
   // Title block: a single "# {{title}}" line.
   out = replaceAutoBlock(out, 'title', `# ${title || ''}`)
   // Type block: the "## Type of Change" section, with boxes ticked.
-  // v8 ignore next: the `|| ''` fallback only matters if the template loses its
-  // type block, which cannot happen in practice.
+  /* v8 ignore next: the `|| ''` fallback only matters if the template loses its
+     type block, which cannot happen in practice. */
   const typeBlock = tickTypeBoxes(blockContent(template, 'type') || '', typeFlags)
   out = replaceAutoBlock(out, 'type', typeBlock.trim())
   // Issue block: the issue number on its own line. The "Fixes #(issue number):"
@@ -221,8 +221,8 @@ export function fillAutoBlocks(template, ctx) {
   // Checklist block: copied verbatim from the template so it resets to the
   // template state on every refresh (human ticks are dropped).
   const checklist = blockContent(template, 'checklist')
-  // v8 ignore next: the `: ''` fallback only matters if the template loses its
-  // checklist block, which cannot happen in practice.
+  /* v8 ignore next: the `: ''` fallback only matters if the template loses its
+     checklist block, which cannot happen in practice. */
   out = replaceAutoBlock(out, 'checklist', checklist !== null ? checklist : '')
   // Commits block: the commit list body (the "## Commits" heading lives inside
   // the block, above the {{commits}} placeholder, so callers pass only the
@@ -282,7 +282,7 @@ export function buildCtx(head, baseRef, title, commitsSection) {
     fixes: extractFixes(head, commitsText),
     typeFlags: classifyChange(head, commitsText),
     // commitsSection is always passed by callers; the `|| ''` is defensive.
-    // v8 ignore next
+    /* v8 ignore next */
     commits: commitsSection || '',
   }
 }
@@ -484,10 +484,10 @@ async function runMain() {
 // Execute only when run as a script (e.g. `node scripts/create-pr.mjs` or via
 // the `npm run pr` / CI workflow), not when imported by unit tests.
 const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
-// v8 ignore start: the direct-invocation guard (and its single branch) only
-// runs when executed as a script, not under vitest, so it cannot be exercised
-// by the pure unit tests. Keep it ignored to avoid skewing branch coverage.
+/* v8 ignore start: the direct-invocation guard (and its single branch) only
+   runs when executed as a script, not under vitest, so it cannot be exercised
+   by the pure unit tests. Keep it ignored to avoid skewing branch coverage. */
 if (invokedDirectly) {
   runMain()
 }
-// v8 ignore stop
+/* v8 ignore stop */
