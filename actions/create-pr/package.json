@@ -1,0 +1,18 @@
+{
+  "name": "create-pr-action",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.mjs",
+  "scripts": {
+    "build": "ncc build src/index.mjs -o dist",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.0",
+    "vitest": "^4.1.10"
+  }
+}

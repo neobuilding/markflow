@@ -31,7 +31,7 @@ export default defineConfig({
       'src/renderer/src/**/*.test.ts',
       'src/renderer/src/**/*.test.tsx',
       'electron/main/**/*.test.ts',
-      'scripts/**/*.test.mjs',
+      'actions/create-pr/src/**/*.test.mjs',
     ],
     // Report coverage for the ENTIRE project (every source file), not only the files
     // that happened to be imported by a test. This surfaces untested modules instead of
@@ -67,7 +67,7 @@ export default defineConfig({
         'electron/main/lifecycle.ts',
         'electron/main/db/database.ts',
         'shared/**/*.ts',
-        'scripts/create-pr.mjs',
+        'actions/create-pr/src/core.mjs',
       ],
       exclude: [
         '**/*.test.ts',
@@ -203,16 +203,19 @@ export default defineConfig({
           functions: 95,
           lines: 95,
         },
-        // CI / PR-automation scripts: every branch in create-pr.mjs is now
-        // accounted for. Its pure functions (deriveTitle / buildCtx /
-        // fillAutoBlocks / replaceAutoBlock / buildBody / buildBodyFor /
-        // classifyChange / extractFixes) are fully unit-tested (100%), and the
-        // side-effecting runMain (gh/git orchestration, process.exit) plus the
-        // direct-invocation guard and the process-executing helpers are wrapped in
-        // `/* v8 ignore */` blocks because they cannot be exercised by unit tests.
-        // The defensive fallbacks inside fillAutoBlocks are likewise ignored, so
-        // the file-level gate is held at 100%.
-        'scripts/create-pr.mjs': {
+        // CI / PR-automation core: every reachable branch in
+        // actions/create-pr/src/core.mjs is now accounted for. Its pure
+        // functions (deriveTitle / buildCtx / fillAutoBlocks / replaceAutoBlock /
+        // buildBody / buildBodyFor / classifyChange / extractFixes / markersFor /
+        // blockContent / tickTypeBoxes / fillPlaceholderBlock /
+        // buildCommitsSection / buildDescription) are fully unit-tested (100%),
+        // and the side-effecting runMain (gh/git orchestration, process.exit) plus
+        // the process-executing helpers are wrapped in `/* v8 ignore */` blocks
+        // because they cannot be exercised by unit tests. The decorative
+        // fallbacks inside fillAutoBlocks are likewise ignored, so the file-level
+        // gate is held at 100%. The Action entry point (src/index.mjs) is not in
+        // this list and therefore carries no coverage threshold.
+        'actions/create-pr/src/core.mjs': {
           statements: 100,
           branches: 100,
           functions: 100,

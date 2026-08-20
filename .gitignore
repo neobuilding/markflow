@@ -122,3 +122,12 @@ e2e/.dev-url
 # Test result XML (JUnit) produced by Vitest (unit) / Playwright (e2e) for CI reporting.
 # Both suites emit into reports/<suite>/junit.xml so the type is self-describing.
 reports/
+
+# The Create/Refresh PR GitHub Action bundles its runtime into
+# actions/create-pr/dist/index.mjs and COMMITS it (GitHub requires a direct
+# `uses:` reference to point at checked-in code, not a build step). Un-ignore it
+# from the project-wide `dist/` rule above. Ancestor dirs must be un-ignored
+# first for the negation to take effect.
+!actions/
+!actions/create-pr/
+!actions/create-pr/dist/

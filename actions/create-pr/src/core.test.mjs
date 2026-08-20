@@ -1,9 +1,9 @@
-// Unit tests for scripts/create-pr.mjs pure logic.
+// Unit tests for actions/create-pr/src/core.mjs pure logic.
 //
-// The script's side-effecting entry point (runMain) is NOT executed on import:
-// it is guarded by `import.meta.url === pathToFileURL(process.argv[1]).href`,
-// and under vitest `process.argv[1]` is the test runner, not this script. So
-// importing the module is safe and only the exported helpers are exercised.
+// The module is imported only for its exported helpers; the side-effecting
+// `runMain` is never called by these tests. Importing is safe because core.mjs
+// no longer runs anything on import (the previous CLI direct-invocation guard
+// was dropped when it became a library used by index.mjs).
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
@@ -20,7 +20,7 @@ import {
   buildBody,
   buildBodyFor,
   markersFor,
-} from './create-pr.mjs'
+} from './core.mjs'
 
 // Guard against a duplicated / malformed block marker silently shrinking a block.
 describe('PR template integrity', () => {

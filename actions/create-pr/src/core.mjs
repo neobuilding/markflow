@@ -1,13 +1,16 @@
-// Create (or refresh) a Pull Request for a branch against `main`.
+// Core logic for the "Create / Refresh PR" GitHub Action.
 //
-// This is the SINGLE source of truth for PR automation, shared by both:
-//   - the local `npm run pr` command (scripts/create-pr.mjs, run on a dev machine)
-//   - the CI workflow `.github/workflows/auto-pr.yml` (which simply calls this
-//     script with --head set to the pushed branch)
+// This module is the SINGLE source of truth for PR automation. It is
+// self-contained: it does NOT read Action inputs or receive the auth token.
+// The Action entry point (`index.mjs`) injects the logical parameters
+// (`head` / `base` / `dryRun` / `templatePath`) and sets `process.env.GH_TOKEN`
+// before calling `runMain`. Keeping the core free of `@actions/core` side
+// effects (beyond `setFailed`) makes it unit-testable and trivially
+// extractable to its own repository.
 //
 // Behaviour:
 //   - Opens (or refreshes) a PR via the GitHub CLI (`gh`), using the repo's PR
-//     template (.github/pull-request-template.md).
+//     template (default `.github/pull-request-template.md`).
 //   - Does NOT push. The head branch must already exist on origin; if it does
 //     not, the script fails fast with a hint to push it first.
 //   - Idempotent: if a PR for the head branch already exists, it is NOT
@@ -22,32 +25,12 @@
 //   - Derives the PR title from the branch name (feature/*, fix/*, etc.).
 //
 // Requirements:
-//   - `gh` CLI installed and authenticated (`gh auth login` locally, or
-//     GITHUB_TOKEN in CI).
+//   - `gh` CLI installed and authenticated (GITHUB_TOKEN / GH_TOKEN in CI).
 //   - Run inside a git worktree with a remote named `origin`.
-//
-// Usage:
-//   node scripts/create-pr.mjs                       # current branch -> main
-//   node scripts/create-pr.mjs --base dev            # target a different base
-//   node scripts/create-pr.mjs --head feature/foo    # explicit head (CI)
-//   node scripts/create-pr.mjs --dry-run             # print the body, write nothing
 import { execFileSync } from 'node:child_process'
 import process from 'node:process'
 import { readFileSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
-
-const args = process.argv.slice(2)
-function arg(name, fallback) {
-  const i = args.indexOf(name)
-  /* v8 ignore next 2: the "has a value after the flag" branch is only exercised
-     via the real CLI argv, which unit tests cannot inject. */
-  if (i !== -1 && args[i + 1]) return args[i + 1]
-  return fallback
-}
-
-const BASE = arg('--base', 'main')
-const DRY_RUN = args.includes('--dry-run')
-const TEMPLATE = '.github/pull-request-template.md'
+import * as core from '@actions/core'
 
 // Each auto-generated *block* is wrapped in symmetric markers carrying a key,
 // e.g. `<!-- AUTO:commits --> ... <!-- /AUTO:commits -->`. The script refreshes
@@ -106,23 +89,17 @@ function tryRun(cmd, cmdArgs, opts = {}) {
 }
 /* v8 ignore stop */
 
+// Fail with a clear message. Uses core.setFailed (which marks the step failed
+// and prints `::error::`) and then THROWS so the calling stack unwinds — unlike
+// the original `process.exit(1)`, setFailed does not terminate the process, so
+// the throw guarantees control flow stops. The entry point (`index.mjs`) wraps
+// `runMain` in try/catch and re-declares via setFailed; internally we just rely
+// on the throw to halt execution.
 /* v8 ignore start */
 function fail(msg) {
-  console.error(`create-pr: ${msg}`)
-  process.exit(1)
-}
-/* v8 ignore stop */
-
-// Resolve the head branch: explicit --head (e.g. CI), else the current branch.
-/* v8 ignore start */
-function resolveHead() {
-  const explicit = arg('--head')
-  if (explicit) return explicit
-  const branch = tryRun('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
-  if (!branch || branch === 'HEAD') {
-    fail('not on a branch (detached HEAD?) and no --head given. Cannot create a PR.')
-  }
-  return branch
+  const full = `create-pr: ${msg}`
+  core.setFailed(full)
+  throw new Error(full)
 }
 /* v8 ignore stop */
 
@@ -305,10 +282,15 @@ export function buildCtx(head, baseRef, title, commitsSection) {
 // Build the full PR body for an existing PR: re-fill the template's auto blocks
 // and preserve any human-written content outside those blocks. Exported for
 // tests.
-export function buildBodyFor(head, baseRef, existingBody) {
+export function buildBodyFor(
+  head,
+  baseRef,
+  existingBody,
+  templatePath = '.github/pull-request-template.md',
+) {
   let filledTemplate
   try {
-    const tpl = readFileSync(TEMPLATE, 'utf8')
+    const tpl = readFileSync(templatePath, 'utf8')
     filledTemplate = fillAutoBlocks(
       tpl,
       buildCtx(head, baseRef, deriveTitle(head), buildCommitsSection(head, baseRef)),
@@ -330,16 +312,19 @@ export function deriveTitle(branch) {
     .replace(/^\w/, (c) => c.toUpperCase())
 }
 
-// ── Main (only runs when executed directly, not when imported by tests) ──
+// ── Main (only runs when invoked by the Action entry point) ──
 // The whole function is excluded from coverage: it orchestrates external
 // processes (`gh` / `git`) and calls `process.exit`, so it cannot be exercised
 // by the pure-function unit tests. Its logic is delegated to the exported,
-// fully-tested helpers above (resolveHead / buildBodyFor / buildCommitsSection
-// / fillAutoBlocks / replaceAutoBlock / buildBody), whose coverage is what we hold to 100%.
+// fully-tested helpers above. A thrown `Error` from `fail()` bubbles up to the
+// entry point (which reports it via `core.setFailed`); we do NOT swallow it here.
 /* v8 ignore start */
-async function runMain() {
-  const head = resolveHead()
-
+export async function runMain({
+  head,
+  base = 'main',
+  dryRun = false,
+  templatePath = '.github/pull-request-template.md',
+}) {
   const ghVersion = tryRun('gh', ['--version'])
   if (!ghVersion) {
     fail("GitHub CLI ('gh') is not installed or not on PATH. Install: https://cli.github.com/")
@@ -353,10 +338,10 @@ async function runMain() {
   // Fetch base so the commit diff is accurate (local CI checkout may be shallow).
   // Non-fatal: if offline / no permission, warn but continue with whatever local
   // base ref we have — the generated commit list may then be approximate.
-  const fetched = tryRun('git', ['fetch', 'origin', BASE, '--quiet'])
+  const fetched = tryRun('git', ['fetch', 'origin', base, '--quiet'])
   if (fetched === null) {
     console.warn(
-      `create-pr: warning: could not fetch '${BASE}' from origin; ` +
+      `create-pr: warning: could not fetch '${base}' from origin; ` +
         'the commit list may be based on a stale local ref.',
     )
   }
@@ -366,9 +351,9 @@ async function runMain() {
   // absent); fall back to the bare `<base>` only if the remote ref is missing.
   // Using the correct base ref is what makes `git log <base>..HEAD` return the
   // branch's commits instead of an empty range.
-  const baseRef = tryRun('git', ['rev-parse', '--verify', `origin/${BASE}`])
-    ? `origin/${BASE}`
-    : BASE
+  const baseRef = tryRun('git', ['rev-parse', '--verify', `origin/${base}`])
+    ? `origin/${base}`
+    : base
 
   // Idempotency: find an existing open PR for this head -> base.
   const existing = tryRun('gh', [
@@ -377,7 +362,7 @@ async function runMain() {
     '--head',
     head,
     '--base',
-    BASE,
+    base,
     '--state',
     'open',
     '--json',
@@ -392,12 +377,12 @@ async function runMain() {
 
   if (existingPrs.length > 0) {
     const { number, url, body = '' } = existingPrs[0]
-    const newBody = buildBodyFor(head, baseRef, body)
+    const newBody = buildBodyFor(head, baseRef, body, templatePath)
     if (newBody === body) {
-      console.log(`create-pr: PR already up to date for ${head} → ${BASE}: ${url}`)
+      console.log(`create-pr: PR already up to date for ${head} → ${base}: ${url}`)
       process.exit(0)
     }
-    if (DRY_RUN) {
+    if (dryRun) {
       console.log(
         `create-pr: [dry-run] would update PR #${number} (${url}) with body:\n` +
           '────────────────────────────────────────\n' +
@@ -432,7 +417,7 @@ async function runMain() {
   const commitsSection = buildCommitsSection(head, baseRef)
   let filledTemplate
   try {
-    const tpl = readFileSync(TEMPLATE, 'utf8')
+    const tpl = readFileSync(templatePath, 'utf8')
     filledTemplate = fillAutoBlocks(tpl, buildCtx(head, baseRef, title, commitsSection))
   } catch {
     // Template missing/unreadable: fall back to just the commits list.
@@ -440,9 +425,9 @@ async function runMain() {
   }
   const body = buildBody(filledTemplate, '')
 
-  if (DRY_RUN) {
+  if (dryRun) {
     console.log(
-      `create-pr: [dry-run] would create PR '${head}' → ${BASE} with title ` +
+      `create-pr: [dry-run] would create PR '${head}' → ${base} with title ` +
         `'${title || head}' and body:\n` +
         '────────────────────────────────────────\n' +
         body +
@@ -451,14 +436,14 @@ async function runMain() {
     process.exit(0)
   }
 
-  console.log(`create-pr: creating PR '${head}' → ${BASE} ...`)
+  console.log(`create-pr: creating PR '${head}' → ${base} ...`)
   let out = null
   try {
     out = run('gh', [
       'pr',
       'create',
       '--base',
-      BASE,
+      base,
       '--head',
       head,
       '--title',
@@ -478,7 +463,7 @@ async function runMain() {
       '--head',
       head,
       '--base',
-      BASE,
+      base,
       '--state',
       'open',
       '--json',
@@ -496,13 +481,8 @@ async function runMain() {
 }
 /* v8 ignore stop */
 
-// Execute only when run as a script (e.g. `node scripts/create-pr.mjs` or via
-// the `npm run pr` / CI workflow), not when imported by unit tests.
-const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
-/* v8 ignore start: the direct-invocation guard (and its single branch) only
-   runs when executed as a script, not under vitest, so it cannot be exercised
-   by the pure unit tests. Keep it ignored to avoid skewing branch coverage. */
-if (invokedDirectly) {
-  runMain()
-}
-/* v8 ignore stop */
+// The Action entry point (index.mjs) imports and calls runMain directly, so no
+// direct-invocation guard is needed here. The previous CLI guard
+// (`import.meta.url === pathToFileURL(process.argv[1]).href`) is intentionally
+// dropped: this module is no longer a standalone script, only an importable
+// library + the runMain export used by index.mjs.

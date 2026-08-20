@@ -32,7 +32,7 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/prepare-win-codesign.ps1 && npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux",
-    "pr": "node scripts/create-pr.mjs"
+    "build:action": "npm --prefix actions/create-pr run build"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.20",

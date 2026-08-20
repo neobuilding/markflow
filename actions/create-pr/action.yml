@@ -1,0 +1,26 @@
+name: 'Create / Refresh PR'
+description: 'Idempotently create or refresh a PR with AUTO-block PR-body management. Self-contained action, extractable to its own repo.'
+inputs:
+  head:
+    description: 'Head branch (e.g. feature/foo). Defaults to github.head_ref.'
+    required: false
+  base:
+    description: 'Base branch'
+    required: false
+    default: 'main'
+  dry-run:
+    description: 'Print body without writing'
+    required: false
+    default: 'false'
+  template:
+    description: 'Path to the PR template'
+    required: false
+    default: '.github/pull-request-template.md'
+  token:
+    description: 'GH token (PAT with repo scope; GITHUB_TOKEN cannot create PRs)'
+    required: true
+runs:
+  using: 'node20'
+  # ncc emits the bundled ESM as `index.mjs` (it names the output after the
+  # entry file's extension). node20 runs .mjs directly, so we point here.
+  main: 'dist/index.mjs'
