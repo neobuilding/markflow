@@ -86,6 +86,16 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
+            # The Create/Refresh PR Action under actions/create-pr/ is intentionally
+            # self-contained: its runtime dep `@actions/core` lives ONLY in
+            # actions/create-pr/node_modules (never hoisted to the repo root, so the
+            # directory stays extractable to its own repo). The root Vitest suite
+            # imports core.mjs, which imports `@actions/core`, so CI must install that
+            # local package before running `npm run ci`. (Root `npm ci` does not walk
+            # into actions/create-pr — there are no npm workspaces here.)
+            - name: Install the self-contained PR Action's dependencies
+              working-directory: actions/create-pr
+              run: npm ci
             # Static quality gate (enforced `npm run quality`): Prettier format check + ESLint
             # (TS7 side-by-side via the `postinstall` shim in scripts/install-eslint-ts6.mjs) + Stylelint
             # (CSS) + Markdownlint (docs) + Secretlint (secrets) + full TypeScript type check (`typecheck`).
