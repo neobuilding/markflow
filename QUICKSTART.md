@@ -53,7 +53,7 @@ npm run e2e             # 端到端：用 Playwright 驱动真实的 Electron �
 
 ### CI 流水线（`.github/workflows/ci.yml`）
 
-`Test, Build & E2E` 任务（ubuntu）依次执行：类型检查 + 单元测试 + 覆盖率 → 安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e`。e2e 步骤刻意合并进该任务，复用同一 runner、一次 `npm ci` 安装与一次 `npm run build`，避免额外启动一个 runner（省一次完整安装 + 一次构建）。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。
+`Test, Build & E2E` 任务（ubuntu）依次执行：`npm run quality`（Prettier + ESLint + Stylelint + Markdownlint + Secretlint + 类型检查，作为快速失败门禁）→ 单元测试 + 覆盖率 → 安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e`。e2e 步骤刻意合并进该任务，复用同一 runner、一次 `npm ci` 安装与一次 `npm run build`，避免额外启动一个 runner（省一次完整安装 + 一次构建）。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。
 
 三平台 `build` 任务（`Build (macos|windows|ubuntu)`）在该测试任务之后运行，是全仓库唯一的三平台构建，既用于 PR 校验也用于发布。
 

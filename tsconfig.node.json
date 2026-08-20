@@ -23,5 +23,5 @@
     "shared/i18n/en.ts",
     "shared/i18n/zh-CN.ts"
   ],
-  "exclude": ["electron/main/**/__tests__/**"]
+  "exclude": ["electron/main/**/__tests__/**", "electron/preload/**/*.test.ts"]
 }

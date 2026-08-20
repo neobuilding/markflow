@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { FileDetailsDialog } from './FileDetailsDialog'
 import { useUIStore } from '../../store/ui'
 import '../../i18n'
 
 // Mock the document hooks used by the dialog.
+const fileStatData = { exists: true, size: 2048, createdAt: 500, updatedAt: 1000 }
 vi.mock('../../hooks/useDocuments', () => ({
   useDocument: (id: string | null) => ({
     data:
@@ -16,11 +17,17 @@ vi.mock('../../hooks/useDocuments', () => ({
             wordCount: 12,
             updatedAt: 1000,
           }
-        : undefined,
+        : id === 'doc-draft'
+          ? {
+              id: 'doc-draft',
+              title: 'Untitled',
+              filePath: '',
+              wordCount: 0,
+              updatedAt: 2000,
+            }
+          : undefined,
   }),
-  useFileStat: () => ({
-    data: { exists: true, size: 2048, createdAt: 500, updatedAt: 1000 },
-  }),
+  useFileStat: () => ({ data: fileStatData }),
   useCreateDocument: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSetEncoding: () => ({ mutateAsync: vi.fn() }),
   useDocuments: () => ({ data: [] }),
@@ -72,5 +79,59 @@ describe('FileDetailsDialog', () => {
     await screen.findByText('Hello')
     fireEvent.click(screen.getByText('Close'))
     expect(useUIStore.getState().fileDetailsId).toBeNull()
+  })
+
+  it('closes via the dialog onOpenChange when dismissed', async () => {
+    useUIStore.getState().setFileDetailsId('doc-1')
+    render(<FileDetailsDialog />)
+    await screen.findByText('Hello')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(useUIStore.getState().fileDetailsId).toBeNull())
+  })
+
+  it('copies the path to the clipboard and shows the copied state', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    useUIStore.getState().setFileDetailsId('doc-1')
+    render(<FileDetailsDialog />)
+    await screen.findByText('Hello')
+    fireEvent.click(screen.getByRole('button', { name: /copy path/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('/tmp/hello.md'))
+    expect(screen.getByText('Copied')).toBeInTheDocument()
+  })
+
+  it('shows placeholders when the file stat is missing', async () => {
+    fileStatData.exists = false
+    useUIStore.getState().setFileDetailsId('doc-1')
+    render(<FileDetailsDialog />)
+    await screen.findByText('Hello')
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+    // Modified falls back to the document's own updatedAt
+    expect(screen.getByText(/1\/1\/1970|1970/)).toBeInTheDocument()
+    fileStatData.exists = true
+  })
+
+  it('shows the unsaved note for a memory-only document', async () => {
+    useUIStore.getState().setFileDetailsId('doc-draft')
+    render(<FileDetailsDialog />)
+    expect(await screen.findByText(/Unsaved/)).toBeInTheDocument()
+  })
+
+  it('resets the copied state after the timeout', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    useUIStore.getState().setFileDetailsId('doc-1')
+    render(<FileDetailsDialog />)
+    await screen.findByText('Hello')
+    fireEvent.click(screen.getByRole('button', { name: /copy path/i }))
+    await waitFor(() => expect(screen.getByText('Copied')).toBeInTheDocument())
+    await new Promise((r) => setTimeout(r, 1600))
+    expect(screen.queryByText('Copied')).toBeNull()
   })
 })

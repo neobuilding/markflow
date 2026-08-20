@@ -226,6 +226,7 @@ export function Sidebar(): React.ReactElement | null {
                   variant="ghost"
                   size="icon"
                   aria-label={t('sidebar.openFolder')}
+                  data-testid="import-folder-btn"
                   onClick={handleImportFolder}
                   disabled={openFolderMut.isPending}
                 >
@@ -269,6 +270,7 @@ export function Sidebar(): React.ReactElement | null {
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6"
+                data-testid="close-workspace-btn"
                 onClick={async () => {
                   if (useUIStore.getState().dirty) {
                     const ok = await window.api.dialog.confirm({
@@ -400,7 +402,11 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
     <div className="px-3 py-8 text-center">
       <FileText size={24} className="mx-auto mb-2 text-[var(--color-text-tertiary)]" />
       <p className="text-xs text-[var(--color-text-tertiary)]">{t('sidebar.emptyFolder')}</p>
-      <button onClick={onCreate} className="mt-2 text-xs text-accent hover:underline">
+      <button
+        onClick={onCreate}
+        className="mt-2 text-xs text-accent hover:underline"
+        data-testid="empty-create-btn"
+      >
         {t('sidebar.createFirst')}
       </button>
     </div>

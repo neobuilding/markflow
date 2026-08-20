@@ -32,26 +32,8 @@ env:
     CSC_IDENTITY_AUTOMATION: false # mac does not use signing/notarization automation (consistent with history)
 
 jobs:
-    # Static quality gate. Runs before the version-computing test job so style/rule violations
-    # fail fast and don't waste build minutes.
-    # Enforced gate (`npm run quality`): Prettier format check + ESLint (TS7 side-by-side via the
-    # `postinstall` shim in scripts/install-eslint-ts6.mjs) + Stylelint (CSS) + Markdownlint (docs)
-    # + Secretlint (secrets) + full TypeScript type check (`typecheck`). ESLint is a hard gate now —
-    # typescript-eslint v8 still caps TypeScript at <6.1.0, so the shim installs the TS6 API alongside
-    # the project's TS7 for the linter only.
-    quality:
-        name: Lint & Format
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v7
-            - uses: actions/setup-node@v7
-              with: { node-version: 22, cache: npm }
-            - run: npm ci
-            - run: npm run quality
-
     test:
         name: Test, Build & E2E
-        needs: [quality]
         runs-on: ubuntu-latest
         # Elevated from the workflow-wide `contents: read` so dorny/test-reporter can
         # publish the JUnit summaries as a PR comment and Checks annotations.
@@ -104,6 +86,12 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
+            # Static quality gate (enforced `npm run quality`): Prettier format check + ESLint
+            # (TS7 side-by-side via the `postinstall` shim in scripts/install-eslint-ts6.mjs) + Stylelint
+            # (CSS) + Markdownlint (docs) + Secretlint (secrets) + full TypeScript type check (`typecheck`).
+            # Runs first so style/rule/type violations fail fast before the expensive test + build + E2E
+            # steps below, without needing a separate runner install.
+            - run: npm run quality
             - run: npm run ci
 
             # Upload the coverage report (text + html + lcov) so it can be inspected from the run.

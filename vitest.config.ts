@@ -31,6 +31,7 @@ export default defineConfig({
       'src/renderer/src/**/*.test.ts',
       'src/renderer/src/**/*.test.tsx',
       'electron/main/**/*.test.ts',
+      'scripts/**/*.test.mjs',
     ],
     // Report coverage for the ENTIRE project (every source file), not only the files
     // that happened to be imported by a test. This surfaces untested modules instead of
@@ -66,6 +67,7 @@ export default defineConfig({
         'electron/main/lifecycle.ts',
         'electron/main/db/database.ts',
         'shared/**/*.ts',
+        'scripts/create-pr.mjs',
       ],
       exclude: [
         '**/*.test.ts',
@@ -184,10 +186,10 @@ export default defineConfig({
           lines: 100,
         },
         'electron/main/menu.ts': {
-          statements: 60,
+          statements: 90,
           branches: 60,
-          functions: 60,
-          lines: 60,
+          functions: 95,
+          lines: 90,
         },
         'electron/main/lifecycle.ts': {
           statements: 90,
@@ -196,10 +198,25 @@ export default defineConfig({
           lines: 90,
         },
         'src/renderer/src/components/**': {
-          statements: 55,
-          branches: 55,
-          functions: 55,
-          lines: 55,
+          statements: 90,
+          branches: 65,
+          functions: 95,
+          lines: 95,
+        },
+        // CI / PR-automation scripts: every branch in create-pr.mjs is now
+        // accounted for. Its pure functions (deriveTitle / buildCtx /
+        // fillAutoBlocks / replaceAutoBlock / buildBody / buildBodyFor /
+        // classifyChange / extractFixes) are fully unit-tested (100%), and the
+        // side-effecting runMain (gh/git orchestration, process.exit) plus the
+        // direct-invocation guard and the process-executing helpers are wrapped in
+        // `/* v8 ignore */` blocks because they cannot be exercised by unit tests.
+        // The defensive fallbacks inside fillAutoBlocks are likewise ignored, so
+        // the file-level gate is held at 100%.
+        'scripts/create-pr.mjs': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
         },
       },
     },

@@ -293,6 +293,7 @@ export function EditorPane(): React.ReactElement {
             size="icon"
             onClick={handleOpenFile}
             disabled={openPathsMut.isPending}
+            data-testid="open-file-btn"
           >
             <FolderOpen size={13} />
           </Button>
@@ -306,6 +307,7 @@ export function EditorPane(): React.ReactElement {
             size="icon"
             onClick={handleOpenFolder}
             disabled={openFolderMut.isPending}
+            data-testid="open-folder-btn"
           >
             <Folder size={13} />
           </Button>
@@ -326,6 +328,7 @@ export function EditorPane(): React.ReactElement {
                 onClick={handleSave}
                 disabled={!editable || !dirty || updateMut.isPending || saveAsMut.isPending}
                 className={editable && dirty ? 'text-accent' : ''}
+                data-testid="save-btn"
               >
                 <Save size={13} />
               </Button>
@@ -345,6 +348,7 @@ export function EditorPane(): React.ReactElement {
                 size="icon"
                 onClick={handleSaveAs}
                 disabled={!editable || saveAsMut.isPending}
+                data-testid="save-as-btn"
               >
                 <SaveAll size={13} />
               </Button>
@@ -360,6 +364,7 @@ export function EditorPane(): React.ReactElement {
                 size="icon"
                 onClick={handleReload}
                 disabled={reloadMut.isPending}
+                data-testid="reload-btn"
               >
                 <RotateCcw size={13} />
               </Button>
@@ -373,6 +378,7 @@ export function EditorPane(): React.ReactElement {
                 variant="ghost"
                 size="icon"
                 onClick={() => doc && useUIStore.getState().setFileDetailsId(doc.id)}
+                data-testid="file-details-btn"
               >
                 <Info size={13} />
               </Button>
@@ -400,7 +406,7 @@ export function EditorPane(): React.ReactElement {
 
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" onClick={handleClose}>
+          <Button variant="ghost" size="icon" onClick={handleClose} data-testid="close-btn">
             <X size={13} />
           </Button>
         </TooltipTrigger>
@@ -412,7 +418,12 @@ export function EditorPane(): React.ReactElement {
       {!sidebarOpen && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={toggleSidebar}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleSidebar}
+              data-testid="toggle-sidebar-btn"
+            >
               <PanelLeft size={14} />
             </Button>
           </TooltipTrigger>
@@ -590,6 +601,7 @@ export function EditorPane(): React.ReactElement {
                         variant="ghost"
                         size="icon"
                         onClick={() => insertMarkdown(before, after)}
+                        data-testid={`fmt-${before}-${after}`}
                       >
                         {icon}
                       </Button>
@@ -738,7 +750,12 @@ export function EditorPane(): React.ReactElement {
               {dirty ? t('editor.diskChangedDirty') : t('editor.diskChangedClean')}
             </p>
             <div className="flex items-center justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => clearExternalChange()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => clearExternalChange()}
+                data-testid="external-ignore-btn"
+              >
                 {t('editor.ignore')}
               </Button>
               <Button
@@ -748,6 +765,7 @@ export function EditorPane(): React.ReactElement {
                   clearExternalChange()
                   handleReload()
                 }}
+                data-testid="external-reload-btn"
               >
                 {t('editor.reloadBtn')}
               </Button>

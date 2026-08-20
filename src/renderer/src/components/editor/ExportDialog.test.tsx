@@ -127,4 +127,158 @@ describe('ExportDialog', () => {
       expect(exportDocument).toHaveBeenCalledWith(expect.objectContaining({ overwrite: true })),
     )
   })
+
+  it('switches the theme choice', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dark' } })
+    expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument()
+  })
+
+  it('toggles inline images', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    const checkbox = screen.getByRole('checkbox')
+    expect(checkbox).toBeChecked()
+    fireEvent.click(checkbox)
+    expect(checkbox).not.toBeChecked()
+  })
+
+  it('picks a path when none is selected, then exports', async () => {
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    const exportBtn = screen.getByRole('button', { name: 'Export' })
+    // First click only picks the path (handleConfirm returns early when targetPath is null);
+    // the second click performs the actual export.
+    fireEvent.click(exportBtn)
+    await waitFor(() => expect(screen.getByDisplayValue('/out.html')).toBeInTheDocument())
+    fireEvent.click(exportBtn)
+    await waitFor(() => expect(exportDocument).toHaveBeenCalled())
+  })
+
+  it('shows an error when export fails', async () => {
+    exportDocument.mockRejectedValueOnce(new Error('boom'))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    await waitFor(() => expect(screen.getByText(/failed/i)).toBeInTheDocument())
+    errorSpy.mockRestore()
+  })
+
+  it('exports when stat read fails (treated as not exists)', async () => {
+    ;(
+      window as unknown as {
+        api: {
+          dialog: { saveHtmlFile: (path?: string) => Promise<string> }
+          documents: {
+            stat: () => Promise<{ exists: boolean }>
+            watch: () => Promise<void>
+            unwatch: () => Promise<void>
+          }
+        }
+      }
+    ).api = {
+      dialog: { saveHtmlFile: vi.fn(async () => '/out.html') },
+      documents: {
+        stat: vi.fn(async () => {
+          throw new Error('no')
+        }),
+        watch: vi.fn(async () => {}),
+        unwatch: vi.fn(async () => {}),
+      },
+    }
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    await waitFor(() => expect(exportDocument).toHaveBeenCalled())
+  })
+
+  it('builds a default path from the title when there is no file path', async () => {
+    const original = doc.filePath
+    doc.filePath = ''
+    try {
+      useUIStore.getState().setExportOpen(true)
+      render(<ExportDialog />)
+      // defaultHtmlPath falls back to `${title}.html` when docPath is empty.
+      await waitFor(() => expect(screen.getByDisplayValue('My Note.html')).toBeInTheDocument())
+    } finally {
+      doc.filePath = original
+    }
+  })
+
+  it('cancels the export from the main dialog', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(useUIStore.getState().exportOpen).toBe(false)
+  })
+
+  it('cancels the overwrite prompt without exporting', async () => {
+    ;(
+      window as unknown as {
+        api: {
+          dialog: { saveHtmlFile: (path?: string) => Promise<string> }
+          documents: {
+            stat: () => Promise<{ exists: boolean }>
+            watch: () => Promise<void>
+            unwatch: () => Promise<void>
+          }
+        }
+      }
+    ).api = {
+      dialog: { saveHtmlFile: vi.fn(async () => '/out.html') },
+      documents: {
+        stat: vi.fn(async () => ({ exists: true })),
+        watch: vi.fn(async () => {}),
+        unwatch: vi.fn(async () => {}),
+      },
+    }
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Overwrite' })).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    // Cancelling the overwrite prompt keeps the dialog open and does not export.
+    expect(exportDocument).not.toHaveBeenCalled()
+    expect(useUIStore.getState().exportOpen).toBe(true)
+  })
+
+  it('ignores an unwatch failure during export', async () => {
+    ;(
+      window as unknown as {
+        api: {
+          dialog: { saveHtmlFile: (path?: string) => Promise<string> }
+          documents: {
+            stat: () => Promise<{ exists: boolean }>
+            watch: () => Promise<void>
+            unwatch: () => Promise<void>
+          }
+        }
+      }
+    ).api = {
+      dialog: { saveHtmlFile: vi.fn(async () => '/out.html') },
+      documents: {
+        stat: vi.fn(async () => ({ exists: false })),
+        watch: vi.fn(async () => {}),
+        unwatch: vi.fn(async () => {
+          throw new Error('no')
+        }),
+      },
+    }
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    await waitFor(() => expect(exportDocument).toHaveBeenCalled())
+  })
 })
