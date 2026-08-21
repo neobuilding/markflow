@@ -25555,25 +25555,6 @@ module.exports = {
 
 /***/ }),
 
-/***/ 534:
-/***/ ((module) => {
-
-function webpackEmptyAsyncContext(req) {
-	// Here Promise.resolve().then() is used instead of new Promise() to prevent
-	// uncaught exception popping up in devtools
-	return Promise.resolve().then(() => {
-		var e = new Error("Cannot find module '" + req + "'");
-		e.code = 'MODULE_NOT_FOUND';
-		throw e;
-	});
-}
-webpackEmptyAsyncContext.keys = () => ([]);
-webpackEmptyAsyncContext.resolve = webpackEmptyAsyncContext;
-webpackEmptyAsyncContext.id = 534;
-module.exports = webpackEmptyAsyncContext;
-
-/***/ }),
-
 /***/ 2613:
 /***/ ((module) => {
 
@@ -27437,11 +27418,6 @@ module.exports = parseParams
 /******/ }
 /******/ 
 /************************************************************************/
-/******/ /* webpack/runtime/hasOwnProperty shorthand */
-/******/ (() => {
-/******/ 	__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
-/******/ })();
-/******/ 
 /******/ /* webpack/runtime/compat */
 /******/ 
 /******/ if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = new URL('.', import.meta.url).pathname.slice(import.meta.url.match(/^file:\/\/\/\w:/) ? 1 : 0, -1) + "/";
@@ -27453,66 +27429,32 @@ var __webpack_exports__ = {};
 var core = __nccwpck_require__(7484);
 ;// CONCATENATED MODULE: external "node:path"
 const external_node_path_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:path");
-;// CONCATENATED MODULE: external "node:child_process"
-const external_node_child_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:child_process");
-;// CONCATENATED MODULE: external "node:process"
-const external_node_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:process");
-;// CONCATENATED MODULE: external "node:fs"
-const external_node_fs_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs");
-;// CONCATENATED MODULE: ./src/core.mjs
-// Core logic for the "Create / Refresh PR" GitHub Action.
+;// CONCATENATED MODULE: ./src/render.mjs
+// Pure rendering logic for the "Create / Refresh PR" GitHub Action.
 //
-// This module is the SINGLE source of truth for PR automation. It is
-// self-contained: it does NOT read Action inputs or receive the auth token.
-// The Action entry point (`index.mjs`) injects the logical parameters
-// (`head` / `base` / `dryRun` / `templatePath`) and sets `process.env.GH_TOKEN`
-// before calling `runMain`. Keeping the core free of `@actions/core` side
-// effects (beyond `setFailed`) makes it unit-testable and trivially
-// extractable to its own repository.
+// This module is the SINGLE source of truth for PR body rendering. It is
+// 100% pure: zero file IO, zero `@actions/core`, zero `execFileSync`, zero
+// `process.env`. Every function is deterministic and trivially unit-testable.
 //
-// Behaviour:
-//   - Opens (or refreshes) a PR via the GitHub CLI (`gh`), using the repo's PR
-//     template (default `.github/pull-request-template.md`).
-//   - Does NOT push. The head branch must already exist on origin; if it does
-//     not, the script fails fast with a hint to push it first.
-//   - Idempotent: if a PR for the head branch already exists, it is NOT
-//     re-created; instead its description is refreshed to reflect the latest
-//     commits on the branch. The PR body is split into independent auto blocks
-//     marked with `<!-- AUTO:key --> ... <!-- /AUTO:key -->`. Each block is
-//     refreshed from the template on every refresh (so the Checklist resets to
-//     its template state and must be re-ticked after each push), while anything
-//     a human writes OUTSIDE the blocks (the Description, any notes) is
-//     preserved verbatim. Re-running on the same commits is a no-op.
-//   - The block keys are NOT hard-coded: every `<!-- AUTO:x -->` marker found
-//     in the template becomes an auto block, and any `{{name}}` placeholder
-//     inside a block is rendered by a "block" plugin (a `(ctx) => string`
-//     generator). Built-in blocks (`title` / `issue` / `commits`) ship with
-//     the action; users may add their own `*.mjs` plugins (e.g. `types`) in
-//     `.github/create-pr/blocks/`. Missing plugins leave `{{name}}` untouched.
-//   - Derives the PR title from the branch name (feature/*, fix/*, etc.).
-//
-// Requirements:
-//   - `gh` CLI installed and authenticated (GITHUB_TOKEN / GH_TOKEN in CI).
-//   - Run inside a git worktree with a remote named `origin`.
-
-
-
-
+// The "Which block keys exist?" and "What does each {{placeholder}} render to?"
+// decisions live here. The "How to read the template / how to run git / how to
+// call gh" decisions live in the service modules (services/*.mjs) and the
+// orchestration module (orchestration.mjs). This separation is what lets you
+// render a full PR body locally without any GH_TOKEN, `gh`, or git history.
 
 // Each auto-generated *block* is wrapped in symmetric markers carrying a key,
-// e.g. `<!-- AUTO:commits --> ... <!-- /AUTO:commits -->`. The script refreshes
-// each block independently by key. The block keys are discovered dynamically
-// from the template (see `discoverSegments`), so the action adapts to any repo's
-// PR template instead of hard-coding a fixed set. Human-written content outside
-// the blocks (the Description, any notes) can be freely interleaved and is
+// e.g. `<!-- AUTO:commits --> ... <!-- /AUTO:commits -->`. The block keys are
+// discovered dynamically from the template (see `discoverSegments`), so the
+// action adapts to any repo's PR template instead of hard-coding a fixed set.
+// Human-written content outside the blocks can be freely interleaved and is
 // preserved across refreshes.
 //
 // A block may contain `{{placeholder}}` tokens. Each placeholder is rendered by
 // a "block plugin" — a `(ctx) => string` function looked up in the `blocks`
-// registry (see `renderBlock`). Built-in plugins (`title` / `issue` /
-// `commits`) ship with the action; users may register their own (e.g. `types`)
-// via `.github/create-pr/blocks/`. A placeholder with no matching plugin is
-// left untouched (the `{{name}}` text is preserved verbatim).
+// registry (see `renderBlock`). Built-in plugins (`title` / `issue` / `commits`)
+// ship with the action; users may register their own (e.g. `types`) via
+// `.github/create-pr/blocks/`. A placeholder with no matching plugin is left
+// untouched (the `{{name}}` text is preserved verbatim).
 const AUTO_OPEN = '<!-- AUTO:'
 const AUTO_CLOSE = '<!-- /AUTO:'
 
@@ -27538,60 +27480,14 @@ function replaceAutoBlock(body, key, content) {
   return `${body.slice(0, start)}${open}\n${content}\n${close}${body.slice(end)}`
 }
 
-// Run a command, returning trimmed stdout. Throws on non-zero exit.
-// v8 ignore: these process-executing helpers are only reached from runMain
-// (external orchestration) and cannot be exercised by the pure unit tests.
-/* v8 ignore start */
-function run(cmd, cmdArgs, opts = {}) {
-  return (0,external_node_child_process_namespaceObject.execFileSync)(cmd, cmdArgs, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    ...opts,
-  }).trim()
-}
-/* v8 ignore stop */
-
-// Run a command, returning null on non-zero exit instead of throwing.
-/* v8 ignore start */
-function tryRun(cmd, cmdArgs, opts = {}) {
-  try {
-    return run(cmd, cmdArgs, opts)
-  } catch {
-    return null
-  }
-}
-/* v8 ignore stop */
-
-// Fail with a clear message. Uses core.setFailed (which marks the step failed
-// and prints `::error::`) and then THROWS so the calling stack unwinds — unlike
-// the original `process.exit(1)`, setFailed does not terminate the process, so
-// the throw guarantees control flow stops. The entry point (`index.mjs`) wraps
-// `runMain` in try/catch and re-declares via setFailed; internally we just rely
-// on the throw to halt execution.
-/* v8 ignore start */
-function fail(msg) {
-  const full = `create-pr: ${msg}`
-  core.setFailed(full)
-  throw new Error(full)
-}
-/* v8 ignore stop */
-
 // Build the commit list (subjects with hashes) for commits on head that are
 // not in base. The "## Commits" heading lives INSIDE the auto block in the
 // template (above the {{commits}} placeholder), so this helper returns only the
 // list body. Exported for unit testing. The git-log executor can be injected
-// (gitLogFn) so tests run without
-// a real repository; it defaults to the real `git log`.
-function buildCommitsSection(
-  head,
-  base,
-  // Use `HEAD` (not the branch name) for the git-log range. In CI, checkout
-  // is typically detached, so the local branch name may not exist; HEAD always
-  // points to the correct feature-branch tip. Locally, HEAD is the current
-  // branch tip, so this is equivalent.
-  gitLogFn = (_h, b) =>
-    tryRun('git', ['log', '--no-merges', '--pretty=format:- %h %s', `${b}..HEAD`]),
-) {
+// (gitLogFn) so tests run without a real repository; when no gitLogFn is given
+// it returns '' (this module never spawns git — the caller provides commits).
+function buildCommitsSection(head, base, gitLogFn) {
+  if (!gitLogFn) return ''
   const log = gitLogFn(head, base)
   if (!log) return ''
   return `${log}\n`
@@ -27600,11 +27496,8 @@ function buildCommitsSection(
 // Build a human-readable commit summary (subjects only, no hashes). It drives
 // the type classification and issue-number extraction in buildCtx. Exported for
 // unit testing; gitLogFn injectable.
-function buildDescription(
-  head,
-  base,
-  gitLogFn = (_h, b) => tryRun('git', ['log', '--no-merges', '--pretty=format:- %s', `${b}..HEAD`]),
-) {
+function buildDescription(head, base, gitLogFn) {
+  if (!gitLogFn) return ''
   const log = gitLogFn(head, base)
   return log ? `${log}\n` : ''
 }
@@ -27667,14 +27560,11 @@ function discoverSegments(template) {
 function fillAutoBlocks(template, ctx, blocks = {}) {
   let out = template
   for (const key of discoverSegments(template)) {
-    // The key is guaranteed present by discoverSegments, so slice its inner
-    // content directly by the markers (no null branch to cover).
     const open = openMarker(key)
     const close = closeMarker(key)
     const start = template.indexOf(open) + open.length
     const end = template.indexOf(close)
     const blockText = template.slice(start, end).trim()
-    // Render every `{{name}}` occurrence inside the block via its plugin.
     const rendered = blockText.replace(/\{\{(\w[\w-]*)\}\}/g, (whole, name) =>
       renderBlock(name, ctx, blocks),
     )
@@ -27700,18 +27590,8 @@ function fillAutoBlocks(template, ctx, blocks = {}) {
 //      refresh lands in case 2 and stops stacking.
 function buildBody(filledTemplate, existingBody) {
   if (!existingBody) return filledTemplate
-  // A body is "partitioned" (Case 2) when it carries at least one AUTO block.
-  // We detect this dynamically rather than hard-coding a specific key: any
-  // template may define its own block keys, and the renderer must adapt to all
-  // of them. The first auto-block key found in the body is used as the probe.
   const bodyKeys = discoverSegments(existingBody)
   if (bodyKeys.length > 0) {
-    // Case 2: refresh each block independently by copying fresh content in.
-    // The set of keys to refresh is the union of the keys present in the
-    // existing body and the keys present in the fresh template, so that a block
-    // added to the template after the PR was created is still picked up, and a
-    // block removed from the template leaves the (now stale) existing block
-    // intact. No key is hard-coded.
     const refreshKeys = new Set([...bodyKeys, ...discoverSegments(filledTemplate)])
     let out = existingBody
     for (const key of refreshKeys) {
@@ -27720,7 +27600,6 @@ function buildBody(filledTemplate, existingBody) {
     }
     return out
   }
-  // Case 3 (legacy): prepend filled template, keep all.
   return `${filledTemplate.trimEnd()}\n\n${existingBody.trim()}`
 }
 
@@ -27735,49 +27614,32 @@ function blockContent(body, key) {
   return body.slice(s + o.length, e).trim()
 }
 
-// Assemble the context object for fillAutoBlocks from the branch and resolved
-// base ref. The commit subjects drive the type classification and issue-number
-// extraction. Exported for unit testing. The context exposes `head` and `base`
-// (the resolved base ref) so block plugins can reference them, plus the derived
-// fields (`title` / `fixes` / `typeFlags` / `commits`).
-function buildCtx(head, baseRef, title, commitsSection) {
-  const commitsText = buildDescription(head, baseRef).replace(/^- /gm, '')
+// Assemble the context object for fillAutoBlocks from the branch, resolved base
+// ref, title, and the injected services.
+//
+// The `services` object carries the I/O capabilities each block plugin may call
+// on its own (per the plugin-autonomy design): `services.git`, `services.gh`,
+// `services.templateSource`. The context exposes `head` / `base` (resolved base
+// ref) / `title` plus two *shared derived facts* the plugins commonly consume:
+// `fixes` (linked issue number) and `typeFlags` (Bug/feature/breaking/docs).
+// These two are derived once here — from `services.git.logSubjects` — so the
+// `issue` and `types` plugins don't each re-run git. Individual plugins may
+// still call `ctx.services.git` themselves for data only they need (e.g. the
+// `commits` plugin fetches the commit list itself). This keeps the renderer and
+// orchestrator free of "which data does each plugin need" — a new plugin can
+// pull whatever it wants from `ctx.services`.
+function buildCtx(head, baseRef, title, services) {
+  const git = services && services.git
+  const commitsText = buildDescription(head, baseRef, git && ((h, b) => git.logSubjects(h, b)))
+    .replace(/^- /gm, '')
   return {
     head,
     base: baseRef,
     title,
+    services: services || {},
     fixes: extractFixes(head, commitsText),
     typeFlags: classifyChange(head, commitsText),
-    // commitsSection is always passed by callers; the `|| ''` is defensive.
-    /* v8 ignore next */
-    commits: commitsSection || '',
   }
-}
-
-// Build the full PR body for an existing PR: re-fill the template's auto blocks
-// and preserve any human-written content outside those blocks. `blocks` is the
-// registry of block plugins used to render `{{placeholder}}` tokens. Exported
-// for tests.
-function buildBodyFor(
-  head,
-  baseRef,
-  existingBody,
-  templatePath = '.github/pull-request-template.md',
-  blocks = {},
-) {
-  let filledTemplate
-  try {
-    const tpl = (0,external_node_fs_namespaceObject.readFileSync)(templatePath, 'utf8')
-    filledTemplate = fillAutoBlocks(
-      tpl,
-      buildCtx(head, baseRef, deriveTitle(head), buildCommitsSection(head, baseRef)),
-      blocks,
-    )
-  } catch {
-    /* v8 ignore next */
-    filledTemplate = ''
-  }
-  return buildBody(filledTemplate, existingBody)
 }
 
 // Derive a human-readable title from a branch name. Exported for unit testing.
@@ -27790,225 +27652,303 @@ function deriveTitle(branch) {
     .replace(/^\w/, (c) => c.toUpperCase())
 }
 
-// ── Main (only runs when invoked by the Action entry point) ──
-// The whole function is excluded from coverage: it orchestrates external
-// processes (`gh` / `git`) and calls `process.exit`, so it cannot be exercised
-// by the pure-function unit tests. Its logic is delegated to the exported,
-// fully-tested helpers above. A thrown `Error` from `fail()` bubbles up to the
-// entry point (which reports it via `core.setFailed`); we do NOT swallow it here.
-/* v8 ignore start */
-async function runMain({
+;// CONCATENATED MODULE: ./src/orchestration.mjs
+// Orchestration: the create-or-refresh-PR decision flow, decoupled from I/O.
+//
+// This module is the equivalent of the old `runMain` in core.mjs, but with every
+// external interaction behind an injectable service:
+//   - TemplateSource  (read the PR template)
+//   - GitService      (fetch, rev-parse, log, ls-remote, remote check)
+//   - GhService       (gh version, pr list/create/edit)
+//
+// The function returns a result object describing what happened (or throws on
+// hard failures). It NEVER calls `process.exit` — that is the entry point's
+// job. It NEVER reads env vars or Action inputs. This makes the whole flow
+// unit-testable with fake services.
+//
+// Behaviour (unchanged from the old runMain, only the boundaries moved):
+//   - Opens (or refreshes) a PR via the GhService, using the repo's PR template.
+//   - Does NOT push. The head branch must already exist on origin.
+//   - Idempotent: existing PR is refreshed, not re-created. No-op if unchanged.
+//   - Splits the PR body into independent auto blocks (see render.mjs).
+//   - Derives the PR title from the branch name.
+
+
+function fail(msg) {
+  throw new Error(`create-pr: ${msg}`)
+}
+
+// Resolve the base ref to compare against. Prefer `origin/<base>` (fresh after
+// fetch, present in CI even when the local branch is absent); fall back to bare
+// `<base>` only if the remote ref is missing.
+function resolveBaseRef(git, base) {
+  return git.revParse(`origin/${base}`) ? `origin/${base}` : base
+}
+
+// Create or refresh a PR. Returns one of:
+//   { action: 'noop',     url }                  — existing PR already up to date
+//   { action: 'updated', url }                  — existing PR body refreshed
+//   { action: 'would-update', number, url, body } — dryRun, existing PR would be updated
+//   { action: 'created',  url }                  — new PR created
+//   { action: 'would-create', title, body }      — dryRun, new PR would be created
+//   { action: 'concurrent', url }                — a concurrent run created the PR
+//
+// Throws on hard failures (gh missing, no origin, branch not on origin, gh
+// command failed with no concurrent PR).
+//
+// `blocks` is the block-plugin registry (built by loader.buildBlockRegistry).
+// `template` is the already-read template string (read by the caller via
+// TemplateSource). Passing the string (not the path) keeps this function pure
+// and lets the caller decide the I/O strategy.
+async function createOrRefreshPr({
   head,
   base = 'main',
   dryRun = false,
-  templatePath = '.github/pull-request-template.md',
-  blocks = {},
+  template, // string (already read), or null/undefined to skip template rendering
+  registry = {},
+  git,
+  gh,
+  log = console.log, // injectable for tests
+  warn = console.warn,
 }) {
-  const ghVersion = tryRun('gh', ['--version'])
-  if (!ghVersion) {
+  if (!git) fail('git service is required')
+  if (!gh) fail('gh service is required')
+
+  // Check `gh` is installed.
+  if (!gh.version()) {
     fail("GitHub CLI ('gh') is not installed or not on PATH. Install: https://cli.github.com/")
   }
 
-  const remotes = run('git', ['remote']).split('\n').filter(Boolean)
-  if (!remotes.includes('origin')) {
+  // Check origin remote exists.
+  if (!git.hasOrigin()) {
     fail("no 'origin' remote configured. Add one with: git remote add origin <url>")
   }
 
-  // Fetch base so the commit diff is accurate (local CI checkout may be shallow).
-  // Non-fatal: if offline / no permission, warn but continue with whatever local
-  // base ref we have — the generated commit list may then be approximate.
-  const fetched = tryRun('git', ['fetch', 'origin', base, '--quiet'])
-  if (fetched === null) {
-    console.warn(
+  // Fetch base so the commit diff is accurate (local CI checkout may be
+  // shallow). Non-fatal: warn but continue with whatever local base we have.
+  if (git.fetchBase(base) === null) {
+    warn(
       `create-pr: warning: could not fetch '${base}' from origin; ` +
         'the commit list may be based on a stale local ref.',
     )
   }
 
-  // Resolve the base ref to compare against. Prefer `origin/<base>` (fresh after
-  // the fetch above, and present in CI even when the local `<base>` branch is
-  // absent); fall back to the bare `<base>` only if the remote ref is missing.
-  // Using the correct base ref is what makes `git log <base>..HEAD` return the
-  // branch's commits instead of an empty range.
-  const baseRef = tryRun('git', ['rev-parse', '--verify', `origin/${base}`])
-    ? `origin/${base}`
-    : base
+  const baseRef = resolveBaseRef(git, base)
+  const title = deriveTitle(head)
+
+  // Assemble the render context. Per the plugin-autonomy rule, we only inject
+  // the services — the `commits` block pulls the commit list itself from
+  // ctx.services.git, and buildCtx derives the shared fixes/typeFlags from
+  // git.logSubjects. We do NOT pre-fetch commits here.
+  const services = { git, gh, templateSource: { read: () => template || '' } }
+  const ctx = buildCtx(head, baseRef, title, services)
+
+  // Render the template into a filled body. If the template is missing/empty,
+  // fall back to a minimal AUTO block so the commits plugin still fills the
+  // commit list from git (same intent as the old runMain's commits-only
+  // fallback, but without the renderer knowing how to fetch them — the plugin
+  // pulls the data itself). `{{commits}}` must live inside an AUTO block for
+  // fillAutoBlocks to render it.
+  const renderTemplate =
+    template ||
+    '<!-- AUTO:commits -->\n{{commits}}\n<!-- /AUTO:commits -->'
+  const filledTemplate = fillAutoBlocks(renderTemplate, ctx, registry)
+  const freshBody = buildBody(filledTemplate, '')
 
   // Idempotency: find an existing open PR for this head -> base.
-  const existing = tryRun('gh', [
-    'pr',
-    'list',
-    '--head',
-    head,
-    '--base',
-    base,
-    '--state',
-    'open',
-    '--json',
-    'number,url,body',
-  ])
-  let existingPrs
-  try {
-    existingPrs = existing ? JSON.parse(existing) : []
-  } catch {
-    existingPrs = []
-  }
+  const existingPrs = gh.prList(head, base)
 
   if (existingPrs.length > 0) {
     const { number, url, body = '' } = existingPrs[0]
-    const newBody = buildBodyFor(head, baseRef, body, templatePath)
+    const newBody = buildBody(filledTemplate, body)
     if (newBody === body) {
-      console.log(`create-pr: PR already up to date for ${head} → ${base}: ${url}`)
-      external_node_process_namespaceObject.exit(0)
+      log(`create-pr: PR already up to date for ${head} → ${base}: ${url}`)
+      return { action: 'noop', url }
     }
     if (dryRun) {
-      console.log(
+      log(
         `create-pr: [dry-run] would update PR #${number} (${url}) with body:\n` +
           '────────────────────────────────────────\n' +
           newBody +
           '\n────────────────────────────────────────',
       )
-      external_node_process_namespaceObject.exit(0)
+      return { action: 'would-update', number, url, body: newBody }
     }
     try {
-      run('gh', ['pr', 'edit', String(number), '--body', newBody])
+      gh.prEdit(number, newBody)
     } catch (err) {
       const detail = (err && (err.stderr || err.stdout)) || err?.message || err
       fail(`failed to update the existing PR description (${url}):\n${detail}`)
     }
-    console.log(`create-pr: updated PR description with latest commits: ${url}`)
-    external_node_process_namespaceObject.exit(0)
+    log(`create-pr: updated PR description with latest commits: ${url}`)
+    return { action: 'updated', url }
   }
 
   // This script only manages the PR — it never pushes. The head branch must
-  // already exist on origin (push it yourself, or let the CI trigger do it).
-  // Fail fast with a clear message if it is missing remotely.
-  console.log(`create-pr: verifying '${head}' exists on origin...`)
-  const remoteRef = tryRun('git', ['ls-remote', '--heads', 'origin', head])
-  if (!remoteRef) {
+  // already exist on origin. Fail fast if it is missing remotely.
+  log(`create-pr: verifying '${head}' exists on origin...`)
+  if (!git.lsRemote(head)) {
     fail(
       `branch '${head}' is not found on origin. Push it first ` +
         `(e.g. \`git push -u origin ${head}\`), then re-run. This script does not push.`,
     )
   }
 
-  const title = deriveTitle(head)
-  const commitsSection = buildCommitsSection(head, baseRef)
-  let filledTemplate
-  try {
-    const tpl = (0,external_node_fs_namespaceObject.readFileSync)(templatePath, 'utf8')
-    filledTemplate = fillAutoBlocks(
-      tpl,
-      buildCtx(head, baseRef, title, commitsSection),
-      blocks,
-    )
-  } catch {
-    // Template missing/unreadable: fall back to just the commits list.
-    filledTemplate = commitsSection
-  }
-  const body = buildBody(filledTemplate, '')
-
   if (dryRun) {
-    console.log(
+    log(
       `create-pr: [dry-run] would create PR '${head}' → ${base} with title ` +
         `'${title || head}' and body:\n` +
         '────────────────────────────────────────\n' +
-        body +
+        freshBody +
         '\n────────────────────────────────────────',
     )
-    external_node_process_namespaceObject.exit(0)
+    return { action: 'would-create', title: title || head, body: freshBody }
   }
 
-  console.log(`create-pr: creating PR '${head}' → ${base} ...`)
-  let out = null
+  log(`create-pr: creating PR '${head}' → ${base} ...`)
+  let out
   try {
-    out = run('gh', [
-      'pr',
-      'create',
-      '--base',
-      base,
-      '--head',
-      head,
-      '--title',
-      title || head,
-      '--body',
-      body,
-    ])
+    out = gh.prCreate(head, base, title || head, freshBody)
   } catch (err) {
-    // Surface the real `gh` error (it is on stderr) instead of swallowing it,
-    // so the failure is diagnosable. A concurrent run may have just created the
+    // Surface the real `gh` error. A concurrent run may have just created the
     // PR; only treat as failure if no open PR for this head exists.
     const detail = (err && (err.stderr || err.stdout)) || err?.message || err
-    console.error(`create-pr: gh pr create failed:\n${detail}`)
-    const concurrent = tryRun('gh', [
-      'pr',
-      'list',
-      '--head',
-      head,
-      '--base',
-      base,
-      '--state',
-      'open',
-      '--json',
-      'url',
-      '--jq',
-      '.[0].url // empty',
-    ])
+    log(`create-pr: gh pr create failed:\n${detail}`)
+    const concurrent = gh.prListUrls(head, base)
     if (concurrent) {
-      console.log(`create-pr: PR created concurrently: ${concurrent}`)
-      external_node_process_namespaceObject.exit(0)
+      log(`create-pr: PR created concurrently: ${concurrent}`)
+      return { action: 'concurrent', url: concurrent }
     }
     fail('failed to create the PR. See the gh error above.')
   }
-  console.log(`create-pr: created PR → ${out}`)
+  log(`create-pr: created PR → ${out}`)
+  return { action: 'created', url: out }
 }
-/* v8 ignore stop */
 
-// The Action entry point (index.mjs) imports and calls runMain directly, so no
-// direct-invocation guard is needed here. The previous CLI guard
-// (`import.meta.url === pathToFileURL(process.argv[1]).href`) is intentionally
-// dropped: this module is no longer a standalone script, only an importable
-// library + the runMain export used by index.mjs.
-
+;// CONCATENATED MODULE: external "node:fs"
+const external_node_fs_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs");
 ;// CONCATENATED MODULE: external "node:url"
 const external_node_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:url");
+;// CONCATENATED MODULE: ./src/blocks/title.mjs
+// Built-in block plugin: `title`.
+//
+// Renders the PR title, preferring `ctx.title` (which `buildCtx` already
+// derived from the branch name) and falling back to deriving it from `ctx.head`
+// directly. When the title is empty, it outputs an empty string (the caller's
+// surrounding markup such as `# {{title}}` then degrades to `# `).
+//
+// This plugin is intentionally self-contained (no import of core.mjs) so it
+// can be copied verbatim into `dist/blocks/` and loaded at runtime by the
+// directory scanner, independent of how the action is bundled.
+//
+// Form: `export default (ctx) => string` — the single shared plugin contract
+// used by both built-in blocks (this directory) and user-provided blocks.
+
+// Mirrors core.deriveTitle so the plugin stays standalone in dist/blocks.
+function title_deriveTitle(branch) {
+  return branch
+    .replace(/^(feature|fix|feat|chore|docs|refactor|test|build|ci)\//i, '')
+    .replace(/[-_/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\w/, (c) => c.toUpperCase())
+}
+
+function title(ctx) {
+  if (ctx.title !== undefined) return ctx.title
+  return title_deriveTitle(ctx.head || '')
+}
+
+;// CONCATENATED MODULE: ./src/blocks/issue.mjs
+// Built-in block plugin: `issue` (matches the `{{issue}}` placeholder in the
+// PR template).
+//
+// Renders the linked issue number from `ctx.fixes` (already derived by
+// `buildCtx` via `extractFixes`). When no issue is referenced, it returns
+// `N/A` — the empty-value presentation is the plugin's own responsibility, not
+// the renderer's (the renderer never inserts a fallback).
+//
+// Form: `export default (ctx) => string` — the single shared plugin contract
+// used by both built-in blocks (this directory) and user-provided blocks.
+function issue(ctx) {
+  return ctx.fixes ? ctx.fixes : 'N/A'
+}
+
+;// CONCATENATED MODULE: ./src/blocks/commits.mjs
+// Built-in block plugin: `commits`.
+//
+// Renders the `base..HEAD` commit list body. This plugin is AUTONOMOUS: it pulls
+// the commit list itself from `ctx.services.git.logRange(head, base)` instead of
+// relying on the caller to pre-compute and stuff a `ctx.commits` value. That is
+// the plugin-autonomy contract — a block fetches whatever data it needs from
+// `ctx.services`, so the renderer/orchestrator never has to know "which plugin
+// needs which data".
+//
+// `ctx.services` is injected by buildCtx (see render.mjs). When no git service
+// is available (e.g. the `--no-git` CLI mode, or a test that passes no services)
+// the plugin renders '' gracefully.
+//
+// Form: `export default (ctx) => string` — the single shared plugin contract.
+function commits(ctx) {
+  const services = (ctx && ctx.services) || {}
+  const git = services.git
+  if (!git) return ''
+  try {
+    const log = git.logRange(ctx.head || '', ctx.base || 'main')
+    return log ? `${log}\n` : ''
+  } catch {
+    return ''
+  }
+}
+
 ;// CONCATENATED MODULE: ./src/loader.mjs
 // Block-plugin loader for the "Create / Refresh PR" GitHub Action.
 //
 // This module is intentionally NOT part of core.mjs: it performs file IO and
-// dynamic `import()`, so it carries no coverage threshold (consistent with the
+// dynamic import(), so it carries no coverage threshold (consistent with the
 // Action entry point). The pure rendering logic lives in core.mjs
 // (`renderBlock` / `discoverSegments` / `fillAutoBlocks`).
 //
-// Loading model (single, unified mechanism for built-in and user blocks):
-//   - Every block is a `*.mjs` file exporting `export default (ctx) => string`.
+// Loading model:
+//   - Built-in blocks (`title` / `issue` / `commits`) are imported statically
+//     so they are bundled into `dist/index.mjs` by ncc. Relying on ncc to copy
+//     `src/blocks/` as assets does not work because ncc 0.38 has no `--asset`
+//     flag and, more importantly, it replaces runtime `import()` with an empty
+//     webpack async context that always throws `MODULE_NOT_FOUND`.
+//   - User blocks are `*.mjs` files in `.github/create-pr/blocks/` (or the
+//     `blocks-dir` input). They are loaded with a real Node dynamic import
+//     obtained via `new Function('url', 'return import(url)')`, which bypasses
+//     ncc's static analysis and correctly resolves `file://` URLs at runtime.
 //   - The file name (minus `.mjs`) is the block name registered in the registry.
-//   - Built-in blocks ship inside the action (`src/blocks/` → bundled into
-//     `dist/blocks/` as an ncc asset); user blocks live in their repo
-//     (default `.github/create-pr/blocks/`, resolved from `process.cwd()`).
-//   - Order: built-in registry is loaded first, then the user directory; a user
-//     block with the same name overrides a built-in one.
-//   - Resilience: a single file that fails to import/run is skipped (treated as
-//     a missing block) without aborting the whole run.
+//   - User blocks are merged on top of built-ins, so a same-named user file
+//     overrides a built-in.
+//   - Resilience: a single file that fails to import/run is skipped (logged)
+//     without aborting the whole run.
 
 
 
 
-const loader_dirname = (0,external_node_path_namespaceObject.dirname)((0,external_node_url_namespaceObject.fileURLToPath)(import.meta.url))
 
-// Resolve the built-in blocks directory. When bundled by ncc, this file lives
-// at `dist/index.mjs` and the blocks asset is copied next to it at
-// `dist/blocks/`; in source form it is `src/loader.mjs` and the blocks are at
-// `src/blocks/`. We try both, preferring whichever exists.
-function builtinBlocksDir() {
-  const candidates = [
-    (0,external_node_path_namespaceObject.join)(loader_dirname, 'blocks'), // bundled asset layout (dist/blocks)
-    (0,external_node_path_namespaceObject.join)(loader_dirname, 'src', 'blocks'), // source layout (actions/create-pr/src/blocks)
-  ]
-  for (const dir of candidates) {
-    if ((0,external_node_fs_namespaceObject.existsSync)(dir)) return dir
+
+
+
+// Use a real Node.js ESM dynamic import for user block plugins. The
+// `/* webpackIgnore: true */` comment tells ncc/webpack not to create its
+// "empty async context" for this call; without it, ncc 0.38 replaces the
+// runtime `import()` with a helper that always throws `MODULE_NOT_FOUND`,
+// which is exactly the bug that caused all `{{placeholder}}` tokens to be
+// left untouched. With the comment, the bundled code keeps the native
+// `import()` and correctly resolves `file://` URLs at runtime.
+const loadModule = (url) => import(/* webpackIgnore: true */ url)
+
+// Built-in block registry. These plugins ship with the action and are always
+// available; they are statically imported so ncc bundles them into dist/index.mjs.
+function builtinRegistry() {
+  return {
+    title: title,
+    issue: issue,
+    commits: commits,
   }
-  return candidates[0]
 }
 
 // Scan a directory of `*.mjs` block plugins and register each by file name.
@@ -28027,14 +27967,19 @@ async function loadBlocks(dir) {
   for (const file of files) {
     const name = file.replace(/\.mjs$/, '')
     try {
-      const mod = await __nccwpck_require__(534)((0,external_node_url_namespaceObject.pathToFileURL)((0,external_node_path_namespaceObject.join)(dir, file)).href)
+      const url = (0,external_node_url_namespaceObject.pathToFileURL)((0,external_node_path_namespaceObject.join)(dir, file)).href
+      const mod = await loadModule(url)
       const fn = mod.default
       if (typeof fn === 'function') {
         registry[name] = fn
+      } else {
+        console.warn(`create-pr: block plugin "${file}" has no default export; skipping`)
       }
-    } catch {
+    } catch (err) {
       // Skip a plugin that fails to load; rendering will treat it as missing
       // and leave its `{{name}}` placeholder untouched.
+      const detail = err && (err.message || String(err))
+      console.warn(`create-pr: failed to load block plugin "${file}": ${detail}`)
     }
   }
   return registry
@@ -28044,52 +27989,227 @@ async function loadBlocks(dir) {
 // (overriding same-named built-ins). `userDir` is the user's plugin directory
 // (default `.github/create-pr/blocks` relative to the repo root / cwd).
 async function buildBlockRegistry(userDir) {
-  const builtin = await loadBlocks(builtinBlocksDir())
+  const builtin = builtinRegistry()
   const user = await loadBlocks(userDir)
   return { ...builtin, ...user }
+}
+
+;// CONCATENATED MODULE: ./src/services/template-source.mjs
+// TemplateSource service: read a PR template file into a string.
+//
+// This is the I/O boundary for "how do we get the template text?". The default
+// implementation reads from the filesystem, but the interface (a single `read`
+// function) lets tests inject an in-memory template without touching disk.
+//
+// Interface contract:
+//   { read(path: string): string }
+// `read` should throw when the file is missing/unreadable, so the caller can
+// decide whether to fall back (e.g. to a commits-only body). Returning an empty
+// string would be ambiguous with a legitimately empty template.
+
+
+// Default TemplateSource backed by the real filesystem.
+function createFsTemplateSource() {
+  return {
+    read(path) {
+      return (0,external_node_fs_namespaceObject.readFileSync)(path, 'utf8')
+    },
+  }
+}
+
+;// CONCATENATED MODULE: external "node:child_process"
+const external_node_child_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:child_process");
+;// CONCATENATED MODULE: ./src/services/git-service.mjs
+// GitService: all `git` CLI operations the PR action needs.
+//
+// This is the I/O boundary for "how do we talk to git?". The default
+// implementation spawns `git` via `execFileSync`, but the interface lets tests
+// inject a fake GitService and assert on the call sequence without a repo.
+//
+// Interface contract (all methods return strings or null, never throw on
+// non-zero exit — callers decide what to do with null):
+//   hasOrigin(): boolean                     — does `git remote` list `origin`?
+//   fetchBase(base): string|null            — `git fetch origin <base>` (null on failure)
+//   revParse(ref): string|null              — `git rev-parse --verify <ref>` (null if ref missing)
+//   logRange(head, base): string             — `git log <base>..HEAD` subjects+hashes
+//   logSubjects(head, base): string         — `git log <base>..HEAD` subjects only
+//   lsRemote(branch): string|null           — `git ls-remote --heads origin <branch>`
+
+
+function run(cmd, cmdArgs, opts = {}) {
+  return (0,external_node_child_process_namespaceObject.execFileSync)(cmd, cmdArgs, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...opts,
+  }).trim()
+}
+
+function tryRun(cmd, cmdArgs, opts = {}) {
+  try {
+    return run(cmd, cmdArgs, opts)
+  } catch {
+    return null
+  }
+}
+
+// Default GitService backed by the real `git` CLI.
+function createExecGitService() {
+  return {
+    hasOrigin() {
+      return run('git', ['remote']).split('\n').filter(Boolean).includes('origin')
+    },
+
+    fetchBase(base) {
+      return tryRun('git', ['fetch', 'origin', base, '--quiet'])
+    },
+
+    revParse(ref) {
+      return tryRun('git', ['rev-parse', '--verify', ref])
+    },
+
+    // `head` is unused by the default impl (the range uses HEAD, not the
+    // branch name, so detached-HEAD CI checkouts work). It is kept in the
+    // signature so a fake service can key on it.
+    logRange(head, base) {
+      return tryRun('git', ['log', '--no-merges', '--pretty=format:- %h %s', `${base}..HEAD`])
+    },
+
+    logSubjects(head, base) {
+      return tryRun('git', ['log', '--no-merges', '--pretty=format:- %s', `${base}..HEAD`])
+    },
+
+    lsRemote(branch) {
+      return tryRun('git', ['ls-remote', '--heads', 'origin', branch])
+    },
+  }
+}
+
+;// CONCATENATED MODULE: external "node:process"
+const external_node_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:process");
+;// CONCATENATED MODULE: ./src/services/gh-service.mjs
+// GhService: all `gh` (GitHub CLI) operations the PR action needs.
+//
+// This is the I/O boundary for "how do we create/edit/list PRs?". The default
+// implementation spawns `gh` via `execFileSync` and injects the token into
+// `process.env.GH_TOKEN`. The interface lets tests inject a fake GhService and
+// assert on the exact `prCreate`/`prEdit` arguments without `gh` installed.
+//
+// Interface contract:
+//   version(): string|null                  — `gh --version` (null if not installed)
+//   prList(head, base): Array<{number,url,body}>  — open PRs for head→base
+//   prCreate(head, base, title, body): string    — creates PR, returns URL
+//   prEdit(number, body): void             — edits PR #number's body
+//   prListUrls(head, base): string|null     — `gh pr list --jq .[0].url` (concurrency check)
+
+
+
+function gh_service_run(cmd, cmdArgs, opts = {}) {
+  return (0,external_node_child_process_namespaceObject.execFileSync)(cmd, cmdArgs, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...opts,
+  }).trim()
+}
+
+function gh_service_tryRun(cmd, cmdArgs, opts = {}) {
+  try {
+    return gh_service_run(cmd, cmdArgs, opts)
+  } catch {
+    return null
+  }
+}
+
+// Default GhService backed by the real `gh` CLI. The token is injected into
+// `process.env.GH_TOKEN` so that `gh` authenticates; the core logic never learns
+// where the token came from.
+function createExecGhService(token) {
+  if (token) external_node_process_namespaceObject.env.GH_TOKEN = token
+
+  return {
+    version() {
+      return gh_service_tryRun('gh', ['--version'])
+    },
+
+    prList(head, base) {
+      const out = gh_service_tryRun('gh', [
+        'pr', 'list',
+        '--head', head,
+        '--base', base,
+        '--state', 'open',
+        '--json', 'number,url,body',
+      ])
+      if (!out) return []
+      try {
+        return JSON.parse(out)
+      } catch {
+        return []
+      }
+    },
+
+    prCreate(head, base, title, body) {
+      return gh_service_run('gh', [
+        'pr', 'create',
+        '--base', base,
+        '--head', head,
+        '--title', title,
+        '--body', body,
+      ])
+    },
+
+    prEdit(number, body) {
+      gh_service_run('gh', ['pr', 'edit', String(number), '--body', body])
+    },
+
+    prListUrls(head, base) {
+      return gh_service_tryRun('gh', [
+        'pr', 'list',
+        '--head', head,
+        '--base', base,
+        '--state', 'open',
+        '--json', 'url',
+        '--jq', '.[0].url // empty',
+      ])
+    },
+  }
 }
 
 ;// CONCATENATED MODULE: ./src/index.mjs
 // GitHub Action entry point for "Create / Refresh PR".
 //
-// Reads the Action inputs, injects the GH token into `process.env.GH_TOKEN`
-// (so that `core.mjs`'s `gh` calls authenticate), and delegates all the real
-// work to `runMain` in core.mjs. This layer is intentionally thin and holds no
-// PR logic of its own — it only resolves inputs and builds the block-plugin
-// registry (via loader.mjs) before handing control to core.
+// This is the ONLY module that knows about GitHub Actions (it reads inputs via
+// `@actions/core` and calls `process.exit`). It assembles the real I/O services
+// (TemplateSource / GitService / GhService), reads the template, loads the
+// block-plugin registry, and delegates all the actual work to
+// `createOrRefreshPr` in orchestration.mjs.
+//
+// Keeping this layer thin means the entire PR logic (render + orchestration) is
+// unit-testable without `@actions/core`, without `gh`, without git, and without
+// a token. See orchestration.test.mjs for the full-flow tests using fakes.
+
+
+
 
 
 
 
 
 async function main() {
-  // Resolve the head branch: an explicit `head` input wins, otherwise fall back
-  // to GitHub-provided refs (PR event => GITHUB_HEAD_REF, push event =>
-  // GITHUB_REF_NAME). This makes the action self-deciding in any repo / event.
+  // Resolve the head branch: explicit input wins, else GitHub's refs.
   const head =
     core.getInput('head') || process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || ''
 
   const base = core.getInput('base') || 'main'
 
-  // `core.getInput` always returns a string; the input's default is the string
-  // 'false'. We must compare explicitly — a bare truthiness check on the string
-  // 'false' would wrongly be truthy.
+  // `core.getInput` always returns a string; the default is 'false'. Compare
+  // explicitly — bare truthiness on 'false' would be wrong.
   const dryRun = core.getInput('dry-run') === 'true'
 
   const templatePath = core.getInput('template') || '.github/pull-request-template.md'
 
-  // Optional directory of user-provided block plugins (default
-  // `.github/create-pr/blocks`). Resolved from the repo root (the checked-out
-  // working directory) so dynamic import paths are stable. Built-in blocks are
-  // always loaded by the loader; the user directory overrides same-named ones.
   const blocksDir =
     core.getInput('blocks-dir') || (0,external_node_path_namespaceObject.join)(process.cwd(), '.github', 'create-pr', 'blocks')
 
-  // Authenticate `gh` with the supplied PAT (the default GITHUB_TOKEN cannot
-  // create PRs). core.mjs reads GH_TOKEN from the environment; it never learns
-  // the token's source.
   const token = core.getInput('token', { required: true })
-  process.env.GH_TOKEN = token
 
   if (!head) {
     core.setFailed(
@@ -28098,16 +28218,43 @@ async function main() {
     return
   }
 
-  // Build the block-plugin registry (built-in + user, user overrides built-in).
-  // Loading is resilient: a single bad plugin is skipped, never aborts the run.
-  const blocks = await buildBlockRegistry(blocksDir)
+  // Assemble the real I/O services. These are the only places that touch the
+  // filesystem / git / gh. orchestration.mjs receives them as arguments.
+  const templateSource = createFsTemplateSource()
+  const git = createExecGitService()
+  const gh = createExecGhService(token)
 
-  // runMain throws on failure (from core.fail), so wrap it here and report via
-  // setFailed. Do NOT swallow the error — setFailed alone does not stop the step.
-  await runMain({ head, base, dryRun, templatePath, blocks })
+  // Read the template here (not inside orchestration) so orchestration stays
+  // pure. If unreadable, pass null so orchestration falls back to a
+  // commits-only body (same behavior as the old runMain).
+  let template = null
+  try {
+    template = templateSource.read(templatePath)
+  } catch {
+    template = null
+  }
+
+  // Build the block-plugin registry (built-in + user; user overrides built-in).
+  const registry = await buildBlockRegistry(blocksDir)
+
+  const result = await createOrRefreshPr({
+    head,
+    base,
+    dryRun,
+    template,
+    registry,
+    git,
+    gh,
+  })
+  // On success, exit 0. createOrRefreshPr throws on hard failure (caught below).
+  if (result.action === 'created' || result.action === 'updated') {
+    // already logged inside orchestration
+  }
+  process.exit(0)
 }
 
 main().catch((err) => {
   core.setFailed(err?.message || String(err))
+  process.exit(1)
 })
 

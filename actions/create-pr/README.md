@@ -36,7 +36,7 @@ template and AUTO-block body management.
 The action is **fully plugin-based** (no declarative config). There is a single,
 uniform extension mechanism: a directory of `*.mjs` files.
 
-- **Built-in blocks** (shipped with the action, minimum universal set):
+- **Built-in blocks** (shipped with the action and bundled into `dist/index.mjs`):
   - `title` — renders the PR title (derived from the branch name).
   - `issue` — renders the linked issue number, or `N/A` when none is referenced.
   - `commits` — renders the `base..HEAD` commit list.
@@ -140,3 +140,22 @@ tests through the root vitest config (which points at `actions/create-pr/src`).
 
 The bundled `dist/index.mjs` is committed on purpose (GitHub requires it for a
 direct `uses:` reference) and must be rebuilt after any change to `src/`.
+
+### Local rendering (no token, no gh)
+
+To preview the full PR body a given branch would produce, without any GitHub
+token or `gh` CLI, run the rendering CLI from the repo root:
+
+```bash
+node actions/create-pr/src/cli-render.mjs --head feature/my-branch
+# Optional: --base main, --template .github/pull-request-template.md,
+#           --blocks-dir .github/create-pr/blocks, --no-git
+```
+
+It reads the template file, loads the block plugins, and derives the title /
+change type from the branch name. Per the plugin-autonomy rule, the CLI only
+injects the services into the render context — it does NOT fetch commits itself.
+The `commits` block plugin pulls the real `git log <base>..HEAD` from
+`ctx.services.git` on its own. Pass `--no-git` to skip the git service entirely
+and render `{{commits}}` empty (handy on machines without git, or to just
+inspect the template structure).

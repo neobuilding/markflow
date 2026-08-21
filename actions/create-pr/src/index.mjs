@@ -1,43 +1,39 @@
 // GitHub Action entry point for "Create / Refresh PR".
 //
-// Reads the Action inputs, injects the GH token into `process.env.GH_TOKEN`
-// (so that `core.mjs`'s `gh` calls authenticate), and delegates all the real
-// work to `runMain` in core.mjs. This layer is intentionally thin and holds no
-// PR logic of its own — it only resolves inputs and builds the block-plugin
-// registry (via loader.mjs) before handing control to core.
+// This is the ONLY module that knows about GitHub Actions (it reads inputs via
+// `@actions/core` and calls `process.exit`). It assembles the real I/O services
+// (TemplateSource / GitService / GhService), reads the template, loads the
+// block-plugin registry, and delegates all the actual work to
+// `createOrRefreshPr` in orchestration.mjs.
+//
+// Keeping this layer thin means the entire PR logic (render + orchestration) is
+// unit-testable without `@actions/core`, without `gh`, without git, and without
+// a token. See orchestration.test.mjs for the full-flow tests using fakes.
 import * as core from '@actions/core'
 import { join } from 'node:path'
-import { runMain } from './core.mjs'
+import { createOrRefreshPr } from './orchestration.mjs'
 import { buildBlockRegistry } from './loader.mjs'
+import { createFsTemplateSource } from './services/template-source.mjs'
+import { createExecGitService } from './services/git-service.mjs'
+import { createExecGhService } from './services/gh-service.mjs'
 
 async function main() {
-  // Resolve the head branch: an explicit `head` input wins, otherwise fall back
-  // to GitHub-provided refs (PR event => GITHUB_HEAD_REF, push event =>
-  // GITHUB_REF_NAME). This makes the action self-deciding in any repo / event.
+  // Resolve the head branch: explicit input wins, else GitHub's refs.
   const head =
     core.getInput('head') || process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || ''
 
   const base = core.getInput('base') || 'main'
 
-  // `core.getInput` always returns a string; the input's default is the string
-  // 'false'. We must compare explicitly — a bare truthiness check on the string
-  // 'false' would wrongly be truthy.
+  // `core.getInput` always returns a string; the default is 'false'. Compare
+  // explicitly — bare truthiness on 'false' would be wrong.
   const dryRun = core.getInput('dry-run') === 'true'
 
   const templatePath = core.getInput('template') || '.github/pull-request-template.md'
 
-  // Optional directory of user-provided block plugins (default
-  // `.github/create-pr/blocks`). Resolved from the repo root (the checked-out
-  // working directory) so dynamic import paths are stable. Built-in blocks are
-  // always loaded by the loader; the user directory overrides same-named ones.
   const blocksDir =
     core.getInput('blocks-dir') || join(process.cwd(), '.github', 'create-pr', 'blocks')
 
-  // Authenticate `gh` with the supplied PAT (the default GITHUB_TOKEN cannot
-  // create PRs). core.mjs reads GH_TOKEN from the environment; it never learns
-  // the token's source.
   const token = core.getInput('token', { required: true })
-  process.env.GH_TOKEN = token
 
   if (!head) {
     core.setFailed(
@@ -46,15 +42,43 @@ async function main() {
     return
   }
 
-  // Build the block-plugin registry (built-in + user, user overrides built-in).
-  // Loading is resilient: a single bad plugin is skipped, never aborts the run.
-  const blocks = await buildBlockRegistry(blocksDir)
+  // Assemble the real I/O services. These are the only places that touch the
+  // filesystem / git / gh. orchestration.mjs receives them as arguments.
+  const templateSource = createFsTemplateSource()
+  const git = createExecGitService()
+  const gh = createExecGhService(token)
 
-  // runMain throws on failure (from core.fail), so wrap it here and report via
-  // setFailed. Do NOT swallow the error — setFailed alone does not stop the step.
-  await runMain({ head, base, dryRun, templatePath, blocks })
+  // Read the template here (not inside orchestration) so orchestration stays
+  // pure. If unreadable, pass null so orchestration falls back to a
+  // commits-only body (same behavior as the old runMain).
+  const template = (() => {
+    try {
+      return templateSource.read(templatePath)
+    } catch {
+      return null
+    }
+  })()
+
+  // Build the block-plugin registry (built-in + user; user overrides built-in).
+  const registry = await buildBlockRegistry(blocksDir)
+
+  const result = await createOrRefreshPr({
+    head,
+    base,
+    dryRun,
+    template,
+    registry,
+    git,
+    gh,
+  })
+  // On success, exit 0. createOrRefreshPr throws on hard failure (caught below).
+  if (result.action === 'created' || result.action === 'updated') {
+    // already logged inside orchestration
+  }
+  process.exit(0)
 }
 
 main().catch((err) => {
   core.setFailed(err?.message || String(err))
+  process.exit(1)
 })

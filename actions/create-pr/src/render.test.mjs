@@ -1,13 +1,9 @@
-// Unit tests for actions/create-pr/src/core.mjs pure logic.
+// Unit tests for actions/create-pr/src/render.mjs pure logic.
 //
-// The module is imported only for its exported helpers; the side-effecting
-// `runMain` is never called by these tests. Importing is safe because core.mjs
-// no longer runs anything on import (the previous CLI direct-invocation guard
-// was dropped when it became a library used by index.mjs).
-//
-// Block-plugin loading (`loadBlocks`) lives in loader.mjs (file IO + dynamic
-// import) and is exercised by its own loader.test.mjs; it is intentionally NOT
-// part of the core coverage gate.
+// render.mjs is 100% pure (zero I/O, zero @actions/core, zero execFileSync).
+// The block-plugin loading (loadBlocks) lives in loader.mjs (file IO + dynamic
+// import) and is exercised by loader.test.mjs; the orchestration flow
+// (createOrRefreshPr) is exercised by orchestration.test.mjs with fake services.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
@@ -20,11 +16,11 @@ import {
   replaceAutoBlock,
   blockContent,
   buildBody,
-  buildBodyFor,
   markersFor,
   renderBlock,
   discoverSegments,
-} from './core.mjs'
+  buildCtx,
+} from './render.mjs'
 import titleBlock from './blocks/title.mjs'
 import issueBlock from './blocks/issue.mjs'
 import commitsBlock from './blocks/commits.mjs'
@@ -40,7 +36,7 @@ function builtinRegistry() {
   }
 }
 
-// Markflow's `types` plugin, inlined here so core tests can render the real
+// Markflow's `types` plugin, inlined here so render tests can render the real
 // template's `{{types}}` placeholder without depending on the repo-side file.
 const typesBlock = (ctx) => {
   const flags = (ctx && ctx.typeFlags) || {}
@@ -106,8 +102,6 @@ describe('PR template integrity', () => {
   it('uses the {{types}} placeholder (not hand-written checkbox lines) in the type block', () => {
     expect(tpl).toContain('<!-- AUTO:type -->')
     expect(tpl).toContain('{{types}}')
-    // No hand-written checklist lines remain inside the type block — the
-    // `types` plugin generates them so they are not duplicated.
     expect(tpl).not.toContain('- [ ] Bug fix (non-breaking change which fixes an issue)')
   })
 })
@@ -118,7 +112,7 @@ describe('deriveTitle', () => {
     expect(deriveTitle('feature/pipeline-test-improves')).toBe('Pipeline test improves')
   })
 
-  it('handles fix/ and other conventional prefixes case-insensitively', () => {
+  it('handles fix/ and other conventional prefixes case-insitively', () => {
     expect(deriveTitle('Fix/LoginBug')).toBe('LoginBug')
   })
 
@@ -132,8 +126,10 @@ describe('deriveTitle', () => {
 })
 
 // --- buildCommitsSection (inject a fake git-log) -------------------------
+// render.mjs buildCommitsSection NEVER calls git on its own — it returns '' when
+// no gitLogFn is given. The caller (orchestration.mjs) injects git.logRange.
 describe('buildCommitsSection', () => {
-  it('returns the commit list without a "## Commits" heading (heading is static in the template)', () => {
+  it('returns the commit list without a "## Commits" heading when a gitLogFn is provided', () => {
     const fakeLog = () => '- abc1234 add auto pr script\n- def5678 wire up workflow\n'
     const out = buildCommitsSection('feature/x', 'origin/main', fakeLog)
     expect(out).not.toContain('## Commits')
@@ -143,6 +139,10 @@ describe('buildCommitsSection', () => {
 
   it('returns an empty string when git log yields nothing', () => {
     expect(buildCommitsSection('feature/x', 'origin/main', () => '')).toBe('')
+  })
+
+  it('returns an empty string when no gitLogFn is provided (pure, never spawns git)', () => {
+    expect(buildCommitsSection('feature/x', 'origin/main')).toBe('')
   })
 })
 
@@ -157,6 +157,10 @@ describe('buildDescription', () => {
 
   it('returns empty when there are no commits', () => {
     expect(buildDescription('feature/x', 'origin/main', () => '')).toBe('')
+  })
+
+  it('returns empty when no gitLogFn is provided (pure, never spawns git)', () => {
+    expect(buildDescription('feature/x', 'origin/main')).toBe('')
   })
 })
 
@@ -281,43 +285,49 @@ describe('built-in block plugins', () => {
     expect(issueBlock({ fixes: '' })).toBe('N/A')
   })
 
-  it('commits: renders ctx.commits when provided by the caller', () => {
-    expect(commitsBlock({ head: 'feature/x', commits: '- abc1234 did a thing\n' })).toContain(
-      '- abc1234 did a thing',
-    )
-  })
+  // The `commits` plugin is autonomous: it pulls the list from
+  // `ctx.services.git.logRange`, so tests provide a fake git service.
+  const fakeGit = (logRange) => ({ logRange })
 
-  it('commits: falls back to buildCommitsSection (gitLogFn injectable) when ctx.commits is undefined', () => {
-    const fakeLog = () => '- abc1234 did a thing\n'
-    const out = commitsBlock({ head: 'feature/x', base: 'origin/main', gitLogFn: fakeLog })
+  it('commits: pulls the commit list from ctx.services.git.logRange', () => {
+    const out = commitsBlock({
+      head: 'feature/x',
+      base: 'origin/main',
+      services: { git: fakeGit(() => '- abc1234 did a thing\n- def5678 more\n') },
+    })
     expect(out).toContain('- abc1234 did a thing')
+    expect(out).toContain('- def5678 more')
   })
 
   it('commits: uses empty head / default base fallbacks when ctx.head/base are absent', () => {
-    const fakeLog = (h, b) => `- log for ${b}`
-    const out = commitsBlock({ gitLogFn: fakeLog })
+    const out = commitsBlock({
+      services: { git: fakeGit((h, b) => `- log for ${b}`) },
+    })
     expect(out).toContain('- log for main')
   })
 
-  it('commits: falls back to the real `git` CLI when no gitLogFn is provided', () => {
-    // No gitLogFn => the built-in default runs `execFileSync('git', ...)`.
-    // In a git checkout this returns the real commit list (a string).
-    const out = commitsBlock({ head: 'feature/auto-pr', base: 'origin/main' })
-    expect(typeof out).toBe('string')
+  it('commits: returns an empty string when no git service is provided', () => {
+    expect(commitsBlock({ head: 'x' })).toBe('')
+    expect(commitsBlock({ head: 'x', services: {} })).toBe('')
   })
 
   it('commits: returns an empty string when the git log throws', () => {
     const out = commitsBlock({
       head: 'x',
-      gitLogFn: () => {
-        throw new Error('boom')
+      services: {
+        git: fakeGit(() => {
+          throw new Error('boom')
+        }),
       },
     })
     expect(out).toBe('')
   })
 
   it('commits: returns an empty string when the git log yields nothing', () => {
-    const out = commitsBlock({ head: 'x', gitLogFn: () => '' })
+    const out = commitsBlock({
+      head: 'x',
+      services: { git: fakeGit(() => '') },
+    })
     expect(out).toBe('')
   })
 })
@@ -335,8 +345,7 @@ describe('fillAutoBlocks', () => {
         title: 'My PR',
         fixes: '42',
         typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-        commits: '- abc1234 did a thing\n',
-        gitLogFn: () => '- abc1234 did a thing\n',
+        services: { git: { logRange: () => '- abc1234 did a thing\n' } },
       },
       markflowRegistry(),
     )
@@ -344,7 +353,6 @@ describe('fillAutoBlocks', () => {
     expect(blockContent(out, 'issue')).toBe('## Fixes #(issue number)\n\n42')
     expect(blockContent(out, 'commits')).toContain('## Commits')
     expect(blockContent(out, 'commits')).toContain('- abc1234 did a thing')
-    // The `types` plugin (not hard-coded text) produced the checkbox line.
     expect(blockContent(out, 'type')).toContain(
       '- [x] Bug fix (non-breaking change which fixes an issue)',
     )
@@ -359,7 +367,7 @@ describe('fillAutoBlocks', () => {
         title: 'T',
         fixes: '',
         typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-        commits: '',
+        services: { git: { logRange: () => '' } },
       },
       markflowRegistry(),
     )
@@ -375,13 +383,11 @@ describe('fillAutoBlocks', () => {
         title: 'T',
         fixes: '',
         typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-        commits: '',
+        services: { git: { logRange: () => '' } },
       },
       markflowRegistry(),
     )
-    // Description is outside the blocks -> preserved as a region.
     expect(out).toContain('## Description')
-    // Checklist is an auto block with no {{placeholder}} -> reset to template state.
     expect(blockContent(out, 'checklist')).toContain('## Checklist')
     expect(blockContent(out, 'checklist')).toContain('- [ ] My code follows the style guidelines')
   })
@@ -395,11 +401,10 @@ describe('fillAutoBlocks', () => {
         title: '',
         fixes: '',
         typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-        commits: '',
+        services: { git: { logRange: () => '' } },
       },
       markflowRegistry(),
     )
-    // blockContent trims, so the rendered "# " (title || '') collapses to "#".
     expect(blockContent(out, 'title')).toBe('#')
   })
 
@@ -438,7 +443,7 @@ describe('buildBody', () => {
       title: 'Auto pr',
       fixes: '7',
       typeFlags: { bug: false, feature: true, breaking: false, docs: false },
-      commits: '- a1 add\n',
+      services: { git: { logRange: () => '- a1 add\n' } },
     })
     expect(buildBody(filled, '')).toBe(filled)
   })
@@ -448,10 +453,8 @@ describe('buildBody', () => {
       title: 'Fresh Title',
       fixes: '99',
       typeFlags: { bug: false, feature: true, breaking: false, docs: false },
-      commits: '- a1 add\n',
+      services: { git: { logRange: () => '- a1 add\n' } },
     })
-    // Build a realistic existing body: take the template, fill with STALE values,
-    // and inject human notes outside the blocks.
     const stale = fillAutoBlocks(
       tpl,
       {
@@ -460,7 +463,7 @@ describe('buildBody', () => {
         title: 'Stale Title',
         fixes: '1',
         typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-        commits: '- old commit\n',
+        services: { git: { logRange: () => '- old commit\n' } },
       },
       markflowRegistry(),
     )
@@ -474,7 +477,6 @@ describe('buildBody', () => {
     expect(blockContent(out, 'commits')).toContain('- a1 add')
     expect(out).not.toContain('Stale Title')
     expect(out).not.toContain('- old commit')
-    // Human-written Description survives; Checklist is reset to template state.
     expect(out).toContain('## Description')
     expect(blockContent(out, 'checklist')).toContain('## Checklist')
     expect(blockContent(out, 'checklist')).toContain('- [ ] My code follows the style guidelines')
@@ -485,7 +487,7 @@ describe('buildBody', () => {
       title: 'Auto pr',
       fixes: '',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '- a1 add\n',
+      services: { git: { logRange: () => '- a1 add\n' } },
     })
     const legacy = '## Checklist\n\n- [x] reviewed\n\nSome human context here'
     const out = buildBody(filled, legacy)
@@ -495,9 +497,6 @@ describe('buildBody', () => {
   })
 
   it('refreshes a CUSTOM auto block key (not in any hard-coded list) on update', () => {
-    // A repo that added its own block (e.g. `<!-- AUTO:security -->`) must be
-    // refreshed like any built-in block, because block keys are discovered
-    // dynamically — there is no fixed key list to keep in sync.
     const customTpl =
       '<!-- AUTO:title -->\n# {{title}}\n<!-- /AUTO:title -->\n\n' +
       '<!-- AUTO:security -->\n## Security\n\n{{security}}\n<!-- /AUTO:security -->'
@@ -525,60 +524,166 @@ describe('buildBody', () => {
       title: 'Auto pr',
       fixes: '',
       typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '- a1 add\n',
+      services: { git: { logRange: () => '- a1 add\n' } },
     })
-    // Simulate a fresh template missing the 'commits' block.
     const filledNoCommits = filled.replace(
       /<!-- AUTO:commits -->[\s\S]*?<!-- \/AUTO:commits -->/,
       '',
     )
     const existingBody = `human above\n\n${filled}\n\nhuman below`
     const out = buildBody(filledNoCommits, existingBody)
-    // The commits block is absent from the fresh template, so the existing one
-    // (from the original filled body) is preserved.
     expect(out).toContain('- a1 add')
   })
 })
 
-// --- buildBodyFor -------------------------------------------------------
-describe('buildBodyFor', () => {
-  it('builds a first-creation body from the template (no existing body)', () => {
-    const out = buildBodyFor(
-      'feature/auto-pr',
-      'origin/main',
-      '',
-      '.github/pull-request-template.md',
-      markflowRegistry(),
-    )
-    expect(out).toContain('# Auto pr')
-    expect(out).toContain('<!-- AUTO:title -->')
-    expect(out).toContain('<!-- /AUTO:title -->')
-    expect(out).toContain('## Checklist')
-    // The types block is rendered by the plugin, not hard-coded.
-    expect(out).toContain('- [ ] My code follows the style guidelines')
-    // head is feature/auto-pr => the `feature` box is ticked, `bug` is not.
-    expect(out).toContain('- [x] New feature (non-breaking change which adds functionality)')
-    expect(out).not.toContain('- [x] Bug fix (non-breaking change which fixes an issue)')
+// --- 完整 PR 模板的本地渲染（端到端） -----------------------------------
+//
+// 这些用例演示如何在本地试验"对完整 PR 模板"的渲染效果，而不需要 GitHub/
+// `gh`/真实 git 历史。核心思路：render.mjs 的纯函数 `fillAutoBlocks` 只依赖
+//   1. PR 模板字符串
+//   2. 块插件注册表 (registry)
+//   3. 我们手动构造的 ctx（title/fixes/typeFlags/commits）
+// 只要把 ctx 完全注入，渲染结果就是确定的、可复现的，与本地是否有 git 历史
+// 无关。等价于 cli-render.mjs 做的事，只是用内联断言而非 console.log。
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { loadBlocks } from './loader.mjs'
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+const TEMPLATE_PATH = join(REPO_ROOT, '.github', 'pull-request-template.md')
+const TYPES_DIR = join(REPO_ROOT, '.github', 'create-pr', 'blocks')
+
+// 直接用 loader 加载仓库里真实的 `types.mjs` 插件（与 action 运行时一致），
+// 而不是依赖测试内联的副本 —— 这样端到端地验证"模板 {{types}} 占位符"和
+// "仓库提供的插件"真的对得上，避免两者悄悄漂移。
+async function realMarkflowRegistry() {
+  const user = await loadBlocks(TYPES_DIR)
+  return { ...builtinRegistry(), ...user }
+}
+
+// 渲染完整 PR body：完全本地、确定性。遵循插件自治原则——commits 由 commits
+// 插件从 ctx.services.git 自取，这里只注入一个 fake git service 提供确定性的
+// commit 列表，因此结果不依赖真实 git 历史。
+async function renderFullPr({
+  head,
+  base = 'origin/main',
+  title,
+  fixes = '',
+  typeFlags,
+  commits = '',
+}) {
+  const registry = await realMarkflowRegistry()
+  const tpl = readFileSync(TEMPLATE_PATH, 'utf8')
+  const ctx = {
+    head,
+    base,
+    title: title ?? deriveTitle(head),
+    fixes,
+    typeFlags: typeFlags ?? classifyChange(head, ''),
+    services: { git: { logRange: () => commits, logSubjects: () => commits } },
+  }
+  return fillAutoBlocks(tpl, ctx, registry)
+}
+
+function blocksOf(body) {
+  const keys = discoverSegments(body)
+  const out = { outside: body }
+  for (const k of keys) out[k] = blockContent(body, k)
+  return out
+}
+
+describe('完整 PR 模板本地渲染（端到端）', () => {
+  it('feature/ 分支：标题来自分支名，feature 框勾选，issue 为 N/A', async () => {
+    const body = await renderFullPr({
+      head: 'feature/pipeline-test-improves',
+      typeFlags: { bug: false, feature: true, breaking: false, docs: false },
+      commits: '- a1 add pipeline test\n- a2 improves coverage\n',
+    })
+    const b = blocksOf(body)
+    expect(b.title).toBe('# Pipeline test improves')
+    expect(b.type).toContain('- [x] New feature (non-breaking change which adds functionality)')
+    expect(b.type).not.toContain('- [x] Bug fix (non-breaking change which fixes an issue)')
+    expect(b.issue).toContain('N/A')
+    expect(b.commits).toContain('## Commits')
+    expect(b.commits).toContain('- a1 add pipeline test')
+    expect(b.commits).toContain('- a2 improves coverage')
+    expect(b.outside).toContain('## Description')
+    expect(b.checklist).toContain('## Checklist')
   })
 
-  it('refreshes only the auto blocks when an existing partitioned body is given', () => {
-    const existing =
-      `human above\n\n${readFileSync('.github/pull-request-template.md', 'utf8')
-        .replace('{{title}}', 'Stale')
-        .replace('{{issue}}', '1')
-        .replace('{{commits}}', '- old commit\n')
-        .replace('{{types}}', '- [ ] Bug fix (non-breaking change which fixes an issue)')}\n\n` +
-      `human below`
-    const out = buildBodyFor(
-      'feature/auto-pr',
-      'origin/main',
-      existing,
-      '.github/pull-request-template.md',
-      markflowRegistry(),
-    )
-    expect(out).toContain('human above')
-    expect(out).toContain('human below')
-    expect(out).toContain('# Auto pr')
-    expect(out).not.toContain('# Stale')
+  it('fix/#123 分支：标题保留 issue 引用、Bug 框勾选、issue 显式渲染为 123', async () => {
+    const body = await renderFullPr({
+      head: 'fix/#123-login',
+      fixes: '123',
+      typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+      commits: '- b1 handle null token\n',
+    })
+    const b = blocksOf(body)
+    expect(b.title).toBe('# #123 login')
+    expect(b.type).toContain('- [x] Bug fix (non-breaking change which fixes an issue)')
+    expect(b.issue).toContain('123')
+    expect(b.issue).not.toContain('N/A')
+    expect(b.commits).toContain('- b1 handle null token')
+  })
+
+  it('docs/ 分支：只勾 Documentation 框（其余留空）', async () => {
+    const body = await renderFullPr({
+      head: 'docs/update-readme',
+      typeFlags: { bug: false, feature: false, breaking: false, docs: true },
+    })
+    const b = blocksOf(body)
+    expect(b.type).toContain('- [x] Documentation update')
+    expect(b.type).not.toContain('- [x] New feature (non-breaking change which adds functionality)')
+    expect(b.type).not.toContain('- [x] Bug fix (non-breaking change which fixes an issue)')
+  })
+
+  it('通过动态加载的真实 types.mjs 渲染（验证占位符与插件端到端对齐）', async () => {
+    const registry = await realMarkflowRegistry()
+    expect(typeof registry.types).toBe('function')
+    const body = await renderFullPr({
+      head: 'feature/xyz',
+      typeFlags: { bug: false, feature: true, breaking: false, docs: false },
+    })
+    const renderedTypes = registry.types({
+      typeFlags: { bug: false, feature: true, breaking: false, docs: false },
+    })
+    expect(body).toContain(renderedTypes)
+  })
+
+  it('与完整渲染快照一致（结构稳定的回归护栏）', async () => {
+    const body = await renderFullPr({
+      head: 'feature/auto-pr-render',
+      fixes: '42',
+      typeFlags: { bug: false, feature: true, breaking: false, docs: false },
+      commits: '- a1 first\n- a2 second\n',
+    })
+    expect(body).toMatchSnapshot()
+  })
+})
+
+// --- buildCtx -----------------------------------------------------------
+describe('buildCtx', () => {
+  it('assembles head/base/title/services and injects the git service', () => {
+    const git = { logSubjects: () => '' }
+    const ctx = buildCtx('feature/x', 'origin/main', 'X', { git })
+    expect(ctx.head).toBe('feature/x')
+    expect(ctx.base).toBe('origin/main')
+    expect(ctx.title).toBe('X')
+    expect(ctx.services.git).toBe(git)
+  })
+
+  it('derives fixes and typeFlags from the git logSubjects when a git service is provided', () => {
+    const ctx = buildCtx('fix/#42-login', 'origin/main', 'Login', {
+      git: { logSubjects: () => '- fix: resolve #42 crash\n' },
+    })
+    expect(ctx.fixes).toBe('42')
+    expect(ctx.typeFlags.bug).toBe(true)
+    expect(ctx.typeFlags.feature).toBe(false)
+  })
+
+  it('derives fixes and typeFlags from the branch name when no git service is provided', () => {
+    const ctx = buildCtx('fix/#42-login', 'origin/main', 'Login', undefined)
+    expect(ctx.fixes).toBe('42')
+    expect(ctx.typeFlags.bug).toBe(true)
   })
 })

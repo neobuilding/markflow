@@ -1,0 +1,47 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`完整 PR 模板本地渲染（端到端） > 与完整渲染快照一致（结构稳定的回归护栏） 1`] = `
+"<!-- AUTO:title -->
+# Auto pr render
+<!-- /AUTO:title -->
+
+## Description
+
+Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context.
+
+<!-- AUTO:type -->
+## Type of Change
+
+- [ ] Bug fix (non-breaking change which fixes an issue)
+- [x] New feature (non-breaking change which adds functionality)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Documentation update
+<!-- /AUTO:type -->
+
+<!-- AUTO:checklist -->
+## Checklist
+
+- [ ] My code follows the style guidelines of this project
+- [ ] I have performed a self-review of my own code
+- [ ] I have commented my code, particularly in hard-to-understand areas
+- [ ] I have made corresponding changes to the documentation
+- [ ] My changes generate no new warnings
+- [ ] I ran \`npm run quality\` locally and it passes (Prettier + Stylelint + Markdownlint + Secretlint)
+- [ ] I have added tests that prove my fix is effective or that my feature works
+- [ ] New and existing unit tests pass locally with my changes
+<!-- /AUTO:checklist -->
+
+<!-- AUTO:issue -->
+## Fixes #(issue number)
+
+42
+<!-- /AUTO:issue -->
+
+<!-- AUTO:commits -->
+## Commits
+
+- a1 first
+- a2 second
+<!-- /AUTO:commits -->
+"
+`;

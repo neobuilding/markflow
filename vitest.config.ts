@@ -67,7 +67,8 @@ export default defineConfig({
         'electron/main/lifecycle.ts',
         'electron/main/db/database.ts',
         'shared/**/*.ts',
-        'actions/create-pr/src/core.mjs',
+        'actions/create-pr/src/render.mjs',
+        'actions/create-pr/src/orchestration.mjs',
         'actions/create-pr/src/blocks/**/*.mjs',
       ],
       exclude: [
@@ -204,21 +205,22 @@ export default defineConfig({
           functions: 95,
           lines: 95,
         },
-        // CI / PR-automation core: every reachable branch in
-        // actions/create-pr/src/core.mjs (plus the built-in block plugins in
-        // actions/create-pr/src/blocks/**) is accounted for. The pure functions
-        // (deriveTitle / buildCtx / fillAutoBlocks / renderBlock /
-        // discoverSegments / replaceAutoBlock / buildBody / buildBodyFor /
-        // classifyChange / extractFixes / markersFor / blockContent /
-        // buildCommitsSection / buildDescription, and the title/issues/commits
-        // plugins) are fully unit-tested (100%), and the side-effecting runMain
-        // (gh/git orchestration, process.exit) plus the process-executing
-        // helpers are wrapped in `/* v8 ignore */` blocks because they cannot be
-        // exercised by unit tests. The block-plugin loader (src/loader.mjs, file
-        // IO + dynamic import) lives outside this gate but is covered by its own
-        // loader.test.mjs. The Action entry point (src/index.mjs) is not in this
-        // list and therefore carries no coverage threshold.
-        'actions/create-pr/src/core.mjs': {
+        // CI / PR-automation: the pure rendering logic (render.mjs), the
+        // decoupled orchestration (orchestration.mjs, tested with fake services),
+        // and the built-in block plugins (blocks/**) are fully unit-tested (100%).
+        // The I/O service implementations (services/*.mjs, real git/gh/fs) and
+        // the Action entry point (index.mjs, @actions/core + process.exit) are
+        // NOT in this gate — they are validated via the orchestration tests
+        // using fakes, not by exercising real external processes. The block-plugin
+        // loader (loader.mjs, file IO + dynamic import) is covered by its own
+        // loader.test.mjs.
+        'actions/create-pr/src/render.mjs': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'actions/create-pr/src/orchestration.mjs': {
           statements: 100,
           branches: 100,
           functions: 100,

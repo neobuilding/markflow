@@ -3,9 +3,18 @@
 // tests cover its branching so registry construction is not a blind spot.
 import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
-import { loadBlocks, buildBlockRegistry, builtinBlocksDir } from './loader.mjs'
+import { loadBlocks, buildBlockRegistry, builtinRegistry } from './loader.mjs'
 
 const __dirname = import.meta.dirname
+
+describe('builtinRegistry', () => {
+  it('returns the three built-in block plugins', () => {
+    const reg = builtinRegistry()
+    expect(typeof reg.title).toBe('function')
+    expect(typeof reg.issue).toBe('function')
+    expect(typeof reg.commits).toBe('function')
+  })
+})
 
 describe('loadBlocks', () => {
   it('scans a directory and registers each *.mjs plugin by file name', async () => {
@@ -34,11 +43,11 @@ describe('loadBlocks', () => {
 
 describe('buildBlockRegistry', () => {
   it('loads built-in blocks and lets a user directory override same-named ones', async () => {
-    // builtinBlocksDir() resolves to src/blocks (source layout) which always
-    // has title/issues/commits.
-    expect(builtinBlocksDir()).toContain('blocks')
     const reg = await buildBlockRegistry(join(__dirname, '__fixtures__', 'blocks'))
+    // Built-ins are always present (inlined into the bundle).
     expect(typeof reg.title).toBe('function')
+    expect(typeof reg.issue).toBe('function')
+    expect(typeof reg.commits).toBe('function')
     // The user `good` plugin is merged in alongside built-ins.
     expect(typeof reg.good).toBe('function')
   })

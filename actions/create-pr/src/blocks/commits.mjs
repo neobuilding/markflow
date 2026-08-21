@@ -1,31 +1,23 @@
 // Built-in block plugin: `commits`.
 //
-// Renders the `base..HEAD` commit list body. It uses `ctx.commits` when the
-// caller has already computed it (e.g. `buildCtx` passes the result of the
-// core's commit-section builder), and otherwise derives it on the fly via
-// `git log base..HEAD` — which preserves the injectable `gitLogFn` so tests run
-// without a real repo. `ctx.base` is the resolved base ref; `ctx.head` is the
-// branch name.
+// Renders the `base..HEAD` commit list body. This plugin is AUTONOMOUS: it pulls
+// the commit list itself from `ctx.services.git.logRange(head, base)` instead of
+// relying on the caller to pre-compute and stuff a `ctx.commits` value. That is
+// the plugin-autonomy contract — a block fetches whatever data it needs from
+// `ctx.services`, so the renderer/orchestrator never has to know "which plugin
+// needs which data".
 //
-// This plugin is intentionally self-contained (no import of core.mjs) so it
-// can be copied verbatim into `dist/blocks/` and loaded at runtime by the
-// directory scanner, independent of how the action is bundled.
+// `ctx.services` is injected by buildCtx (see render.mjs). When no git service
+// is available (e.g. the `--no-git` CLI mode, or a test that passes no services)
+// the plugin renders '' gracefully.
 //
-// Form: `export default (ctx) => string` — the single shared plugin contract
-// used by both built-in blocks (this directory) and user-provided blocks.
-import { execFileSync } from 'node:child_process'
-
+// Form: `export default (ctx) => string` — the single shared plugin contract.
 export default function commits(ctx) {
-  if (ctx.commits !== undefined) return ctx.commits
-  const base = ctx.base || 'main'
-  const gitLogFn =
-    ctx.gitLogFn ||
-    ((_h, b) =>
-      execFileSync('git', ['log', '--no-merges', '--pretty=format:- %h %s', `${b}..HEAD`], {
-        encoding: 'utf8',
-      }).trim())
+  const services = (ctx && ctx.services) || {}
+  const git = services.git
+  if (!git) return ''
   try {
-    const log = gitLogFn(ctx.head || '', base)
+    const log = git.logRange(ctx.head || '', ctx.base || 'main')
     return log ? `${log}\n` : ''
   } catch {
     return ''
