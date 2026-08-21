@@ -68,6 +68,7 @@ export default defineConfig({
         'electron/main/db/database.ts',
         'shared/**/*.ts',
         'actions/create-pr/src/core.mjs',
+        'actions/create-pr/src/blocks/**/*.mjs',
       ],
       exclude: [
         '**/*.test.ts',
@@ -204,18 +205,26 @@ export default defineConfig({
           lines: 95,
         },
         // CI / PR-automation core: every reachable branch in
-        // actions/create-pr/src/core.mjs is now accounted for. Its pure
-        // functions (deriveTitle / buildCtx / fillAutoBlocks / replaceAutoBlock /
-        // buildBody / buildBodyFor / classifyChange / extractFixes / markersFor /
-        // blockContent / tickTypeBoxes / fillPlaceholderBlock /
-        // buildCommitsSection / buildDescription) are fully unit-tested (100%),
-        // and the side-effecting runMain (gh/git orchestration, process.exit) plus
-        // the process-executing helpers are wrapped in `/* v8 ignore */` blocks
-        // because they cannot be exercised by unit tests. The decorative
-        // fallbacks inside fillAutoBlocks are likewise ignored, so the file-level
-        // gate is held at 100%. The Action entry point (src/index.mjs) is not in
-        // this list and therefore carries no coverage threshold.
+        // actions/create-pr/src/core.mjs (plus the built-in block plugins in
+        // actions/create-pr/src/blocks/**) is accounted for. The pure functions
+        // (deriveTitle / buildCtx / fillAutoBlocks / renderBlock /
+        // discoverSegments / replaceAutoBlock / buildBody / buildBodyFor /
+        // classifyChange / extractFixes / markersFor / blockContent /
+        // buildCommitsSection / buildDescription, and the title/issues/commits
+        // plugins) are fully unit-tested (100%), and the side-effecting runMain
+        // (gh/git orchestration, process.exit) plus the process-executing
+        // helpers are wrapped in `/* v8 ignore */` blocks because they cannot be
+        // exercised by unit tests. The block-plugin loader (src/loader.mjs, file
+        // IO + dynamic import) lives outside this gate but is covered by its own
+        // loader.test.mjs. The Action entry point (src/index.mjs) is not in this
+        // list and therefore carries no coverage threshold.
         'actions/create-pr/src/core.mjs': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        'actions/create-pr/src/blocks/**/*.mjs': {
           statements: 100,
           branches: 100,
           functions: 100,

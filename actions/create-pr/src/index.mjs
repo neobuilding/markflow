@@ -3,9 +3,12 @@
 // Reads the Action inputs, injects the GH token into `process.env.GH_TOKEN`
 // (so that `core.mjs`'s `gh` calls authenticate), and delegates all the real
 // work to `runMain` in core.mjs. This layer is intentionally thin and holds no
-// PR logic of its own.
+// PR logic of its own — it only resolves inputs and builds the block-plugin
+// registry (via loader.mjs) before handing control to core.
 import * as core from '@actions/core'
+import { join } from 'node:path'
 import { runMain } from './core.mjs'
+import { buildBlockRegistry } from './loader.mjs'
 
 async function main() {
   // Resolve the head branch: an explicit `head` input wins, otherwise fall back
@@ -23,6 +26,13 @@ async function main() {
 
   const templatePath = core.getInput('template') || '.github/pull-request-template.md'
 
+  // Optional directory of user-provided block plugins (default
+  // `.github/create-pr/blocks`). Resolved from the repo root (the checked-out
+  // working directory) so dynamic import paths are stable. Built-in blocks are
+  // always loaded by the loader; the user directory overrides same-named ones.
+  const blocksDir =
+    core.getInput('blocks-dir') || join(process.cwd(), '.github', 'create-pr', 'blocks')
+
   // Authenticate `gh` with the supplied PAT (the default GITHUB_TOKEN cannot
   // create PRs). core.mjs reads GH_TOKEN from the environment; it never learns
   // the token's source.
@@ -36,9 +46,13 @@ async function main() {
     return
   }
 
+  // Build the block-plugin registry (built-in + user, user overrides built-in).
+  // Loading is resilient: a single bad plugin is skipped, never aborts the run.
+  const blocks = await buildBlockRegistry(blocksDir)
+
   // runMain throws on failure (from core.fail), so wrap it here and report via
   // setFailed. Do NOT swallow the error — setFailed alone does not stop the step.
-  await runMain({ head, base, dryRun, templatePath })
+  await runMain({ head, base, dryRun, templatePath, blocks })
 }
 
 main().catch((err) => {

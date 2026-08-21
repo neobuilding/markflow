@@ -169,7 +169,7 @@ var ExitCode;
  * @param name the name of the variable to set
  * @param val the value of the variable. Non-string values will be converted to a string via JSON.stringify
  */
- 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function exportVariable(name, val) {
     const convertedVal = (0, utils_1.toCommandValue)(val);
     process.env[name] = convertedVal;
@@ -269,7 +269,7 @@ exports.getBooleanInput = getBooleanInput;
  * @param     name     name of the output to set
  * @param     value    value to store. Non-string values will be converted to a string via JSON.stringify
  */
- 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setOutput(name, value) {
     const filePath = process.env['GITHUB_OUTPUT'] || '';
     if (filePath) {
@@ -403,7 +403,7 @@ exports.group = group;
  * @param     name     name of the state to store
  * @param     value    value to store. Non-string values will be converted to a string via JSON.stringify
  */
- 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function saveState(name, value) {
     const filePath = process.env['GITHUB_STATE'] || '';
     if (filePath) {
@@ -484,7 +484,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.prepareKeyValueMessage = exports.issueFileCommand = void 0;
 // We use any as a valid input type
- 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 const crypto = __importStar(__nccwpck_require__(6982));
 const fs = __importStar(__nccwpck_require__(9896));
 const os = __importStar(__nccwpck_require__(857));
@@ -1066,7 +1066,7 @@ exports.summary = _summary;
 
 
 // We use any as a valid input type
- 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.toCommandProperties = exports.toCommandValue = void 0;
 /**
@@ -1257,7 +1257,7 @@ const path = __importStar(__nccwpck_require__(6928));
 const io = __importStar(__nccwpck_require__(4994));
 const ioUtil = __importStar(__nccwpck_require__(5207));
 const timers_1 = __nccwpck_require__(3557);
- 
+/* eslint-disable @typescript-eslint/unbound-method */
 const IS_WINDOWS = process.platform === 'win32';
 /*
  * Class for running command line tools. Handles quoting and arg parsing in a platform agnostic way.
@@ -1931,7 +1931,7 @@ exports.PersonalAccessTokenCredentialHandler = PersonalAccessTokenCredentialHand
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 
- 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -2784,7 +2784,7 @@ function tryGetExecutablePath(filePath, extensions) {
         }
         catch (err) {
             if (err.code !== 'ENOENT') {
-                 
+                // eslint-disable-next-line no-console
                 console.log(`Unexpected error attempting to determine if executable file exists '${filePath}': ${err}`);
             }
         }
@@ -2812,7 +2812,7 @@ function tryGetExecutablePath(filePath, extensions) {
             }
             catch (err) {
                 if (err.code !== 'ENOENT') {
-                     
+                    // eslint-disable-next-line no-console
                     console.log(`Unexpected error attempting to determine if executable file exists '${filePath}': ${err}`);
                 }
             }
@@ -2830,7 +2830,7 @@ function tryGetExecutablePath(filePath, extensions) {
                         }
                     }
                     catch (err) {
-                         
+                        // eslint-disable-next-line no-console
                         console.log(`Unexpected error attempting to determine the actual case of the file '${filePath}': ${err}`);
                     }
                     return filePath;
@@ -6910,7 +6910,7 @@ async function lazyllhttp () {
 
   return await WebAssembly.instantiate(mod, {
     env: {
-       
+      /* eslint-disable camelcase */
 
       wasm_on_url: (p, at, len) => {
         /* istanbul ignore next */
@@ -6949,7 +6949,7 @@ async function lazyllhttp () {
         return currentParser.onMessageComplete() || 0
       }
 
-       
+      /* eslint-enable camelcase */
     }
   })
 }
@@ -12901,14 +12901,14 @@ class File extends Blob {
     let t = options.type
     let d
 
-     
+    // eslint-disable-next-line no-labels
     substep: {
       if (t) {
         t = parseMIMEType(t)
 
         if (t === 'failure') {
           t = ''
-           
+          // eslint-disable-next-line no-labels
           break substep
         }
 
@@ -15751,7 +15751,7 @@ async function httpNetworkFetch (
 
   // 7. Let newConnection be "yes" if forceNewConnection is true; otherwise
   // "no".
-  const newConnection = forceNewConnection ? 'yes' : 'no'  
+  const newConnection = forceNewConnection ? 'yes' : 'no' // eslint-disable-line no-unused-vars
 
   // 8. Switch on request’s mode:
   if (request.mode === 'websocket') {
@@ -18263,7 +18263,7 @@ function determineRequestsReferrer (request) {
       // 3. Return referrerOrigin.
       return referrerOrigin
     }
-    case 'strict-origin':  
+    case 'strict-origin': // eslint-disable-line
       /**
          * 1. If referrerURL is a potentially trustworthy URL and
          * request’s current URL is not a potentially trustworthy URL,
@@ -24750,7 +24750,7 @@ function fireEvent (e, target, eventConstructor = Event, eventInitDict) {
   // 2. Let event be the result of creating an event given eventConstructor,
   //    in the relevant realm of target.
   // 3. Initialize event’s type attribute to e.
-  const event = new eventConstructor(e, eventInitDict)  
+  const event = new eventConstructor(e, eventInitDict) // eslint-disable-line new-cap
 
   // 4. Initialize any other IDL attributes of event as described in the
   //    invocation of this algorithm.
@@ -25555,6 +25555,25 @@ module.exports = {
 
 /***/ }),
 
+/***/ 534:
+/***/ ((module) => {
+
+function webpackEmptyAsyncContext(req) {
+	// Here Promise.resolve().then() is used instead of new Promise() to prevent
+	// uncaught exception popping up in devtools
+	return Promise.resolve().then(() => {
+		var e = new Error("Cannot find module '" + req + "'");
+		e.code = 'MODULE_NOT_FOUND';
+		throw e;
+	});
+}
+webpackEmptyAsyncContext.keys = () => ([]);
+webpackEmptyAsyncContext.resolve = webpackEmptyAsyncContext;
+webpackEmptyAsyncContext.id = 534;
+module.exports = webpackEmptyAsyncContext;
+
+/***/ }),
+
 /***/ 2613:
 /***/ ((module) => {
 
@@ -26005,7 +26024,7 @@ const StreamSearch = __nccwpck_require__(4136)
 
 const B_DCRLF = Buffer.from('\r\n\r\n')
 const RE_CRLF = /\r\n/g
-const RE_HDR = /^([^:]+):[ \t]?([\x00-\xFF]+)?$/  
+const RE_HDR = /^([^:]+):[ \t]?([\x00-\xFF]+)?$/ // eslint-disable-line no-control-regex
 
 function HeaderParser (cfg) {
   EventEmitter.call(this)
@@ -26067,7 +26086,7 @@ HeaderParser.prototype._parseHeader = function () {
   const len = lines.length
   let m, h
 
-  for (var i = 0; i < len; ++i) {  
+  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
     if (lines[i].length === 0) { continue }
     if (lines[i][0] === '\t' || lines[i][0] === ' ') {
       // folded header content
@@ -26185,7 +26204,7 @@ function SBMH (needle) {
 
   // Populate occurrence table with analysis of the needle,
   // ignoring last letter.
-  for (var i = 0; i < needleLength - 1; ++i) {  
+  for (var i = 0; i < needleLength - 1; ++i) { // eslint-disable-line no-var
     this._occ[needle[i]] = needleLength - 1 - i
   }
 }
@@ -26343,7 +26362,7 @@ SBMH.prototype._sbmh_lookup_char = function (data, pos) {
 }
 
 SBMH.prototype._sbmh_memcmp = function (data, pos, len) {
-  for (var i = 0; i < len; ++i) {  
+  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
     if (this._sbmh_lookup_char(data, pos + i) !== this._needle[i]) { return false }
   }
   return true
@@ -26781,7 +26800,7 @@ function UrlEncoded (boy, cfg) {
   this.fieldsLimit = getLimit(limits, 'fields', Infinity)
 
   let charset
-  for (var i = 0, len = parsedConType.length; i < len; ++i) {  
+  for (var i = 0, len = parsedConType.length; i < len; ++i) { // eslint-disable-line no-var
     if (Array.isArray(parsedConType[i]) &&
         RE_CHARSET.test(parsedConType[i][0])) {
       charset = parsedConType[i][1].toLowerCase()
@@ -27024,7 +27043,7 @@ module.exports = Decoder
 
 module.exports = function basename (path) {
   if (typeof path !== 'string') { return '' }
-  for (var i = path.length - 1; i >= 0; --i) {  
+  for (var i = path.length - 1; i >= 0; --i) { // eslint-disable-line no-var
     switch (path.charCodeAt(i)) {
       case 0x2F: // '/'
       case 0x5C: // '\'
@@ -27185,7 +27204,7 @@ module.exports = function getLimit (limits, name, defaultLimit) {
 /***/ 8929:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
- 
+/* eslint-disable object-property-newline */
 
 
 const decodeText = __nccwpck_require__(2747)
@@ -27311,7 +27330,7 @@ function parseParams (str) {
   let tmp = ''
   const len = str.length
 
-  for (var i = 0; i < len; ++i) {  
+  for (var i = 0; i < len; ++i) { // eslint-disable-line no-var
     const char = str[i]
     if (char === '\\' && inquote) {
       if (escaping) { escaping = false } else {
@@ -27418,6 +27437,11 @@ module.exports = parseParams
 /******/ }
 /******/ 
 /************************************************************************/
+/******/ /* webpack/runtime/hasOwnProperty shorthand */
+/******/ (() => {
+/******/ 	__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ })();
+/******/ 
 /******/ /* webpack/runtime/compat */
 /******/ 
 /******/ if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = new URL('.', import.meta.url).pathname.slice(import.meta.url.match(/^file:\/\/\/\w:/) ? 1 : 0, -1) + "/";
@@ -27427,6 +27451,8 @@ var __webpack_exports__ = {};
 
 // EXTERNAL MODULE: ./node_modules/@actions/core/lib/core.js
 var core = __nccwpck_require__(7484);
+;// CONCATENATED MODULE: external "node:path"
+const external_node_path_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:path");
 ;// CONCATENATED MODULE: external "node:child_process"
 const external_node_child_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:child_process");
 ;// CONCATENATED MODULE: external "node:process"
@@ -27452,12 +27478,17 @@ const external_node_fs_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import
 //   - Idempotent: if a PR for the head branch already exists, it is NOT
 //     re-created; instead its description is refreshed to reflect the latest
 //     commits on the branch. The PR body is split into independent auto blocks
-//     marked with `<!-- AUTO:key --> ... <!-- /AUTO:key -->` (title / type /
-//     issue / checklist / commits). Each block is refreshed from the template
-//     on every refresh (so the Checklist resets to its template state and must
-//     be re-ticked after each push), while anything a human writes OUTSIDE the
-//     blocks (the Description, any notes) is preserved verbatim. Re-running on
-//     the same commits is a no-op.
+//     marked with `<!-- AUTO:key --> ... <!-- /AUTO:key -->`. Each block is
+//     refreshed from the template on every refresh (so the Checklist resets to
+//     its template state and must be re-ticked after each push), while anything
+//     a human writes OUTSIDE the blocks (the Description, any notes) is
+//     preserved verbatim. Re-running on the same commits is a no-op.
+//   - The block keys are NOT hard-coded: every `<!-- AUTO:x -->` marker found
+//     in the template becomes an auto block, and any `{{name}}` placeholder
+//     inside a block is rendered by a "block" plugin (a `(ctx) => string`
+//     generator). Built-in blocks (`title` / `issue` / `commits`) ship with
+//     the action; users may add their own `*.mjs` plugins (e.g. `types`) in
+//     `.github/create-pr/blocks/`. Missing plugins leave `{{name}}` untouched.
 //   - Derives the PR title from the branch name (feature/*, fix/*, etc.).
 //
 // Requirements:
@@ -27470,12 +27501,18 @@ const external_node_fs_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import
 
 // Each auto-generated *block* is wrapped in symmetric markers carrying a key,
 // e.g. `<!-- AUTO:commits --> ... <!-- /AUTO:commits -->`. The script refreshes
-// each block independently by key. Blocks (title / type / issue / checklist /
-// commits) are regenerated from the template on every refresh; human-written
-// content outside the blocks (the Description, any notes) can be freely
-// interleaved and is preserved across refreshes. The template defines the
-// blocks; a PR body gains them on first creation and is then refreshed
-// block-by-block.
+// each block independently by key. The block keys are discovered dynamically
+// from the template (see `discoverSegments`), so the action adapts to any repo's
+// PR template instead of hard-coding a fixed set. Human-written content outside
+// the blocks (the Description, any notes) can be freely interleaved and is
+// preserved across refreshes.
+//
+// A block may contain `{{placeholder}}` tokens. Each placeholder is rendered by
+// a "block plugin" — a `(ctx) => string` function looked up in the `blocks`
+// registry (see `renderBlock`). Built-in plugins (`title` / `issue` /
+// `commits`) ship with the action; users may register their own (e.g. `types`)
+// via `.github/create-pr/blocks/`. A placeholder with no matching plugin is
+// left untouched (the `{{name}}` text is preserved verbatim).
 const AUTO_OPEN = '<!-- AUTO:'
 const AUTO_CLOSE = '<!-- /AUTO:'
 
@@ -27595,67 +27632,54 @@ function extractFixes(head, commitsText) {
   return m ? m[1] : ''
 }
 
-// Tick the matching "Type of Change" boxes inside a block's text. Exported for
-// unit testing.
-function tickTypeBoxes(blockText, typeFlags) {
-  return blockText
-    .replace(/^- \[ \] (Bug fix.*)$/m, (_, c) => (typeFlags.bug ? `- [x] ${c}` : `- [ ] ${c}`))
-    .replace(/^- \[ \] (New feature.*)$/m, (_, c) =>
-      typeFlags.feature ? `- [x] ${c}` : `- [ ] ${c}`,
-    )
-    .replace(/^- \[ \] (Breaking change.*)$/m, (_, c) =>
-      typeFlags.breaking ? `- [x] ${c}` : `- [ ] ${c}`,
-    )
-    .replace(/^- \[ \] (Documentation update.*)$/m, (_, c) =>
-      typeFlags.docs ? `- [x] ${c}` : `- [ ] ${c}`,
-    )
+// Render a block plugin by name from the registry. Returns the rendered string
+// when the plugin exists, otherwise the `{{name}}` placeholder text unchanged
+// (so a missing plugin never drops or corrupts human content). Exported for
+// unit testing. `blocks` maps a plugin name to its `(ctx) => string` generator.
+function renderBlock(name, ctx, blocks) {
+  const fn = blocks && blocks[name]
+  if (!fn) return `{{${name}}}`
+  return fn(ctx)
 }
 
-// Fill every auto block of the PR template from the context. Each block is
-// refreshed independently by its marker key, so human-written content between
-// blocks is preserved. Replaces the {{title}} / {{issue}} / {{commits}}
-// placeholders, ticks the "Type of Change" boxes, and resets the Checklist to
-// its template state. Exported for tests.
-// Fill one auto block from the template: copy the block verbatim (so any extra
-// content inside it survives every refresh), swap its {{placeholder}} for
-// `value` (falling back to `fallback` when `value` is empty), and write it back
-// into `body`. Shared by every block that carries a single {{placeholder}};
-// blocks with bespoke logic (type's checkbox ticks, checklist's verbatim copy)
-// call replaceAutoBlock directly. Exported for unit testing.
-function fillPlaceholderBlock(body, template, key, placeholder, value, fallback = '') {
-  const block = (blockContent(template, key) || '').replace(
-    new RegExp(`\\{\\{${placeholder}\\}\\}`, 'g'),
-    value || fallback,
-  )
-  return replaceAutoBlock(body, key, block.trim())
+// Discover every auto-block key present in a template by scanning its
+// `<!-- AUTO:x --> ... <!-- /AUTO:x -->` markers. Keys are returned in document
+// order, with duplicates de-duplicated (the first occurrence wins). A template
+// with no markers yields an empty list — in that case nothing is rendered and
+// the template is used verbatim as the PR body. Exported for unit testing.
+function discoverSegments(template) {
+  const openRe = new RegExp(`${AUTO_OPEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([\\w-]+) -->`, 'g')
+  const keys = []
+  let m
+  while ((m = openRe.exec(template)) !== null) {
+    const key = m[1]
+    if (!keys.includes(key)) keys.push(key)
+  }
+  return keys
 }
 
-function fillAutoBlocks(template, ctx) {
-  const { title, fixes, typeFlags, commits } = ctx
+// Fill every discovered auto block of the PR template from the context. The
+// block keys are discovered dynamically (no hard-coded list). For each block,
+// every `{{placeholder}}` token inside it is rendered by the matching plugin
+// from `blocks`; tokens without a matching plugin are left untouched. Blocks
+// with no `{{placeholder}}` (e.g. the Checklist) are copied verbatim, which
+// resets them to the template state on every refresh. Exported for tests.
+function fillAutoBlocks(template, ctx, blocks = {}) {
   let out = template
-  // Title block: the {{title}} placeholder is swapped for the actual PR title;
-  // any other content inside the block is preserved on every refresh.
-  out = fillPlaceholderBlock(out, template, 'title', 'title', title)
-  // Type block: the "## Type of Change" section, with boxes ticked.
-  /* v8 ignore next: the `|| ''` fallback only matters if the template loses its
-     type block, which cannot happen in practice. */
-  const typeBlock = tickTypeBoxes(blockContent(template, 'type') || '', typeFlags)
-  out = replaceAutoBlock(out, 'type', typeBlock.trim())
-  // Issue block: the {{issue}} placeholder is swapped for the extracted issue
-  // number; the "## Fixes #(issue number)" heading (and any other content
-  // inside the block) is regenerated from the template on every refresh. "N/A"
-  // signals no linked issue.
-  out = fillPlaceholderBlock(out, template, 'issue', 'issue', fixes, 'N/A')
-  // Checklist block: copied verbatim from the template so it resets to the
-  // template state on every refresh (human ticks are dropped).
-  const checklist = blockContent(template, 'checklist')
-  /* v8 ignore next: the `: ''` fallback only matters if the template loses its
-     checklist block, which cannot happen in practice. */
-  out = replaceAutoBlock(out, 'checklist', checklist !== null ? checklist : '')
-  // Commits block: the {{commits}} placeholder is swapped for the commit list
-  // body; the "## Commits" heading (and any other content inside the block) is
-  // regenerated from the template on every refresh.
-  out = fillPlaceholderBlock(out, template, 'commits', 'commits', commits)
+  for (const key of discoverSegments(template)) {
+    // The key is guaranteed present by discoverSegments, so slice its inner
+    // content directly by the markers (no null branch to cover).
+    const open = openMarker(key)
+    const close = closeMarker(key)
+    const start = template.indexOf(open) + open.length
+    const end = template.indexOf(close)
+    const blockText = template.slice(start, end).trim()
+    // Render every `{{name}}` occurrence inside the block via its plugin.
+    const rendered = blockText.replace(/\{\{(\w[\w-]*)\}\}/g, (whole, name) =>
+      renderBlock(name, ctx, blocks),
+    )
+    out = replaceAutoBlock(out, key, rendered.trim())
+  }
   return out
 }
 
@@ -27676,10 +27700,21 @@ function fillAutoBlocks(template, ctx) {
 //      refresh lands in case 2 and stops stacking.
 function buildBody(filledTemplate, existingBody) {
   if (!existingBody) return filledTemplate
-  if (existingBody.includes(openMarker('title')) && existingBody.includes(closeMarker('title'))) {
+  // A body is "partitioned" (Case 2) when it carries at least one AUTO block.
+  // We detect this dynamically rather than hard-coding a specific key: any
+  // template may define its own block keys, and the renderer must adapt to all
+  // of them. The first auto-block key found in the body is used as the probe.
+  const bodyKeys = discoverSegments(existingBody)
+  if (bodyKeys.length > 0) {
     // Case 2: refresh each block independently by copying fresh content in.
+    // The set of keys to refresh is the union of the keys present in the
+    // existing body and the keys present in the fresh template, so that a block
+    // added to the template after the PR was created is still picked up, and a
+    // block removed from the template leaves the (now stale) existing block
+    // intact. No key is hard-coded.
+    const refreshKeys = new Set([...bodyKeys, ...discoverSegments(filledTemplate)])
     let out = existingBody
-    for (const key of ['title', 'type', 'issue', 'checklist', 'commits']) {
+    for (const key of refreshKeys) {
       const fresh = blockContent(filledTemplate, key)
       if (fresh !== null) out = replaceAutoBlock(out, key, fresh)
     }
@@ -27702,10 +27737,14 @@ function blockContent(body, key) {
 
 // Assemble the context object for fillAutoBlocks from the branch and resolved
 // base ref. The commit subjects drive the type classification and issue-number
-// extraction. Exported for unit testing.
+// extraction. Exported for unit testing. The context exposes `head` and `base`
+// (the resolved base ref) so block plugins can reference them, plus the derived
+// fields (`title` / `fixes` / `typeFlags` / `commits`).
 function buildCtx(head, baseRef, title, commitsSection) {
   const commitsText = buildDescription(head, baseRef).replace(/^- /gm, '')
   return {
+    head,
+    base: baseRef,
     title,
     fixes: extractFixes(head, commitsText),
     typeFlags: classifyChange(head, commitsText),
@@ -27716,13 +27755,15 @@ function buildCtx(head, baseRef, title, commitsSection) {
 }
 
 // Build the full PR body for an existing PR: re-fill the template's auto blocks
-// and preserve any human-written content outside those blocks. Exported for
-// tests.
+// and preserve any human-written content outside those blocks. `blocks` is the
+// registry of block plugins used to render `{{placeholder}}` tokens. Exported
+// for tests.
 function buildBodyFor(
   head,
   baseRef,
   existingBody,
   templatePath = '.github/pull-request-template.md',
+  blocks = {},
 ) {
   let filledTemplate
   try {
@@ -27730,6 +27771,7 @@ function buildBodyFor(
     filledTemplate = fillAutoBlocks(
       tpl,
       buildCtx(head, baseRef, deriveTitle(head), buildCommitsSection(head, baseRef)),
+      blocks,
     )
   } catch {
     /* v8 ignore next */
@@ -27755,7 +27797,13 @@ function deriveTitle(branch) {
 // fully-tested helpers above. A thrown `Error` from `fail()` bubbles up to the
 // entry point (which reports it via `core.setFailed`); we do NOT swallow it here.
 /* v8 ignore start */
-async function runMain({ head, base = 'main', dryRun = false, templatePath = '.github/pull-request-template.md' }) {
+async function runMain({
+  head,
+  base = 'main',
+  dryRun = false,
+  templatePath = '.github/pull-request-template.md',
+  blocks = {},
+}) {
   const ghVersion = tryRun('gh', ['--version'])
   if (!ghVersion) {
     fail("GitHub CLI ('gh') is not installed or not on PATH. Install: https://cli.github.com/")
@@ -27849,7 +27897,11 @@ async function runMain({ head, base = 'main', dryRun = false, templatePath = '.g
   let filledTemplate
   try {
     const tpl = (0,external_node_fs_namespaceObject.readFileSync)(templatePath, 'utf8')
-    filledTemplate = fillAutoBlocks(tpl, buildCtx(head, baseRef, title, commitsSection))
+    filledTemplate = fillAutoBlocks(
+      tpl,
+      buildCtx(head, baseRef, title, commitsSection),
+      blocks,
+    )
   } catch {
     // Template missing/unreadable: fall back to just the commits list.
     filledTemplate = commitsSection
@@ -27918,13 +27970,95 @@ async function runMain({ head, base = 'main', dryRun = false, templatePath = '.g
 // dropped: this module is no longer a standalone script, only an importable
 // library + the runMain export used by index.mjs.
 
+;// CONCATENATED MODULE: external "node:url"
+const external_node_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:url");
+;// CONCATENATED MODULE: ./src/loader.mjs
+// Block-plugin loader for the "Create / Refresh PR" GitHub Action.
+//
+// This module is intentionally NOT part of core.mjs: it performs file IO and
+// dynamic `import()`, so it carries no coverage threshold (consistent with the
+// Action entry point). The pure rendering logic lives in core.mjs
+// (`renderBlock` / `discoverSegments` / `fillAutoBlocks`).
+//
+// Loading model (single, unified mechanism for built-in and user blocks):
+//   - Every block is a `*.mjs` file exporting `export default (ctx) => string`.
+//   - The file name (minus `.mjs`) is the block name registered in the registry.
+//   - Built-in blocks ship inside the action (`src/blocks/` → bundled into
+//     `dist/blocks/` as an ncc asset); user blocks live in their repo
+//     (default `.github/create-pr/blocks/`, resolved from `process.cwd()`).
+//   - Order: built-in registry is loaded first, then the user directory; a user
+//     block with the same name overrides a built-in one.
+//   - Resilience: a single file that fails to import/run is skipped (treated as
+//     a missing block) without aborting the whole run.
+
+
+
+
+const loader_dirname = (0,external_node_path_namespaceObject.dirname)((0,external_node_url_namespaceObject.fileURLToPath)(import.meta.url))
+
+// Resolve the built-in blocks directory. When bundled by ncc, this file lives
+// at `dist/index.mjs` and the blocks asset is copied next to it at
+// `dist/blocks/`; in source form it is `src/loader.mjs` and the blocks are at
+// `src/blocks/`. We try both, preferring whichever exists.
+function builtinBlocksDir() {
+  const candidates = [
+    (0,external_node_path_namespaceObject.join)(loader_dirname, 'blocks'), // bundled asset layout (dist/blocks)
+    (0,external_node_path_namespaceObject.join)(loader_dirname, 'src', 'blocks'), // source layout (actions/create-pr/src/blocks)
+  ]
+  for (const dir of candidates) {
+    if ((0,external_node_fs_namespaceObject.existsSync)(dir)) return dir
+  }
+  return candidates[0]
+}
+
+// Scan a directory of `*.mjs` block plugins and register each by file name.
+// Missing/symbolic directories yield an empty registry (never throw). A single
+// file that throws on import is skipped (logged) so one bad plugin cannot break
+// the run. Returns a `Record<string, (ctx) => string>` registry.
+async function loadBlocks(dir) {
+  const registry = {}
+  if (!dir || !(0,external_node_fs_namespaceObject.existsSync)(dir)) return registry
+  let files
+  try {
+    files = (0,external_node_fs_namespaceObject.readdirSync)(dir).filter((f) => f.endsWith('.mjs'))
+  } catch {
+    return registry
+  }
+  for (const file of files) {
+    const name = file.replace(/\.mjs$/, '')
+    try {
+      const mod = await __nccwpck_require__(534)((0,external_node_url_namespaceObject.pathToFileURL)((0,external_node_path_namespaceObject.join)(dir, file)).href)
+      const fn = mod.default
+      if (typeof fn === 'function') {
+        registry[name] = fn
+      }
+    } catch {
+      // Skip a plugin that fails to load; rendering will treat it as missing
+      // and leave its `{{name}}` placeholder untouched.
+    }
+  }
+  return registry
+}
+
+// Build the full block registry: built-in blocks first, then user blocks
+// (overriding same-named built-ins). `userDir` is the user's plugin directory
+// (default `.github/create-pr/blocks` relative to the repo root / cwd).
+async function buildBlockRegistry(userDir) {
+  const builtin = await loadBlocks(builtinBlocksDir())
+  const user = await loadBlocks(userDir)
+  return { ...builtin, ...user }
+}
+
 ;// CONCATENATED MODULE: ./src/index.mjs
 // GitHub Action entry point for "Create / Refresh PR".
 //
 // Reads the Action inputs, injects the GH token into `process.env.GH_TOKEN`
 // (so that `core.mjs`'s `gh` calls authenticate), and delegates all the real
 // work to `runMain` in core.mjs. This layer is intentionally thin and holds no
-// PR logic of its own.
+// PR logic of its own — it only resolves inputs and builds the block-plugin
+// registry (via loader.mjs) before handing control to core.
+
+
 
 
 
@@ -27944,6 +28078,13 @@ async function main() {
 
   const templatePath = core.getInput('template') || '.github/pull-request-template.md'
 
+  // Optional directory of user-provided block plugins (default
+  // `.github/create-pr/blocks`). Resolved from the repo root (the checked-out
+  // working directory) so dynamic import paths are stable. Built-in blocks are
+  // always loaded by the loader; the user directory overrides same-named ones.
+  const blocksDir =
+    core.getInput('blocks-dir') || (0,external_node_path_namespaceObject.join)(process.cwd(), '.github', 'create-pr', 'blocks')
+
   // Authenticate `gh` with the supplied PAT (the default GITHUB_TOKEN cannot
   // create PRs). core.mjs reads GH_TOKEN from the environment; it never learns
   // the token's source.
@@ -27951,13 +28092,19 @@ async function main() {
   process.env.GH_TOKEN = token
 
   if (!head) {
-    core.setFailed('Could not resolve a head branch (no `head` input and no GITHUB_HEAD_REF/REF_NAME).')
+    core.setFailed(
+      'Could not resolve a head branch (no `head` input and no GITHUB_HEAD_REF/REF_NAME).',
+    )
     return
   }
 
+  // Build the block-plugin registry (built-in + user, user overrides built-in).
+  // Loading is resilient: a single bad plugin is skipped, never aborts the run.
+  const blocks = await buildBlockRegistry(blocksDir)
+
   // runMain throws on failure (from core.fail), so wrap it here and report via
   // setFailed. Do NOT swallow the error — setFailed alone does not stop the step.
-  await runMain({ head, base, dryRun, templatePath })
+  await runMain({ head, base, dryRun, templatePath, blocks })
 }
 
 main().catch((err) => {

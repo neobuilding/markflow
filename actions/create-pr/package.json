@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/index.mjs",
   "scripts": {
-    "build": "ncc build src/index.mjs -o dist",
+    "build": "ncc build src/index.mjs -o dist && node copy-blocks.mjs",
+    "copy-blocks": "node copy-blocks.mjs",
     "test": "vitest run"
   },
   "dependencies": {

@@ -16,12 +16,17 @@
 //   - Idempotent: if a PR for the head branch already exists, it is NOT
 //     re-created; instead its description is refreshed to reflect the latest
 //     commits on the branch. The PR body is split into independent auto blocks
-//     marked with `<!-- AUTO:key --> ... <!-- /AUTO:key -->` (title / type /
-//     issue / checklist / commits). Each block is refreshed from the template
-//     on every refresh (so the Checklist resets to its template state and must
-//     be re-ticked after each push), while anything a human writes OUTSIDE the
-//     blocks (the Description, any notes) is preserved verbatim. Re-running on
-//     the same commits is a no-op.
+//     marked with `<!-- AUTO:key --> ... <!-- /AUTO:key -->`. Each block is
+//     refreshed from the template on every refresh (so the Checklist resets to
+//     its template state and must be re-ticked after each push), while anything
+//     a human writes OUTSIDE the blocks (the Description, any notes) is
+//     preserved verbatim. Re-running on the same commits is a no-op.
+//   - The block keys are NOT hard-coded: every `<!-- AUTO:x -->` marker found
+//     in the template becomes an auto block, and any `{{name}}` placeholder
+//     inside a block is rendered by a "block" plugin (a `(ctx) => string`
+//     generator). Built-in blocks (`title` / `issue` / `commits`) ship with
+//     the action; users may add their own `*.mjs` plugins (e.g. `types`) in
+//     `.github/create-pr/blocks/`. Missing plugins leave `{{name}}` untouched.
 //   - Derives the PR title from the branch name (feature/*, fix/*, etc.).
 //
 // Requirements:
@@ -34,12 +39,18 @@ import * as core from '@actions/core'
 
 // Each auto-generated *block* is wrapped in symmetric markers carrying a key,
 // e.g. `<!-- AUTO:commits --> ... <!-- /AUTO:commits -->`. The script refreshes
-// each block independently by key. Blocks (title / type / issue / checklist /
-// commits) are regenerated from the template on every refresh; human-written
-// content outside the blocks (the Description, any notes) can be freely
-// interleaved and is preserved across refreshes. The template defines the
-// blocks; a PR body gains them on first creation and is then refreshed
-// block-by-block.
+// each block independently by key. The block keys are discovered dynamically
+// from the template (see `discoverSegments`), so the action adapts to any repo's
+// PR template instead of hard-coding a fixed set. Human-written content outside
+// the blocks (the Description, any notes) can be freely interleaved and is
+// preserved across refreshes.
+//
+// A block may contain `{{placeholder}}` tokens. Each placeholder is rendered by
+// a "block plugin" — a `(ctx) => string` function looked up in the `blocks`
+// registry (see `renderBlock`). Built-in plugins (`title` / `issue` /
+// `commits`) ship with the action; users may register their own (e.g. `types`)
+// via `.github/create-pr/blocks/`. A placeholder with no matching plugin is
+// left untouched (the `{{name}}` text is preserved verbatim).
 const AUTO_OPEN = '<!-- AUTO:'
 const AUTO_CLOSE = '<!-- /AUTO:'
 
@@ -159,67 +170,54 @@ export function extractFixes(head, commitsText) {
   return m ? m[1] : ''
 }
 
-// Tick the matching "Type of Change" boxes inside a block's text. Exported for
-// unit testing.
-export function tickTypeBoxes(blockText, typeFlags) {
-  return blockText
-    .replace(/^- \[ \] (Bug fix.*)$/m, (_, c) => (typeFlags.bug ? `- [x] ${c}` : `- [ ] ${c}`))
-    .replace(/^- \[ \] (New feature.*)$/m, (_, c) =>
-      typeFlags.feature ? `- [x] ${c}` : `- [ ] ${c}`,
-    )
-    .replace(/^- \[ \] (Breaking change.*)$/m, (_, c) =>
-      typeFlags.breaking ? `- [x] ${c}` : `- [ ] ${c}`,
-    )
-    .replace(/^- \[ \] (Documentation update.*)$/m, (_, c) =>
-      typeFlags.docs ? `- [x] ${c}` : `- [ ] ${c}`,
-    )
+// Render a block plugin by name from the registry. Returns the rendered string
+// when the plugin exists, otherwise the `{{name}}` placeholder text unchanged
+// (so a missing plugin never drops or corrupts human content). Exported for
+// unit testing. `blocks` maps a plugin name to its `(ctx) => string` generator.
+export function renderBlock(name, ctx, blocks) {
+  const fn = blocks && blocks[name]
+  if (!fn) return `{{${name}}}`
+  return fn(ctx)
 }
 
-// Fill every auto block of the PR template from the context. Each block is
-// refreshed independently by its marker key, so human-written content between
-// blocks is preserved. Replaces the {{title}} / {{issue}} / {{commits}}
-// placeholders, ticks the "Type of Change" boxes, and resets the Checklist to
-// its template state. Exported for tests.
-// Fill one auto block from the template: copy the block verbatim (so any extra
-// content inside it survives every refresh), swap its {{placeholder}} for
-// `value` (falling back to `fallback` when `value` is empty), and write it back
-// into `body`. Shared by every block that carries a single {{placeholder}};
-// blocks with bespoke logic (type's checkbox ticks, checklist's verbatim copy)
-// call replaceAutoBlock directly. Exported for unit testing.
-export function fillPlaceholderBlock(body, template, key, placeholder, value, fallback = '') {
-  const block = (blockContent(template, key) || '').replace(
-    new RegExp(`\\{\\{${placeholder}\\}\\}`, 'g'),
-    value || fallback,
-  )
-  return replaceAutoBlock(body, key, block.trim())
+// Discover every auto-block key present in a template by scanning its
+// `<!-- AUTO:x --> ... <!-- /AUTO:x -->` markers. Keys are returned in document
+// order, with duplicates de-duplicated (the first occurrence wins). A template
+// with no markers yields an empty list — in that case nothing is rendered and
+// the template is used verbatim as the PR body. Exported for unit testing.
+export function discoverSegments(template) {
+  const openRe = new RegExp(`${AUTO_OPEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([\\w-]+) -->`, 'g')
+  const keys = []
+  let m
+  while ((m = openRe.exec(template)) !== null) {
+    const key = m[1]
+    if (!keys.includes(key)) keys.push(key)
+  }
+  return keys
 }
 
-export function fillAutoBlocks(template, ctx) {
-  const { title, fixes, typeFlags, commits } = ctx
+// Fill every discovered auto block of the PR template from the context. The
+// block keys are discovered dynamically (no hard-coded list). For each block,
+// every `{{placeholder}}` token inside it is rendered by the matching plugin
+// from `blocks`; tokens without a matching plugin are left untouched. Blocks
+// with no `{{placeholder}}` (e.g. the Checklist) are copied verbatim, which
+// resets them to the template state on every refresh. Exported for tests.
+export function fillAutoBlocks(template, ctx, blocks = {}) {
   let out = template
-  // Title block: the {{title}} placeholder is swapped for the actual PR title;
-  // any other content inside the block is preserved on every refresh.
-  out = fillPlaceholderBlock(out, template, 'title', 'title', title)
-  // Type block: the "## Type of Change" section, with boxes ticked.
-  /* v8 ignore next: the `|| ''` fallback only matters if the template loses its
-     type block, which cannot happen in practice. */
-  const typeBlock = tickTypeBoxes(blockContent(template, 'type') || '', typeFlags)
-  out = replaceAutoBlock(out, 'type', typeBlock.trim())
-  // Issue block: the {{issue}} placeholder is swapped for the extracted issue
-  // number; the "## Fixes #(issue number)" heading (and any other content
-  // inside the block) is regenerated from the template on every refresh. "N/A"
-  // signals no linked issue.
-  out = fillPlaceholderBlock(out, template, 'issue', 'issue', fixes, 'N/A')
-  // Checklist block: copied verbatim from the template so it resets to the
-  // template state on every refresh (human ticks are dropped).
-  const checklist = blockContent(template, 'checklist')
-  /* v8 ignore next: the `: ''` fallback only matters if the template loses its
-     checklist block, which cannot happen in practice. */
-  out = replaceAutoBlock(out, 'checklist', checklist !== null ? checklist : '')
-  // Commits block: the {{commits}} placeholder is swapped for the commit list
-  // body; the "## Commits" heading (and any other content inside the block) is
-  // regenerated from the template on every refresh.
-  out = fillPlaceholderBlock(out, template, 'commits', 'commits', commits)
+  for (const key of discoverSegments(template)) {
+    // The key is guaranteed present by discoverSegments, so slice its inner
+    // content directly by the markers (no null branch to cover).
+    const open = openMarker(key)
+    const close = closeMarker(key)
+    const start = template.indexOf(open) + open.length
+    const end = template.indexOf(close)
+    const blockText = template.slice(start, end).trim()
+    // Render every `{{name}}` occurrence inside the block via its plugin.
+    const rendered = blockText.replace(/\{\{(\w[\w-]*)\}\}/g, (whole, name) =>
+      renderBlock(name, ctx, blocks),
+    )
+    out = replaceAutoBlock(out, key, rendered.trim())
+  }
   return out
 }
 
@@ -240,10 +238,21 @@ export function fillAutoBlocks(template, ctx) {
 //      refresh lands in case 2 and stops stacking.
 export function buildBody(filledTemplate, existingBody) {
   if (!existingBody) return filledTemplate
-  if (existingBody.includes(openMarker('title')) && existingBody.includes(closeMarker('title'))) {
+  // A body is "partitioned" (Case 2) when it carries at least one AUTO block.
+  // We detect this dynamically rather than hard-coding a specific key: any
+  // template may define its own block keys, and the renderer must adapt to all
+  // of them. The first auto-block key found in the body is used as the probe.
+  const bodyKeys = discoverSegments(existingBody)
+  if (bodyKeys.length > 0) {
     // Case 2: refresh each block independently by copying fresh content in.
+    // The set of keys to refresh is the union of the keys present in the
+    // existing body and the keys present in the fresh template, so that a block
+    // added to the template after the PR was created is still picked up, and a
+    // block removed from the template leaves the (now stale) existing block
+    // intact. No key is hard-coded.
+    const refreshKeys = new Set([...bodyKeys, ...discoverSegments(filledTemplate)])
     let out = existingBody
-    for (const key of ['title', 'type', 'issue', 'checklist', 'commits']) {
+    for (const key of refreshKeys) {
       const fresh = blockContent(filledTemplate, key)
       if (fresh !== null) out = replaceAutoBlock(out, key, fresh)
     }
@@ -266,10 +275,14 @@ export function blockContent(body, key) {
 
 // Assemble the context object for fillAutoBlocks from the branch and resolved
 // base ref. The commit subjects drive the type classification and issue-number
-// extraction. Exported for unit testing.
+// extraction. Exported for unit testing. The context exposes `head` and `base`
+// (the resolved base ref) so block plugins can reference them, plus the derived
+// fields (`title` / `fixes` / `typeFlags` / `commits`).
 export function buildCtx(head, baseRef, title, commitsSection) {
   const commitsText = buildDescription(head, baseRef).replace(/^- /gm, '')
   return {
+    head,
+    base: baseRef,
     title,
     fixes: extractFixes(head, commitsText),
     typeFlags: classifyChange(head, commitsText),
@@ -280,13 +293,15 @@ export function buildCtx(head, baseRef, title, commitsSection) {
 }
 
 // Build the full PR body for an existing PR: re-fill the template's auto blocks
-// and preserve any human-written content outside those blocks. Exported for
-// tests.
+// and preserve any human-written content outside those blocks. `blocks` is the
+// registry of block plugins used to render `{{placeholder}}` tokens. Exported
+// for tests.
 export function buildBodyFor(
   head,
   baseRef,
   existingBody,
   templatePath = '.github/pull-request-template.md',
+  blocks = {},
 ) {
   let filledTemplate
   try {
@@ -294,6 +309,7 @@ export function buildBodyFor(
     filledTemplate = fillAutoBlocks(
       tpl,
       buildCtx(head, baseRef, deriveTitle(head), buildCommitsSection(head, baseRef)),
+      blocks,
     )
   } catch {
     /* v8 ignore next */
@@ -324,6 +340,7 @@ export async function runMain({
   base = 'main',
   dryRun = false,
   templatePath = '.github/pull-request-template.md',
+  blocks = {},
 }) {
   const ghVersion = tryRun('gh', ['--version'])
   if (!ghVersion) {
@@ -418,7 +435,7 @@ export async function runMain({
   let filledTemplate
   try {
     const tpl = readFileSync(templatePath, 'utf8')
-    filledTemplate = fillAutoBlocks(tpl, buildCtx(head, baseRef, title, commitsSection))
+    filledTemplate = fillAutoBlocks(tpl, buildCtx(head, baseRef, title, commitsSection), blocks)
   } catch {
     // Template missing/unreadable: fall back to just the commits list.
     filledTemplate = commitsSection

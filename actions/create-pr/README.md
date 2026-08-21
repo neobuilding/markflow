@@ -18,12 +18,75 @@ template and AUTO-block body management.
 - Idempotent: if a PR for the head branch already exists, it is refreshed (not
   re-created). Re-running on the same commits is a no-op.
 - Splits the PR body into independent auto blocks marked with
-  `<!-- AUTO:key --> ... <!-- /AUTO:key -->` (`title` / `type` / `issue` /
-  `checklist` / `commits`). Each block is refreshed from the template on every
-  run, while human-written content outside the blocks (Description, notes) is
-  preserved verbatim.
-- Derives the PR title from the branch name (`feature/*`, `fix/*`, etc.) and
-  auto-ticks the "Type of Change" boxes.
+  `<!-- AUTO:key --> ... <!-- /AUTO:key -->`. The block **keys are discovered
+  dynamically** from the template — any `<!-- AUTO:x -->` marker becomes a block,
+  so the action adapts to any repo's PR template instead of hard-coding a fixed
+  set. Human-written content outside the blocks (Description, notes) is preserved
+  verbatim.
+- Each block may contain `{{placeholder}}` tokens. A token is rendered by a
+  **block plugin** — a `(ctx) => string` generator looked up in the block
+  registry. Built-in plugins (`title` / `issue` / `commits`) ship with the
+  action; users may add their own (e.g. `types`) in `.github/create-pr/blocks/`.
+  A token with no matching plugin is left untouched (`{{name}}` stays verbatim),
+  so a missing plugin never drops or corrupts content.
+- Derives the PR title from the branch name (`feature/*`, `fix/*`, etc.).
+
+## Block plugin mechanism
+
+The action is **fully plugin-based** (no declarative config). There is a single,
+uniform extension mechanism: a directory of `*.mjs` files.
+
+- **Built-in blocks** (shipped with the action, minimum universal set):
+  - `title` — renders the PR title (derived from the branch name).
+  - `issue` — renders the linked issue number, or `N/A` when none is referenced.
+  - `commits` — renders the `base..HEAD` commit list.
+- **Custom blocks**: drop a `.mjs` file in `.github/create-pr/blocks/` of your
+  repo. Each file exports a default function `export default (ctx) => string`,
+  and the **file name (minus `.mjs`) is the block name** used as the
+  `{{placeholder}}` in your template. Custom blocks are loaded _after_ the
+  built-ins, so a same-named file overrides a built-in.
+
+The `ctx` passed to every plugin includes: `head` (branch name), `base` (resolved
+base ref), `title`, `fixes` (extracted issue number), `typeFlags` (derived by
+`classifyChange`: `bug` / `feature` / `breaking` / `docs`), and `commits`.
+
+Example — a repo-provided `types.mjs` plugin that generates the "Type of Change"
+checkboxes (the action core never hard-codes any checkbox wording):
+
+```js
+// .github/create-pr/blocks/types.mjs
+export default (ctx) => {
+  const f = ctx.typeFlags || {}
+  const row = (label, on) => `- [${on ? 'x' : ' '}] ${label}`
+  return [
+    row('Bug fix (non-breaking change which fixes an issue)', f.bug),
+    row('New feature (non-breaking change which adds functionality)', f.feature),
+    row(
+      'Breaking change (fix or feature that would cause existing functionality to not work as expected)',
+      f.breaking,
+    ),
+    row('Documentation update', f.docs),
+  ].join('\n')
+}
+```
+
+With the template containing:
+
+```markdown
+<!-- AUTO:type -->
+
+## Type of Change
+
+{{types}}
+<!-- /AUTO:type -->
+```
+
+The action refreshes the block on every run, re-rendering `{{types}}` from the
+current branch/commits. Blocks with **no** `{{placeholder}}` (like the
+Checklist) are simply copied verbatim, which resets them to the template state.
+
+A template with **no** `<!-- AUTO:x -->` markers at all is used verbatim as the
+PR body (no block rendering), so plain templates still "just create a PR".
 
 ## Inputs
 
@@ -33,6 +96,10 @@ template and AUTO-block body management.
 - `dry-run` (optional, default `false`): Print the body without writing.
 - `template` (optional, default `.github/pull-request-template.md`): Path to the
   PR template (override for custom repos).
+- `blocks-dir` (optional, default `.github/create-pr/blocks`): Directory of
+  user-provided block plugins (relative paths are resolved from the repo root).
+  Same-named files override the built-in blocks. Set to an empty/absent
+  directory to use only the built-in blocks.
 - `token` (required): GH token (PAT with `repo` scope). `GITHUB_TOKEN` cannot
   create PRs.
 

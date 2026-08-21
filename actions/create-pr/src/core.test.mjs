@@ -4,6 +4,10 @@
 // `runMain` is never called by these tests. Importing is safe because core.mjs
 // no longer runs anything on import (the previous CLI direct-invocation guard
 // was dropped when it became a library used by index.mjs).
+//
+// Block-plugin loading (`loadBlocks`) lives in loader.mjs (file IO + dynamic
+// import) and is exercised by its own loader.test.mjs; it is intentionally NOT
+// part of the core coverage gate.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
@@ -13,14 +17,49 @@ import {
   classifyChange,
   extractFixes,
   fillAutoBlocks,
-  fillPlaceholderBlock,
   replaceAutoBlock,
   blockContent,
-  tickTypeBoxes,
   buildBody,
   buildBodyFor,
   markersFor,
+  renderBlock,
+  discoverSegments,
 } from './core.mjs'
+import titleBlock from './blocks/title.mjs'
+import issueBlock from './blocks/issue.mjs'
+import commitsBlock from './blocks/commits.mjs'
+
+// A registry mirroring the action's built-in blocks, used by tests that render
+// the real template (the same plugins shipped in src/blocks/). Plugin names
+// match the template's placeholders: `title` / `issue` / `commits`.
+function builtinRegistry() {
+  return {
+    title: titleBlock,
+    issue: issueBlock,
+    commits: commitsBlock,
+  }
+}
+
+// Markflow's `types` plugin, inlined here so core tests can render the real
+// template's `{{types}}` placeholder without depending on the repo-side file.
+const typesBlock = (ctx) => {
+  const flags = (ctx && ctx.typeFlags) || {}
+  const row = (label, on) => `- [${on ? 'x' : ' '}] ${label}`
+  return [
+    row('Bug fix (non-breaking change which fixes an issue)', flags.bug),
+    row('New feature (non-breaking change which adds functionality)', flags.feature),
+    row(
+      'Breaking change (fix or feature that would cause existing functionality to not work as expected)',
+      flags.breaking,
+    ),
+    row('Documentation update', flags.docs),
+  ].join('\n')
+}
+
+// The full registry markflow uses: built-in blocks + the repo's `types` plugin.
+function markflowRegistry() {
+  return { ...builtinRegistry(), types: typesBlock }
+}
 
 // Guard against a duplicated / malformed block marker silently shrinking a block.
 describe('PR template integrity', () => {
@@ -62,6 +101,14 @@ describe('PR template integrity', () => {
     expect(tpl).toContain('{{title}}')
     expect(tpl).toContain('{{issue}}')
     expect(tpl).toContain('{{commits}}')
+  })
+
+  it('uses the {{types}} placeholder (not hand-written checkbox lines) in the type block', () => {
+    expect(tpl).toContain('<!-- AUTO:type -->')
+    expect(tpl).toContain('{{types}}')
+    // No hand-written checklist lines remain inside the type block — the
+    // `types` plugin generates them so they are not duplicated.
+    expect(tpl).not.toContain('- [ ] Bug fix (non-breaking change which fixes an issue)')
   })
 })
 
@@ -186,79 +233,92 @@ describe('auto block markers', () => {
   })
 })
 
-describe('fillPlaceholderBlock', () => {
-  it('replaces the {{placeholder}} and preserves other content inside the block', () => {
-    const template = '<!-- AUTO:title -->\n# {{title}}\n> subtitle line\n<!-- /AUTO:title -->'
-    const out = fillPlaceholderBlock(template, template, 'title', 'title', 'My Title')
-    expect(blockContent(out, 'title')).toBe('# My Title\n> subtitle line')
+// --- renderBlock (the universal plugin renderer) ------------------------
+describe('renderBlock', () => {
+  it('renders a registered block plugin, passing ctx', () => {
+    const reg = { greet: (ctx) => `hi ${ctx.name}` }
+    expect(renderBlock('greet', { name: 'x' }, reg)).toBe('hi x')
   })
 
-  it('replaces every occurrence of the placeholder (global)', () => {
-    const template = '<!-- AUTO:x -->\n{{v}} and {{v}}\n<!-- /AUTO:x -->'
-    const out = fillPlaceholderBlock(template, template, 'x', 'v', 'VAL')
-    expect(blockContent(out, 'x')).toBe('VAL and VAL')
-  })
-
-  it('falls back to fallback when value is empty', () => {
-    const template = '<!-- AUTO:issue -->\n## Fixes #(n)\n\n{{issue}}\n<!-- /AUTO:issue -->'
-    const out = fillPlaceholderBlock(template, template, 'issue', 'issue', '', 'N/A')
-    expect(blockContent(out, 'issue')).toBe('## Fixes #(n)\n\nN/A')
-  })
-
-  it('is a no-op (never drops human text) when the block is absent from the body', () => {
-    const body = 'human paragraph outside blocks'
-    const template = '<!-- AUTO:title -->\n# {{title}}\n<!-- /AUTO:title -->'
-    expect(fillPlaceholderBlock(body, template, 'title', 'title', 'X')).toBe(body)
-  })
-
-  it('covers the null block fallback when the block is absent from the template', () => {
-    const body = 'human paragraph'
-    const template = 'no auto blocks here'
-    expect(fillPlaceholderBlock(body, template, 'title', 'title', 'X')).toBe(body)
+  it('returns the {{name}} placeholder untouched when no plugin is registered', () => {
+    expect(renderBlock('missing', {}, {})).toBe('{{missing}}')
+    expect(renderBlock('missing', {}, undefined)).toBe('{{missing}}')
   })
 })
 
-// --- tickTypeBoxes -------------------------------------------------------
-describe('tickTypeBoxes', () => {
-  const block = `## Type of Change
-
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Documentation update`
-
-  it('ticks the Bug fix box and leaves others unticked', () => {
-    const out = tickTypeBoxes(block, {
-      bug: true,
-      feature: false,
-      breaking: false,
-      docs: false,
-    })
-    expect(out).toContain('- [x] Bug fix (non-breaking change which fixes an issue)')
-    expect(out).toContain('- [ ] New feature (non-breaking change which adds functionality)')
+// --- discoverSegments ----------------------------------------------------
+describe('discoverSegments', () => {
+  it('extracts every AUTO:key marker key in document order', () => {
+    const tpl = ['<!-- AUTO:title -->', '<!-- AUTO:issue -->', '<!-- AUTO:commits -->'].join('\n')
+    expect(discoverSegments(tpl)).toEqual(['title', 'issue', 'commits'])
   })
 
-  it('ticks the Documentation box when docs flag is set', () => {
-    const out = tickTypeBoxes(block, {
-      bug: false,
-      feature: false,
-      breaking: false,
-      docs: true,
-    })
-    expect(out).toContain('- [x] Documentation update')
+  it('returns an empty list when the template has no markers', () => {
+    expect(discoverSegments('just plain text, no markers')).toEqual([])
   })
 
-  it('ticks New feature and Breaking change together', () => {
-    const out = tickTypeBoxes(block, {
-      bug: false,
-      feature: true,
-      breaking: true,
-      docs: false,
-    })
-    expect(out).toContain('- [x] New feature (non-breaking change which adds functionality)')
-    expect(out).toContain(
-      '- [x] Breaking change (fix or feature that would cause existing functionality to not work as expected)',
+  it('de-duplicates repeated keys (first occurrence wins)', () => {
+    const tpl = '<!-- AUTO:x -->\na\n<!-- /AUTO:x -->\nxxx\n<!-- AUTO:x -->\nb\n<!-- /AUTO:x -->'
+    expect(discoverSegments(tpl)).toEqual(['x'])
+  })
+})
+
+// --- built-in block plugins (src/blocks/*) -------------------------------
+describe('built-in block plugins', () => {
+  it('title: derives the title from the branch name', () => {
+    expect(titleBlock({ head: 'feature/pipeline-test' })).toBe('Pipeline test')
+  })
+
+  it('title: yields an empty string for an empty head (no crash)', () => {
+    expect(titleBlock({ head: '' })).toBe('')
+  })
+
+  it('issue: returns the linked issue number', () => {
+    expect(issueBlock({ fixes: '42' })).toBe('42')
+  })
+
+  it('issue: returns N/A when no issue is linked (empty-value policy lives in the plugin)', () => {
+    expect(issueBlock({ fixes: '' })).toBe('N/A')
+  })
+
+  it('commits: renders ctx.commits when provided by the caller', () => {
+    expect(commitsBlock({ head: 'feature/x', commits: '- abc1234 did a thing\n' })).toContain(
+      '- abc1234 did a thing',
     )
+  })
+
+  it('commits: falls back to buildCommitsSection (gitLogFn injectable) when ctx.commits is undefined', () => {
+    const fakeLog = () => '- abc1234 did a thing\n'
+    const out = commitsBlock({ head: 'feature/x', base: 'origin/main', gitLogFn: fakeLog })
+    expect(out).toContain('- abc1234 did a thing')
+  })
+
+  it('commits: uses empty head / default base fallbacks when ctx.head/base are absent', () => {
+    const fakeLog = (h, b) => `- log for ${b}`
+    const out = commitsBlock({ gitLogFn: fakeLog })
+    expect(out).toContain('- log for main')
+  })
+
+  it('commits: falls back to the real `git` CLI when no gitLogFn is provided', () => {
+    // No gitLogFn => the built-in default runs `execFileSync('git', ...)`.
+    // In a git checkout this returns the real commit list (a string).
+    const out = commitsBlock({ head: 'feature/auto-pr', base: 'origin/main' })
+    expect(typeof out).toBe('string')
+  })
+
+  it('commits: returns an empty string when the git log throws', () => {
+    const out = commitsBlock({
+      head: 'x',
+      gitLogFn: () => {
+        throw new Error('boom')
+      },
+    })
+    expect(out).toBe('')
+  })
+
+  it('commits: returns an empty string when the git log yields nothing', () => {
+    const out = commitsBlock({ head: 'x', gitLogFn: () => '' })
+    expect(out).toBe('')
   })
 })
 
@@ -266,55 +326,98 @@ describe('tickTypeBoxes', () => {
 describe('fillAutoBlocks', () => {
   const tpl = readFileSync('.github/pull-request-template.md', 'utf8')
 
-  it('fills title, issue, commits and ticks the type block from ctx', () => {
-    const out = fillAutoBlocks(tpl, {
-      title: 'My PR',
-      fixes: '42',
-      typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '- abc1234 did a thing\n',
-    })
+  it('fills title, issue, commits and renders the types block via the registry', () => {
+    const out = fillAutoBlocks(
+      tpl,
+      {
+        head: 'feature/auto-pr',
+        base: 'origin/main',
+        title: 'My PR',
+        fixes: '42',
+        typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+        commits: '- abc1234 did a thing\n',
+        gitLogFn: () => '- abc1234 did a thing\n',
+      },
+      markflowRegistry(),
+    )
     expect(blockContent(out, 'title')).toBe('# My PR')
     expect(blockContent(out, 'issue')).toBe('## Fixes #(issue number)\n\n42')
     expect(blockContent(out, 'commits')).toContain('## Commits')
     expect(blockContent(out, 'commits')).toContain('- abc1234 did a thing')
+    // The `types` plugin (not hard-coded text) produced the checkbox line.
     expect(blockContent(out, 'type')).toContain(
       '- [x] Bug fix (non-breaking change which fixes an issue)',
     )
   })
 
-  it('shows "N/A" as the issue value when none is referenced', () => {
-    const out = fillAutoBlocks(tpl, {
-      title: 'T',
-      fixes: '',
-      typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '',
-    })
+  it('shows "N/A" as the issue value when none is referenced (issues plugin policy)', () => {
+    const out = fillAutoBlocks(
+      tpl,
+      {
+        head: 'feature/auto-pr',
+        base: 'origin/main',
+        title: 'T',
+        fixes: '',
+        typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+        commits: '',
+      },
+      markflowRegistry(),
+    )
     expect(blockContent(out, 'issue')).toBe('## Fixes #(issue number)\n\nN/A')
   })
 
   it('preserves the human Description region but resets the Checklist block to template state', () => {
-    const out = fillAutoBlocks(tpl, {
-      title: 'T',
-      fixes: '',
-      typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '',
-    })
+    const out = fillAutoBlocks(
+      tpl,
+      {
+        head: 'feature/auto-pr',
+        base: 'origin/main',
+        title: 'T',
+        fixes: '',
+        typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+        commits: '',
+      },
+      markflowRegistry(),
+    )
     // Description is outside the blocks -> preserved as a region.
     expect(out).toContain('## Description')
-    // Checklist is an auto block -> present (reset to template, all unticked).
+    // Checklist is an auto block with no {{placeholder}} -> reset to template state.
     expect(blockContent(out, 'checklist')).toContain('## Checklist')
     expect(blockContent(out, 'checklist')).toContain('- [ ] My code follows the style guidelines')
   })
 
   it('renders an empty title block when no title is provided', () => {
-    const out = fillAutoBlocks(tpl, {
-      title: '',
-      fixes: '',
-      typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '',
-    })
+    const out = fillAutoBlocks(
+      tpl,
+      {
+        head: '',
+        base: 'origin/main',
+        title: '',
+        fixes: '',
+        typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+        commits: '',
+      },
+      markflowRegistry(),
+    )
     // blockContent trims, so the rendered "# " (title || '') collapses to "#".
     expect(blockContent(out, 'title')).toBe('#')
+  })
+
+  it('leaves {{name}} untouched when no plugin is registered for it', () => {
+    const localTpl = '<!-- AUTO:custom -->\n## Custom\n\n{{custom}}\n<!-- /AUTO:custom -->'
+    const out = fillAutoBlocks(localTpl, {}, {})
+    expect(blockContent(out, 'custom')).toBe('## Custom\n\n{{custom}}')
+  })
+
+  it('renders every occurrence of a {{placeholder}} inside a block (global)', () => {
+    const localTpl = '<!-- AUTO:x -->\n{{v}} and {{v}}\n<!-- /AUTO:x -->'
+    const out = fillAutoBlocks(localTpl, {}, { v: () => 'VAL' })
+    expect(blockContent(out, 'x')).toBe('VAL and VAL')
+  })
+
+  it('a template with no AUTO markers is used verbatim (no rendering)', () => {
+    const plain = 'Just plain text.\nNo markers here.'
+    expect(fillAutoBlocks(plain, { title: 'X' }, builtinRegistry())).toBe(plain)
   })
 })
 
@@ -323,7 +426,11 @@ describe('buildBody', () => {
   const tpl = readFileSync('.github/pull-request-template.md', 'utf8')
 
   function fill(ctx) {
-    return fillAutoBlocks(tpl, ctx)
+    return fillAutoBlocks(
+      tpl,
+      { head: 'feature/auto-pr', base: 'origin/main', ...ctx },
+      markflowRegistry(),
+    )
   }
 
   it('returns the filled template alone on first creation (no existing body)', () => {
@@ -345,12 +452,18 @@ describe('buildBody', () => {
     })
     // Build a realistic existing body: take the template, fill with STALE values,
     // and inject human notes outside the blocks.
-    const stale = fillAutoBlocks(tpl, {
-      title: 'Stale Title',
-      fixes: '1',
-      typeFlags: { bug: true, feature: false, breaking: false, docs: false },
-      commits: '- old commit\n',
-    })
+    const stale = fillAutoBlocks(
+      tpl,
+      {
+        head: 'feature/auto-pr',
+        base: 'origin/main',
+        title: 'Stale Title',
+        fixes: '1',
+        typeFlags: { bug: true, feature: false, breaking: false, docs: false },
+        commits: '- old commit\n',
+      },
+      markflowRegistry(),
+    )
     const existingBody = `human note above\n\n${stale}\n\nhuman note below`
     const out = buildBody(filled, existingBody)
     expect(out).toContain('human note above')
@@ -381,6 +494,32 @@ describe('buildBody', () => {
     expect(out).toContain('Some human context here')
   })
 
+  it('refreshes a CUSTOM auto block key (not in any hard-coded list) on update', () => {
+    // A repo that added its own block (e.g. `<!-- AUTO:security -->`) must be
+    // refreshed like any built-in block, because block keys are discovered
+    // dynamically — there is no fixed key list to keep in sync.
+    const customTpl =
+      '<!-- AUTO:title -->\n# {{title}}\n<!-- /AUTO:title -->\n\n' +
+      '<!-- AUTO:security -->\n## Security\n\n{{security}}\n<!-- /AUTO:security -->'
+    const freshCtx = { title: 'Fresh', security: 'scanned' }
+    const filled = fillAutoBlocks(customTpl, freshCtx, {
+      title: (c) => c.title,
+      security: (c) => c.security,
+    })
+    const stale = fillAutoBlocks(
+      customTpl,
+      { title: 'Stale', security: 'UNSCANNED' },
+      {
+        title: (c) => c.title,
+        security: (c) => c.security,
+      },
+    )
+    const out = buildBody(filled, stale)
+    expect(blockContent(out, 'title')).toBe('# Fresh')
+    expect(blockContent(out, 'security')).toBe('## Security\n\nscanned')
+    expect(out).not.toContain('UNSCANNED')
+  })
+
   it('skips a block when it is absent from the fresh template (leaves existing block intact)', () => {
     const filled = fill({
       title: 'Auto pr',
@@ -404,11 +543,22 @@ describe('buildBody', () => {
 // --- buildBodyFor -------------------------------------------------------
 describe('buildBodyFor', () => {
   it('builds a first-creation body from the template (no existing body)', () => {
-    const out = buildBodyFor('feature/auto-pr', 'origin/main', '')
+    const out = buildBodyFor(
+      'feature/auto-pr',
+      'origin/main',
+      '',
+      '.github/pull-request-template.md',
+      markflowRegistry(),
+    )
     expect(out).toContain('# Auto pr')
     expect(out).toContain('<!-- AUTO:title -->')
     expect(out).toContain('<!-- /AUTO:title -->')
     expect(out).toContain('## Checklist')
+    // The types block is rendered by the plugin, not hard-coded.
+    expect(out).toContain('- [ ] My code follows the style guidelines')
+    // head is feature/auto-pr => the `feature` box is ticked, `bug` is not.
+    expect(out).toContain('- [x] New feature (non-breaking change which adds functionality)')
+    expect(out).not.toContain('- [x] Bug fix (non-breaking change which fixes an issue)')
   })
 
   it('refreshes only the auto blocks when an existing partitioned body is given', () => {
@@ -416,8 +566,16 @@ describe('buildBodyFor', () => {
       `human above\n\n${readFileSync('.github/pull-request-template.md', 'utf8')
         .replace('{{title}}', 'Stale')
         .replace('{{issue}}', '1')
-        .replace('{{commits}}', '- old commit\n')}\n\n` + `human below`
-    const out = buildBodyFor('feature/auto-pr', 'origin/main', existing)
+        .replace('{{commits}}', '- old commit\n')
+        .replace('{{types}}', '- [ ] Bug fix (non-breaking change which fixes an issue)')}\n\n` +
+      `human below`
+    const out = buildBodyFor(
+      'feature/auto-pr',
+      'origin/main',
+      existing,
+      '.github/pull-request-template.md',
+      markflowRegistry(),
+    )
     expect(out).toContain('human above')
     expect(out).toContain('human below')
     expect(out).toContain('# Auto pr')
