@@ -1,4 +1,10 @@
-// Unit tests for the local-render CLI (cli-render.mjs).
+// Integration tests for the local-render CLI (cli-render.mjs).
+//
+// This file is intentionally OUTSIDE the unit-test glob (actions/create-pr/src/**/*.test.mjs)
+// because it spawns a real child process and reads the real repository template
+// file — i.e. it performs real filesystem I/O, which unit tests must not do.
+// Run it on demand (e.g. `node --experimental-vm-modules node_modules/vitest/vitest.mjs run e2e/integration`)
+// or via a dedicated integration CI job, not as part of `npm run ci` coverage.
 //
 // cli-render.mjs is the "preview locally" entry point: it parses CLI flags,
 // reads the template (defaulting to the same path the Action uses) and the
@@ -15,8 +21,8 @@ import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const CLI = join(__dirname, 'cli-render.mjs')
-const REPO_ROOT = join(__dirname, '..', '..', '..')
+const CLI = join(__dirname, '..', '..', 'actions', 'create-pr', 'src', 'cli-render.mjs')
+const REPO_ROOT = join(__dirname, '..', '..')
 const DEFAULT_TEMPLATE = join(REPO_ROOT, '.github', 'pull-request-template.md')
 
 function runCli(args, cwd = REPO_ROOT) {
@@ -27,7 +33,7 @@ function runCli(args, cwd = REPO_ROOT) {
   })
 }
 
-describe('cli-render — local preview CLI', () => {
+describe('cli-render — local preview CLI (integration)', () => {
   it('exits 1 when --head is missing', async () => {
     const { code, stderr } = await runCli(['--no-git'])
     expect(code).toBe(1)

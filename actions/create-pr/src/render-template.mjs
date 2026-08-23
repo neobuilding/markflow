@@ -65,6 +65,10 @@ export async function renderTemplate({
   existingBody = null,
   blocksDir = DEFAULT_BLOCKS_DIR,
   noGit = false,
+  // Allow callers (notably tests) to inject a git service; fall back to the
+  // real exec-backed one only when omitted. Keeping this injectable is what
+  // lets unit tests cover resolveBaseRef's branches without spawning git.
+  git: injectedGit = null,
 } = {}) {
   if (!head) {
     throw new Error('renderTemplate: `head` is required')
@@ -77,7 +81,7 @@ export async function renderTemplate({
   // service; the `commits` block pulls the commit list from ctx.services.git
   // itself. `--no-git` omits it entirely (commits renders empty).
   const services = {}
-  if (!noGit) services.git = createExecGitService()
+  if (!noGit) services.git = injectedGit || createExecGitService()
 
   // Build the block-plugin registry (built-in + user; user overrides built-in).
   // Loading plugins is part of rendering and only needed here.

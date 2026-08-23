@@ -4,8 +4,7 @@
 // The block-plugin loading (loadBlocks) lives in loader.mjs (file IO + dynamic
 // import) and is exercised by loader.test.mjs; the orchestration flow
 // (createOrRefreshPr) is exercised by orchestration.test.mjs with fake services.
-import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { describe, it, expect, vi } from 'vitest'
 import {
   deriveTitle,
   buildCommitsSection,
@@ -24,6 +23,70 @@ import {
 import titleBlock from './blocks/title.mjs'
 import issueBlock from './blocks/issue.mjs'
 import commitsBlock from './blocks/commits.mjs'
+
+// Mock the fs boundary so no test reads from (or depends on) the real repo
+// filesystem at runtime. The template content is supplied INLINE by the mock
+// (PR_TEMPLATE, a verbatim copy of .github/pull-request-template.md, hoisted so
+// the module-level `readFileSync(...)` call below sees it). The block-plugin
+// loading below still uses loader.mjs's real dynamic import() against a fixture
+// directory (module loading, not file I/O). existsSync is stubbed true because
+// the fixture directories are real test assets.
+const { readFileSync, existsSync, readdirSync, PR_TEMPLATE } = vi.hoisted(() => {
+  const prTemplate = [
+    '<!-- AUTO:title -->',
+    '# {{title}}',
+    '<!-- /AUTO:title -->',
+    '',
+    '## Description',
+    '',
+    'Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context.',
+    '',
+    '<!-- AUTO:type -->',
+    '## Type of Change',
+    '',
+    '{{types}}',
+    '<!-- /AUTO:type -->',
+    '',
+    '<!-- AUTO:checklist -->',
+    '## Checklist',
+    '',
+    '- [ ] My code follows the style guidelines of this project',
+    '- [ ] I have performed a self-review of my own code',
+    '- [ ] I have commented my code, particularly in hard-to-understand areas',
+    '- [ ] I have made corresponding changes to the documentation',
+    '- [ ] My changes generate no new warnings',
+    '- [ ] I ran `npm run quality` locally and it passes (Prettier + Stylelint + Markdownlint + Secretlint)',
+    '- [ ] I have added tests that prove my fix is effective or that my feature works',
+    '- [ ] New and existing unit tests pass locally with my changes',
+    '<!-- /AUTO:checklist -->',
+    '',
+    '<!-- AUTO:issue -->',
+    '## Fixes #(issue number)',
+    '',
+    '{{issue}}',
+    '<!-- /AUTO:issue -->',
+    '',
+    '<!-- AUTO:commits -->',
+    '## Commits',
+    '',
+    '{{commits}}',
+    '<!-- /AUTO:commits -->',
+    '',
+  ].join('\n')
+  // readdirSync is stubbed to the fixture listing so loader.mjs's dynamic
+  // import() resolves the real fixture plugins without touching the real repo.
+  return {
+    readFileSync: vi.fn(() => prTemplate),
+    existsSync: vi.fn(() => true),
+    readdirSync: vi.fn(() => ['good.mjs', 'notafn.mjs', 'readme.md', 'types.mjs']),
+    PR_TEMPLATE: prTemplate,
+  }
+})
+vi.mock('./services/fs-glue.mjs', () => ({
+  readFileSync,
+  existsSync,
+  readdirSync,
+}))
 
 // A registry mirroring the action's built-in blocks, used by tests that render
 // the real template (the same plugins shipped in src/blocks/). Plugin names
@@ -549,17 +612,25 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadBlocks } from './loader.mjs'
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-const TEMPLATE_PATH = join(REPO_ROOT, '.github', 'pull-request-template.md')
-const TYPES_DIR = join(REPO_ROOT, '.github', 'create-pr', 'blocks')
+const __dirname = dirname(fileURLToPath(import.meta.url))
+// Load the user block plugin from a fixture directory (a test asset), not the
+// real repo `.github/create-pr/blocks`. `loadBlocks` still performs a real
+// dynamic `import()` of the fixture plugin — preserving the end-to-end
+// "template placeholder ⇄ plugin" alignment check — but it never reads the
+// real repository filesystem (no node:fs access).
+const TYPES_DIR = join(__dirname, '__fixtures__', 'blocks')
 
-// 直接用 loader 加载仓库里真实的 `types.mjs` 插件（与 action 运行时一致），
+// 用 loader 加载 fixture 里的 `types.mjs` 插件（与 action 运行时同构），
 // 而不是依赖测试内联的副本 —— 这样端到端地验证"模板 {{types}} 占位符"和
-// "仓库提供的插件"真的对得上，避免两者悄悄漂移。
+// "插件"真的对得上，避免两者悄悄漂移。加载走真实 import()，但不碰真实 fs。
 async function realMarkflowRegistry() {
   const user = await loadBlocks(TYPES_DIR)
   return { ...builtinRegistry(), ...user }
 }
+
+// The path handed to the mocked readFileSync; its value is irrelevant because
+// the mock returns PR_TEMPLATE regardless of the argument (no real fs access).
+const TEMPLATE_PATH = '<mocked-template-path>'
 
 // 渲染完整 PR body：完全本地、确定性。遵循插件自治原则——commits 由 commits
 // 插件从 ctx.services.git 自取，这里只注入一个 fake git service 提供确定性的
@@ -573,6 +644,9 @@ async function renderFullPr({
   commits = '',
 }) {
   const registry = await realMarkflowRegistry()
+  // The template is delivered via the mocked fs-glue readFileSync (no real
+  // filesystem access); supply the inlined PR_TEMPLATE as its return value.
+  readFileSync.mockReturnValue(PR_TEMPLATE)
   const tpl = readFileSync(TEMPLATE_PATH, 'utf8')
   const ctx = {
     head,
