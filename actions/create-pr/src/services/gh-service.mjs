@@ -12,7 +12,7 @@
 //   prEdit(number, body): void             — edits PR #number's body
 //   prListUrls(head, base): string|null     — `gh pr list --jq .[0].url` (concurrency check)
 import process from 'node:process'
-import { execFileSync } from 'node:child_process'
+import { execFileSync } from './exec-glue.mjs'
 
 function run(cmd, cmdArgs, opts = {}) {
   return execFileSync(cmd, cmdArgs, {

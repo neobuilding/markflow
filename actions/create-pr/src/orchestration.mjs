@@ -1,8 +1,6 @@
 // Orchestration: the create-or-refresh-PR decision flow, decoupled from I/O.
 //
-// This module is the equivalent of the old `runMain` in core.mjs, but with every
-// external interaction behind an injectable service:
-//   - TemplateSource  (read the PR template)
+// Every external interaction is behind an injectable service:
 //   - GitService      (fetch, rev-parse, log, ls-remote, remote check)
 //   - GhService       (gh version, pr list/create/edit)
 //
@@ -11,23 +9,20 @@
 // job. It NEVER reads env vars or Action inputs. This makes the whole flow
 // unit-testable with fake services.
 //
-// Behaviour (unchanged from the old runMain, only the boundaries moved):
+// Behaviour:
 //   - Opens (or refreshes) a PR via the GhService, using the repo's PR template.
 //   - Does NOT push. The head branch must already exist on origin.
 //   - Idempotent: existing PR is refreshed, not re-created. No-op if unchanged.
 //   - Splits the PR body into independent auto blocks (see render.mjs).
 //   - Derives the PR title from the branch name.
-import { deriveTitle, buildCtx, fillAutoBlocks, buildBody } from './render.mjs'
+//   - Delegates rendering to render-template.mjs (one render step in the flow);
+//     it does NOT implement rendering itself — rendering lives in exactly one
+//     module.
+import { deriveTitle } from './render.mjs'
+import { renderTemplate as renderTemplateImpl } from './render-template.mjs'
 
 function fail(msg) {
   throw new Error(`create-pr: ${msg}`)
-}
-
-// Resolve the base ref to compare against. Prefer `origin/<base>` (fresh after
-// fetch, present in CI even when the local branch is absent); fall back to bare
-// `<base>` only if the remote ref is missing.
-function resolveBaseRef(git, base) {
-  return git.revParse(`origin/${base}`) ? `origin/${base}` : base
 }
 
 // Create or refresh a PR. Returns one of:
@@ -41,18 +36,20 @@ function resolveBaseRef(git, base) {
 // Throws on hard failures (gh missing, no origin, branch not on origin, gh
 // command failed with no concurrent PR).
 //
-// `blocks` is the block-plugin registry (built by loader.buildBlockRegistry).
-// `template` is the already-read template string (read by the caller via
-// TemplateSource). Passing the string (not the path) keeps this function pure
-// and lets the caller decide the I/O strategy.
+// Rendering is one of the orchestrated steps: after we learn the existing PR
+// body (if any) from `gh.prList`, we delegate to `renderTemplate` to produce the
+// final body — a fresh render for a new PR, or the refresh-merged body for an
+// existing one. This keeps all rendering in exactly one module while leaving
+// the create/refresh *decision* (noop / updated / created / concurrent) here.
 export async function createOrRefreshPr({
   head,
   base = 'main',
   dryRun = false,
-  template, // string (already read), or null/undefined to skip template rendering
-  registry = {},
+  template = '', // already-read template string (caller reads the file)
+  blocksDir, // optional override for block-plugin directory
   git,
   gh,
+  renderTemplate = renderTemplateImpl, // injectable; defaults to the real renderer
   log = console.log, // injectable for tests
   warn = console.warn,
 }) {
@@ -78,32 +75,28 @@ export async function createOrRefreshPr({
     )
   }
 
-  const baseRef = resolveBaseRef(git, base)
   const title = deriveTitle(head)
 
-  // Assemble the render context. Per the plugin-autonomy rule, we only inject
-  // the services — the `commits` block pulls the commit list itself from
-  // ctx.services.git, and buildCtx derives the shared fixes/typeFlags from
-  // git.logSubjects. We do NOT pre-fetch commits here.
-  const ctx = buildCtx(head, baseRef, title, { git, gh })
-
-  // Render the template into a filled body. If the template is missing/empty,
-  // fall back to a minimal AUTO block so the commits plugin still fills the
-  // commit list from git (same intent as the old runMain's commits-only
-  // fallback, but without the renderer knowing how to fetch them — the plugin
-  // pulls the data itself). `{{commits}}` must live inside an AUTO block for
-  // fillAutoBlocks to render it.
-  const renderTemplate = template || '<!-- AUTO:commits -->\n{{commits}}\n<!-- /AUTO:commits -->'
-  const filledTemplate = fillAutoBlocks(renderTemplate, ctx, registry)
-  const freshBody = buildBody(filledTemplate, '')
-
-  // Idempotency: find an existing open PR for this head -> base.
+  // Idempotency: find an existing open PR for this head -> base. Its current
+  // body (if any) is fed back into the renderer so the refresh merges the fresh
+  // AUTO blocks into it, preserving human text outside the blocks.
   const existingPrs = gh.prList(head, base)
+  const existingBody = existingPrs.length > 0 ? (existingPrs[0].body ?? '') : null
+
+  // Rendering step (delegated to the single rendering module): produces the
+  // final body — fresh for a new PR, refresh-merged for an existing one.
+  const body = await renderTemplate({
+    head,
+    base,
+    template,
+    existingBody,
+    blocksDir,
+  })
 
   if (existingPrs.length > 0) {
-    const { number, url, body = '' } = existingPrs[0]
-    const newBody = buildBody(filledTemplate, body)
-    if (newBody === body) {
+    const { number, url } = existingPrs[0]
+    const newBody = body
+    if (newBody === existingBody) {
       log(`create-pr: PR already up to date for ${head} → ${base}: ${url}`)
       return { action: 'noop', url }
     }
@@ -141,16 +134,16 @@ export async function createOrRefreshPr({
       `create-pr: [dry-run] would create PR '${head}' → ${base} with title ` +
         `'${title || head}' and body:\n` +
         '────────────────────────────────────────\n' +
-        freshBody +
+        body +
         '\n────────────────────────────────────────',
     )
-    return { action: 'would-create', title: title || head, body: freshBody }
+    return { action: 'would-create', title: title || head, body }
   }
 
   log(`create-pr: creating PR '${head}' → ${base} ...`)
   let out
   try {
-    out = gh.prCreate(head, base, title || head, freshBody)
+    out = gh.prCreate(head, base, title || head, body)
   } catch (err) {
     // Surface the real `gh` error. A concurrent run may have just created the
     // PR; only treat as failure if no open PR for this head exists.

@@ -1,36 +1,43 @@
 #!/usr/bin/env node
-// Local PR-template rendering CLI.
+// Local template-rendering CLI.
 //
-// Renders the full PR body from a template + block plugins. This is the "I just
-// want to see what the PR body looks like" entry point. It needs NO GitHub
-// token and NO `gh` CLI.
+// Renders a block template into a final string and prints it. This is the "I
+// just want to see what the rendered body looks like" entry point. It needs NO
+// GitHub token and NO `gh` CLI.
 //
-// Following the plugin-autonomy rule, this CLI does NOT worry about which plugin
-// needs which data. It only assembles the I/O services, injects them into the
-// render context via buildCtx, and lets each block plugin pull what it needs
-// from `ctx.services` (e.g. the `commits` plugin calls
-// `ctx.services.git.logRange(...)` itself). Adding a new plugin never requires
-// touching this file.
+// It is a thin wrapper over the single rendering entry point
+// (render-template.mjs): it only reads files (template + optional existing
+// body) and prints the result. All rendering logic lives in render-template.mjs,
+// shared with the GitHub Action plugin (index.mjs, via orchestration.mjs).
 //
 // Usage:
 //   node actions/create-pr/src/cli-render.mjs \
 //     --head feature/my-branch \
 //     [--base main] \
-//     [--template .github/pull-request-template.md] \
+//     [--template .github/pull-request-template.md] \   # defaults to this path
+//     [--existing /path/to/current-pr-body.md] \   # preview a REFRESH (merge)
 //     [--blocks-dir .github/create-pr/blocks] \
 //     [--no-git]
 //
-// By default a GitService is provided via ctx.services.git, so the `commits`
-// block renders the real `git log <base>..HEAD`. Pass `--no-git` to run without
-// any git service (the `commits` plugin then renders empty) — handy on machines
-// without git or to inspect just the template structure.
+// When --template is omitted, the same default path the Action uses
+// (.github/pull-request-template.md) is read, so a bare --head previews the
+// real PR template. When the template file is missing, it falls back to a
+// commits-only body (matching index.mjs).
 //
-// Exit codes: 0 on success, 1 on error (missing --head, template unreadable).
+// By default a GitService is provided so the `commits` block renders the real
+// `git log <base>..HEAD`. Pass `--no-git` to run without any git service (the
+// `commits` plugin then renders empty) — handy on machines without git or to
+// inspect just the template structure.
+//
+// Exit codes: 0 on success, 1 on error (missing --head, or unreadable file).
 import { join } from 'node:path'
-import { deriveTitle, buildCtx, fillAutoBlocks } from './render.mjs'
-import { createExecGitService } from './services/git-service.mjs'
+import { renderTemplate } from './render-template.mjs'
 import { createFsTemplateSource } from './services/template-source.mjs'
-import { buildBlockRegistry } from './loader.mjs'
+
+// Same default template path the GitHub Action uses in index.mjs. Mirroring it
+// here means a bare `cli-render.mjs --head x` previews the real PR template with
+// no extra flags.
+const DEFAULT_TEMPLATE_PATH = join(process.cwd(), '.github', 'pull-request-template.md')
 
 function parseArgs(argv) {
   const args = {}
@@ -40,46 +47,50 @@ function parseArgs(argv) {
     if (arg === '--head') args.head = next
     else if (arg === '--base') args.base = next
     else if (arg === '--template') args.template = next
+    else if (arg === '--existing') args.existing = next
     else if (arg === '--blocks-dir') args.blocksDir = next
     else if (arg === '--no-git') args.noGit = true
   }
   return args
 }
 
-function main() {
+// Read a template/existing-body file into a string. The caller owns file I/O
+// and hands the string to the renderer. If unreadable, return '' so the
+// renderer falls back to a commits-only body (matching index.mjs behavior).
+function readTemplateOrEmpty(path) {
+  if (!path) return ''
+  try {
+    return createFsTemplateSource().read(path)
+  } catch {
+    return ''
+  }
+}
+
+async function main() {
   const args = parseArgs(process.argv)
   if (!args.head) {
     console.error('create-pr: --head is required (e.g. --head feature/my-branch)')
     process.exit(1)
   }
 
-  const head = args.head
-  const base = args.base || 'main'
-  const templatePath = args.template || '.github/pull-request-template.md'
-  const blocksDir = args.blocksDir || '.github/create-pr/blocks'
+  // The caller owns file I/O: read the template (defaulting to the same path
+  // the Action uses) and the optional existing body into strings, then hand
+  // them to the renderer.
+  const template = readTemplateOrEmpty(args.template || DEFAULT_TEMPLATE_PATH)
+  const existingBody = args.existing ? readTemplateOrEmpty(args.existing) : null
 
-  // Read the template (this CLI's own file I/O).
-  let template
-  try {
-    template = createFsTemplateSource().read(templatePath)
-  } catch {
-    console.error(`create-pr: could not read template at '${templatePath}'`)
-    process.exit(1)
-  }
-
-  // Assemble the services and hand them to the render context. We do NOT pre-
-  // fetch commits here — the `commits` plugin pulls them from ctx.services.git
-  // itself. `--no-git` omits the git service entirely.
-  const services = {}
-  if (!args.noGit) services.git = createExecGitService()
-
-  const ctx = buildCtx(head, base, deriveTitle(head), services)
-
-  // Load the registry (built-in blocks + user blocks, like the real action).
-  buildBlockRegistry(join(process.cwd(), blocksDir)).then((registry) => {
-    const body = fillAutoBlocks(template, ctx, registry)
-    console.log(body)
+  const body = await renderTemplate({
+    head: args.head,
+    base: args.base,
+    template,
+    existingBody,
+    blocksDir: args.blocksDir,
+    noGit: args.noGit,
   })
+  console.log(body)
 }
 
-main()
+main().catch((err) => {
+  console.error(`create-pr: ${err?.message || String(err)}`)
+  process.exit(1)
+})

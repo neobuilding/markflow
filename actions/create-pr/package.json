@@ -6,7 +6,8 @@
   "main": "src/index.mjs",
   "scripts": {
     "build": "ncc build src/index.mjs -o dist",
-    "test": "vitest run"
+    "test": "vitest run",
+    "local-test-render": "node src/cli-render.mjs --template ./../../.github/pull-request-template.md --head feature/my-branch"
   },
   "dependencies": {
     "@actions/core": "^1.11.0"

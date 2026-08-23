@@ -6,7 +6,7 @@
 // the decoupling: the orchestration logic is now fully unit-testable.
 import { describe, it, expect, vi } from 'vitest'
 import { createOrRefreshPr } from './orchestration.mjs'
-import { fillAutoBlocks, deriveTitle } from './render.mjs'
+import { fillAutoBlocks, deriveTitle, buildBody } from './render.mjs'
 
 // --- Fake services -------------------------------------------------------
 
@@ -113,6 +113,24 @@ const TEMPLATE = [
   '',
 ].join('\n')
 
+// A fake renderer that mirrors render-template.mjs but uses the test's FAKE git
+// service (no real git / filesystem). It takes the same options the real
+// renderer takes — including `existingBody`, which it merges via buildBody so
+// the refresh path is exercised exactly like production. Orchestration is given
+// this via the `renderTemplate` param, keeping the flow testable with fakes.
+function fakeRender(git) {
+  return async ({ head, base = 'main', existingBody = null } = {}) => {
+    const ctx = {
+      head,
+      base,
+      title: deriveTitle(head),
+      services: { git },
+    }
+    const fresh = fillAutoBlocks(TEMPLATE, ctx, miniRegistry())
+    return existingBody != null ? buildBody(fresh, existingBody) : fresh
+  }
+}
+
 // --- Tests ---------------------------------------------------------------
 
 describe('createOrRefreshPr — create path', () => {
@@ -124,7 +142,7 @@ describe('createOrRefreshPr — create path', () => {
       head: 'feature/new-thing',
       base: 'main',
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log,
@@ -151,7 +169,7 @@ describe('createOrRefreshPr — create path', () => {
       base: 'main',
       dryRun: true,
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
@@ -161,21 +179,23 @@ describe('createOrRefreshPr — create path', () => {
     expect(gh.calls.some((c) => c[0] === 'prCreate')).toBe(false)
   })
 
-  it('falls back to bare base when revParse(origin/<base>) is missing', async () => {
-    // resolveBaseRef returns `base` (not `origin/base`) when revParse is falsy.
-    const git = fakeGit({ revParse: null })
+  it('passes the bare base to the commits plugin (renderer-owned resolution)', async () => {
+    // Base resolution (origin/<base> vs bare <base>) now lives in the rendering
+    // entry point (render-template.mjs). Orchestration just threads `base`
+    // through; the renderer's commits plugin receives the (resolved) base. Here
+    // it is 'main'.
+    const git = fakeGit()
     const gh = fakeGh()
     const result = await createOrRefreshPr({
       head: 'feature/x',
       base: 'main',
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
     })
     expect(result.action).toBe('created')
-    // The commits plugin received the bare base (not origin/main) as ctx.base.
     const commitsCall = git.calls.find((c) => c[0] === 'logRange')
     expect(commitsCall[2]).toBe('main')
   })
@@ -190,7 +210,7 @@ describe('createOrRefreshPr — create path', () => {
       base: 'main',
       dryRun: true,
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
@@ -206,7 +226,7 @@ describe('createOrRefreshPr — create path', () => {
       head: '',
       base: 'main',
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
@@ -219,10 +239,17 @@ describe('createOrRefreshPr — create path', () => {
 
 describe('createOrRefreshPr — update path', () => {
   it('updates an existing PR when the body changed', async () => {
-    // Simulate an existing PR with a stale title, so the refreshed body differs.
+    // Simulate an existing PR with a stale title/commits, so the refreshed body
+    // (rendered by the injected fake renderer with a *different* git) differs.
+    const staleGit = fakeGit({ logRange: '- old commit\n' })
     const existingBody = fillAutoBlocks(
       TEMPLATE,
-      { head: 'feature/x', base: 'origin/main', title: 'Stale', fixes: '1', commits: '- old\n' },
+      {
+        head: 'feature/x',
+        base: 'main',
+        title: 'Stale',
+        services: { git: staleGit },
+      },
       miniRegistry(),
     )
     const git = fakeGit({ logRange: '- h1 new commit\n' })
@@ -233,7 +260,7 @@ describe('createOrRefreshPr — update path', () => {
       head: 'feature/x',
       base: 'main',
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
@@ -253,17 +280,7 @@ describe('createOrRefreshPr — update path', () => {
     // fixes/typeFlags derive from git.logSubjects. So the refreshed body matches
     // the existing one exactly => noop.
     const git = fakeGit() // default logRange/logSubjects
-    const fresh = fillAutoBlocks(
-      TEMPLATE,
-      {
-        head: 'feature/x',
-        base: 'origin/main',
-        title: deriveTitle('feature/x'),
-        fixes: '', // extractFixes('feature/x', '- first\n- second\n') => ''
-        services: { git }, // commits plugin renders git.logRange default
-      },
-      miniRegistry(),
-    )
+    const fresh = await fakeRender(git)({ head: 'feature/x', base: 'main' })
     const gh = fakeGh({
       prs: [{ number: 1, url: 'u', body: fresh }],
     })
@@ -271,13 +288,35 @@ describe('createOrRefreshPr — update path', () => {
       head: 'feature/x',
       base: 'main',
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
     })
     expect(result.action).toBe('noop')
     expect(gh.calls.some((c) => c[0] === 'prEdit')).toBe(false)
+  })
+
+  it('treats an existing PR with a missing body as empty (dry-run)', async () => {
+    // A PR entry returned by `gh pr list` may carry no `body` field. The
+    // `body ?? ''` fallback must kick in (existingBody becomes '') so the flow
+    // still renders and attempts an update rather than crashing.
+    const git = fakeGit({ logRange: '- h1 new commit\n' })
+    const gh = fakeGh({
+      prs: [{ number: 9, url: 'https://github.com/o/r/pull/9' }], // no `body`
+    })
+    const result = await createOrRefreshPr({
+      head: 'feature/x',
+      base: 'main',
+      dryRun: true,
+      template: TEMPLATE,
+      renderTemplate: fakeRender(git),
+      git,
+      gh,
+      log: vi.fn(),
+    })
+    expect(result.action).toBe('would-update')
+    expect(result.number).toBe(9)
   })
 
   it('warns but continues when git fetchBase returns null (non-fatal)', async () => {
@@ -288,7 +327,7 @@ describe('createOrRefreshPr — update path', () => {
       head: 'feature/x',
       base: 'main',
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
@@ -387,7 +426,7 @@ describe('createOrRefreshPr — update path', () => {
       base: 'main',
       dryRun: true,
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
@@ -409,7 +448,7 @@ describe('createOrRefreshPr — concurrency path', () => {
       head: 'feature/x',
       base: 'main',
       template: TEMPLATE,
-      registry: miniRegistry(),
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
@@ -576,25 +615,24 @@ describe('createOrRefreshPr — failure paths', () => {
 })
 
 describe('createOrRefreshPr — template handling', () => {
-  it('falls back to commits-only body when template is null', async () => {
+  it('renders the template via the injected renderer for a new PR', async () => {
+    // Rendering is delegated to the (injectable) renderer. For a new PR (no
+    // existing body) the rendered output is the fresh render, and that exact
+    // string is what gets sent to gh.prCreate.
     const git = fakeGit()
     const gh = fakeGh()
+    const rendered = await fakeRender(git)({ head: 'feature/x', base: 'main' })
     const result = await createOrRefreshPr({
       head: 'feature/x',
       base: 'main',
-      template: null, // no template
-      registry: miniRegistry(),
+      template: TEMPLATE,
+      renderTemplate: fakeRender(git),
       git,
       gh,
       log: vi.fn(),
     })
     expect(result.action).toBe('created')
     const createCall = gh.calls.find((c) => c[0] === 'prCreate')
-    // Without a real template, orchestration falls back to a minimal AUTO block
-    // so the `commits` plugin can still render the commit list from git. The
-    // AUTO:commits marker is expected (it's what the renderer keys on).
-    expect(createCall[4]).toContain('<!-- AUTO:commits -->')
-    expect(createCall[4]).toContain('- h1 first commit')
-    expect(createCall[4]).not.toContain('## Commits')
+    expect(createCall[4]).toBe(rendered)
   })
 })

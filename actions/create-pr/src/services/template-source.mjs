@@ -9,7 +9,7 @@
 // `read` should throw when the file is missing/unreadable, so the caller can
 // decide whether to fall back (e.g. to a commits-only body). Returning an empty
 // string would be ambiguous with a legitimately empty template.
-import { readFileSync } from 'node:fs'
+import { readFileSync } from './fs-glue.mjs'
 
 // Default TemplateSource backed by the real filesystem.
 export function createFsTemplateSource() {

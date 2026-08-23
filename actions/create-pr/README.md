@@ -132,6 +132,7 @@ cd actions/create-pr
 npm install          # installs @actions/core, @vercel/ncc, vitest locally
 npm run build        # ncc bundles src/index.mjs -> dist/index.mjs
 npm test             # runs the unit tests with vitest
+npm run local-test-render   # preview the rendered PR body for a branch (no token, no gh)
 ```
 
 In the host `markflow` repo, `npm run build:action` triggers the same build via
@@ -143,8 +144,15 @@ direct `uses:` reference) and must be rebuilt after any change to `src/`.
 
 ### Local rendering (no token, no gh)
 
-To preview the full PR body a given branch would produce, without any GitHub
-token or `gh` CLI, run the rendering CLI from the repo root:
+All rendering goes through a single module, `src/render-template.mjs`
+(`renderTemplate`). `src/cli-render.mjs` is just a thin wrapper over it: it
+parses CLI flags, reads the template (and optional existing body) into strings,
+and prints the result. Both the GitHub Action (`src/index.mjs`) and local
+previews call the same `renderTemplate`, so what you preview locally is exactly
+what the Action would put in the PR.
+
+To preview the **fresh** PR body a given branch would produce, without any
+GitHub token or `gh` CLI, run the rendering CLI from the repo root:
 
 ```bash
 node actions/create-pr/src/cli-render.mjs --head feature/my-branch
@@ -152,10 +160,46 @@ node actions/create-pr/src/cli-render.mjs --head feature/my-branch
 #           --blocks-dir .github/create-pr/blocks, --no-git
 ```
 
+The repo also wires this up as a convenience script so you don't have to type
+the path. Both `package.json` files expose the same `local-test-render` script;
+the only difference is which `package.json` runs it (and thus how the path is
+resolved):
+
+- **From the repo root** (`markflow/package.json`):
+  `npm run local-test-render` → `node actions/create-pr/src/cli-render.mjs --head feature/my-branch`
+  (the template defaults to `.github/pull-request-template.md` via `cli-render`'s
+  own default, so `--template` is omitted).
+- **From inside `actions/create-pr`** (`actions/create-pr/package.json`):
+  `npm run local-test-render` → `node src/cli-render.mjs --template ./../../.github/pull-request-template.md --head feature/my-branch`
+  (it passes the real template path explicitly, relative to the action dir).
+
+Both resolve `feature/my-branch` against the default template and print the
+rendered body. Run either one — they produce the same output.
+
 It reads the template file, loads the block plugins, and derives the title /
-change type from the branch name. Per the plugin-autonomy rule, the CLI only
-injects the services into the render context — it does NOT fetch commits itself.
-The `commits` block plugin pulls the real `git log <base>..HEAD` from
+change type from the branch name. Per the plugin-autonomy rule, the renderer
+only injects the services into the render context — it does NOT fetch commits
+itself. The `commits` block plugin pulls the real `git log <base>..HEAD` from
 `ctx.services.git` on its own. Pass `--no-git` to skip the git service entirely
 and render `{{commits}}` empty (handy on machines without git, or to just
 inspect the template structure).
+
+#### Previewing a _refresh_ (existing PR) render
+
+"Refresh" means merging the freshly rendered body into an **existing** PR body
+(the action keeps human-written text outside the `<!-- AUTO:… -->` blocks and
+only updates the blocks in place). The merge is part of `renderTemplate`, so you
+preview a refresh in one step by passing the existing body via `--existing`:
+
+```bash
+node actions/create-pr/src/cli-render.mjs \
+  --head feature/my-branch \
+  --existing /path/to/current-pr-body.md
+# Optional: --base main, --template .github/pull-request-template.md,
+#           --blocks-dir .github/create-pr/blocks, --no-git
+```
+
+This shows exactly what the action would write back to GitHub on a refresh
+(`action: 'updated'`), without needing a token, `gh`, or a live PR. The refresh
+merge is a pure, local operation — `renderTemplate` refreshes each AUTO block in
+place and preserves human-written text outside the blocks.

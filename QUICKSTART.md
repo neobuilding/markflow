@@ -51,6 +51,19 @@ npm run e2e             # 端到端：用 Playwright 驱动真实的 Electron �
   xvfb-run --auto-servernum -- npm run e2e
   ```
 
+## Create-PR Action（本地构建与预览）
+
+`actions/create-pr/` 是随仓库内置的 GitHub Action，用于从 head 分支幂等创建/刷新到 `main` 的 PR（完整设计与插件机制见 [`actions/create-pr/README.md`](actions/create-pr/README.md)）。两个根级脚本封装了它：
+
+```bash
+npm run build:action        # ncc 打包 actions/create-pr/src/index.mjs -> dist/index.mjs
+npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 token，无需 gh）
+```
+
+`npm run local-test-render` 直接调用 `actions/create-pr/src/cli-render.mjs`，无需 GitHub token 或 `gh` CLI，即可预览 Action 会写入 PR 的正文。它按默认模板解析 `feature/my-branch` 并打印渲染结果；可选参数：`--base main`、`--template .github/pull-request-template.md`、`--blocks-dir .github/create-pr/blocks`、`--no-git`、`--existing <body.md>`（预览对已有 PR 的刷新）。
+
+> ⚠️ **改完 Action 后必须重建产物**：已提交的 `actions/create-pr/dist/index.mjs` 是刻意保留的（GitHub 要求直接 `uses:` 引用时必须存在）。任何改动 `actions/create-pr/src/` 后都要执行 `npm run build:action`，并将重建后的 `dist/index.mjs` 一并提交——否则 CI 用的是过期产物。
+
 ### CI 流水线（`.github/workflows/ci.yml`）
 
 `Test, Build & E2E` 任务（ubuntu）依次执行：`npm run quality`（Prettier + ESLint + Stylelint + Markdownlint + Secretlint + 类型检查，作为快速失败门禁）→ 单元测试 + 覆盖率 → 安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e`。e2e 步骤刻意合并进该任务，复用同一 runner、一次 `npm ci` 安装与一次 `npm run build`，避免额外启动一个 runner（省一次完整安装 + 一次构建）。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。

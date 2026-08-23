@@ -12,7 +12,7 @@
 //   logRange(head, base): string             — `git log <base>..HEAD` subjects+hashes
 //   logSubjects(head, base): string         — `git log <base>..HEAD` subjects only
 //   lsRemote(branch): string|null           — `git ls-remote --heads origin <branch>`
-import { execFileSync } from 'node:child_process'
+import { execFileSync } from './exec-glue.mjs'
 
 function run(cmd, cmdArgs, opts = {}) {
   return execFileSync(cmd, cmdArgs, {

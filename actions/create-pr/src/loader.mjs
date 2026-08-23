@@ -1,9 +1,8 @@
 // Block-plugin loader for the "Create / Refresh PR" GitHub Action.
 //
-// This module is intentionally NOT part of core.mjs: it performs file IO and
-// dynamic import(), so it carries no coverage threshold (consistent with the
-// Action entry point). The pure rendering logic lives in core.mjs
-// (`renderBlock` / `discoverSegments` / `fillAutoBlocks`).
+// This module performs file IO and dynamic import(), so it carries no coverage
+// threshold (consistent with the Action entry point). The pure rendering logic
+// lives in render.mjs (`renderBlock` / `discoverSegments` / `fillAutoBlocks`).
 //
 // Loading model:
 //   - Built-in blocks (`title` / `issue` / `commits`) are imported statically
@@ -20,7 +19,7 @@
 //     overrides a built-in.
 //   - Resilience: a single file that fails to import/run is skipped (logged)
 //     without aborting the whole run.
-import { readdirSync, existsSync } from 'node:fs'
+import { readdirSync, existsSync } from './services/fs-glue.mjs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 

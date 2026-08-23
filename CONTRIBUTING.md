@@ -164,6 +164,32 @@ MarkFlow releases are **automated** via a single `ci.yml` workflow:
 > ⚠️ Because every merge to `main` produces a draft Release, keep `main` green and
 > land changes behind reviewed PRs.
 
+## Create-PR Action (local build & preview)
+
+`actions/create-pr/` is a self-contained GitHub Action (shipped in-repo under `actions/create-pr/`
+and referenced via `uses: ./actions/create-pr` in `ci.yml`) that idempotently creates/refreshes a PR
+from a head branch into `main`. Its full design, plugin mechanism, and local-rendering usage are
+documented in [`actions/create-pr/README.md`](actions/create-pr/README.md).
+
+Two root-level scripts wrap it:
+
+```bash
+npm run build:action        # ncc bundles actions/create-pr/src/index.mjs -> dist/index.mjs
+npm run local-test-render    # Preview the rendered PR body for a branch (no token, no gh)
+```
+
+`npm run local-test-render` runs `actions/create-pr/src/cli-render.mjs` without any GitHub token or
+`gh` CLI, so you can verify the rendered body before opening a PR. It resolves `feature/my-branch`
+against the default template and prints the result. Optional flags: `--base main`,
+`--template .github/pull-request-template.md`, `--blocks-dir .github/create-pr/blocks`, `--no-git`,
+`--existing <body.md>` (to preview a refresh of an existing PR).
+
+> ⚠️ **Rebuild the bundle after editing the Action**: the bundled
+> `actions/create-pr/dist/index.mjs` is committed on purpose (GitHub requires it for a direct
+> `uses:` reference). Any change under `actions/create-pr/src/` must be followed by
+> `npm run build:action`, and the rebuilt `dist/index.mjs` committed alongside the source change —
+> otherwise CI ships a stale bundle. Treat `dist/` as a build artifact that must track `src/`.
+
 ## Building & Packaging
 
 ```bash

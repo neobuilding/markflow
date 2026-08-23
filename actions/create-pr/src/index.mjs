@@ -2,9 +2,9 @@
 //
 // This is the ONLY module that knows about GitHub Actions (it reads inputs via
 // `@actions/core` and calls `process.exit`). It assembles the real I/O services
-// (TemplateSource / GitService / GhService), reads the template, loads the
-// block-plugin registry, and delegates all the actual work to
-// `createOrRefreshPr` in orchestration.mjs.
+// (GitService / GhService), reads the template FILE into a string, and delegates
+// the actual work to `createOrRefreshPr` in orchestration.mjs. Rendering itself
+// lives in render-template.mjs and is invoked by orchestration.
 //
 // Keeping this layer thin means the entire PR logic (render + orchestration) is
 // unit-testable without `@actions/core`, without `gh`, without git, and without
@@ -12,7 +12,6 @@
 import * as core from '@actions/core'
 import { join } from 'node:path'
 import { createOrRefreshPr } from './orchestration.mjs'
-import { buildBlockRegistry } from './loader.mjs'
 import { createFsTemplateSource } from './services/template-source.mjs'
 import { createExecGitService } from './services/git-service.mjs'
 import { createExecGhService } from './services/gh-service.mjs'
@@ -42,39 +41,32 @@ async function main() {
     return
   }
 
-  // Assemble the real I/O services. These are the only places that touch the
-  // filesystem / git / gh. orchestration.mjs receives them as arguments.
-  const templateSource = createFsTemplateSource()
+  // Real I/O services. These are the only places that touch git / gh.
   const git = createExecGitService()
   const gh = createExecGhService(token)
 
-  // Read the template here (not inside orchestration) so orchestration stays
-  // pure. If unreadable, pass null so orchestration falls back to a
-  // commits-only body (same behavior as the old runMain).
-  const template = (() => {
-    try {
-      return templateSource.read(templatePath)
-    } catch {
-      return null
-    }
-  })()
+  // Read the template FILE into a string. The caller owns file I/O; the
+  // renderer takes the string. If unreadable, pass '' so the renderer falls
+  // back to a commits-only body.
+  const templateSource = createFsTemplateSource()
+  let template
+  try {
+    template = templateSource.read(templatePath)
+  } catch {
+    template = ''
+  }
 
-  // Build the block-plugin registry (built-in + user; user overrides built-in).
-  const registry = await buildBlockRegistry(blocksDir)
-
-  const result = await createOrRefreshPr({
+  // createOrRefreshPr throws on hard failure (caught below); on success we just
+  // exit 0 (the action result was already logged inside orchestration).
+  await createOrRefreshPr({
     head,
     base,
     dryRun,
     template,
-    registry,
+    blocksDir,
     git,
     gh,
   })
-  // On success, exit 0. createOrRefreshPr throws on hard failure (caught below).
-  if (result.action === 'created' || result.action === 'updated') {
-    // already logged inside orchestration
-  }
   process.exit(0)
 }
 

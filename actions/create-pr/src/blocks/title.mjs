@@ -5,9 +5,9 @@
 // directly. When the title is empty, it outputs an empty string (the caller's
 // surrounding markup such as `# {{title}}` then degrades to `# `).
 //
-// This plugin is intentionally self-contained (no import of core.mjs) so it
-// can be copied verbatim into `dist/blocks/` and loaded at runtime by the
-// directory scanner, independent of how the action is bundled.
+// This plugin is intentionally self-contained (no import of render.mjs or any
+// sibling module) so it can be copied verbatim into `dist/blocks/` and loaded
+// at runtime by the directory scanner, independent of how the action is bundled.
 //
 // Form: `export default (ctx) => string` — the single shared plugin contract
 // used by both built-in blocks (this directory) and user-provided blocks.
