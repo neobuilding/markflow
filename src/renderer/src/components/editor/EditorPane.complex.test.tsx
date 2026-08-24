@@ -51,8 +51,10 @@ interface ApiShape {
   dialog: Record<string, ReturnType<typeof vi.fn>>
   window: Record<string, ReturnType<typeof vi.fn>>
   menu: Record<string, ReturnType<typeof vi.fn>>
+  clipboard: Record<string, ReturnType<typeof vi.fn>>
   onMenuEvent: ReturnType<typeof vi.fn>
   onFileChanged: ReturnType<typeof vi.fn>
+  onFolderChanged: ReturnType<typeof vi.fn>
   onOpenPaths: ReturnType<typeof vi.fn>
   onAppRequestQuit: ReturnType<typeof vi.fn>
 }
@@ -126,8 +128,10 @@ beforeEach(() => {
       isMaximized: vi.fn(async () => false),
     },
     menu: { setEditable: vi.fn(), setHasDocument: vi.fn(), setPrinting: vi.fn() },
+    clipboard: { writeText: vi.fn(async () => {}) },
     onMenuEvent: vi.fn(() => noopUnsub),
     onFileChanged: vi.fn(() => noopUnsub),
+    onFolderChanged: vi.fn(() => noopUnsub),
     onOpenPaths: vi.fn(() => noopUnsub),
     onAppRequestQuit: vi.fn(() => noopUnsub),
   }
@@ -552,6 +556,52 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
 
     await userEvent.click(screen.getByTitle(/show in folder/i))
     expect(showInFolder).toHaveBeenCalledWith('/a.md')
+  })
+
+  it('copies the full file path from the breadcrumb menu', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '/docs/sub/a.md' }
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTitle('Copy path'))
+    const copyFull = await screen.findByText('Copy full path')
+    await user.click(copyFull)
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith('/docs/sub/a.md'))
+    docs.a = { ...docs.a, filePath: originalPath }
+  })
+
+  it('copies just the file name from the breadcrumb menu', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '/docs/sub/a.md' }
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTitle('Copy path'))
+    const copyName = await screen.findByText('Copy file name')
+    await user.click(copyName)
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith('a.md'))
+    docs.a = { ...docs.a, filePath: originalPath }
+  })
+
+  it('navigates the sidebar to a directory segment clicked in the breadcrumb', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '/docs/sub/a.md' }
+    mount()
+    await openDoc()
+    await flush()
+
+    // The breadcrumb renders clickable folder segments ("docs", "sub") plus the file name.
+    const segments = screen.getAllByTitle('Go to this folder')
+    expect(segments.length).toBeGreaterThan(0)
+    await user.click(segments[0])
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+    docs.a = { ...docs.a, filePath: originalPath }
   })
 
   it('dismisses the external-change dialog when closed via onOpenChange', async () => {

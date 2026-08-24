@@ -91,10 +91,11 @@ describe('FileDetailsDialog', () => {
 
   it('copies the path to the clipboard and shows the copied state', async () => {
     const writeText = vi.fn(async () => {})
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      configurable: true,
-    })
+    // The dialog copies via the Electron preload bridge (window.api.clipboard),
+    // not the browser's navigator.clipboard.
+    ;(window as unknown as { api: { clipboard: { writeText: typeof writeText } } }).api = {
+      clipboard: { writeText },
+    }
     useUIStore.getState().setFileDetailsId('doc-1')
     render(<FileDetailsDialog />)
     await screen.findByText('Hello')
@@ -122,10 +123,9 @@ describe('FileDetailsDialog', () => {
 
   it('resets the copied state after the timeout', async () => {
     const writeText = vi.fn(async () => {})
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      configurable: true,
-    })
+    ;(window as unknown as { api: { clipboard: { writeText: typeof writeText } } }).api = {
+      clipboard: { writeText },
+    }
     useUIStore.getState().setFileDetailsId('doc-1')
     render(<FileDetailsDialog />)
     await screen.findByText('Hello')

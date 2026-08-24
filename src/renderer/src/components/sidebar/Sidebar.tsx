@@ -351,7 +351,6 @@ export function Sidebar(): React.ReactElement | null {
                       onSelectDoc={handleSelectDoc}
                       onDeleteDoc={handleDeleteDoc}
                       onDetailsDoc={handleDetailsDoc}
-                      onEnterFolder={() => {}}
                     />
                   ))}
                 </ul>
@@ -551,7 +550,7 @@ interface TreeRowProps {
   onSelectDoc: (doc: Document) => void
   onDeleteDoc: (doc: Document) => void
   onDetailsDoc: (doc: Document) => void
-  onEnterFolder: (folder: string) => void
+  onEnterFolder?: (folder: string) => void
 }
 
 // Recursively render the document tree: folders are collapsible, files reuse DocItem.
@@ -571,7 +570,7 @@ function TreeRow({
       <li className="group">
         <button
           onClick={() => setOpen((o) => !o)}
-          onDoubleClick={() => onEnterFolder(node.path)}
+          onDoubleClick={() => onEnterFolder?.(node.path)}
           className="flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-overlay)] transition-colors truncate"
           style={{ paddingLeft: depth * 12 + 12 }}
         >
@@ -597,7 +596,7 @@ function TreeRow({
                 data-testid="enter-folder-btn"
                 onClick={(e) => {
                   e.stopPropagation()
-                  onEnterFolder(node.path)
+                  onEnterFolder?.(node.path)
                 }}
                 className="shrink-0 ml-auto p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-overlay)] transition-opacity"
               >

@@ -16,7 +16,6 @@ import {
   PanelLeft,
   X,
   FolderOpen,
-  Folder,
   Save,
   SaveAll,
   RotateCcw,
@@ -254,10 +253,21 @@ export function EditorPane(): React.ReactElement {
   }, [openFolderMut])
 
   // Clicking a folder segment in the breadcrumb navigates the sidebar to that directory.
-  const handleNavigateToSegment = useCallback((segments: string[], index: number) => {
-    const dirPath = segments.slice(0, index + 1).join('/')
-    useUIStore.getState().setActiveFolder(dirPath)
-  }, [])
+  // We rebuild the directory path from the original path (not from the split segments),
+  // so the absolute root ("/" on POSIX, the drive letter on Windows) is preserved. The
+  // root occupies one leading segment, so the target is the first `index + 2` segments.
+  const handleNavigateToSegment = useCallback(
+    (segments: string[], index: number) => {
+      if (!doc?.filePath) return
+      const norm = doc.filePath.replace(/\\/g, '/')
+      const dirPath = norm
+        .split('/')
+        .slice(0, index + 2)
+        .join('/')
+      useUIStore.getState().setActiveFolder(dirPath)
+    },
+    [doc],
+  )
 
   // Copy the full path or just the file name from the breadcrumb.
   const handleCopyPath = useCallback(

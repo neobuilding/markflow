@@ -214,7 +214,7 @@ const dirNotifyTimers = new Map<string, ReturnType<typeof setTimeout>>()
 function watchDirectory(dirPath: string): void {
   const existing = dirWatchers.get(dirPath)
   if (existing) {
-    dirRefCount.set(dirPath, (dirRefCount.get(dirPath) ?? 0) + 1)
+    dirRefCount.set(dirPath, dirRefCount.get(dirPath)! + 1)
     return
   }
   try {

@@ -334,4 +334,42 @@ describe('Sidebar — interactions', () => {
     fireEvent.contextMenu(aItem as HTMLElement)
     expect(await screen.findByText('Delete')).toBeInTheDocument()
   })
+
+  it('navigates to the parent folder via the up button', async () => {
+    useUIStore.getState().setActiveFolder('/docs/sub')
+    mount()
+    // parentFolder('/docs/sub') = '/docs', so the button is enabled.
+    const upBtn = screen.getByTestId('up-folder-btn') as HTMLButtonElement
+    expect(upBtn.disabled).toBe(false)
+    await userEvent.click(upBtn)
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+  })
+
+  it('disables the up button at a root-level folder (no parent)', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    // '/docs' has a single path segment, so there is no parent folder to go up to.
+    const upBtn = screen.getByTestId('up-folder-btn') as HTMLButtonElement
+    expect(upBtn.disabled).toBe(true)
+    await userEvent.click(upBtn)
+    // A disabled button is a no-op: the active folder stays put.
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+  })
+
+  it('enters a subfolder via the enter button in the tree', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    // Expand the nested 'sub' folder so its enter button is rendered.
+    await userEvent.click(screen.getByText('sub'))
+    expect(await screen.findByText('b.md')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('enter-folder-btn'))
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs/sub'))
+  })
+
+  it('enters a subfolder by double-clicking the folder row', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.doubleClick(screen.getByText('sub'))
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs/sub'))
+  })
 })

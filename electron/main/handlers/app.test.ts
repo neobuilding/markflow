@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const handlers: Record<string, (...a: unknown[]) => unknown> = {}
+const clipboardMock = vi.hoisted(() => ({ writeText: vi.fn() }))
 const h = vi.hoisted(() => ({ version: '9.9.9', showItemErr: false }))
 vi.mock('electron', () => ({
   ipcMain: {
@@ -14,6 +15,7 @@ vi.mock('electron', () => ({
       return p
     },
   },
+  clipboard: clipboardMock,
   app: { getVersion: () => h.version },
 }))
 
@@ -48,5 +50,19 @@ describe('app handlers', () => {
 
   it('returns the app version', () => {
     expect(handlers['app:get-version'](null)).toBe('9.9.9')
+  })
+
+  it('writes the provided text to the clipboard', () => {
+    clipboardMock.writeText.mockClear()
+    handlers['clipboard:write-text'](null, '/some/long/path.md')
+    expect(clipboardMock.writeText).toHaveBeenCalledTimes(1)
+    expect(clipboardMock.writeText).toHaveBeenCalledWith('/some/long/path.md')
+  })
+
+  it('does not throw when clipboard.writeText throws', () => {
+    clipboardMock.writeText.mockImplementationOnce(() => {
+      throw new Error('clipboard unavailable')
+    })
+    expect(() => handlers['clipboard:write-text'](null, 'x')).not.toThrow()
   })
 })

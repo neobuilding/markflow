@@ -31,6 +31,7 @@ export default defineConfig({
       'src/renderer/src/**/*.test.ts',
       'src/renderer/src/**/*.test.tsx',
       'electron/main/**/*.test.ts',
+      'electron/preload/**/*.test.ts',
       'actions/create-pr/src/**/*.test.mjs',
     ],
     // Report coverage for the ENTIRE project (every source file), not only the files
@@ -53,6 +54,7 @@ export default defineConfig({
         'src/renderer/src/i18n/**/*.ts',
         'src/renderer/src/hooks/**/*.{ts,tsx}',
         'src/renderer/src/components/**/*.{ts,tsx}',
+        'electron/preload/**/*.ts',
         'electron/main/ipc/**/*.ts',
         'electron/main/ipc/documents.ts',
         'electron/main/ipc/export.ts',
