@@ -10,7 +10,9 @@ export default tseslint.config(
     ignores: [
       'out',
       'dist',
+      '**/dist',
       'dist-electron',
+      '**/dist-electron',
       'release',
       'node_modules',
       'coverage',

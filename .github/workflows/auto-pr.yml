@@ -2,8 +2,10 @@ name: Auto Create PR
 # Automatically open (or keep up to date) a Pull Request from any `feature/*`
 # branch into `main` when that branch is pushed.
 #
-# All PR logic lives in scripts/create-pr.mjs (the single source of truth, also
-# used by the local `npm run pr` command), so CI and local stay in sync.
+# All PR logic lives in actions/create-pr (the single source of truth, used by
+# the CI workflow via the local composite Action
+# `actions/create-pr`, extractable to its own repo), so the behaviour stays in
+# one place.
 #   - On the first triggering push: opens a PR using the repo's PR template,
 #     with a generated "## Commits" list.
 #   - On later pushes: if a PR already exists, its description is refreshed to
@@ -40,9 +42,11 @@ jobs:
                   # Full history so `git log main..HEAD` is accurate.
                   fetch-depth: 0
             - name: Create / refresh PR
-              env:
-                  # Authenticate `gh` with a PAT (the default GITHUB_TOKEN cannot
-                  # create PRs). Configure PR_TOKEN in repo Settings > Secrets with
-                  # the `repo` scope.
-                  GH_TOKEN: ${{ secrets.PR_TOKEN }}
-              run: node scripts/create-pr.mjs --base main --head "${{ github.ref_name }}"
+              # Explicit `head` overrides the action's GITHUB_HEAD_REF /
+              # GITHUB_REF_NAME fallback, matching the prior
+              # `--head "${{ github.ref_name }}"` behaviour.
+              uses: ./actions/create-pr
+              with:
+                  head: ${{ github.ref_name }}
+                  base: main
+                  token: ${{ secrets.PR_TOKEN }}

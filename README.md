@@ -220,6 +220,33 @@ npm run e2e             # End-to-end: drives the REAL Electron app via Playwrigh
   (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you must
   run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e`.
 
+### Create-PR GitHub Action (local build & preview)
+
+`actions/create-pr/` is a self-contained GitHub Action that creates/refreshes PRs from a head
+branch into `main` using the repo's PR template (full design & plugin mechanism:
+[`actions/create-pr/README.md`](actions/create-pr/README.md)). Two root-level scripts wrap it:
+
+```bash
+npm run build:action        # ncc bundles actions/create-pr/src/index.mjs -> dist/index.mjs
+npm run local-test-render    # Preview the rendered PR body for a branch (no token, no gh)
+```
+
+`npm run local-test-render` runs the rendering CLI without any GitHub token or `gh` CLI, so you
+can preview exactly what the Action would put in the PR. It resolves `feature/my-branch` against
+the default template and prints the rendered body:
+
+```bash
+npm run local-test-render    # shorthand for the example below
+# equivalent:
+node actions/create-pr/src/cli-render.mjs --head feature/my-branch
+# Optional flags: --base main, --template .github/pull-request-template.md,
+#                 --blocks-dir .github/create-pr/blocks, --no-git, --existing <body.md>
+```
+
+> The bundled `actions/create-pr/dist/index.mjs` is committed on purpose (GitHub requires it for a
+> direct `uses:` reference). **After any change to `actions/create-pr/src/`, run `npm run build:action`
+> and commit the rebuilt `dist/index.mjs`** — otherwise CI uses a stale bundle.
+
 ### CI pipeline (`.github/workflows/ci.yml`)
 
 The `Test, Build & E2E` job (ubuntu) chains: `npm run quality` (Prettier + ESLint + Stylelint +

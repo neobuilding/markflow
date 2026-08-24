@@ -37,6 +37,5 @@
     "comment-empty-line-before": null,
     "no-descending-specificity": null,
     "declaration-block-no-redundant-longhand-properties": null
-  },
-  "ignoreFiles": ["**/dist/**", "**/dist-electron/**", "**/release/**", "**/node_modules/**"]
+  }
 }
