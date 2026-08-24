@@ -21,6 +21,8 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.unsavedDrafts': '未保存草稿',
   'sidebar.details': '详情',
   'sidebar.delete': '删除',
+  'sidebar.up': '上层文件夹',
+  'sidebar.enter': '进入此文件夹',
   'details.unsaved': '未保存（仅存在于内存中）',
 
   // ── Editor pane ────────────────────────────────────────────────────────
@@ -58,6 +60,10 @@ export const zhCN: Record<TranslationKey, string> = {
   'editor.view.split': '分屏',
   'editor.view.preview': '预览',
   'editor.showInFolder': '在文件夹中显示',
+  'editor.openSegmentFolder': '定位到此文件夹',
+  'editor.copyPath': '复制路径',
+  'editor.copyFullPath': '复制完整路径',
+  'editor.copyFileName': '复制文件名',
   'editor.diskChangedTitle': '磁盘上的文件已更改',
   'editor.diskChangedDirty': '该文件已被其他程序修改。重新加载将丢弃你未保存的更改。',
   'editor.diskChangedClean': '该文件已被其他程序修改。是否重新加载以使用磁盘上的最新版本？',

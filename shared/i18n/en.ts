@@ -21,6 +21,8 @@ export const en = {
   'sidebar.unsavedDrafts': 'Unsaved drafts',
   'sidebar.details': 'Details',
   'sidebar.delete': 'Delete',
+  'sidebar.up': 'Up to parent folder',
+  'sidebar.enter': 'Open this folder',
 
   // ── Editor pane ────────────────────────────────────────────────────────
   'editor.save': 'Save',
@@ -57,6 +59,10 @@ export const en = {
   'editor.view.split': 'Split',
   'editor.view.preview': 'Preview',
   'editor.showInFolder': 'Show in folder',
+  'editor.openSegmentFolder': 'Go to this folder',
+  'editor.copyPath': 'Copy path',
+  'editor.copyFullPath': 'Copy full path',
+  'editor.copyFileName': 'Copy file name',
   'editor.diskChangedTitle': 'File changed on disk',
   'editor.diskChangedDirty':
     'This file was modified by another program. Reloading will discard your unsaved changes.',

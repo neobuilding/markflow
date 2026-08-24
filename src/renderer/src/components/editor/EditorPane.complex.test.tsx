@@ -390,32 +390,6 @@ describe('EditorPane — close & open', () => {
     expect(useUIStore.getState().activeDocumentId).toBeNull()
   })
 
-  it('Open file forwards selected paths to openPaths mutation', async () => {
-    const user = userEvent.setup()
-    api.dialog.openFiles = vi.fn(async () => ['/x.md'])
-    mount()
-    await openDoc()
-    await flush()
-
-    await user.click(screen.getByTestId('open-file-btn'))
-    await flush()
-    expect(api.dialog.openFiles).toHaveBeenCalled()
-    expect(api.files.resolvePaths).toHaveBeenCalledWith(['/x.md'])
-  })
-
-  it('Open folder forwards the folder path to openFolder mutation', async () => {
-    const user = userEvent.setup()
-    api.dialog.openFolderPath = vi.fn(async () => '/some/folder')
-    mount()
-    await openDoc()
-    await flush()
-
-    await user.click(screen.getByTestId('open-folder-btn'))
-    await flush()
-    expect(api.dialog.openFolderPath).toHaveBeenCalled()
-    expect(api.files.resolvePaths).toHaveBeenCalledWith(['/some/folder'])
-  })
-
   it('does not watch a file when no document is active', async () => {
     // activeDocumentId stays null (beforeEach default) → the watch effect returns early.
     mount()
@@ -496,14 +470,14 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
     expect(useUIStore.getState().exportOpen).toBe(true)
   })
 
-  it('toggles the sidebar when it is closed', async () => {
+  it('toggles the sidebar open via the toolbar button when it is closed', async () => {
     const user = userEvent.setup()
     useUIStore.getState().setSidebarOpen(false)
     mount()
     await openDoc()
     await flush()
 
-    await user.click(screen.getByTestId('toggle-sidebar-btn'))
+    await user.click(screen.getByTestId('sidebar-toggle-btn'))
     await flush()
     expect(useUIStore.getState().sidebarOpen).toBe(true)
   })

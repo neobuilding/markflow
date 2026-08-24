@@ -10,10 +10,10 @@ import {
   Link,
   List,
   CheckSquare,
-  PanelLeft,
   GripVertical,
   PenLine,
   Lock,
+  PanelLeft,
   X,
   FolderOpen,
   Folder,
@@ -22,8 +22,9 @@ import {
   RotateCcw,
   Info,
   FileOutput,
+  Copy,
 } from 'lucide-react'
-import { cn } from '../../lib/utils'
+import { cn, baseName } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
   useDocument,
@@ -41,16 +42,22 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useLocalDocument } from '../../hooks/useLocalDocument'
 import type { ViewMode } from '../../types'
 import { useT } from '../../i18n'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu'
 
 export function EditorPane(): React.ReactElement {
   const {
     activeDocumentId,
     viewMode,
     setViewMode,
-    sidebarOpen,
-    toggleSidebar,
     editable,
     toggleEditable,
+    sidebarOpen,
+    toggleSidebar,
     closeDocument,
     externalChange,
     clearExternalChange,
@@ -246,6 +253,26 @@ export function EditorPane(): React.ReactElement {
     if (folderPath) openFolderMut.mutate(folderPath)
   }, [openFolderMut])
 
+  // Clicking a folder segment in the breadcrumb navigates the sidebar to that directory.
+  const handleNavigateToSegment = useCallback((segments: string[], index: number) => {
+    const dirPath = segments.slice(0, index + 1).join('/')
+    useUIStore.getState().setActiveFolder(dirPath)
+  }, [])
+
+  // Copy the full path or just the file name from the breadcrumb.
+  const handleCopyPath = useCallback(
+    async (mode: 'full' | 'name') => {
+      if (!doc?.filePath) return
+      const text = mode === 'full' ? doc.filePath : baseName(doc.filePath)
+      try {
+        await window.api.clipboard.writeText(text)
+      } catch {
+        // ignore copy failures
+      }
+    },
+    [doc],
+  )
+
   // Split view: draggable divider. splitRatio is the editor's width fraction (0–1).
   const splitContainerRef = useRef<HTMLDivElement>(null)
   const [splitRatio, setSplitRatio] = useState(0.5)
@@ -291,32 +318,15 @@ export function EditorPane(): React.ReactElement {
           <Button
             variant="ghost"
             size="icon"
-            onClick={handleOpenFile}
-            disabled={openPathsMut.isPending}
-            data-testid="open-file-btn"
+            aria-label={t('menu.toggleSidebar')}
+            data-testid="sidebar-toggle-btn"
+            onClick={toggleSidebar}
           >
-            <FolderOpen size={13} />
+            <PanelLeft size={14} />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{t('sidebar.openFile')} (⌘O)</TooltipContent>
+        <TooltipContent>{t('editor.toggleSidebarShortcut')}</TooltipContent>
       </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleOpenFolder}
-            disabled={openFolderMut.isPending}
-            data-testid="open-folder-btn"
-          >
-            <Folder size={13} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('sidebar.openFolder')} (⌘⇧O)</TooltipContent>
-      </Tooltip>
-
-      <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
-
       {/* Save / Save As / Reload — grouped with Open/Close as file operations, kept on the left */}
       {activeDocumentId && (
         <>
@@ -414,22 +424,6 @@ export function EditorPane(): React.ReactElement {
       </Tooltip>
 
       <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
-
-      {!sidebarOpen && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleSidebar}
-              data-testid="toggle-sidebar-btn"
-            >
-              <PanelLeft size={14} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('editor.toggleSidebarShortcut')}</TooltipContent>
-        </Tooltip>
-      )}
 
       {/* Read-only / edit mode toggle */}
       {editable ? (
@@ -669,29 +663,51 @@ export function EditorPane(): React.ReactElement {
           className="flex items-center gap-0.5 min-w-0 overflow-hidden text-[var(--color-text-tertiary)]"
           title={doc.filePath}
         >
-          {doc.filePath
-            .replace(/\\/g, '/')
-            .split('/')
-            .filter(Boolean)
-            .map((seg: string, i: number, arr: string[]) => {
+          {(() => {
+            const segments = doc.filePath.replace(/\\/g, '/').split('/').filter(Boolean)
+            return segments.map((seg: string, i: number, arr: string[]) => {
               const isLast = i === arr.length - 1
               return (
                 <span key={i} className="flex items-center gap-0.5 min-w-0">
-                  <span
-                    className={cn(
-                      'truncate',
-                      isLast
-                        ? 'text-[var(--color-text-primary)] font-medium'
-                        : 'hover:text-[var(--color-text-secondary)]',
-                    )}
-                  >
-                    {seg}
-                  </span>
+                  {isLast ? (
+                    <span className="truncate text-[var(--color-text-primary)] font-medium">
+                      {seg}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleNavigateToSegment(segments, i)}
+                      className="truncate hover:text-accent transition-colors"
+                      title={t('editor.openSegmentFolder')}
+                    >
+                      {seg}
+                    </button>
+                  )}
                   {!isLast && <span className="text-[var(--color-border-strong)] shrink-0">/</span>}
                 </span>
               )
-            })}
+            })
+          })()}
         </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="shrink-0 ml-1 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
+              title={t('editor.copyPath')}
+            >
+              <Copy size={12} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => handleCopyPath('full')}>
+              {t('editor.copyFullPath')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleCopyPath('name')}>
+              {t('editor.copyFileName')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Editor / Preview / Split */}

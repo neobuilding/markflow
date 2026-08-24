@@ -8,6 +8,8 @@ import {
   FolderOpen,
   Folder,
   ChevronRight,
+  ArrowUp,
+  ArrowRight,
   X,
   GripVertical,
 } from 'lucide-react'
@@ -48,6 +50,7 @@ export function Sidebar(): React.ReactElement | null {
     setActiveDocumentId,
     setSearchOpen,
     activeFolder,
+    setActiveFolder,
     closeWorkspace,
   } = useUIStore()
   const { t } = useT()
@@ -135,6 +138,14 @@ export function Sidebar(): React.ReactElement | null {
     useUIStore.getState().setFileDetailsId(doc.id)
   }, [])
 
+  // Enter a subfolder: make it the active (current) folder.
+  const handleEnterFolder = useCallback(
+    (folder: string) => {
+      setActiveFolder(folder)
+    },
+    [setActiveFolder],
+  )
+
   // Sidebar resize drag handlers
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -164,6 +175,15 @@ export function Sidebar(): React.ReactElement | null {
     document.body.style.userSelect = 'none'
   }, [])
 
+  // Parent folder of the current folder; null when at a root level (no parent to go up to).
+  const parentFolder = useMemo(() => {
+    if (!activeFolder) return null
+    const parts = activeFolder.split(/[\\/]/).filter(Boolean)
+    if (parts.length <= 1) return null
+    const parent = activeFolder.slice(0, activeFolder.length - parts[parts.length - 1].length - 1)
+    return parent || null
+  }, [activeFolder])
+
   if (!sidebarOpen) return null
 
   const folderName = activeFolder
@@ -184,15 +204,7 @@ export function Sidebar(): React.ReactElement | null {
         }}
       >
         <div className="titlebar-no-drag flex items-center gap-1.5 flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-            <div className="w-5 h-5 rounded bg-accent flex items-center justify-center shrink-0">
-              <FileText size={11} className="text-white" />
-            </div>
-            <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate">
-              MarkFlow
-            </span>
-          </div>
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center gap-0.5 ml-auto">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -257,6 +269,22 @@ export function Sidebar(): React.ReactElement | null {
       {/* Current folder bar */}
       {activeFolder && (
         <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--color-border)] shrink-0">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                aria-label={t('sidebar.up')}
+                data-testid="up-folder-btn"
+                disabled={!parentFolder}
+                onClick={() => parentFolder && setActiveFolder(parentFolder)}
+              >
+                <ArrowUp size={12} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('sidebar.up')}</TooltipContent>
+          </Tooltip>
           <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
           <span
             className="text-2xs text-[var(--color-text-tertiary)] truncate flex-1"
@@ -323,6 +351,7 @@ export function Sidebar(): React.ReactElement | null {
                       onSelectDoc={handleSelectDoc}
                       onDeleteDoc={handleDeleteDoc}
                       onDetailsDoc={handleDetailsDoc}
+                      onEnterFolder={() => {}}
                     />
                   ))}
                 </ul>
@@ -339,6 +368,7 @@ export function Sidebar(): React.ReactElement | null {
                     onSelectDoc={handleSelectDoc}
                     onDeleteDoc={handleDeleteDoc}
                     onDetailsDoc={handleDetailsDoc}
+                    onEnterFolder={handleEnterFolder}
                   />
                 ))}
               </ul>
@@ -453,7 +483,7 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1">
-          <span className="text-sm font-medium truncate text-[var(--color-text-primary)]">
+          <span className="text-xs font-medium truncate text-[var(--color-text-primary)]">
             {/* A memory-only new document has no file on disk yet; it is listed in the dedicated
                 "Unsaved drafts" group (PLAN §6.3), falling back to its title here. */}
             {doc.filePath ? baseName(doc.filePath) : doc.title}
@@ -521,17 +551,28 @@ interface TreeRowProps {
   onSelectDoc: (doc: Document) => void
   onDeleteDoc: (doc: Document) => void
   onDetailsDoc: (doc: Document) => void
+  onEnterFolder: (folder: string) => void
 }
 
 // Recursively render the document tree: folders are collapsible, files reuse DocItem.
-function TreeRow({ node, depth, activeId, onSelectDoc, onDeleteDoc, onDetailsDoc }: TreeRowProps) {
+function TreeRow({
+  node,
+  depth,
+  activeId,
+  onSelectDoc,
+  onDeleteDoc,
+  onDetailsDoc,
+  onEnterFolder,
+}: TreeRowProps) {
+  const { t } = useT()
   const [open, setOpen] = useState(false)
   if (node.isFolder) {
     return (
-      <li>
+      <li className="group">
         <button
           onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-1.5 w-full px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-overlay)] transition-colors truncate"
+          onDoubleClick={() => onEnterFolder(node.path)}
+          className="flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-overlay)] transition-colors truncate"
           style={{ paddingLeft: depth * 12 + 12 }}
         >
           <ChevronRight
@@ -547,6 +588,24 @@ function TreeRow({ node, depth, activeId, onSelectDoc, onDeleteDoc, onDetailsDoc
             <Folder size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
           )}
           <span className="truncate">{node.name}</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                role="button"
+                tabIndex={-1}
+                aria-label={t('sidebar.enter')}
+                data-testid="enter-folder-btn"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onEnterFolder(node.path)
+                }}
+                className="shrink-0 ml-auto p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-overlay)] transition-opacity"
+              >
+                <ArrowRight size={13} className="text-[var(--color-text-tertiary)]" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{t('sidebar.enter')}</TooltipContent>
+          </Tooltip>
         </button>
         {open && (
           <ul>
@@ -559,6 +618,7 @@ function TreeRow({ node, depth, activeId, onSelectDoc, onDeleteDoc, onDetailsDoc
                 onSelectDoc={onSelectDoc}
                 onDeleteDoc={onDeleteDoc}
                 onDetailsDoc={onDetailsDoc}
+                onEnterFolder={onEnterFolder}
               />
             ))}
           </ul>

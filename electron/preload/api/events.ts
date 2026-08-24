@@ -25,6 +25,11 @@ export const onMenuEvent = (
 export const onFileChanged = (callback: (data: { id: string; filePath: string }) => void) =>
   onIpc('app:file-changed', callback)
 
+// A file was added or removed in the directory of an open document; the renderer
+// should refresh the sidebar list (does NOT prompt to reload, unlike onFileChanged).
+export const onFolderChanged = (callback: (data: { dirPath: string }) => void) =>
+  onIpc('app:folder-changed', callback)
+
 // Paths opened via CLI args / file association / drag-onto-dock
 export const onOpenPaths = (callback: (paths: string[]) => void) =>
   onIpc('app:open-paths', callback)
