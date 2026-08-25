@@ -13,7 +13,13 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { onMenuEvent, onFileChanged, onOpenPaths, onAppRequestQuit } from './events'
+import {
+  onMenuEvent,
+  onFileChanged,
+  onOpenPaths,
+  onAppRequestQuit,
+  onFolderChanged,
+} from './events'
 
 beforeEach(() => {
   for (const k of Object.keys(listeners)) delete listeners[k]
@@ -68,5 +74,16 @@ describe('preload events subscriptions', () => {
     expect(typeof listeners['app:request-quit']).toBe('function')
     listeners['app:request-quit']({})
     expect(called).toBe(true)
+  })
+
+  it('onFolderChanged maps to app:folder-changed and forwards the dirPath', () => {
+    let payload: unknown
+    onFolderChanged((data) => {
+      payload = data
+    })
+    expect(typeof listeners['app:folder-changed']).toBe('function')
+    const change = { dirPath: '/docs' }
+    listeners['app:folder-changed']({}, change)
+    expect(payload).toEqual(change)
   })
 })

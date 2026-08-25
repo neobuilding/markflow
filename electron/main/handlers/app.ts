@@ -1,6 +1,6 @@
 // App-level IPC handlers: get-initial-paths / show-in-folder / get-version.
 // Extracted from index.ts.
-import { ipcMain, shell, app } from 'electron'
+import { ipcMain, shell, app, clipboard } from 'electron'
 import { pendingInitialPaths } from '../state'
 
 export function registerAppHandlers(): void {
@@ -21,4 +21,13 @@ export function registerAppHandlers(): void {
 
   // Renderer's "About" dialog fetches the app version (in production this is the injected rolling version)
   ipcMain.handle('app:get-version', () => app.getVersion())
+
+  // Write text to the system clipboard from the renderer.
+  ipcMain.handle('clipboard:write-text', (_event, text: string) => {
+    try {
+      clipboard.writeText(text)
+    } catch {
+      // Ignore clipboard failures
+    }
+  })
 }

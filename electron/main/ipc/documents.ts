@@ -204,6 +204,63 @@ const suppressUntil = new Map<string, number>()
 // to determine whether the file itself changed (see the watchDocument callback).
 const watchedMtime = new Map<string, number>()
 
+// Directory watchers: one FSWatcher per directory, shared by all open documents in that directory
+// (reference-counted). Used to notify the renderer when files are added/removed in the directory so
+// the sidebar list can be refreshed. Keyed by the absolute directory path.
+const dirWatchers = new Map<string, FSWatcher>()
+const dirRefCount = new Map<string, number>()
+const dirNotifyTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function watchDirectory(dirPath: string): void {
+  const existing = dirWatchers.get(dirPath)
+  if (existing) {
+    dirRefCount.set(dirPath, dirRefCount.get(dirPath)! + 1)
+    return
+  }
+  try {
+    const watcher = watch(dirPath, () => {
+      // A directory change may be a sibling file write (e.g. exporting HTML) or an add/remove of
+      // another document. We don't try to classify it here — we just debounce and tell the renderer
+      // to refresh the list. Debouncing collapses burst events (e.g. an editor writing temp files).
+      const t = dirNotifyTimers.get(dirPath)
+      if (t) clearTimeout(t)
+      dirNotifyTimers.set(
+        dirPath,
+        setTimeout(() => {
+          dirNotifyTimers.delete(dirPath)
+          const win = _getMainWindow?.()
+          if (win) win.webContents.send('app:folder-changed', { dirPath })
+        }, 400),
+      )
+    })
+    dirWatchers.set(dirPath, watcher)
+    dirRefCount.set(dirPath, 1)
+  } catch {
+    // ignore — directory may be inaccessible
+  }
+}
+
+function unwatchDirectory(dirPath: string): void {
+  const count = (dirRefCount.get(dirPath) ?? 0) - 1
+  if (count > 0) {
+    dirRefCount.set(dirPath, count)
+    return
+  }
+  dirRefCount.delete(dirPath)
+  const t = dirNotifyTimers.get(dirPath)
+  if (t) clearTimeout(t)
+  dirNotifyTimers.delete(dirPath)
+  const w = dirWatchers.get(dirPath)
+  if (w) {
+    try {
+      w.close()
+    } catch {
+      // ignore
+    }
+    dirWatchers.delete(dirPath)
+  }
+}
+
 function watchDocument(id: string): void {
   if (fileWatchers.has(id)) return
   let row: { file_path: string } | undefined
@@ -235,6 +292,12 @@ function watchDocument(id: string): void {
     fileWatchers.set(id, watcher)
   } catch {
     // ignore — file may be inaccessible
+  }
+  // Also watch the enclosing directory so add/remove of sibling files triggers a list refresh.
+  try {
+    watchDirectory(dirname(filePath))
+  } catch {
+    // ignore — directory may be inaccessible
   }
 }
 
@@ -285,6 +348,14 @@ function unwatchDocument(id: string): void {
       // ignore
     }
     fileWatchers.delete(id)
+  }
+  // Release the directory watch (decrement ref count; only closes when last document leaves).
+  try {
+    const row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as
+      { file_path: string } | undefined
+    if (row?.file_path) unwatchDirectory(dirname(row.file_path))
+  } catch {
+    // ignore
   }
   // Fetch the document's file path to clean up the mtime baseline
   try {

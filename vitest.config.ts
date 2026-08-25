@@ -31,6 +31,7 @@ export default defineConfig({
       'src/renderer/src/**/*.test.ts',
       'src/renderer/src/**/*.test.tsx',
       'electron/main/**/*.test.ts',
+      'electron/preload/**/*.test.ts',
       'actions/create-pr/src/**/*.test.mjs',
     ],
     // Report coverage for the ENTIRE project (every source file), not only the files
@@ -53,6 +54,7 @@ export default defineConfig({
         'src/renderer/src/i18n/**/*.ts',
         'src/renderer/src/hooks/**/*.{ts,tsx}',
         'src/renderer/src/components/**/*.{ts,tsx}',
+        'electron/preload/**/*.ts',
         'electron/main/ipc/**/*.ts',
         'electron/main/ipc/documents.ts',
         'electron/main/ipc/export.ts',
@@ -191,6 +193,15 @@ export default defineConfig({
           lines: 100,
         },
         'electron/main/i18n.ts': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        // Preload composition root (window.api assembly). It is a pure
+        // composition module with no native/IPC logic of its own, so the
+        // entire api contract is asserted by electron/preload/index.test.ts.
+        'electron/preload/index.ts': {
           statements: 100,
           branches: 100,
           functions: 100,

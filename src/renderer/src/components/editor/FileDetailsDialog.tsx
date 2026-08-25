@@ -47,7 +47,7 @@ export function FileDetailsDialog(): React.ReactElement | null {
   const copyPath = async () => {
     if (!doc?.filePath) return
     try {
-      await navigator.clipboard.writeText(doc.filePath)
+      await window.api.clipboard.writeText(doc.filePath)
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {

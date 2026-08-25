@@ -4,11 +4,18 @@ import { documentsApi } from './api/documents'
 import { exportApi } from './api/export'
 import { searchApi } from './api/search'
 import { appApi } from './api/app'
+import { clipboardApi } from './api/clipboard'
 import { filesApi } from './api/files'
 import { dialogApi } from './api/dialog'
 import { windowApi } from './api/window'
 import { menuApi } from './api/menu'
-import { onMenuEvent, onFileChanged, onOpenPaths, onAppRequestQuit } from './api/events'
+import {
+  onMenuEvent,
+  onFileChanged,
+  onFolderChanged,
+  onOpenPaths,
+  onAppRequestQuit,
+} from './api/events'
 
 // Custom APIs exposed to renderer. Each group is assembled from the per-domain
 // modules under ./api so this file only does composition, not implementation.
@@ -17,6 +24,7 @@ const api = {
   export: exportApi,
   search: searchApi,
   app: appApi,
+  clipboard: clipboardApi,
   files: filesApi,
   dialog: dialogApi,
   window: windowApi,
@@ -24,6 +32,7 @@ const api = {
   // Event subscriptions are spread to the top level (window.api.onMenuEvent, ...)
   onMenuEvent,
   onFileChanged,
+  onFolderChanged,
   onOpenPaths,
   onAppRequestQuit,
 }

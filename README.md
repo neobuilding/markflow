@@ -1,7 +1,7 @@
 # MarkFlow
 
 <p align="center">
-  <img src="resources/icon.png" alt="MarkFlow Logo" width="128" height="128">
+  <img src="docs/Markflow_cn.png" alt="MarkFlow Screenshot" width="700">
 </p>
 
 <p align="center">

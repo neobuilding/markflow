@@ -12,6 +12,7 @@ import { ExportDialog } from './components/editor/ExportDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { buildStandaloneHtml, resolveTheme } from './lib/export'
 import { getExportHtml } from './lib/exportStore'
+import { queryClient, DOCS_KEY } from './lib/queryClient'
 import { t, useT, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
 
@@ -237,6 +238,17 @@ export default function App(): React.ReactElement {
     return () => remove()
   }, [tryCloseWorkspace])
 
+  // When files are added/removed in the directory of an open document, refresh the sidebar
+  // list. This does not prompt to reload the active document (that is onFileChanged's job) —
+  // it only re-fetches the document list so new/deleted sibling files show up.
+  useEffect(() => {
+    if (!window.api?.onFolderChanged) return
+    const remove = window.api.onFolderChanged(() => {
+      queryClient.invalidateQueries({ queryKey: DOCS_KEY })
+    })
+    return () => remove()
+  }, [])
+
   // Open files/folders dragged into the window (cross-platform)
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('Files')) {
@@ -269,7 +281,7 @@ export default function App(): React.ReactElement {
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        <div className="flex flex-1 min-h-0">
+        <div className="relative flex flex-1 min-h-0">
           <Sidebar />
           <EditorPane />
         </div>

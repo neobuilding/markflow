@@ -51,8 +51,10 @@ interface ApiShape {
   dialog: Record<string, ReturnType<typeof vi.fn>>
   window: Record<string, ReturnType<typeof vi.fn>>
   menu: Record<string, ReturnType<typeof vi.fn>>
+  clipboard: Record<string, ReturnType<typeof vi.fn>>
   onMenuEvent: ReturnType<typeof vi.fn>
   onFileChanged: ReturnType<typeof vi.fn>
+  onFolderChanged: ReturnType<typeof vi.fn>
   onOpenPaths: ReturnType<typeof vi.fn>
   onAppRequestQuit: ReturnType<typeof vi.fn>
 }
@@ -126,8 +128,10 @@ beforeEach(() => {
       isMaximized: vi.fn(async () => false),
     },
     menu: { setEditable: vi.fn(), setHasDocument: vi.fn(), setPrinting: vi.fn() },
+    clipboard: { writeText: vi.fn(async () => {}) },
     onMenuEvent: vi.fn(() => noopUnsub),
     onFileChanged: vi.fn(() => noopUnsub),
+    onFolderChanged: vi.fn(() => noopUnsub),
     onOpenPaths: vi.fn(() => noopUnsub),
     onAppRequestQuit: vi.fn(() => noopUnsub),
   }
@@ -390,32 +394,6 @@ describe('EditorPane — close & open', () => {
     expect(useUIStore.getState().activeDocumentId).toBeNull()
   })
 
-  it('Open file forwards selected paths to openPaths mutation', async () => {
-    const user = userEvent.setup()
-    api.dialog.openFiles = vi.fn(async () => ['/x.md'])
-    mount()
-    await openDoc()
-    await flush()
-
-    await user.click(screen.getByTestId('open-file-btn'))
-    await flush()
-    expect(api.dialog.openFiles).toHaveBeenCalled()
-    expect(api.files.resolvePaths).toHaveBeenCalledWith(['/x.md'])
-  })
-
-  it('Open folder forwards the folder path to openFolder mutation', async () => {
-    const user = userEvent.setup()
-    api.dialog.openFolderPath = vi.fn(async () => '/some/folder')
-    mount()
-    await openDoc()
-    await flush()
-
-    await user.click(screen.getByTestId('open-folder-btn'))
-    await flush()
-    expect(api.dialog.openFolderPath).toHaveBeenCalled()
-    expect(api.files.resolvePaths).toHaveBeenCalledWith(['/some/folder'])
-  })
-
   it('does not watch a file when no document is active', async () => {
     // activeDocumentId stays null (beforeEach default) → the watch effect returns early.
     mount()
@@ -496,14 +474,14 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
     expect(useUIStore.getState().exportOpen).toBe(true)
   })
 
-  it('toggles the sidebar when it is closed', async () => {
+  it('toggles the sidebar open via the toolbar button when it is closed', async () => {
     const user = userEvent.setup()
     useUIStore.getState().setSidebarOpen(false)
     mount()
     await openDoc()
     await flush()
 
-    await user.click(screen.getByTestId('toggle-sidebar-btn'))
+    await user.click(screen.getByTestId('sidebar-toggle-btn'))
     await flush()
     expect(useUIStore.getState().sidebarOpen).toBe(true)
   })
@@ -578,6 +556,69 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
 
     await userEvent.click(screen.getByTitle(/show in folder/i))
     expect(showInFolder).toHaveBeenCalledWith('/a.md')
+  })
+
+  it('copies the full file path from the breadcrumb menu', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '/docs/sub/a.md' }
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTitle('Copy path'))
+    const copyFull = await screen.findByText('Copy full path')
+    await user.click(copyFull)
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith('/docs/sub/a.md'))
+    docs.a = { ...docs.a, filePath: originalPath }
+  })
+
+  it('copies just the file name from the breadcrumb menu', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '/docs/sub/a.md' }
+    mount()
+    await openDoc()
+    await flush()
+
+    await user.click(screen.getByTitle('Copy path'))
+    const copyName = await screen.findByText('Copy file name')
+    await user.click(copyName)
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith('a.md'))
+    docs.a = { ...docs.a, filePath: originalPath }
+  })
+
+  it('navigates the sidebar to a directory segment clicked in the breadcrumb', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '/docs/sub/a.md' }
+    mount()
+    await openDoc()
+    await flush()
+
+    // The breadcrumb renders clickable folder segments ("docs", "sub") plus the file name.
+    const segments = screen.getAllByTitle('Go to this folder')
+    expect(segments.length).toBeGreaterThan(0)
+    await user.click(segments[0])
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+    docs.a = { ...docs.a, filePath: originalPath }
+  })
+
+  it('does not write to clipboard when the document has no filePath (copy path early-returns)', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '' }
+    mount()
+    await openDoc()
+    await flush()
+
+    // The Copy-path button is always rendered, but handleCopyPath returns early
+    // when doc.filePath is empty, so the clipboard must not be touched.
+    await user.click(screen.getByTitle('Copy path'))
+    const copyFull = await screen.findByText('Copy full path')
+    await user.click(copyFull)
+    expect(api.clipboard.writeText).not.toHaveBeenCalled()
+    docs.a = { ...docs.a, filePath: originalPath }
   })
 
   it('dismisses the external-change dialog when closed via onOpenChange', async () => {

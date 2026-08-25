@@ -110,13 +110,18 @@ const fakeIpcMain = {
 const stableDocsRoot = mkdtempSync(join(tmpdir(), 'mf-db-'))
 const fakeApp = { getPath: () => stableDocsRoot } as any
 
-// A fake main window that captures 'app:file-changed' notifications, so the
-// notifyExternalChange path can be exercised end-to-end.
+// A fake main window that captures 'app:file-changed' and 'app:folder-changed'
+// notifications, so the notifyExternalChange / directory-watch paths can be
+// exercised end-to-end.
 const sentFileChanged: Array<{ id: string; filePath: string }> = []
-const fakeMainWindow = {
+const sentFolderChanged: Array<{ dirPath: string }> = []
+// Mutable so tests can simulate the main window being gone (null) to exercise
+// the early-return branch in watchDirectory.
+let fakeMainWindow: any = {
   webContents: {
-    send: (channel: string, payload: { id: string; filePath: string }) => {
+    send: (channel: string, payload: any) => {
       if (channel === 'app:file-changed') sentFileChanged.push(payload)
+      if (channel === 'app:folder-changed') sentFolderChanged.push(payload)
     },
   },
 }
@@ -1241,5 +1246,151 @@ describe('documents — pure encoding / text utilities', () => {
       expect(doc.encodingConfidence).toBe(1)
       expect(doc.isArchived).toBe(false)
     })
+  })
+})
+
+describe('documents IPC — directory watch (folder-changed)', () => {
+  it('emits a debounced app:folder-changed when a sibling file appears in the watched directory', async () => {
+    const created = await call('documents:create', {
+      title: 'DirWatch1',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    sentFolderChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(join(dirname(created.filePath), 'DirWatch1.sibling.md'), '# sibling')
+    // The directory watcher debounces for 400ms before notifying.
+    await new Promise((r) => setTimeout(r, 700))
+    expect(sentFolderChanged).toContainEqual({ dirPath: dirname(created.filePath) })
+    await call('documents:unwatch', created.id)
+  })
+
+  it('collapses a burst of directory events into a single debounced notification', async () => {
+    const created = await call('documents:create', {
+      title: 'DirBurst',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    sentFolderChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    const dir = dirname(created.filePath)
+    writeFileSync(join(dir, 'b1.md'), '1')
+    await new Promise((r) => setTimeout(r, 80)) // still inside the 400ms window
+    writeFileSync(join(dir, 'b2.md'), '2')
+    await new Promise((r) => setTimeout(r, 700))
+    const mine = sentFolderChanged.filter((e) => e.dirPath === dir)
+    // Both writes collapse into a single debounced notification.
+    expect(mine).toHaveLength(1)
+    await call('documents:unwatch', created.id)
+  })
+
+  it('shares one watcher across documents in the same directory via reference counting', async () => {
+    const a = await call('documents:create', { title: 'RefA', content: 'v1', memoryOnly: false })
+    const b = await call('documents:create', { title: 'RefB', content: 'v2', memoryOnly: false })
+    expect(dirname(a.filePath)).toBe(dirname(b.filePath))
+    const dir = dirname(a.filePath)
+    await call('documents:watch', a.id)
+    await call('documents:watch', b.id)
+    // With both documents open, exactly one watcher exists; a change is reported once.
+    sentFolderChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(join(dir, 'ref-touch-1.md'), 'x')
+    await new Promise((r) => setTimeout(r, 700))
+    expect(sentFolderChanged.filter((e) => e.dirPath === dir)).toHaveLength(1)
+
+    // Unwatching one document keeps the shared watcher alive (refcount > 0).
+    await call('documents:unwatch', a.id)
+    sentFolderChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(join(dir, 'ref-touch-2.md'), 'y')
+    await new Promise((r) => setTimeout(r, 700))
+    expect(sentFolderChanged.filter((e) => e.dirPath === dir)).toHaveLength(1)
+
+    // Unwatching the last document closes the watcher; further changes are silent.
+    await call('documents:unwatch', b.id)
+    sentFolderChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(join(dir, 'ref-touch-3.md'), 'z')
+    await new Promise((r) => setTimeout(r, 700))
+    expect(sentFolderChanged.filter((e) => e.dirPath === dir)).toEqual([])
+  })
+
+  it('does not throw and emits nothing when the main window is missing', async () => {
+    const created = await call('documents:create', {
+      title: 'NoWin',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    await call('documents:watch', created.id)
+    const saved = fakeMainWindow
+    fakeMainWindow = null
+    sentFolderChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(join(dirname(created.filePath), 'nowin.md'), 'z')
+    await new Promise((r) => setTimeout(r, 700))
+    // The watch callback early-returns when there is no window, so no event is sent.
+    expect(sentFolderChanged).toEqual([])
+    fakeMainWindow = saved
+    await call('documents:unwatch', created.id)
+  })
+
+  it('reuses the shared watcher and bumps the refcount when watching a second document in the same directory', async () => {
+    const a = await call('documents:create', { title: 'ReuseA', content: 'v1', memoryOnly: false })
+    const b = await call('documents:create', { title: 'ReuseB', content: 'v2', memoryOnly: false })
+    const dir = dirname(a.filePath)
+    expect(dirname(b.filePath)).toBe(dir)
+    await call('documents:watch', a.id)
+    // Second watch of the same directory must hit the existing-watcher branch (refcount 1 -> 2).
+    await call('documents:watch', b.id)
+    // A change is still reported exactly once even though two documents reference the watcher.
+    sentFolderChanged.length = 0
+    await new Promise((r) => setTimeout(r, 30))
+    writeFileSync(join(dir, 'reuse-touch.md'), 'x')
+    await new Promise((r) => setTimeout(r, 700))
+    expect(sentFolderChanged.filter((e) => e.dirPath === dir)).toHaveLength(1)
+    await call('documents:unwatch', a.id)
+    await call('documents:unwatch', b.id)
+  })
+
+  it('unwatches a document whose directory has no registered watcher without error', async () => {
+    const created = await call('documents:create', {
+      title: 'NoWatcher',
+      content: 'v1',
+      memoryOnly: false,
+    })
+    // Never call documents:watch — unwatchDirectory must handle a missing watcher (`if (w)` falsy).
+    expect(() => call('documents:unwatch', created.id)).not.toThrow()
+  })
+
+  it('clears a pending debounce timer when unwatching while a directory change is still debouncing', async () => {
+    // Coverage for documents.ts:251 — the `if (t) clearTimeout(t)` branch fires when
+    // unwatchDirectory runs while a 400ms debounce timer is still pending (a change was
+    // observed but not yet flushed). We fake only setTimeout/clearTimeout so the watcher's
+    // 400ms timer stays deterministically pending; setImmediate stays real so the real
+    // fs.watch IO event can still be delivered and register that pending timer.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const created = await call('documents:create', {
+        title: 'PendingTimer',
+        content: 'v1',
+        memoryOnly: false,
+      })
+      await call('documents:watch', created.id)
+      const dir = dirname(created.filePath)
+      // Trigger a directory change so the watcher schedules a (now fake, pending) debounce timer.
+      writeFileSync(join(dir, 'pending-touch.md'), 'x')
+      // Let the real fs.watch IO event fire and register the pending timer.
+      await new Promise((r) => setImmediate(r))
+      sentFolderChanged.length = 0
+      // Unwatching now must clearTimeout() the pending timer, so no folder-changed is sent later.
+      await call('documents:unwatch', created.id)
+      // Flush any fake timers; because the pending timer was cleared, no notification fires.
+      vi.runAllTimers()
+      expect(sentFolderChanged).not.toContainEqual({ dirPath: dir })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
