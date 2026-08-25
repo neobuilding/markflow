@@ -198,6 +198,15 @@ export default defineConfig({
           functions: 100,
           lines: 100,
         },
+        // Preload composition root (window.api assembly). It is a pure
+        // composition module with no native/IPC logic of its own, so the
+        // entire api contract is asserted by electron/preload/index.test.ts.
+        'electron/preload/index.ts': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
         'electron/main/menu.ts': {
           statements: 90,
           branches: 60,

@@ -55,7 +55,6 @@ export function EditorPane(): React.ReactElement {
     setViewMode,
     editable,
     toggleEditable,
-    sidebarOpen,
     toggleSidebar,
     closeDocument,
     externalChange,
