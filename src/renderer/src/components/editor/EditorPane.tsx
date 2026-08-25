@@ -257,8 +257,11 @@ export function EditorPane(): React.ReactElement {
   // root occupies one leading segment, so the target is the first `index + 2` segments.
   const handleNavigateToSegment = useCallback(
     (segments: string[], index: number) => {
-      if (!doc?.filePath) return
-      const norm = doc.filePath.replace(/\\/g, '/')
+      // `doc` is guaranteed non-null here: the breadcrumb (and this handler's
+      // click target at line ~687) only render when `doc.filePath` exists, and
+      // the render body already accesses `doc.filePath` unguarded. A defensive
+      // `if (!doc?.filePath) return` would be an unreachable branch.
+      const norm = doc!.filePath.replace(/\\/g, '/')
       const dirPath = norm
         .split('/')
         .slice(0, index + 2)

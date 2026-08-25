@@ -356,6 +356,16 @@ describe('Sidebar — interactions', () => {
     await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
   })
 
+  it('renders the root folder name when the active folder ends with a separator', async () => {
+    useUIStore.getState().setActiveFolder('/docs/')
+    mount()
+    // '/docs/'.split('/').filter(Boolean) = ['docs'], so pop() is 'docs' (no fallback).
+    // Use a root-level path with a trailing separator to exercise the `?? activeFolder` fallback.
+    useUIStore.getState().setActiveFolder('/')
+    // The folder name falls back to the full path when the last segment is empty.
+    await waitFor(() => expect(screen.getByText('/')).toBeInTheDocument())
+  })
+
   it('enters a subfolder via the enter button in the tree', async () => {
     useUIStore.getState().setActiveFolder('/docs')
     mount()

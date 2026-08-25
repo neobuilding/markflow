@@ -604,6 +604,23 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     docs.a = { ...docs.a, filePath: originalPath }
   })
 
+  it('does not write to clipboard when the document has no filePath (copy path early-returns)', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '' }
+    mount()
+    await openDoc()
+    await flush()
+
+    // The Copy-path button is always rendered, but handleCopyPath returns early
+    // when doc.filePath is empty, so the clipboard must not be touched.
+    await user.click(screen.getByTitle('Copy path'))
+    const copyFull = await screen.findByText('Copy full path')
+    await user.click(copyFull)
+    expect(api.clipboard.writeText).not.toHaveBeenCalled()
+    docs.a = { ...docs.a, filePath: originalPath }
+  })
+
   it('dismisses the external-change dialog when closed via onOpenChange', async () => {
     mount()
     await openDoc()

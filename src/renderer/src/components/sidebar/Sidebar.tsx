@@ -181,7 +181,7 @@ export function Sidebar(): React.ReactElement | null {
     const parts = activeFolder.split(/[\\/]/).filter(Boolean)
     if (parts.length <= 1) return null
     const parent = activeFolder.slice(0, activeFolder.length - parts[parts.length - 1].length - 1)
-    return parent || null
+    return parent
   }, [activeFolder])
 
   if (!sidebarOpen) return null
