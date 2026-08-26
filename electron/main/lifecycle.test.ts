@@ -122,14 +122,8 @@ vi.mock('./state', () => {
   }
 })
 
-vi.mock('./db/database', () => ({
-  initDatabase: vi.fn(),
-  getDb: () => ({
-    prepare: () => ({
-      get: () => undefined,
-      run: () => ({}),
-    }),
-  }),
+vi.mock('./model/documentStore', () => ({
+  purgeUnsavedDrafts: vi.fn(() => 0),
 }))
 
 async function loadLifecycle(): Promise<void> {

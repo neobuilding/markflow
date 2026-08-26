@@ -23,16 +23,8 @@
     '!**/{.DS_Store,Thumbs.db,desktop.ini}',
     '!**/node_modules/.bin',
   ],
-  asarUnpack: ['node_modules/better-sqlite3/**'],
+  asarUnpack: [],
   mac: {
-    // better-sqlite3 ships per-arch prebuilds (darwin-x64.node / darwin-arm64.node) that are
-    // byte-identical in both the x64 and arm64 app bundles. @electron/universal requires such
-    // Mach-O files to be explicitly declared as x64-arch files, otherwise it throws
-    // "Detected file ... that's the same in both x64 and arm64 builds and not covered by the
-    // x64ArchFiles rule". Marking both darwin prebuilds keeps the correct binaries in place:
-    // the x64 bundle's darwin-arm64.node copy is the real arm64 binary (and vice-versa), so the
-    // universal app loads the right one per architecture at runtime.
-    x64ArchFiles: '**/node_modules/better-sqlite3/prebuilds/darwin-*.node',
     entitlementsInherit: 'resources/entitlements.mac.plist',
     extendInfo: {
       NSCameraUsageDescription: "Application requests access to the device's camera.",

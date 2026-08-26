@@ -1,9 +1,8 @@
 import type { IpcMain } from 'electron'
 import type { App } from 'electron'
-import { getDb } from '../db/database'
 
 let _app: App | null = null
-import { join, dirname, basename, extname } from 'node:path'
+import { join, dirname, basename, extname, isAbsolute } from 'node:path'
 import {
   readFileSync,
   writeFileSync,
@@ -22,48 +21,45 @@ import type { FSWatcher } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
 import iconv from 'iconv-lite'
+import {
+  type Document,
+  listDocuments as storeList,
+  getDocumentById as storeGet,
+  upsertDocument as storeUpsert,
+  updateDocument as storeUpdate,
+  deleteDocument as storeDelete,
+  getDocumentByFilePath as storeGetByPath,
+} from '../model/documentStore'
 
-export interface DocumentRow {
-  id: string
-  title: string
-  folder_path: string
-  file_path: string
-  content: string
-  word_count: number
-  is_archived: number
-  encoding: string
-  encoding_confidence: number
-  created_at: number
-  updated_at: number
-}
+export type { Document } from '../model/documentStore'
 
-export interface Document {
+// Build a Document from the canonical fields used by the handlers. Replaces the old
+// SQL row → Document mapping (toDocument). `is_archived` was removed with the archive feature.
+function makeDocument(params: {
   id: string
   title: string
   folderPath: string
   filePath: string
   content: string
   wordCount: number
-  isArchived: boolean
-  encoding: string
-  encodingConfidence: number
+  encoding?: string
+  encodingConfidence?: number
   createdAt: number
   updatedAt: number
-}
-
-export function toDocument(row: DocumentRow): Document {
+  memoryOnly?: boolean
+}): Document {
   return {
-    id: row.id,
-    title: row.title,
-    folderPath: row.folder_path,
-    filePath: row.file_path,
-    content: row.content,
-    wordCount: row.word_count,
-    isArchived: row.is_archived === 1,
-    encoding: row.encoding ?? 'utf-8',
-    encodingConfidence: row.encoding_confidence ?? 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    id: params.id,
+    title: params.title,
+    folderPath: params.folderPath,
+    filePath: params.filePath,
+    content: params.content,
+    wordCount: params.wordCount,
+    encoding: params.encoding ?? 'utf-8',
+    encodingConfidence: params.encodingConfidence ?? 1,
+    createdAt: params.createdAt,
+    updatedAt: params.updatedAt,
+    memoryOnly: params.memoryOnly,
   }
 }
 
@@ -263,15 +259,17 @@ function unwatchDirectory(dirPath: string): void {
 
 function watchDocument(id: string): void {
   if (fileWatchers.has(id)) return
-  let row: { file_path: string } | undefined
+  // Defensive: a store read failure (e.g. the store is unavailable) must not crash
+  // watch setup. Skip watching rather than throw (regression guard for the
+  // "watch swallows a store read failure" path).
+  let doc: Document | null
   try {
-    row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as
-      { file_path: string } | undefined
+    doc = storeGet(id)
   } catch {
     return
   }
-  if (!row?.file_path || typeof row.file_path !== 'string') return
-  const filePath = row.file_path
+  if (!doc?.filePath || typeof doc.filePath !== 'string') return
+  const filePath = doc.filePath
   // Record the starting mtime as the "unchanged" baseline (for comparison when filename is null).
   // If the file is missing/unreadable, just skip watching instead of pre-checking with existsSync.
   try {
@@ -350,20 +348,10 @@ function unwatchDocument(id: string): void {
     fileWatchers.delete(id)
   }
   // Release the directory watch (decrement ref count; only closes when last document leaves).
-  try {
-    const row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as
-      { file_path: string } | undefined
-    if (row?.file_path) unwatchDirectory(dirname(row.file_path))
-  } catch {
-    // ignore
-  }
-  // Fetch the document's file path to clean up the mtime baseline
-  try {
-    const row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as
-      { file_path: string } | undefined
-    if (row?.file_path) watchedMtime.delete(row.file_path)
-  } catch {
-    // ignore
+  const doc = storeGet(id)
+  if (doc?.filePath) {
+    unwatchDirectory(dirname(doc.filePath))
+    watchedMtime.delete(doc.filePath)
   }
 }
 
@@ -376,30 +364,15 @@ export function registerDocumentHandlers(
   _getMainWindow = getMainWindow as () => {
     webContents: { send: (channel: string, ...args: unknown[]) => void }
   } | null
-  // List all documents (sorted by updated_at)
+  // List all documents (sorted by updated_at). Phase one: read directly from the store
+  // (the single source of truth). In phase two this is backed by chokidar-driven store state.
   ipcMain.handle('documents:list', (_event, folderPath?: string) => {
-    const db = getDb()
-    let rows: DocumentRow[]
-    if (folderPath !== undefined && folderPath !== '') {
-      rows = db
-        .prepare(
-          'SELECT * FROM documents WHERE folder_path = ? AND is_archived = 0 ORDER BY updated_at DESC',
-        )
-        .all(folderPath) as DocumentRow[]
-    } else {
-      rows = db
-        .prepare('SELECT * FROM documents WHERE is_archived = 0 ORDER BY updated_at DESC')
-        .all() as DocumentRow[]
-    }
-    return rows.map(toDocument)
+    return storeList(folderPath)
   })
 
   // Get single document
   ipcMain.handle('documents:get', (_event, id: string) => {
-    const db = getDb()
-    const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-      DocumentRow | undefined
-    return row ? toDocument(row) : null
+    return storeGet(id)
   })
 
   // Create new document
@@ -415,7 +388,6 @@ export function registerDocumentHandlers(
         memoryOnly?: boolean
       },
     ) => {
-      const db = getDb()
       const id = randomUUID()
       const now = Date.now()
       const title = params.title || 'Untitled'
@@ -427,21 +399,33 @@ export function registerDocumentHandlers(
       const wordCount = countWords(content)
 
       // Memory-only mode: a brand-new in-app document must NOT touch the filesystem
-      // until the user explicitly saves it. We insert a draft DB row with an empty
+      // until the user explicitly saves it. We insert a draft record with an empty
       // file_path and skip both the disk write and the file watcher. The first Save
       // (Save As) later writes the file to the user-chosen path and backfills file_path.
       if (params.memoryOnly) {
-        db.prepare(
-          `
-          INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, encoding, encoding_confidence, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, 0, 'utf-8', 1, ?, ?)
-        `,
-        ).run(id, title, folderPath, '', content, wordCount, now, now)
-        const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
-        return toDocument(row)
+        const doc = makeDocument({
+          id,
+          title,
+          folderPath,
+          filePath: '',
+          content,
+          wordCount,
+          createdAt: now,
+          updatedAt: now,
+          memoryOnly: true,
+        })
+        return storeUpsert(doc)
       }
 
-      const baseDir = folderPath ? join(getDefaultDocsDir(), folderPath) : getDefaultDocsDir()
+      // Plan §6.#13/#19: when an absolute folder path is supplied (e.g. the
+      // renderer's activeFolder), write directly there (VS Code "save into the
+      // opened folder" semantics). A relative sub-folder name is still joined onto
+      // the default docs dir to preserve the legacy behavior.
+      const baseDir = folderPath
+        ? isAbsolute(folderPath)
+          ? folderPath
+          : join(getDefaultDocsDir(), folderPath)
+        : getDefaultDocsDir()
       mkdirSync(baseDir, { recursive: true })
 
       // Create a unique filename atomically: open with O_EXCL ('wx') and retry with an
@@ -470,16 +454,18 @@ export function registerDocumentHandlers(
         closeSync(fd)
       }
 
-      // Insert into DB
-      db.prepare(
-        `
-        INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, encoding, encoding_confidence, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 0, 'utf-8', 1, ?, ?)
-      `,
-      ).run(id, title, folderPath, filePath, content, wordCount, now, now)
-
-      const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
-      return toDocument(row)
+      const doc = makeDocument({
+        id,
+        title,
+        folderPath,
+        filePath,
+        content,
+        wordCount,
+        createdAt: now,
+        updatedAt: now,
+        memoryOnly: false,
+      })
+      return storeUpsert(doc)
     },
   )
 
@@ -487,10 +473,8 @@ export function registerDocumentHandlers(
   ipcMain.handle(
     'documents:update',
     (_event, id: string, updates: Partial<{ title: string; content: string }>) => {
-      const db = getDb()
       const now = Date.now()
-      const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-        DocumentRow | undefined
+      const existing = storeGet(id)
       if (!existing) return null
 
       const newTitle = updates.title ?? existing.title
@@ -501,53 +485,48 @@ export function registerDocumentHandlers(
       // Write back in the document's original metadata encoding to preserve byte-level fidelity (R5).
       // A memory-only draft (file_path === '') has no file yet; the first Save is always routed to
       // Save As, so this branch is defensive only. Skip the disk write to avoid writing to an empty path.
-      if (existing.file_path) {
-        suppressUntil.set(existing.file_path, Date.now() + 2000)
-        writeFileSync(existing.file_path, iconv.encode(newContent, existing.encoding || 'utf-8'))
+      if (existing.filePath) {
+        suppressUntil.set(existing.filePath, Date.now() + 2000)
+        writeFileSync(existing.filePath, iconv.encode(newContent, existing.encoding || 'utf-8'))
       }
 
       // Rename file if title changed
-      let newFilePath = existing.file_path
-      if (updates.title && updates.title !== existing.title && existing.file_path) {
-        const dir = dirname(existing.file_path)
+      let newFilePath = existing.filePath
+      if (updates.title && updates.title !== existing.title && existing.filePath) {
+        const dir = dirname(existing.filePath)
         const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
-        const ext = extname(existing.file_path).toLowerCase() || '.md'
+        const ext = extname(existing.filePath).toLowerCase() || '.md'
         // Pick a free target name: the title-based name, or `<title>-N<ext>` if already taken by
         // a *different* file. (renameSync replaces the target atomically on both Windows and POSIX,
         // so we probe existence explicitly to avoid clobbering an unrelated file.)
         let target = join(dir, `${safeTitle}${ext}`)
         let counter = 0
-        while (target !== existing.file_path && existsSync(target)) {
+        while (target !== existing.filePath && existsSync(target)) {
           counter++
           target = join(dir, `${safeTitle}-${counter}${ext}`)
         }
-        if (target !== existing.file_path) {
-          renameSync(existing.file_path, target)
+        if (target !== existing.filePath) {
+          renameSync(existing.filePath, target)
         }
         newFilePath = target
       }
 
-      db.prepare(
-        `
-        UPDATE documents
-        SET title = ?, content = ?, word_count = ?, file_path = ?, updated_at = ?
-        WHERE id = ?
-      `,
-      ).run(newTitle, newContent, wordCount, newFilePath, now, id)
-
-      const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
-      return toDocument(row)
+      return storeUpdate(id, {
+        title: newTitle,
+        content: newContent,
+        wordCount,
+        filePath: newFilePath,
+        updatedAt: now,
+      })
     },
   )
 
-  // Save As: write the content to a brand-new file path and point the DB record at that new file
+  // Save As: write the content to a brand-new file path and point the record at that new file
   // (folder_path / file_path / title are updated in sync). The original file is left untouched.
   ipcMain.handle(
     'documents:save-as',
     (_event, id: string, newFilePath: string, updates: { title?: string; content?: string }) => {
-      const db = getDb()
-      const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-        DocumentRow | undefined
+      const existing = storeGet(id)
       if (!existing) return null
 
       const content = updates.content ?? existing.content
@@ -562,45 +541,40 @@ export function registerDocumentHandlers(
       writeFileSync(newFilePath, iconv.encode(content, existing.encoding || 'utf-8'))
 
       const folderPath = dirname(newFilePath)
-      db.prepare(
-        `
-        UPDATE documents
-        SET title = ?, folder_path = ?, file_path = ?, content = ?, word_count = ?, updated_at = ?
-        WHERE id = ?
-      `,
-      ).run(title, folderPath, newFilePath, content, wordCount, now, id)
-
-      const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
-      return toDocument(row)
+      return storeUpdate(id, {
+        title,
+        folderPath,
+        filePath: newFilePath,
+        content,
+        wordCount,
+        updatedAt: now,
+      })
     },
   )
 
-  // Reload: re-read the current file from disk, write back to the DB, and return the latest document.
+  // Reload: re-read the current file from disk, write back to the store, and return the latest document.
   // Returns null if the file has been deleted.
   ipcMain.handle('documents:reload', (_event, id: string) => {
-    const db = getDb()
-    const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-      DocumentRow | undefined
+    const existing = storeGet(id)
     if (!existing) return null
 
     let text: string
     let encoding: string
     let confidence: number
     try {
-      ;({ text, encoding, confidence } = readMarkdownText(existing.file_path))
+      ;({ text, encoding, confidence } = readMarkdownText(existing.filePath))
     } catch {
       return null
     }
     const wordCount = countWords(text)
     const now = Date.now()
-    db.prepare(
-      `
-      UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?
-    `,
-    ).run(text, wordCount, encoding, confidence, now, id)
-
-    const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
-    return toDocument(row)
+    return storeUpdate(id, {
+      content: text,
+      wordCount,
+      encoding,
+      encodingConfidence: confidence,
+      updatedAt: now,
+    })
   })
 
   // Watch / unwatch disk changes for the file backing a document
@@ -613,16 +587,14 @@ export function registerDocumentHandlers(
 
   // Delete document
   ipcMain.handle('documents:delete', (_event, id: string) => {
-    const db = getDb()
-    const existing = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as
-      DocumentRow | undefined
+    const existing = storeGet(id)
     if (!existing) return false
 
     try {
       // A memory-only draft has no file on disk (file_path === ''); skip the unlink so we
-      // neither error nor leave a stray log line. Deleting such a draft just removes the DB row.
-      if (existing.file_path) {
-        unlinkSync(existing.file_path)
+      // neither error nor leave a stray log line. Deleting such a draft just removes the store entry.
+      if (existing.filePath) {
+        unlinkSync(existing.filePath)
       }
     } catch (e) {
       // A missing file is not a failure here (already removed externally); only log real errors.
@@ -631,14 +603,11 @@ export function registerDocumentHandlers(
       }
     }
 
-    db.prepare('DELETE FROM documents WHERE id = ?').run(id)
-    return true
+    return storeDelete(id)
   })
 
   // Import markdown file from disk
   ipcMain.handle('documents:import', (_event, filePath: string) => {
-    const db = getDb()
-
     let text: string
     let encoding: string
     let confidence: number
@@ -648,90 +617,86 @@ export function registerDocumentHandlers(
       return null
     }
     const title = basename(filePath).replace(/\.(md|markdown|mdx|mdtxt|mdtext)$/i, '')
-    const id = randomUUID()
     const now = Date.now()
     const wordCount = countWords(text)
 
-    // Check if already exists
-    const existing = db.prepare('SELECT * FROM documents WHERE file_path = ?').get(filePath) as
-      DocumentRow | undefined
+    // Check if already imported (by file path)
+    const existing = storeGetByPath(filePath)
     if (existing) {
-      // Re-open an already-imported file: refresh the DB record from the current on-disk content,
+      // Re-open an already-imported file: refresh the record from the current on-disk content,
       // avoiding stale cached content (e.g. unsaved changes from a previous session, or external edits).
-      db.prepare(
-        'UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?',
-      ).run(text, wordCount, encoding, confidence, now, existing.id)
-      const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(existing.id) as DocumentRow
-      return toDocument(row)
+      return storeUpdate(existing.id, {
+        content: text,
+        wordCount,
+        encoding,
+        encodingConfidence: confidence,
+        updatedAt: now,
+      })
     }
 
-    db.prepare(
-      `
-      INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, encoding, encoding_confidence, created_at, updated_at)
-      VALUES (?, ?, '', ?, ?, ?, 0, ?, ?, ?, ?)
-    `,
-    ).run(id, title, filePath, text, wordCount, encoding, confidence, now, now)
-
-    const row = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
-    return toDocument(row)
+    const doc = makeDocument({
+      id: randomUUID(),
+      title,
+      folderPath: '',
+      filePath,
+      content: text,
+      wordCount,
+      encoding,
+      encodingConfidence: confidence,
+      createdAt: now,
+      updatedAt: now,
+      memoryOnly: false,
+    })
+    return storeUpsert(doc)
   })
 
   // Batch import multiple markdown files
   // Returns array of imported documents (skips already-imported files, but includes them in result)
   ipcMain.handle('documents:import-many', (_event, filePaths: string[]) => {
-    const db = getDb()
     const results: Document[] = []
     const now = Date.now()
 
-    const insertStmt = db.prepare(`
-      INSERT INTO documents (id, title, folder_path, file_path, content, word_count, is_archived, encoding, encoding_confidence, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
-    `)
-    const selectByPath = db.prepare('SELECT * FROM documents WHERE file_path = ?')
-    const selectById = db.prepare('SELECT * FROM documents WHERE id = ?')
-
-    const insertMany = db.transaction((paths: string[]) => {
-      for (const filePath of paths) {
-        let parsed: { text: string; encoding: string; confidence: number }
-        try {
-          parsed = readMarkdownText(filePath)
-        } catch {
-          continue
-        }
-        const content = parsed.text
-        const title = basename(filePath).replace(/\.(md|markdown|mdx|mdtxt|mdtext)$/i, '')
-        const wordCount = countWords(content)
-
-        const existing = selectByPath.get(filePath) as DocumentRow | undefined
-        if (existing) {
-          // Already-imported file: refresh the record from the current on-disk content to ensure the latest is loaded
-          db.prepare(
-            'UPDATE documents SET content = ?, word_count = ?, encoding = ?, encoding_confidence = ?, updated_at = ? WHERE id = ?',
-          ).run(content, wordCount, parsed.encoding, parsed.confidence, now, existing.id)
-          const row = selectById.get(existing.id) as DocumentRow
-          results.push(toDocument(row))
-          continue
-        }
-
-        const id = randomUUID()
-        insertStmt.run(
-          id,
-          title,
-          '',
-          filePath,
-          content,
-          wordCount,
-          parsed.encoding,
-          parsed.confidence,
-          now,
-          now,
-        )
-        const row = selectById.get(id) as DocumentRow
-        results.push(toDocument(row))
+    for (const filePath of filePaths) {
+      let parsed: { text: string; encoding: string; confidence: number }
+      try {
+        parsed = readMarkdownText(filePath)
+      } catch {
+        continue
       }
-    })
+      const content = parsed.text
+      const title = basename(filePath).replace(/\.(md|markdown|mdx|mdtxt|mdtext)$/i, '')
+      const wordCount = countWords(content)
 
-    insertMany(filePaths)
+      const existing = storeGetByPath(filePath)
+      if (existing) {
+        // Already-imported file: refresh the record from the current on-disk content to ensure the latest is loaded
+        results.push(
+          storeUpdate(existing.id, {
+            content,
+            wordCount,
+            encoding: parsed.encoding,
+            encodingConfidence: parsed.confidence,
+            updatedAt: now,
+          }) as Document,
+        )
+        continue
+      }
+
+      const doc = makeDocument({
+        id: randomUUID(),
+        title,
+        folderPath: '',
+        filePath,
+        content,
+        wordCount,
+        encoding: parsed.encoding,
+        encodingConfidence: parsed.confidence,
+        createdAt: now,
+        updatedAt: now,
+        memoryOnly: false,
+      })
+      results.push(storeUpsert(doc))
+    }
     return results
   })
 
@@ -774,26 +739,25 @@ export function registerDocumentHandlers(
     }
   })
 
-  // Manual encoding switch: re-decode the on-disk file with the user-selected encoding and update DB content + encoding metadata.
+  // Manual encoding switch: re-decode the on-disk file with the user-selected encoding and update store content + encoding metadata.
   // Does not write to disk (file bytes unchanged); only refreshes the in-memory decode result for the editor to re-render.
   ipcMain.handle('documents:set-encoding', (_event, id: string, enc: string) => {
-    const db = getDb()
-    const row = db.prepare('SELECT file_path FROM documents WHERE id = ?').get(id) as
-      { file_path: string } | undefined
-    if (!row) return null
+    const existing = storeGet(id)
+    if (!existing) return null
     let buf: Buffer
     try {
-      buf = readFileSync(row.file_path)
+      buf = readFileSync(existing.filePath)
     } catch {
       return null
     }
     const norm = normEnc(enc)
     const text = iconv.decode(buf, norm)
     const now = Date.now()
-    db.prepare(
-      'UPDATE documents SET content = ?, encoding = ?, encoding_confidence = 1, updated_at = ? WHERE id = ?',
-    ).run(text, norm, now, id)
-    const updated = db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentRow
-    return toDocument(updated)
+    return storeUpdate(id, {
+      content: text,
+      encoding: norm,
+      encodingConfidence: 1,
+      updatedAt: now,
+    })
   })
 }

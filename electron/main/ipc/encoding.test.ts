@@ -5,7 +5,6 @@ import {
   detectEncoding,
   cjkSecondPass,
   countReplacements,
-  toDocument,
   readMarkdownText,
   countWords,
 } from './documents'
@@ -46,38 +45,6 @@ describe('countReplacements', () => {
 
   it('counts zero replacements when the encoding matches the bytes', () => {
     expect(countReplacements(gbk('中文'), 'gbk')).toBe(0)
-  })
-})
-
-describe('toDocument', () => {
-  it('falls back to utf-8 when encoding/confidence are missing', () => {
-    const d = toDocument({
-      id: '1',
-      title: 't',
-      folder_path: '',
-      file_path: '',
-      content: 'c',
-      word_count: 1,
-      is_archived: 0,
-    } as any)
-    expect(d.encoding).toBe('utf-8')
-    expect(d.encodingConfidence).toBe(1)
-  })
-
-  it('preserves an explicit encoding', () => {
-    const d = toDocument({
-      id: '1',
-      title: 't',
-      folder_path: '',
-      file_path: '',
-      content: 'c',
-      word_count: 1,
-      is_archived: 0,
-      encoding: 'gbk',
-      encoding_confidence: 0.5,
-    } as any)
-    expect(d.encoding).toBe('gbk')
-    expect(d.encodingConfidence).toBe(0.5)
   })
 })
 

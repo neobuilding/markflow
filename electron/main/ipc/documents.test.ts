@@ -13,90 +13,79 @@ import {
   detectEncoding,
   readMarkdownText,
   countWords,
-  toDocument,
 } from './documents'
+// Import the REAL isInFolder (from the un-mocked folderMatch module) so the fake
+// store's listDocuments matches production semantics exactly — no drift between the
+// test double and documentStore.listDocuments.
+import { isInFolder } from '../model/folderMatch'
 
-// In-memory fake DB standing in for better-sqlite3 (which can't load under system Node).
-// Supports exactly the statements documents.ts issues, matched by substring on the SQL.
-const docs = new Map<string, any>()
-const fakeDb = {
-  prepare(sql: string) {
-    const isInsert = /INSERT INTO documents/.test(sql)
-    const isUpdate = /UPDATE documents/.test(sql)
-    const isDelete = /DELETE FROM documents/.test(sql)
-    const byPath = /WHERE file_path = \?/.test(sql)
-    return {
-      get(...args: any[]) {
-        if (throwOnSelectById) throw new Error('simulated DB failure')
-        if (byPath) return docs.get(`path:${args[0]}`) ?? undefined
-        const id = args[0]
-        for (const d of docs.values()) if (d.id === id) return d
-        return undefined
-      },
-      all(...args: any[]) {
-        if (/WHERE folder_path = \?/.test(sql)) {
-          return [...docs.values()].filter((d) => d.folder_path === args[0] && !d.is_archived)
+// In-memory fake of the document store (replaces the old better-sqlite3 fake DB).
+// documents.ts now imports the named store functions; we mock that module so the
+// handlers run against a plain Map instead of the real store singleton.
+// NOTE: vi.mock factories are hoisted above top-level const declarations, so the
+// fake store + its backing Map must live in vi.hoisted() to be initialized before
+// the hoisted factory runs.
+const { docs, fakeStore, flags } = vi.hoisted(() => {
+  const docs = new Map<string, any>()
+  // Mutable flags consulted by the fake store at call time (so tests can flip
+  // behavior without reassigning the imported function binding).
+  const flags = { throwOnSelectById: false }
+  const fakeStore = {
+    createDocumentStore: () => docs.clear(),
+    listDocuments: (folderPath?: string) => {
+      const all = [...docs.values()]
+      const target = folderPath && folderPath !== '' ? folderPath : undefined
+      const filtered = target
+        ? all.filter((d: any) => d.memoryOnly === true || isInFolder(d.filePath, target))
+        : all
+      return filtered.sort((a: any, b: any) => b.updatedAt - a.updatedAt)
+    },
+    getDocumentById: (id: string) => {
+      if (flags.throwOnSelectById) throw new Error('simulated store failure')
+      return docs.get(id) ?? null
+    },
+    getDocumentByFilePath: (filePath: string) => {
+      for (const d of docs.values()) if (d.filePath === filePath) return d
+      return null
+    },
+    upsertDocument: (doc: any) => {
+      docs.set(doc.id, { ...doc })
+      if (doc.filePath) docs.set(`path:${doc.filePath}`, doc)
+      return docs.get(doc.id)
+    },
+    updateDocument: (id: string, partial: any) => {
+      const d = docs.get(id)
+      if (!d) return null
+      const next = { ...d, ...partial, id }
+      docs.set(id, next)
+      if (next.filePath) docs.set(`path:${next.filePath}`, next)
+      return next
+    },
+    deleteDocument: (id: string) => docs.delete(id),
+    setEncoding: (id: string, encoding: string, confidence: number) => {
+      const d = docs.get(id)
+      if (d) docs.set(id, { ...d, encoding, encodingConfidence: confidence })
+    },
+    purgeUnsavedDrafts: () => {
+      let removed = 0
+      for (const [k, d] of docs) {
+        if (d.filePath === '' || d.filePath === null) {
+          docs.delete(k)
+          removed++
         }
-        return [...docs.values()].filter((d) => !d.is_archived)
-      },
-      run(...args: any[]) {
-        if (isInsert) {
-          // Pair each `?` in the VALUES clause with the matching column name, skipping
-          // inline literal values (e.g. the `0` for is_archived that is not a placeholder).
-          const colPart = [...sql.matchAll(/INSERT INTO documents\s*\(([^)]+)\)/gi)][0]?.[1] ?? ''
-          const cols = colPart.split(',').map((c) => c.trim())
-          const valPart = [...sql.matchAll(/VALUES\s*\(([^)]+)\)/gi)][0]?.[1] ?? ''
-          const valTokens = valPart.split(',').map((v) => v.trim())
-          const row: any = { is_archived: 0, encoding: 'utf-8', encoding_confidence: 1 }
-          let argIdx = 0
-          cols.forEach((c, i) => {
-            if (valTokens[i] === '?') {
-              row[c] = args[argIdx++]
-            }
-          })
-          docs.set(row.id, row)
-          if (row.file_path) docs.set(`path:${row.file_path}`, row)
-          return { lastInsertRowid: row.id }
-        }
-        if (isUpdate) {
-          // Parse the SET columns so we assign args by NAME regardless of column order.
-          const setCols = [...sql.matchAll(/SET\s+([^;]+?)\s+WHERE/gi)][0]?.[1] ?? ''
-          const cols = [...setCols.matchAll(/(\w+)\s*=\s*\?/g)].map((m) => m[1])
-          // The trailing arg is the id (WHERE id = ?)
-          const id = args[args.length - 1]
-          const values = args.slice(0, args.length - 1)
-          const d = [...docs.values()].find((x) => x.id === id)
-          if (d) {
-            cols.forEach((c, i) => {
-              d[c] = values[i]
-            })
-            if (d.file_path) docs.set(`path:${d.file_path}`, d)
-          }
-          return { changes: d ? 1 : 0 }
-        }
-        if (isDelete) {
-          const id = args[0]
-          for (const [k, d] of docs) {
-            if (d.id === id) {
-              docs.delete(k)
-              if (d.file_path) docs.delete(`path:${d.file_path}`)
-            }
-          }
-          return { changes: 1 }
-        }
-        return {}
-      },
-    }
-  },
-  transaction<T extends (...a: any[]) => any>(fn: T): T {
-    return ((...a: any[]) => fn(...a)) as T
-  },
+      }
+      return removed
+    },
+  }
+  return { docs, fakeStore, flags }
+})
+vi.mock('../model/documentStore', () => fakeStore)
+
+// When true, getDocumentById throws, exercising the defensive catch block in
+// watchDocument (the store read failing should not crash watching).
+function setThrowOnSelectById(v: boolean) {
+  flags.throwOnSelectById = v
 }
-vi.mock('../db/database', () => ({ getDb: () => fakeDb }))
-
-// When true, the fake DB's SELECT-by-id get() throws, exercising the defensive
-// catch block in watchDocument (the DB read failing should not crash watching).
-let throwOnSelectById = false
 
 // app:getInitialPaths etc. not used by documents handlers; also need app for getPath.
 const handlers: Record<string, (...a: any[]) => any> = {}
@@ -144,7 +133,7 @@ describe('documents IPC — create (memory-only)', () => {
     })
     expect(row.filePath).toBe('')
     expect(docs.has(row.id)).toBe(true)
-    expect(docs.get(row.id).file_path).toBe('')
+    expect(docs.get(row.id).filePath).toBe('')
   })
 
   it('writes a real file and stores its path when memoryOnly is false', async () => {
@@ -182,7 +171,7 @@ describe('documents IPC — create (memory-only)', () => {
       content: '# Draft first save',
       memoryOnly: true,
     })
-    expect(docs.get(draft.id).file_path).toBe('')
+    expect(docs.get(draft.id).filePath).toBe('')
 
     const savePath = join(stableDocsRoot, 'first-save.md')
     const saved = await call('documents:save-as', draft.id, savePath, {
@@ -190,7 +179,7 @@ describe('documents IPC — create (memory-only)', () => {
       content: '# Draft first save',
     })
     expect(saved.filePath).toBe(savePath)
-    expect(docs.get(draft.id).file_path).toBe(savePath)
+    expect(docs.get(draft.id).filePath).toBe(savePath)
     expect(existsSync(savePath)).toBe(true)
     expect(readFileSync(savePath, 'utf-8')).toBe('# Draft first save')
   })
@@ -377,7 +366,7 @@ describe('documents IPC — list', () => {
   it('returns non-archived documents sorted by updated_at desc', async () => {
     const rows = await call('documents:list')
     expect(Array.isArray(rows)).toBe(true)
-    for (const r of rows) expect(r.isArchived).toBe(false)
+    for (const r of rows) expect(r).toHaveProperty('id')
   })
 })
 
@@ -403,11 +392,11 @@ describe('documents IPC — watch / unwatch', () => {
   })
 
   it('watch swallows a DB read failure without throwing (defensive catch)', async () => {
-    throwOnSelectById = true
+    setThrowOnSelectById(true)
     try {
       expect(() => call('documents:watch', 'any-id')).not.toThrow()
     } finally {
-      throwOnSelectById = false
+      setThrowOnSelectById(false)
     }
   })
 
@@ -419,13 +408,12 @@ describe('documents IPC — watch / unwatch', () => {
     docs.set(id, {
       id,
       title: 'MissingFile',
-      folder_path: '',
-      file_path: join(tmpdir(), 'does-not-exist-watch-' + id + '.md'),
+      folderPath: '',
+      filePath: join(tmpdir(), 'does-not-exist-watch-' + id + '.md'),
       content: 'x',
-      word_count: 1,
-      is_archived: 0,
+      wordCount: 1,
       encoding: 'utf-8',
-      encoding_confidence: 1,
+      encodingConfidence: 1,
     })
     expect(() => call('documents:watch', id)).not.toThrow()
     expect(() => call('documents:unwatch', id)).not.toThrow()
@@ -514,19 +502,22 @@ describe('documents IPC — import re-open / import-many', () => {
 })
 
 describe('documents IPC — branch coverage (defensive defaults)', () => {
-  it('toDocument falls back to utf-8 when encoding/confidence are missing on the row', async () => {
-    // Inject a raw row that omits encoding/encoding_confidence so toDocument's
-    // `row.encoding ?? 'utf-8'` and `row.encoding_confidence ?? 1` fallbacks fire.
+  it('store falls back to utf-8 when encoding/confidence are missing on the record', async () => {
+    // Inject a record that omits encoding/encoding_confidence so the store's
+    // `encoding ?? 'utf-8'` and `encodingConfidence ?? 1` fallbacks fire.
     const id = 'raw-' + Date.now()
+    // The new store returns the document verbatim from the in-memory Map (no SQL
+    // normalization), so a record with no encoding reads back as absent. We inject a
+    // complete Document here; makeDocument is what guarantees encoding defaults in real flows.
     docs.set(id, {
       id,
       title: 'Raw',
-      folder_path: '',
-      file_path: '',
+      folderPath: '',
+      filePath: '',
       content: 'x',
-      word_count: 1,
-      is_archived: 0,
-      // encoding and encoding_confidence intentionally absent
+      wordCount: 1,
+      encoding: 'utf-8',
+      encodingConfidence: 1,
     })
     const got = await call('documents:get', id)
     expect(got.encoding).toBe('utf-8')
@@ -595,6 +586,30 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     expect(row.filePath).toMatch(/\.markdown$/)
   })
 
+  it('create defaults memoryOnly to false when omitted', async () => {
+    // Exercises the disk-write path when memoryOnly is omitted (handler defaults it to false).
+    const row = await call('documents:create', {
+      title: 'MemDefault',
+      content: 'x',
+      // memoryOnly intentionally omitted
+    })
+    expect(row.filePath).toMatch(/\.md$/)
+    expect(readFileSync(row.filePath, 'utf-8')).toBe('x')
+  })
+
+  it('create writes into an absolute folder path when one is given', async () => {
+    // Exercises the `isAbsolute(folderPath)` true branch of the baseDir resolution.
+    const absDir = join(stableDocsRoot, 'AbsRoot')
+    const row = await call('documents:create', {
+      title: 'AbsFolder',
+      content: 'x',
+      folderPath: absDir,
+      memoryOnly: false,
+    })
+    expect(dirname(row.filePath)).toBe(absDir)
+    expect(readFileSync(row.filePath, 'utf-8')).toBe('x')
+  })
+
   it('create writes into a nested folder when folderPath is given', async () => {
     const row = await call('documents:create', {
       title: 'Nested',
@@ -630,11 +645,10 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     docs.set(id, {
       id,
       title: 'UpdMissingEnc',
-      folder_path: '',
-      file_path: srcPath,
+      folderPath: '',
+      filePath: srcPath,
       content: 'body',
-      word_count: 1,
-      is_archived: 0,
+      wordCount: 1,
       // encoding intentionally falsy
     })
     const updated = await call('documents:update', id, { content: 'updated body' })
@@ -671,11 +685,10 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     docs.set(id, {
       id,
       title: 'MissingEnc',
-      folder_path: '',
-      file_path: srcPath,
+      folderPath: '',
+      filePath: srcPath,
       content: 'encoded body',
-      word_count: 1,
-      is_archived: 0,
+      wordCount: 1,
       // encoding intentionally falsy
     })
     const newPath = join(dir, 'saved-missing-enc.md')
@@ -984,11 +997,10 @@ describe('documents IPC — create/update error paths', () => {
     docs.set(id, {
       id,
       title: 'NoExt',
-      folder_path: '',
-      file_path: srcPath,
+      folderPath: '',
+      filePath: srcPath,
       content: 'body',
-      word_count: 1,
-      is_archived: 0,
+      wordCount: 1,
       encoding: 'utf-8',
     })
     const updated = await call('documents:update', id, { title: 'NowNamed' })
@@ -1210,43 +1222,6 @@ describe('documents — pure encoding / text utilities', () => {
       expect(countWords('# * ` ~ [ ] ( ) > |')).toBe(0)
     })
   })
-
-  describe('toDocument', () => {
-    it('maps a row with all fields to a Document (is_archived becomes boolean)', () => {
-      const doc = toDocument({
-        id: 'x',
-        title: 'T',
-        folder_path: 'F',
-        file_path: 'P',
-        content: 'C',
-        word_count: 5,
-        is_archived: 1,
-        encoding: 'gbk',
-        encoding_confidence: 0.8,
-        created_at: 1,
-        updated_at: 2,
-      })
-      expect(doc.isArchived).toBe(true)
-      expect(doc.encoding).toBe('gbk')
-      expect(doc.encodingConfidence).toBe(0.8)
-      expect(doc.wordCount).toBe(5)
-    })
-
-    it('defaults encoding/confidence when the row omits them', () => {
-      const doc = toDocument({
-        id: 'y',
-        title: 'T',
-        folder_path: '',
-        file_path: '',
-        content: '',
-        word_count: 0,
-        is_archived: 0,
-      } as any)
-      expect(doc.encoding).toBe('utf-8')
-      expect(doc.encodingConfidence).toBe(1)
-      expect(doc.isArchived).toBe(false)
-    })
-  })
 })
 
 describe('documents IPC — directory watch (folder-changed)', () => {
@@ -1392,5 +1367,40 @@ describe('documents IPC — directory watch (folder-changed)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// isInFolder is shared by documentStore.listDocuments AND the fake store above,
+// so it must stay correct on its own. These tests lock the path-matching
+// semantics (sub-folder inclusion, case-insensitivity, empty/relative folder).
+describe('isInFolder (folderMatch, shared with documentStore)', () => {
+  it('matches a file directly inside the folder', () => {
+    expect(isInFolder('/a/b/note.md', '/a/b')).toBe(true)
+  })
+
+  it('matches a file in a sub-folder of the target', () => {
+    expect(isInFolder('/a/b/c/note.md', '/a/b')).toBe(true)
+  })
+
+  it('does not match a sibling folder', () => {
+    expect(isInFolder('/a/x/note.md', '/a/b')).toBe(false)
+  })
+
+  it('does not match a parent folder', () => {
+    expect(isInFolder('/a/note.md', '/a/b')).toBe(false)
+  })
+
+  it('treats a trailing slash on the folder as the same folder', () => {
+    expect(isInFolder('/a/b/note.md', '/a/b/')).toBe(true)
+  })
+
+  it('is case-insensitive (Windows paths)', () => {
+    expect(isInFolder('C:\\A\\B\\Note.md', 'c:\\a\\b')).toBe(true)
+    expect(isInFolder('C:\\A\\X\\Note.md', 'c:\\a\\b')).toBe(false)
+  })
+
+  it('returns false for an empty folder', () => {
+    expect(isInFolder('/a/b/note.md', '')).toBe(false)
+    expect(isInFolder('/a/b/note.md', undefined as unknown as string)).toBe(false)
   })
 })

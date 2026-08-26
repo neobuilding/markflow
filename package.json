@@ -6,7 +6,7 @@
   "type": "module",
   "author": "MarkFlow Team",
   "scripts": {
-    "postinstall": "electron-builder install-app-deps && node scripts/install-eslint-ts6.mjs",
+    "postinstall": "node scripts/install-eslint-ts6.mjs",
     "prepare": "husky",
     "dev": "vite",
     "build": "vite build",
@@ -37,7 +37,6 @@
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.20",
-    "better-sqlite3": "^13.0.3",
     "comlink": "^4.4.2",
     "dompurify": "^3.4.13",
     "franc": "^6.2.0",
@@ -55,6 +54,7 @@
     "markdown-it-task-lists": "^2.1.1",
     "markdown-it-texmath": "^1.0.0",
     "mermaid": "^11.16.1",
+    "minisearch": "^7.2.0",
     "react-i18next": "^17.0.11"
   },
   "devDependencies": {
@@ -83,7 +83,6 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.4",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/iconv-lite": "^0.0.1",
     "@types/katex": "^0.16.8",
     "@types/markdown-it": "^14.1.2",

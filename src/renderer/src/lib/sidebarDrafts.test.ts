@@ -10,7 +10,7 @@ function doc(id: string, filePath: string): Document {
     filePath,
     content: '',
     wordCount: 0,
-    isArchived: false,
+
     encoding: 'utf-8',
     encodingConfidence: 1,
     createdAt: 0,

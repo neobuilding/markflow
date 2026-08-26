@@ -5,7 +5,6 @@ export interface Document {
   filePath: string
   content: string
   wordCount: number
-  isArchived: boolean
   encoding: string
   encodingConfidence: number
   createdAt: number

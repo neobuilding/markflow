@@ -57,7 +57,7 @@ export function Sidebar(): React.ReactElement | null {
   const [sidebarWidth, setSidebarWidth] = useState(240)
   const isResizing = useRef(false)
 
-  const { data: allDocs = [], isLoading: loading } = useDocuments()
+  const { data: allDocs = [], isLoading: loading } = useDocuments(activeFolder ?? undefined)
 
   // Split memory-only drafts (filePath === '') from folder documents. Drafts are shown in a
   // dedicated "Unsaved drafts" group above the tree, never via isInFolder (which is always false

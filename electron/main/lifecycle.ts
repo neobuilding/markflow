@@ -12,14 +12,14 @@
 // Extracted from index.ts. The quit flags live in state.ts (shared with window.ts).
 import { ipcMain, app } from 'electron'
 import { getMainWindow, setIsQuiting, getReadyToQuit, setReadyToQuit } from './state'
-import { getDb } from './db/database'
+import { purgeUnsavedDrafts as storePurgeUnsavedDrafts } from './model/documentStore'
 
 export function setupLifecycle(): void {
   function purgeUnsavedDrafts(): void {
     try {
-      getDb().prepare("DELETE FROM documents WHERE file_path IS NULL OR file_path = ''").run()
+      storePurgeUnsavedDrafts()
     } catch {
-      // Best-effort cleanup; the DB is in-memory so nothing persists regardless.
+      // Best-effort cleanup; drafts live in-memory so nothing persists regardless.
     }
   }
 

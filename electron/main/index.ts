@@ -21,7 +21,7 @@ import { registerDialogHandlers } from './handlers/dialog'
 import { registerFilesHandlers } from './handlers/files'
 import { registerAppHandlers } from './handlers/app'
 import { registerWindowHandlers } from './handlers/window'
-import { initDatabase } from './db/database'
+import { createDocumentStore } from './model/documentStore'
 import { initMenuI18n } from './i18n'
 import { getMainWindow, setIsQuiting, setReadyToQuit, pendingInitialPaths } from './state'
 
@@ -124,7 +124,7 @@ if (!shouldStart) {
 
     setupCSP(VITE_DEV_SERVER_URL)
 
-    await initDatabase()
+    await createDocumentStore()
 
     // appdoc: protocol handling (must be registered inside whenReady; ② and
     // registerSchemesAsPrivileged happen at two different times)

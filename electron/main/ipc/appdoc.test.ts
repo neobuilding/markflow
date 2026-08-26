@@ -16,12 +16,11 @@ vi.mock('electron', () => ({
     },
   },
 }))
-vi.mock('../db/database', () => ({
-  getDb: () => ({
-    prepare: () => ({
-      get: () => (h.filePath === '__NONE__' ? undefined : { file_path: h.filePath }),
-    }),
-  }),
+vi.mock('../model/documentStore', () => ({
+  getDocumentById: (id: string) => {
+    if (id === '__NONE__' || h.filePath === '__NONE__') return null
+    return { id, filePath: h.filePath } as unknown
+  },
 }))
 
 import { registerAppDocProtocol } from './appdoc'

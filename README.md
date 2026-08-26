@@ -30,7 +30,7 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 - **Sidebar shows file extensions** — File names in the sidebar include their extension (e.g. `foo.md`); subfolders start collapsed
 - **Open anywhere** — Launch via command line, drag-and-drop a file/folder onto the window, or set MarkFlow as the default app for `.md` files
 - **Empty on launch** — No previous file/folder is restored; the app always starts fresh
-- **Full-text search** — SQLite FTS5 powered, instant results with highlighted snippets
+- **Full-text search** — minisearch powered (pure-JS, no native deps), instant results with highlighted snippets
 - **Manual save** — No auto-save: use **Save** (⌘/Ctrl+S), **Save As…** (⌘/Ctrl+⇧+S), and **Reload from Disk** (⌘/Ctrl+⇧+R) from the toolbar or File menu
 - **KaTeX math formulas** — Support for inline `$...$` and block `$$...$$` LaTeX formulas
 - **Mermaid diagrams** — Render flowcharts, sequence diagrams, and more from ` ```mermaid ` code blocks
@@ -47,10 +47,6 @@ A cross-platform Markdown editor with **Linear-style UI**, built with Electron +
 
 - Node.js >= 22
 - npm >= 9
-- A C++ toolchain to compile the native `better-sqlite3` module:
-  - **Windows**: **Visual Studio Build Tools** with the **“使用 C++ 的桌面开发” (Desktop development with C++)** workload (download: <https://aka.ms/vs/17/release/vs_buildtools.exe>).
-  - **macOS**: Xcode Command Line Tools (`xcode-select --install`).
-  - **Linux**: `build-essential` + `python3`.
 
 ### Development
 
@@ -117,7 +113,7 @@ Visit the [Releases](https://github.com/neobuilding/markflow/releases) page to d
 markflow/
 ├── electron/
 │   ├── main/              # Electron main process
-│   │   ├── db/           # SQLite database & migrations
+│   │   ├── model/        # In-memory document store (replaces the old SQLite layer)
 │   │   ├── ipc/          # IPC handlers (documents, search)
 │   │   └── index.ts      # Main process entry
 │   └── preload/          # Preload script (contextBridge)
@@ -159,21 +155,21 @@ markflow/
 
 ## 🛠️ Tech Stack
 
-| Layer             | Technology                                                    |
-| ----------------- | ------------------------------------------------------------- |
-| Build             | Vite 8 + vite-plugin-electron                                 |
-| Desktop           | Electron 43                                                   |
-| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4               |
-| UI Components     | Radix UI primitives (shadcn/ui style)                         |
-| State             | Zustand (UI) + TanStack Query v5 (IPC)                        |
-| Storage           | better-sqlite3 + FTS5 + Markdown file dual-write              |
-| Editor            | CodeMirror 6 with Markdown syntax highlighting                |
-| Math              | KaTeX (LaTeX formula rendering)                               |
-| Diagrams          | Mermaid.js                                                    |
-| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
-| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)         |
-| Testing           | Vitest + jsdom                                                |
-| Packaging         | electron-builder                                              |
+| Layer             | Technology                                                                   |
+| ----------------- | ---------------------------------------------------------------------------- |
+| Build             | Vite 8 + vite-plugin-electron                                                |
+| Desktop           | Electron 43                                                                  |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                              |
+| UI Components     | Radix UI primitives (shadcn/ui style)                                        |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                                       |
+| Storage           | In-memory document store (Map) + minisearch index + Markdown file dual-write |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                               |
+| Math              | KaTeX (LaTeX formula rendering)                                              |
+| Diagrams          | Mermaid.js                                                                   |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)                        |
+| Testing           | Vitest + jsdom                                                               |
+| Packaging         | electron-builder                                                             |
 
 ## 📦 Packaging Configuration
 
@@ -187,7 +183,7 @@ Configuration is in `electron-builder.json5`. Key settings:
 
 - `appId`: `com.markflow.app`
 - `productName`: `MarkFlow`
-- `asar`: enabled (with `better-sqlite3` unpacked for native module loading)
+- `asar`: enabled
 - `entitlements`: `resources/entitlements.mac.plist` (macOS sandbox permissions)
 
 ## 🧹 Code Quality & Linting

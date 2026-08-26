@@ -38,7 +38,7 @@ export default defineConfig({
     // that happened to be imported by a test. This surfaces untested modules instead of
     // hiding them, which is required to reason about true coverage. Integration-only
     // surface (React components, Electron native main, workers, CodeMirror editor, the
-    // better-sqlite3 driver) is excluded from the threshold gate because it depends on
+    // native integration surface) is excluded from the threshold gate because it depends on
     // native APIs / DOM rendering and is validated by other means; the unit-testable
     // logic surface below is held to a high bar.
     coverage: {
@@ -67,7 +67,6 @@ export default defineConfig({
         'electron/main/i18n.ts',
         'electron/main/menu.ts',
         'electron/main/lifecycle.ts',
-        'electron/main/db/database.ts',
         'shared/**/*.ts',
         'actions/create-pr/src/**/*.mjs',
       ],
@@ -179,18 +178,6 @@ export default defineConfig({
           branches: 70,
           functions: 70,
           lines: 70,
-        },
-        'electron/main/db/database.ts': {
-          // statements/functions/lines and all reachable branches are fully covered.
-          // The unreachable `String(err)` arm of the `err instanceof Error ? … : …`
-          // guard (database.ts:39) is excluded from v8 coverage via a `/* v8 ignore
-          // next */` comment, because Vitest always wraps a throwing `vi.mock` factory
-          // into an Error and a dynamic import can never reject with a non-Error value
-          // under test. The gate is therefore held at 100%.
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
         },
         'electron/main/i18n.ts': {
           statements: 100,

@@ -60,7 +60,7 @@ const baseDoc = {
   filePath: '/a/hi.md',
   content: '# Hello\n',
   wordCount: 1,
-  isArchived: false,
+
   encoding: 'utf-8',
   encodingConfidence: 1,
   createdAt: 0,
