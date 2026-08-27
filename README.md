@@ -113,7 +113,7 @@ Visit the [Releases](https://github.com/neobuilding/markflow/releases) page to d
 markflow/
 ├── electron/
 │   ├── main/              # Electron main process
-│   │   ├── model/        # In-memory document store (replaces the old SQLite layer)
+│   │   ├── model/        # In-memory document store
 │   │   ├── ipc/          # IPC handlers (documents, search)
 │   │   └── index.ts      # Main process entry
 │   └── preload/          # Preload script (contextBridge)

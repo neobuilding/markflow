@@ -19,9 +19,9 @@ import {
 // test double and documentStore.listDocuments.
 import { isInFolder } from '../model/folderMatch'
 
-// In-memory fake of the document store (replaces the old better-sqlite3 fake DB).
-// documents.ts now imports the named store functions; we mock that module so the
-// handlers run against a plain Map instead of the real store singleton.
+// In-memory fake of the document store. documents.ts imports the named store
+// functions; we mock that module so the handlers run against a plain Map instead
+// of the real store singleton.
 // NOTE: vi.mock factories are hoisted above top-level const declarations, so the
 // fake store + its backing Map must live in vi.hoisted() to be initialized before
 // the hoisted factory runs.
@@ -96,7 +96,7 @@ const fakeIpcMain = {
 } as any
 // A stable temp dir for the whole test file, so collision-retry tests can pre-create files
 // in the exact directory the create/update handlers will write into.
-const stableDocsRoot = mkdtempSync(join(tmpdir(), 'mf-db-'))
+const stableDocsRoot = mkdtempSync(join(tmpdir(), 'mf-docs-'))
 const fakeApp = { getPath: () => stableDocsRoot } as any
 
 // A fake main window that captures 'app:file-changed' and 'app:folder-changed'
@@ -163,7 +163,7 @@ describe('documents IPC — create (memory-only)', () => {
   })
 
   it('first Save As of a memory-only draft writes the file and stores its path (no writeFileSync(""))', async () => {
-    // Regression guard: a memory-only draft has file_path === '' in the DB. The first Save As
+    // Regression guard: a memory-only draft has file_path === ''. The first Save As
     // must route to documents:save-as (which writes to the new path), never to documents:update
     // (which would call writeFileSync('') and crash). Confirms file_path is populated + disk file exists.
     const draft = await call('documents:create', {
@@ -234,7 +234,7 @@ describe('documents IPC — update', () => {
 })
 
 describe('documents IPC — delete', () => {
-  it('removes the DB row (and the file when present)', async () => {
+  it('removes the store entry (and the file when present)', async () => {
     const created = await call('documents:create', {
       title: 'Del',
       content: 'x',
@@ -251,7 +251,7 @@ describe('documents IPC — delete', () => {
     expect(await call('documents:delete', 'nope')).toBe(false)
   })
 
-  it('still deletes the DB row when the on-disk file unlink fails for a non-ENOENT reason', async () => {
+  it('still deletes the store entry when the on-disk file unlink fails for a non-ENOENT reason', async () => {
     const created = await call('documents:create', {
       title: 'DelErr',
       content: 'x',
@@ -287,7 +287,7 @@ describe('documents IPC — saveAs', () => {
 })
 
 describe('documents IPC — reload', () => {
-  it('re-reads the file from disk and refreshes the DB content', async () => {
+  it('re-reads the file from disk and refreshes the stored content', async () => {
     const created = await call('documents:create', {
       title: 'R',
       content: 'disk',
@@ -391,7 +391,7 @@ describe('documents IPC — watch / unwatch', () => {
     expect(() => call('documents:unwatch', created.id)).not.toThrow()
   })
 
-  it('watch swallows a DB read failure without throwing (defensive catch)', async () => {
+  it('watch swallows a store read failure without throwing (defensive catch)', async () => {
     setThrowOnSelectById(true)
     try {
       expect(() => call('documents:watch', 'any-id')).not.toThrow()
@@ -462,7 +462,7 @@ describe('documents IPC — set-encoding edge cases', () => {
 })
 
 describe('documents IPC — import re-open / import-many', () => {
-  it('re-opens an already-imported file, refreshing its DB record from disk', async () => {
+  it('re-opens an already-imported file, refreshing its store record from disk', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mf-imp-'))
     const p = join(dir, 're.md')
     writeFileSync(p, '# first version')
@@ -702,7 +702,7 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     expect(await call('documents:reload', 'nope')).toBeNull()
   })
 
-  it('delete of a memory-only draft only removes the DB row (no file_path to unlink)', async () => {
+  it('delete of a memory-only draft only removes the store entry (no file_path to unlink)', async () => {
     const created = await call('documents:create', {
       title: 'MemDelete',
       content: 'x',
@@ -982,7 +982,7 @@ describe('documents IPC — create/update error paths', () => {
     expect(thrown).toBeInstanceOf(Error)
     // Node rejects NUL in paths; the error surfaces unchanged (not converted to EEXIST).
     expect((thrown as NodeJS.ErrnoException).code).not.toBe('EEXIST')
-    // The failure aborts creation outright: no DB row, and no `-N` fallback file on disk.
+    // The failure aborts creation outright: no store entry, and no `-N` fallback file on disk.
     expect([...docs.values()].some((d) => d.title === 'Bad\0Name')).toBe(false)
     expect(existsSync(join(markFlowDir, 'Bad\0Name-1.md'.replace('\0', '')))).toBe(false)
   })

@@ -3,10 +3,9 @@ import MiniSearch from 'minisearch'
 import { getAllDocuments } from '../model/documentStore'
 
 // ─── Search index (minisearch) ───────────────────────────────────────────────
-// Replaces the old FTS5 virtual table (better-sqlite3). minisearch is a pure-JS
-// inverted index. We rebuild it from the in-memory store on each query; the document
-// set is small (hundreds to low thousands) so a full rebuild per query is negligible
-// and avoids keeping the index in sync with mutations.
+// minisearch is a pure-JS inverted index. We rebuild it from the in-memory store
+// on each query; the document set is small (hundreds to low thousands) so a full
+// rebuild per query is negligible and avoids keeping the index in sync with mutations.
 //
 // CJK note: minisearch's default tokenizer splits on whitespace/punctuation, which
 // returns 0 matches for Chinese text. We supply a custom tokenizer that uses
@@ -75,7 +74,7 @@ function buildIndex() {
 }
 
 // Generate an HTML snippet with the matched query terms wrapped in <mark>, mirroring
-// the old FTS5 snippet() output consumed by CommandPalette (dangerouslySetInnerHTML).
+// the snippet output consumed by CommandPalette (dangerouslySetInnerHTML).
 // @internal Exported only so the snippet logic (including the no-match fallback
 // branch) can be unit-tested directly; production code uses it via search:query.
 export function makeSnippet(content: string, terms: string[], maxLen = 120): string {

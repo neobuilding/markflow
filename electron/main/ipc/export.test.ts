@@ -52,19 +52,19 @@ beforeAll(() => {
 })
 
 describe('export — embed-images (R7)', () => {
-  it('data: image preserved as-is (no DB access)', async () => {
+  it('data: image preserved as-is (no store access)', async () => {
     const html = '<img src="data:image/png;base64,AAAA">'
     const out = (await handlers['export:embed-images'](null, html)) as string
     expect(out).toContain('data:image/png;base64,AAAA')
   })
 
-  it('appdoc:// inlined as base64 data URL (file_path fetched via fake DB)', async () => {
+  it('appdoc:// inlined as base64 data URL (file_path fetched via store mock)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mf-embed-'))
     const imgPath = join(dir, 'a.png')
     writeFileSync(imgPath, PNG)
     const mdPath = join(dir, 'doc.md')
     writeFileSync(mdPath, '# hi')
-    hoist.imgDocPath = mdPath // fake DB: the document's file_path
+    hoist.imgDocPath = mdPath // store mock: the document's file_path
     const html = `<img src="appdoc://doc1/a.png">`
     const out = (await handlers['export:embed-images'](null, html)) as string
     expect(out).toContain('data:image/png;base64,')
@@ -156,15 +156,15 @@ describe('export — embed-images edge cases (R7)', () => {
     expect(out).not.toContain('data:image')
   })
 
-  it('keeps the original <img> when the appdoc doc id has no DB row', async () => {
-    hoist.imgDocPath = '__NONE__' // fake DB returns undefined for this doc id
+  it('keeps the original <img> when the appdoc doc id has no store row', async () => {
+    hoist.imgDocPath = '__NONE__' // store mock returns undefined for this doc id
     const html = `<img src="appdoc://ghost/a.png">`
     const out = (await handlers['export:embed-images'](null, html)) as string
     expect(out).toContain('appdoc://ghost/a.png')
   })
 
   it('keeps the original <img> when the resolved image file cannot be read', async () => {
-    // the DB row exists but points at a path that does not exist on disk -> readFileSync throws
+    // the store entry exists but points at a path that does not exist on disk -> readFileSync throws
     hoist.imgDocPath = join(tmpdir(), 'does-not-exist-xyz', 'doc.md')
     const html = `<img src="appdoc://doc1/a.png">`
     const out = (await handlers['export:embed-images'](null, html)) as string

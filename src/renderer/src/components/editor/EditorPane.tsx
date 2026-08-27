@@ -146,7 +146,7 @@ export function EditorPane(): React.ReactElement {
     }
     const { localContent, localTitle } = draftRef.current
     // Re-read the on-disk line ending at save time as the final source of truth (don't depend on
-    // whether the async effect finished or the DB is clean)
+    // whether the async effect finished or the store is clean)
     const eol = doc?.filePath
       ? await window.api.documents.eol(doc.filePath).catch(() => getEol())
       : getEol()

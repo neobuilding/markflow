@@ -19,7 +19,7 @@ By participating, you agree to uphold a respectful, harassment-free environment.
 - npm >= 9
 
 > 💡 No native toolchain is required: MarkFlow uses an in-memory document store and a
-> pure-JS search index (minisearch) instead of a native database module, so `npm install`
+> pure-JS search index (minisearch), so `npm install`
 > works without a C++ compiler.
 
 ### Run the dev build
@@ -42,7 +42,7 @@ npm run dev
 markflow/
 ├── electron/
 │   ├── main/              # Electron main process
-│   │   ├── model/        # In-memory document store (replaces the old SQLite layer)
+│   │   ├── model/        # In-memory document store
 │   │   ├── ipc/          # IPC handlers (documents, search)
 │   │   └── index.ts      # Main process entry
 │   └── preload/          # Preload script (contextBridge)

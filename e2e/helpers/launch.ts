@@ -7,8 +7,8 @@
 // server. launchApp() just launches a fresh Electron instance pointed at that
 // shared dev server via VITE_DEV_SERVER_URL.
 //
-// Each test uses its OWN temporary user-data-dir so the SQLite documents.db is
-// isolated (prevents the UNIQUE(file_path) collision when multiple memory-only
+// Each test uses its OWN temporary user-data-dir so the document store is
+// isolated (prevents the file_path collision when multiple memory-only
 // drafts are created across tests, and keeps tests from polluting real data).
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -36,7 +36,7 @@ export async function launchApp(): Promise<AppHandle> {
     throw new Error('MARKFLOW_DEV_URL is not set — did the Playwright globalSetup run?')
   }
 
-  // Isolated user data dir per test for a clean documents.db each time.
+  // Isolated user data dir per test for a clean document store each time.
   const userDataDir = mkdtempSync(join(tmpdir(), 'markflow-e2e-'))
 
   const electronApp = await electron.launch({

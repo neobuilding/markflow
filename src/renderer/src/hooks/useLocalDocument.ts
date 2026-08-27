@@ -25,14 +25,14 @@ export function useLocalDocument(
   useEffect(() => {
     dirtyRef.current = dirty
   })
-  // Original line ending: inferred from the authoritative content (disk/database); on save we
+  // Original line ending: inferred from the authoritative content (disk); on save we
   // restore the editor-normalized LF back to it, so a CRLF file isn't rewritten to LF when edited
   // (CodeMirror internally uses \n as the line separator).
   const eolRef = useRef<'\r\n' | '\n'>('\n')
 
   useEffect(() => {
     if (!doc) return
-    // Switching to a different document: always overwrite the local draft with the authoritative content (disk/database)
+    // Switching to a different document: always overwrite the local draft with the authoritative content (disk)
     if (doc.id !== prevIdRef.current) {
       prevIdRef.current = doc.id
       appliedEncodingRef.current = doc.encoding
@@ -86,7 +86,7 @@ export function useLocalDocument(
   }, [doc?.id, doc?.encoding, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Trust the on-disk file's own line ending (async, overriding the synchronous inference above):
-  // the database content may have been rewritten by an older version, so disk is the source of
+  // the on-disk content may have been rewritten by an older version, so disk is the source of
   // truth for line endings. Only read the first 64KB, so the cost is negligible.
   useEffect(() => {
     if (!doc?.filePath) return

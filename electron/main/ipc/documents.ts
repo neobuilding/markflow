@@ -33,8 +33,7 @@ import {
 
 export type { Document } from '../model/documentStore'
 
-// Build a Document from the canonical fields used by the handlers. Replaces the old
-// SQL row → Document mapping (toDocument). `is_archived` was removed with the archive feature.
+// Build a Document from the canonical fields used by the handlers.
 function makeDocument(params: {
   id: string
   title: string
@@ -701,7 +700,7 @@ export function registerDocumentHandlers(
   })
 
   // Read the file's original line endings (only the first 64KB, to avoid cost on large files): restored on save.
-  // Trust the on-disk file itself, not the DB content (which an older version may have rewritten).
+  // Trust the on-disk file itself, not the stored content (which an older version may have rewritten).
   // Avoid existsSync/openSync TOCTOU: try opening directly and treat any failure as "use default \n".
   ipcMain.handle('documents:eol', (_event, filePath: string) => {
     let fd: number | undefined

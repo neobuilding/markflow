@@ -1,6 +1,6 @@
 // appdoc: protocol handling (privilege / symlink allow-list, C2 / §4.1 / §4.5).
 // URL shape: appdoc://<docId>/<relativePath>. The handler looks up file_path by docId
-// in the DB, computes docBaseDir, resolves the relative path to an absolute one, then
+// in the document store, computes docBaseDir, resolves the relative path to an absolute one, then
 // runs the secondary containment check; any privilege escape returns 403.
 // APPDOC_MIME / isSubdir are defined in ../lib/security (shared with other main-process handlers).
 import { protocol } from 'electron'

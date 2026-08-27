@@ -128,8 +128,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   // ensuring "exporting HTML never closes the current file or workspace".
   closeDocument: () => {
     if (get().exporting || get().exportOpen) return
-    // A memory-only draft that was never saved to disk has no file and only a DB row.
-    // Remove that orphan DB row on close so we don't leave a zombie draft (PLAN §6.4).
+    // A memory-only draft that was never saved to disk has no file and only a store entry.
+    // Remove that orphan store entry on close so we don't leave a zombie draft (PLAN §6.4).
     const id = get().activeDocumentId
     if (id && get().isNewUnsaved) {
       void deleteUnsavedDraft(id)

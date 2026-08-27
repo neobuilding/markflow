@@ -1,6 +1,5 @@
-// documentStore.ts — in-memory single source of truth for documents (replaces the
-// better-sqlite3 `documents` table). Phase one of removing the database layer:
-// documents live in a Map keyed by id; disk I/O and encoding detection stay in the
+// documentStore.ts — in-memory single source of truth for documents.
+// Documents live in a Map keyed by id; disk I/O and encoding detection stay in the
 // IPC handlers (documents.ts) which call into this store after reading/writing files.
 import { randomUUID } from 'node:crypto'
 import { isInFolder } from './folderMatch'
