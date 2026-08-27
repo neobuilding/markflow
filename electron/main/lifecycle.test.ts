@@ -31,7 +31,7 @@ const h = vi.hoisted(() => {
       closeDevTools: vi.fn(),
     },
   }
-  return { appHandlers, ipcOn, fakeQuit, fakeWebContentsSend, fakeWindow }
+  return { appHandlers, ipcOn, fakeQuit, fakeWebContentsSend, fakeWindow, purgeThrows: false }
 })
 
 // Mock `electron` FIRST (before importing lifecycle), so the module-top-level
@@ -123,7 +123,10 @@ vi.mock('./state', () => {
 })
 
 vi.mock('./model/documentStore', () => ({
-  purgeUnsavedDrafts: vi.fn(() => 0),
+  purgeUnsavedDrafts: vi.fn(() => {
+    if (h.purgeThrows) throw new Error('purge failed')
+    return 0
+  }),
 }))
 
 async function loadLifecycle(): Promise<void> {
@@ -140,6 +143,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   // Default: window considered destroyed (so the prompt/safety-net branch is skipped).
   h.fakeWindow.isDestroyed = () => true
+  h.purgeThrows = false
   h.fakeQuit.mockClear()
   h.fakeWebContentsSend.mockClear()
 })
@@ -237,5 +241,40 @@ describe('main process — before-quit safety net', () => {
     h.fakeQuit.mockClear()
     h.appHandlers['window-all-closed']()
     expect(h.fakeQuit).toHaveBeenCalledTimes(1)
+  })
+
+  it('purges drafts via the store on the readyToQuit fast path', async () => {
+    h.fakeWindow.isDestroyed = () => false
+    const state = await import('./state.js')
+    const docStore = await import('./model/documentStore.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
+
+    // Flip readyToQuit so before-quit takes the immediate purge-and-quit branch.
+    state.setReadyToQuit(true)
+    const evt = { preventDefault: vi.fn() }
+    h.appHandlers['before-quit'](evt)
+
+    expect(evt.preventDefault).not.toHaveBeenCalled()
+    expect(h.fakeWebContentsSend).not.toHaveBeenCalledWith('app:request-quit')
+    expect(docStore.purgeUnsavedDrafts).toHaveBeenCalled()
+  })
+
+  it('still quits when purging unsaved drafts throws', async () => {
+    h.fakeWindow.isDestroyed = () => false
+    const state = await import('./state.js')
+    const docStore = await import('./model/documentStore.js')
+    h.purgeThrows = true
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
+
+    state.setReadyToQuit(true)
+    const evt = { preventDefault: vi.fn() }
+    h.appHandlers['before-quit'](evt)
+
+    // The catch swallows the purge error and the quit still proceeds (before-quit is
+    // not prevented, so the OS quit continues).
+    expect(evt.preventDefault).not.toHaveBeenCalled()
+    expect(docStore.purgeUnsavedDrafts).toHaveBeenCalled()
   })
 })

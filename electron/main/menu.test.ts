@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { collectMarkdownFiles } from './lib/md-files'
 
 const menuItems: Record<string, { id?: string; enabled: boolean }> = {}
 const setAppMenuCalls: unknown[] = []
@@ -107,6 +108,8 @@ beforeEach(() => {
     canceled: true,
     filePaths: [],
   })
+  // Restore the default folder-scan stub so a prior test's mockReturnValueOnce can't leak.
+  vi.mocked(collectMarkdownFiles).mockImplementation(() => ['/x/a.md', '/x/b.md'])
 })
 
 describe('native menu', () => {
@@ -295,6 +298,66 @@ describe('native menu', () => {
     }
     expect(sent).toBe(true)
     expect(h.openFilesSent).toContainEqual(['menu:open-files', ['/docs/a.md', '/docs/b.md']])
+  })
+
+  it('builds the darwin-specific menu (close role + hiddenInset title bar)', () => {
+    // `process.platform === 'darwin'` branches in the template are environment-dependent
+    // and never taken on Windows CI; force darwin here to exercise them.
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    try {
+      setAppMenuCalls.length = 0
+      menu.setupMenu()
+      expect(setAppMenuCalls.length).toBeGreaterThanOrEqual(1)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original })
+    }
+  })
+
+  it('ignores an unsupported locale sent via app:set-language', () => {
+    setWindow()
+    menu.setupMenu()
+    menu.registerMenuHandlers()
+    const sendSpy = vi.spyOn(h.mainWindow!.webContents, 'send')
+    ipcHandlers['app:set-language'](null, 'fr' as unknown as 'en')
+    // The `if (locale === 'en' || locale === 'zh-CN')` guard is false, so no locale switch and no notify.
+    expect(sendSpy).not.toHaveBeenCalledWith('menu:language', expect.anything())
+  })
+
+  it('applyMenuStates is a no-op when menu items are absent (defensive guard)', () => {
+    setWindow()
+    menu.setupMenu()
+    menu.registerMenuHandlers()
+    // Simulate getMenuItemById returning null for every id so each `if (item)` takes its
+    // (uncovered on the happy path) else branch. applyMenuStates must not throw.
+    for (const k of Object.keys(menuItems)) delete menuItems[k]
+    expect(() => ipcHandlers['menu:set-editable'](null, true)).not.toThrow()
+    // Restore a valid menu for the next test.
+    menu.setupMenu()
+  })
+
+  it('does not send files when the open-folder dialog finds no markdown files', async () => {
+    setWindow()
+    menu.setupMenu()
+    // Force the folder scan to return no markdown files so the `if (mdFiles.length > 0)` else branch runs.
+    vi.mocked(collectMarkdownFiles).mockReturnValueOnce([])
+    // Confirmed dialog (not canceled) so the open-folder click actually runs the scan.
+    vi.mocked(dialog.showOpenDialog).mockResolvedValue({
+      canceled: false,
+      filePaths: ['/empty/folder'],
+    })
+    h.openFilesSent.length = 0
+    for (const c of [...allClicks]) {
+      if (c) {
+        try {
+          await c()
+        } catch {
+          /* ignore non-folder clicks */
+        }
+      }
+    }
+    // No markdown files were found, so no empty `menu:open-files` payload was sent.
+    expect(h.openFilesSent).not.toContainEqual(['menu:open-files', []])
   })
 
   it('collects and sends markdown files when the open-folder dialog is confirmed', async () => {

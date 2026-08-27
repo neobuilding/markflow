@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import MiniSearch from 'minisearch'
 import { createDocumentStore, upsertDocument, type Document } from '../model/documentStore'
 
 const handlers: Record<string, (...a: unknown[]) => unknown> = {}
@@ -88,6 +89,38 @@ describe('search:query', () => {
     expect(typeof res[0].score).toBe('number')
     expect(typeof res[0].updatedAt).toBe('number')
   })
+
+  it('returns [] for a null/undefined query', async () => {
+    expect(await query(null as unknown as string)).toEqual([])
+    expect(await query(undefined as unknown as string)).toEqual([])
+  })
+
+  it('falls back to defaults when a result references a missing document', async () => {
+    vi.spyOn(MiniSearch.prototype, 'search').mockReturnValue([
+      {
+        id: 'ghost',
+        title: undefined,
+        folderPath: undefined,
+        score: 0.5,
+        terms: undefined,
+      },
+    ] as unknown as ReturnType<MiniSearch['search']>)
+
+    const res = (await query('anything')) as Array<{
+      id: string
+      title: string
+      folderPath: string
+      snippet: string
+      updatedAt: number
+    }>
+
+    expect(res).toHaveLength(1)
+    expect(res[0].id).toBe('ghost')
+    expect(res[0].title).toBe('')
+    expect(res[0].folderPath).toBe('')
+    expect(res[0].snippet).toBe('')
+    expect(res[0].updatedAt).toBe(0)
+  })
 })
 
 describe('makeSnippet', () => {
@@ -100,6 +133,29 @@ describe('makeSnippet', () => {
     // Exercises the `hit === -1` branch of makeSnippet.
     const s = makeSnippet('Markdown editor with highlight', ['zzzqqqxyz'])
     expect(s).toBe('Markdown editor with highlight'.slice(0, 120))
+    expect(s).not.toContain('<mark>')
+  })
+
+  it('returns empty string when content is empty', () => {
+    expect(makeSnippet('', ['markdown'])).toBe('')
+  })
+
+  it('picks the earliest hit when multiple terms match', () => {
+    // "hello" appears earlier than "world"; this exercises the
+    // `idx < hit` branch after hit has already been set.
+    const s = makeSnippet('hello world', ['world', 'hello'])
+    expect(s).toContain('<mark>hello</mark>')
+  })
+
+  it('adds ellipses around a middle match in long content', () => {
+    const content = 'a'.repeat(50) + 'target' + 'b'.repeat(100)
+    const s = makeSnippet(content, ['target'])
+    expect(s).toMatch(/^….*<mark>target<\/mark>.*…$/)
+  })
+
+  it('returns escaped content when all terms are empty', () => {
+    const s = makeSnippet('hello world', [''])
+    expect(s).toBe('hello world')
     expect(s).not.toContain('<mark>')
   })
 })

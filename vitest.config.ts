@@ -128,44 +128,19 @@ export default defineConfig({
           functions: 100,
           lines: 100,
         },
-        'electron/main/ipc/documents.ts': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'electron/main/ipc/export.ts': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        // Integration-facing surface (UI components, Electron handlers/IPC, native
-        // menu) depends on DOM / native APIs and is validated more loosely.
-        // Fallback for any ipc file not listed explicitly above.
+        // All pure-logic IPC handlers are held to 100%; this glob covers
+        // documents.ts, export.ts, search.ts, appdoc.ts and any future ipc file.
         'electron/main/ipc/**': {
-          statements: 80,
-          branches: 80,
-          functions: 80,
-          lines: 80,
-        },
-        'electron/main/ipc/search.ts': {
-          statements: 92,
-          branches: 72,
-          functions: 80,
-          lines: 92,
-        },
-        'electron/main/ipc/appdoc.ts': {
-          statements: 90,
-          branches: 85,
-          functions: 90,
-          lines: 90,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
         },
         'electron/main/handlers/**': {
-          statements: 85,
-          branches: 85,
-          functions: 85,
-          lines: 85,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
         },
         'electron/main/state.ts': {
           statements: 100,
@@ -174,10 +149,10 @@ export default defineConfig({
           lines: 100,
         },
         'electron/main/window.ts': {
-          statements: 70,
-          branches: 70,
-          functions: 70,
-          lines: 70,
+          statements: 100,
+          branches: 85,
+          functions: 100,
+          lines: 100,
         },
         'electron/main/i18n.ts': {
           statements: 100,
@@ -195,16 +170,16 @@ export default defineConfig({
           lines: 100,
         },
         'electron/main/menu.ts': {
-          statements: 90,
-          branches: 60,
-          functions: 95,
-          lines: 90,
+          statements: 98,
+          branches: 95,
+          functions: 100,
+          lines: 98,
         },
         'electron/main/lifecycle.ts': {
-          statements: 90,
+          statements: 100,
           branches: 85,
-          functions: 80,
-          lines: 90,
+          functions: 100,
+          lines: 100,
         },
         'src/renderer/src/components/**': {
           statements: 90,
