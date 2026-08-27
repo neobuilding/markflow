@@ -604,6 +604,29 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     docs.a = { ...docs.a, filePath: originalPath }
   })
 
+  it('navigates to the correct Windows drive path segments in the breadcrumb', async () => {
+    const user = userEvent.setup()
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: 'D:/GitHub/markflow/QUICKSTART.md' }
+    mount()
+    await openDoc()
+    await flush()
+
+    const segments = screen.getAllByTitle('Go to this folder')
+    expect(segments).toHaveLength(3)
+
+    await user.click(segments[0])
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('D:/'))
+
+    await user.click(segments[1])
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('D:/GitHub'))
+
+    await user.click(segments[2])
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('D:/GitHub/markflow'))
+
+    docs.a = { ...docs.a, filePath: originalPath }
+  })
+
   it('does not write to clipboard when the document has no filePath (copy path early-returns)', async () => {
     const user = userEvent.setup()
     const originalPath = docs.a.filePath

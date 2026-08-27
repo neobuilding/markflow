@@ -252,9 +252,14 @@ export function EditorPane(): React.ReactElement {
   }, [openFolderMut])
 
   // Clicking a folder segment in the breadcrumb navigates the sidebar to that directory.
-  // We rebuild the directory path from the original path (not from the split segments),
-  // so the absolute root ("/" on POSIX, the drive letter on Windows) is preserved. The
-  // root occupies one leading segment, so the target is the first `index + 2` segments.
+  // `segments` is the path split on `/` with empty parts removed, so for POSIX paths the
+  // leading root `/` is also removed and must be prepended back. For Windows drive paths,
+  // the drive letter (e.g. `D:`) is kept as the first segment; clicking it should resolve
+  // to `D:/`, so we restore the trailing slash in that case.
+  // NOTE: UNC paths (//server/share/...) are NOT supported — they start with `/` and are
+  // treated as POSIX absolute paths here (and by the store's `isInFolder`), so the leading
+  // `//` is dropped and navigation would be wrong. This mirrors the rest of the codebase,
+  // which also does not handle UNC paths.
   const handleNavigateToSegment = useCallback(
     (segments: string[], index: number) => {
       // `doc` is guaranteed non-null here: the breadcrumb (and this handler's
@@ -262,10 +267,13 @@ export function EditorPane(): React.ReactElement {
       // the render body already accesses `doc.filePath` unguarded. A defensive
       // `if (!doc?.filePath) return` would be an unreachable branch.
       const norm = doc!.filePath.replace(/\\/g, '/')
-      const dirPath = norm
-        .split('/')
-        .slice(0, index + 2)
-        .join('/')
+      const isPosixAbs = norm.startsWith('/')
+      const isWinAbs = /^[a-zA-Z]:\//.test(norm)
+      const prefix = isPosixAbs ? '/' : ''
+      let dirPath = prefix + segments.slice(0, index + 1).join('/')
+      if (isWinAbs && index === 0) {
+        dirPath += '/'
+      }
       useUIStore.getState().setActiveFolder(dirPath)
     },
     [doc],
