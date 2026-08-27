@@ -77,9 +77,9 @@ npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 to
 | `vite.config.ts`                         | Vite 配置（renderer + electron，vite-plugin-electron） |
 | `electron-builder.json5`                 | 打包配置（输出目录、图标、DMG/NSIS 设置）              |
 | `electron/main/`                         | Electron 主进程                                        |
-| `electron/main/db/database.ts`           | SQLite 初始化 + FTS5 迁移                              |
+| `electron/main/model/documentStore.ts`   | 内存文档存储（替代原 SQLite 层）                       |
 | `electron/main/ipc/documents.ts`         | 文档 CRUD IPC 处理器                                   |
-| `electron/main/ipc/search.ts`            | FTS5 全文搜索 IPC 处理器                               |
+| `electron/main/ipc/search.ts`            | minisearch 全文搜索 IPC 处理器                         |
 | `electron/preload/index.ts`              | contextBridge 暴露 API                                 |
 | `src/renderer/src/`                      | React 渲染层                                           |
 | `src/renderer/src/store/ui.ts`           | Zustand UI 状态                                        |

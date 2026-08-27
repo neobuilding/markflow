@@ -6,7 +6,7 @@
 import { protocol } from 'electron'
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, resolve, extname } from 'node:path'
-import { getDb } from '../db/database'
+import { getDocumentById } from '../model/documentStore'
 import { parseAppDocUrl, isSubdir, APPDOC_MIME } from '../lib/security'
 
 export function registerAppDocProtocol(): void {
@@ -20,12 +20,11 @@ export function registerAppDocProtocol(): void {
         return new Response('Not Found', { status: 404 })
       }
       const { docId, relPath } = parsed
-      const row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(docId) as
-        { file_path: string } | undefined
-      if (!row?.file_path) {
+      const doc = getDocumentById(docId)
+      if (!doc?.filePath) {
         return new Response('Not Found', { status: 404 })
       }
-      const docBaseDir = dirname(row.file_path)
+      const docBaseDir = dirname(doc.filePath)
       const resolved = resolve(docBaseDir, relPath)
       // Secondary containment check: block ../ traversal and symlink escapes
       if (!isSubdir(docBaseDir, resolved)) {

@@ -17,23 +17,10 @@ By participating, you agree to uphold a respectful, harassment-free environment.
 
 - Node.js >= 22
 - npm >= 9
-- A C++ toolchain (required to compile the native `better-sqlite3` module during
-  `npm install` → `electron-builder install-app-deps`):
-  - **Windows**: Install **Visual Studio Build Tools** (2019 or newer) with the
-    **"Desktop development with C++"** workload (listed as “使用 C++ 的桌面开发” in the
-    Chinese installer UI). This installs
-    the MSVC toolset + Windows SDK that `node-gyp` needs. Download the VS2022
-    installer from <https://aka.ms/vs/17/release/vs_buildtools.exe>, or modify an
-    existing install via the Visual Studio Installer.
-  - **macOS / Linux**: Xcode Command Line Tools (`xcode-select --install`) /
-    `build-essential` + `python3` respectively (the `build` job already
-    covers these on Linux).
 
-> ⚠️ **Windows gotcha**: without the C++ workload, `npm install` fails at the
-> `postinstall` step with `gyp ERR! find VS … missing any VC++ toolset`. The fix is
-> installing the “Desktop development with C++” workload above — not skipping
-> `postinstall` (that would leave `better-sqlite3` with the wrong Electron ABI and
-> crash at runtime).
+> 💡 No native toolchain is required: MarkFlow uses an in-memory document store and a
+> pure-JS search index (minisearch) instead of a native database module, so `npm install`
+> works without a C++ compiler.
 
 ### Run the dev build
 
@@ -55,7 +42,7 @@ npm run dev
 markflow/
 ├── electron/
 │   ├── main/              # Electron main process
-│   │   ├── db/           # SQLite database & migrations
+│   │   ├── model/        # In-memory document store (replaces the old SQLite layer)
 │   │   ├── ipc/          # IPC handlers (documents, search)
 │   │   └── index.ts      # Main process entry
 │   └── preload/          # Preload script (contextBridge)
@@ -80,21 +67,21 @@ markflow/
 
 ## Tech Stack
 
-| Layer             | Technology                                                    |
-| ----------------- | ------------------------------------------------------------- |
-| Build             | Vite 8 + vite-plugin-electron                                 |
-| Desktop           | Electron 43                                                   |
-| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4               |
-| UI Components     | Radix UI primitives (shadcn/ui style)                         |
-| State             | Zustand (UI) + TanStack Query v5 (IPC)                        |
-| Storage           | better-sqlite3 + FTS5 + Markdown file dual-write              |
-| Editor            | CodeMirror 6 with Markdown syntax highlighting                |
-| Math              | KaTeX (LaTeX formula rendering)                               |
-| Diagrams          | Mermaid.js                                                    |
-| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers) |
-| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)         |
-| Testing           | Vitest + jsdom                                                |
-| Packaging         | electron-builder                                              |
+| Layer             | Technology                                                                   |
+| ----------------- | ---------------------------------------------------------------------------- |
+| Build             | Vite 8 + vite-plugin-electron                                                |
+| Desktop           | Electron 43                                                                  |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                              |
+| UI Components     | Radix UI primitives (shadcn/ui style)                                        |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                                       |
+| Storage           | In-memory document store (Map) + minisearch index + Markdown file dual-write |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                               |
+| Math              | KaTeX (LaTeX formula rendering)                                              |
+| Diagrams          | Mermaid.js                                                                   |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)                        |
+| Testing           | Vitest + jsdom                                                               |
+| Packaging         | electron-builder                                                             |
 
 ## Coding Conventions
 

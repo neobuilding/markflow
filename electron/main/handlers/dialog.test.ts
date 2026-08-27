@@ -76,4 +76,15 @@ describe('dialog handlers', () => {
     h.save = { canceled: true, filePath: undefined }
     expect(await handlers['dialog:save-html'](null)).toBeNull()
   })
+
+  it('save-file returns null when filePath is absent even if not canceled', async () => {
+    // Exercises the `result.filePath ?? null` branch (filePath undefined, not canceled).
+    h.save = { canceled: false, filePath: undefined }
+    expect(await handlers['dialog:save-file'](null)).toBeNull()
+  })
+
+  it('save-html returns null when filePath is absent even if not canceled', async () => {
+    h.save = { canceled: false, filePath: undefined }
+    expect(await handlers['dialog:save-html'](null)).toBeNull()
+  })
 })

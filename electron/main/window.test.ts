@@ -133,4 +133,25 @@ describe('createWindow', () => {
     window.createWindow()
     expect(h.win.loadURL).toHaveBeenCalledWith('http://localhost:5173/')
   })
+
+  it('loads the built index.html when running in production', () => {
+    h.devUrl = ''
+    window.createWindow()
+    expect(h.win.loadURL).toHaveBeenCalledWith(expect.stringContaining('app/dist/index.html'))
+  })
+
+  it('applies darwin-specific window options (frame + hiddenInset title bar)', () => {
+    // The `process.platform === 'darwin'` branches in the BrowserWindow options are
+    // environment-dependent and never taken on Windows CI; force darwin to cover them.
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    try {
+      window.createWindow()
+      // Fire ready-to-show so the window is maximized (exercises the darwin branch path).
+      events['ready-to-show'](null)
+      expect(h.win.maximized).toBe(true)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original })
+    }
+  })
 })

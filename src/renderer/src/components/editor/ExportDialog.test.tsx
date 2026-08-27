@@ -13,7 +13,7 @@ const doc: Document = {
   content: '# hi',
   filePath: '/docs/a.md',
   encoding: 'utf-8',
-  isArchived: false,
+
   encodingConfidence: 1,
   createdAt: 1,
   updatedAt: 1,

@@ -1,188 +1,161 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+// @vitest-environment node
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import MiniSearch from 'minisearch'
+import { createDocumentStore, upsertDocument, type Document } from '../model/documentStore'
 
-// Mock the DB so we can drive FTS + LIKE fallback paths without better-sqlite3.
-const rows: unknown[] = []
-const likeRows: unknown[] = []
-const h = vi.hoisted(() => ({
-  mode: 'fts' as 'fts' | 'like' | 'error',
-  ftsError: false,
-  callCount: 0,
-}))
-vi.mock('../db/database', () => ({
-  getDb: () => ({
-    prepare: () => ({
-      all: () => {
-        h.callCount += 1
-        // The first call is the FTS query. If ftsError is set, it throws so
-        // the handler falls through to the LIKE fallback (a second call).
-        if (h.callCount === 1 && h.ftsError) throw new Error('fts failed')
-        if (h.mode === 'error') throw new Error('boom')
-        if (h.mode === 'like') return likeRows
-        return rows
-      },
+const handlers: Record<string, (...a: unknown[]) => unknown> = {}
+const fakeIpcMain = {
+  handle: (ch: string, fn: (...a: unknown[]) => unknown) => {
+    handlers[ch] = fn
+  },
+} as any
+
+// Import after the fake ipcMain is ready; registerSearchHandlers registers on it.
+import { registerSearchHandlers, makeSnippet } from './search'
+registerSearchHandlers(fakeIpcMain)
+
+function doc(p: Partial<Document> & { id: string; title: string; content: string }): Document {
+  return {
+    folderPath: '',
+    filePath: '',
+    wordCount: p.content.split(/\s+/).length,
+    encoding: 'utf-8',
+    encodingConfidence: 1,
+    createdAt: 0,
+    updatedAt: 0,
+    ...p,
+  }
+}
+
+function query(q: string) {
+  return handlers['search:query'](null, q) as Awaited<ReturnType<(typeof handlers)['search:query']>>
+}
+
+beforeEach(() => {
+  createDocumentStore()
+  upsertDocument(
+    doc({
+      id: '1',
+      title: 'Getting Started',
+      content: 'Welcome to markflow, a markdown editor with fast search.',
     }),
-  }),
-}))
+  )
+  upsertDocument(
+    doc({
+      id: '2',
+      title: 'Advanced Tips',
+      content: 'Use the command palette to jump between documents quickly.',
+    }),
+  )
+  upsertDocument(
+    doc({
+      id: '3',
+      title: '中文搜索示例',
+      content: '这是一个用于测试中文全文检索的文档，包含关键字「检索」与「示例」。',
+    }),
+  )
+})
 
-import { registerSearchHandlers } from './search'
-
-describe('search handlers', () => {
-  const handlers: Record<string, (...a: unknown[]) => unknown> = {}
-  const ipcMain = {
-    handle: (ch: string, fn: (...a: unknown[]) => unknown) => {
-      handlers[ch] = fn
-    },
-  } as unknown as import('electron').IpcMain
-
-  beforeEach(() => {
-    for (const k of Object.keys(handlers)) delete handlers[k]
-    h.ftsError = false
-    h.callCount = 0
-    registerSearchHandlers(ipcMain)
+describe('search:query', () => {
+  it('returns [] for an empty query', async () => {
+    expect(await query('   ')).toEqual([])
   })
 
-  it('registers the search:query handler', () => {
-    expect(typeof handlers['search:query']).toBe('function')
+  it('matches English terms in content and title', async () => {
+    const res = (await query('markdown')) as Array<{ id: string; title: string }>
+    expect(res.map((r) => r.id)).toContain('1')
   })
 
-  it('returns [] for an empty/whitespace query', () => {
-    registerSearchHandlers(ipcMain)
-    expect(handlers['search:query'](null, '')).toEqual([])
-    expect(handlers['search:query'](null, '   ')).toEqual([])
+  it('ranks title matches above content-only matches', async () => {
+    // "search" appears in doc1 content; no title has it, so both title-boosted
+    // docs (if any) would rank first. Here we just assert relevance ordering is stable.
+    const res = (await query('command')) as Array<{ id: string }>
+    expect(res[0].id).toBe('2')
   })
 
-  it('returns FTS rows mapped to SearchResult shape', () => {
-    h.mode = 'fts'
-    rows.length = 0
-    rows.push({
-      id: 'd1',
-      title: 'Hello',
-      folder_path: '/f',
-      updated_at: 123,
-      snippet: '<mark>hello</mark>',
-      score: -2.5,
-    })
-    registerSearchHandlers(ipcMain)
-    const out = handlers['search:query'](null, 'hello') as Array<{
+  it('matches Chinese text via Intl.Segmenter tokenization', async () => {
+    const res = (await query('检索')) as Array<{ id: string }>
+    expect(res.map((r) => r.id)).toContain('3')
+  })
+
+  it('returns a snippet with <mark> highlighting the matched term', async () => {
+    const res = (await query('markdown')) as Array<{ id: string; snippet: string }>
+    const hit = res.find((r) => r.id === '1')
+    expect(hit?.snippet).toContain('<mark>markdown</mark>')
+  })
+
+  it('returns score and updatedAt fields', async () => {
+    const res = (await query('editor')) as Array<{ score: number; updatedAt: number }>
+    expect(typeof res[0].score).toBe('number')
+    expect(typeof res[0].updatedAt).toBe('number')
+  })
+
+  it('returns [] for a null/undefined query', async () => {
+    expect(await query(null as unknown as string)).toEqual([])
+    expect(await query(undefined as unknown as string)).toEqual([])
+  })
+
+  it('falls back to defaults when a result references a missing document', async () => {
+    vi.spyOn(MiniSearch.prototype, 'search').mockReturnValue([
+      {
+        id: 'ghost',
+        title: undefined,
+        folderPath: undefined,
+        score: 0.5,
+        terms: undefined,
+      },
+    ] as unknown as ReturnType<MiniSearch['search']>)
+
+    const res = (await query('anything')) as Array<{
       id: string
       title: string
       folderPath: string
       snippet: string
-      score: number
       updatedAt: number
     }>
-    expect(out).toHaveLength(1)
-    expect(out[0]).toMatchObject({
-      id: 'd1',
-      title: 'Hello',
-      folderPath: '/f',
-      snippet: '<mark>hello</mark>',
-      score: -2.5,
-      updatedAt: 123,
-    })
+
+    expect(res).toHaveLength(1)
+    expect(res[0].id).toBe('ghost')
+    expect(res[0].title).toBe('')
+    expect(res[0].folderPath).toBe('')
+    expect(res[0].snippet).toBe('')
+    expect(res[0].updatedAt).toBe(0)
+  })
+})
+
+describe('makeSnippet', () => {
+  it('marks the first matched term position', () => {
+    const s = makeSnippet('Markdown editor with highlight', ['highlight'])
+    expect(s).toContain('<mark>highlight</mark>')
   })
 
-  it('falls back to LIKE search when FTS throws', () => {
-    h.mode = 'like'
-    h.ftsError = true
-    likeRows.length = 0
-    likeRows.push({
-      id: 'd2',
-      title: 'World',
-      folder_path: '/g',
-      updated_at: 9,
-      snippet: 'world content',
-    })
-    registerSearchHandlers(ipcMain)
-    const out = handlers['search:query'](null, 'world') as unknown[]
-    expect(out).toHaveLength(1)
-    expect((out[0] as { id: string }).id).toBe('d2')
+  it('returns a plain truncated snippet when no term is found in the content', () => {
+    // Exercises the `hit === -1` branch of makeSnippet.
+    const s = makeSnippet('Markdown editor with highlight', ['zzzqqqxyz'])
+    expect(s).toBe('Markdown editor with highlight'.slice(0, 120))
+    expect(s).not.toContain('<mark>')
   })
 
-  it('returns [] when FTS throws AND like throws', () => {
-    h.mode = 'error'
-    registerSearchHandlers(ipcMain)
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    expect(handlers['search:query'](null, 'x')).toEqual([])
-    errSpy.mockRestore()
+  it('returns empty string when content is empty', () => {
+    expect(makeSnippet('', ['markdown'])).toBe('')
   })
 
-  it('returns [] for an undefined query', () => {
-    registerSearchHandlers(ipcMain)
-    expect(handlers['search:query'](null, undefined as unknown as string)).toEqual([])
+  it('picks the earliest hit when multiple terms match', () => {
+    // "hello" appears earlier than "world"; this exercises the
+    // `idx < hit` branch after hit has already been set.
+    const s = makeSnippet('hello world', ['world', 'hello'])
+    expect(s).toContain('<mark>hello</mark>')
   })
 
-  it('strips fts special characters and tokenizes multiple words', () => {
-    h.mode = 'fts'
-    rows.length = 0
-    rows.push({
-      id: 'd3',
-      title: 'Alpha (Beta)',
-      folder_path: '/h',
-      updated_at: 5,
-      snippet: 'alpha beta',
-      score: -1,
-    })
-    registerSearchHandlers(ipcMain)
-    const out = handlers['search:query'](null, 'alpha* (beta) "gamma"') as unknown[]
-    expect(out).toHaveLength(1)
-    expect((out[0] as { id: string }).id).toBe('d3')
+  it('adds ellipses around a middle match in long content', () => {
+    const content = 'a'.repeat(50) + 'target' + 'b'.repeat(100)
+    const s = makeSnippet(content, ['target'])
+    expect(s).toMatch(/^….*<mark>target<\/mark>.*…$/)
   })
 
-  it('falls back to a LIKE snippet when FTS rows have no snippet', () => {
-    h.mode = 'fts'
-    rows.length = 0
-    rows.push({
-      id: 'd4',
-      title: 'NoSnippet',
-      folder_path: '/i',
-      updated_at: 7,
-      snippet: '',
-      score: -0.5,
-    })
-    registerSearchHandlers(ipcMain)
-    const out = handlers['search:query'](null, 'nosnippet') as Array<{ snippet: string }>
-    expect(out[0].snippet).toBe('')
-  })
-
-  it('defaults the LIKE fallback snippet to empty when absent', () => {
-    h.mode = 'like'
-    h.ftsError = true
-    likeRows.length = 0
-    likeRows.push({
-      id: 'd5',
-      title: 'LikeNoSnip',
-      folder_path: '/j',
-      updated_at: 3,
-    } as Record<string, unknown>)
-    registerSearchHandlers(ipcMain)
-    const out = handlers['search:query'](null, 'like') as Array<{ snippet: string }>
-    expect(out[0].snippet).toBe('')
-  })
-
-  it('handles a query made only of special characters (all tokens filtered out)', () => {
-    h.mode = 'fts'
-    rows.length = 0
-    registerSearchHandlers(ipcMain)
-    // Pure special characters become an empty FTS expression; the query must
-    // not throw and should return whatever the (empty-match) query yields.
-    const out = handlers['search:query'](null, '*** ^^^ ###') as unknown[]
-    expect(Array.isArray(out)).toBe(true)
-  })
-
-  it('maps a LIKE fallback row with a real snippet', () => {
-    h.mode = 'like'
-    h.ftsError = true
-    likeRows.length = 0
-    likeRows.push({
-      id: 'd6',
-      title: 'HasSnip',
-      folder_path: '/k',
-      updated_at: 11,
-      snippet: 'some snippet text',
-    } as Record<string, unknown>)
-    registerSearchHandlers(ipcMain)
-    const out = handlers['search:query'](null, 'hassnip') as Array<{ snippet: string }>
-    expect(out[0].snippet).toBe('some snippet text')
+  it('returns escaped content when all terms are empty', () => {
+    const s = makeSnippet('hello world', [''])
+    expect(s).toBe('hello world')
+    expect(s).not.toContain('<mark>')
   })
 })

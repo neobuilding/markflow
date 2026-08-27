@@ -4,17 +4,14 @@ import { writeFileSync, mkdtempSync, readFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// better-sqlite3 is a native module compiled against the Electron ABI in the main process,
-// so it can't load under the system Node (it would trigger a node-gyp rebuild and hang for a
-// long time). The export test uses vi.mock to provide a fake DB, avoiding the
-// initDatabase → better-sqlite3 load.
+// The export handler now reads document file paths from the in-memory store singleton.
+// Mock that module's getDocumentById so the test controls which file_path a doc id resolves to.
 const hoist = vi.hoisted(() => ({ imgDocPath: '' }))
-vi.mock('../db/database', () => ({
-  getDb: () => ({
-    prepare: () => ({
-      get: () => (hoist.imgDocPath === '__NONE__' ? undefined : { file_path: hoist.imgDocPath }),
-    }),
-  }),
+vi.mock('../model/documentStore', () => ({
+  getDocumentById: (id: string) => {
+    if (id === '__NONE__' || hoist.imgDocPath === '__NONE__') return null
+    return { id, filePath: hoist.imgDocPath } as unknown
+  },
 }))
 
 // The main-process Electron runtime is unavailable under plain Node. Stub the only value import

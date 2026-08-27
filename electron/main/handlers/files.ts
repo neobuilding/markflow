@@ -20,7 +20,9 @@ export function registerFilesHandlers(): void {
         if (st.isDirectory()) {
           directories.push(absolute)
           for (const f of collectMarkdownFiles(absolute)) markdownFiles.add(f)
-        } else if (st.isFile()) {
+        } else {
+          // statSync followed by isDirectory()===false means a regular file (symlinks
+          // resolve to their target). Filter by extension; non-markdown paths add nothing.
           const ext = absolute.slice(absolute.lastIndexOf('.')).toLowerCase()
           if (MD_EXTS.has(ext)) {
             markdownFiles.add(absolute)

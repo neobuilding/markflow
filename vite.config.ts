@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron/simple'
-import { notBundle } from 'vite-plugin-electron/plugin'
 import { fileURLToPath } from 'node:url'
 import checker from 'vite-plugin-checker'
 
@@ -59,10 +58,6 @@ export default defineConfig({
       main: {
         entry: 'electron/main/index.ts',
         vite: {
-          // notBundle() keeps all dependencies as external requires (not bundled).
-          // Required for native modules like better-sqlite3 whose .node binaries
-          // cannot be processed by Rollup.
-          plugins: [notBundle()],
           build: {
             rollupOptions: {
               output: {

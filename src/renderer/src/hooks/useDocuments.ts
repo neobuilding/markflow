@@ -30,13 +30,20 @@ export function useCreateDocument() {
       content?: string
       ext?: string
       memoryOnly?: boolean
-    }) =>
-      window.api.documents.create({
+    }) => {
+      // When the caller does not pin a folder, save non-memory-only docs into the
+      // currently opened folder (activeFolder, an absolute path) so they appear in
+      // the active list — VS Code "save into the opened folder" semantics (PLAN §6.#13).
+      const activeFolder = useUIStore.getState().activeFolder
+      const folderPath = params.folderPath ?? (activeFolder ? activeFolder : undefined)
+      return window.api.documents.create({
         ...params,
+        folderPath,
         // New documents are memory-only drafts by default: no file is written to disk
         // until the user explicitly saves (Save As). See PLAN §6.3.
         memoryOnly: params.memoryOnly ?? true,
-      }),
+      })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: DOCS_KEY })
     },
@@ -158,7 +165,7 @@ export function useImportDocuments() {
 
 // Open a set of file/folder paths:
 // 1) the main process expands folders into a Markdown file list
-// 2) batch-import them into the database
+// 2) batch-import them into the in-memory document store
 // 3) set the "current folder" to the opened directory (or the file's parent for a single file)
 //    and activate the first document
 // 4) open in read-only mode by default (editable=false)

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,12 +16,11 @@ vi.mock('electron', () => ({
     },
   },
 }))
-vi.mock('../db/database', () => ({
-  getDb: () => ({
-    prepare: () => ({
-      get: () => (h.filePath === '__NONE__' ? undefined : { file_path: h.filePath }),
-    }),
-  }),
+vi.mock('../model/documentStore', () => ({
+  getDocumentById: (id: string) => {
+    if (id === '__NONE__' || h.filePath === '__NONE__') return null
+    return { id, filePath: h.filePath } as unknown
+  },
 }))
 
 import { registerAppDocProtocol } from './appdoc'
@@ -92,8 +91,20 @@ describe('appdoc protocol', () => {
   })
 
   it('returns 500 when reading the file throws', () => {
-    // Point at a directory path so readFileSync throws (EISDIR), exercising the catch.
-    const res = protocolHandler!({ url: `appdoc://d1/${encodeURIComponent('')}` })
-    expect([403, 404, 500]).toContain(res.status)
+    // A real existing subdirectory resolves inside the doc base dir; readFileSync on a
+    // directory throws (EISDIR), which the handler's try/catch converts to 500.
+    const subDir = join(root, 'subdir')
+    mkdirSync(subDir, { recursive: true })
+    const res = protocolHandler!({ url: `appdoc://d1/subdir` })
+    expect(res.status).toBe(500)
+  })
+
+  it('serves a file whose relPath needs no percent-encoding', () => {
+    // Exercises a plain (non-encoded) relPath name hitting the mime branch.
+    const plainPath = join(root, 'plain.png')
+    writeFileSync(plainPath, 'PNGDATA')
+    const res = protocolHandler!({ url: `appdoc://d1/plain.png` })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toBe('image/png')
   })
 })

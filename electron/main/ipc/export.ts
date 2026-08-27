@@ -17,7 +17,7 @@ import {
   rmSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { getDb } from '../db/database'
+import { getDocumentById } from '../model/documentStore'
 import { isSubdir, APPDOC_MIME, parseAppDocUrl } from '../lib/security'
 import { dirname, extname, resolve, join } from 'node:path'
 
@@ -34,10 +34,9 @@ async function inlineOne(src: string): Promise<string | null> {
       const parsed = parseAppDocUrl(src)
       if (!parsed) return null
       const { docId, relPath: rel } = parsed
-      const row = getDb().prepare('SELECT file_path FROM documents WHERE id = ?').get(docId) as
-        { file_path: string } | undefined
-      if (!row) return null
-      const base = dirname(row.file_path)
+      const doc = getDocumentById(docId)
+      if (!doc) return null
+      const base = dirname(doc.filePath)
       const resolved = resolve(base, rel)
       if (!isSubdir(base, resolved)) return null
       let buf: Buffer
