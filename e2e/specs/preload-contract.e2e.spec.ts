@@ -65,8 +65,8 @@ test.describe('preload bridge contract (api/* split)', () => {
         setEncoding: 'function',
         stat: 'function',
         eol: 'function',
-        watch: 'function',
-        unwatch: 'function',
+        setOpenFolder: 'function',
+        clearOpenFolders: 'function',
       }),
     )
     // export — §2.2

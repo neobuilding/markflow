@@ -2,9 +2,10 @@
 import { readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { app } from 'electron'
+import { MD_EXTS } from './markdown-ext'
 
-// Supported Markdown extensions
-export const MD_EXTS = new Set(['.md', '.markdown', '.mdx', '.mdtxt', '.mdtext'])
+// Re-exported so existing importers (handlers/files.ts, tests) keep one symbol.
+export { MD_EXTS }
 
 // Recursively collect all Markdown files under a directory
 export function collectMarkdownFiles(dir: string): string[] {

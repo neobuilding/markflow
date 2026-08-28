@@ -74,8 +74,8 @@ beforeEach(() => {
   api = {
     documents: {
       get: vi.fn(async (id: string) => docs[id] ?? null),
-      watch: vi.fn(async () => {}),
-      unwatch: vi.fn(async () => {}),
+      setOpenFolder: vi.fn(async () => {}),
+      clearOpenFolders: vi.fn(async () => {}),
       eol: vi.fn(async () => '\n'),
       update: vi.fn(async (id: string, u: { title?: string; content?: string }) => ({
         ...docs[id],
@@ -196,8 +196,10 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     await user.click(screen.getByTestId('save-btn'))
     await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
     expect(useUIStore.getState().justSaved).toBe(true)
-    expect(api.documents.unwatch).toHaveBeenCalled()
-    expect(api.documents.watch).toHaveBeenCalled()
+    // Folder watching is owned by the main process and registered once when the folder
+    // is opened; saving must not touch that registration.
+    expect(api.documents.setOpenFolder).not.toHaveBeenCalled()
+    expect(api.documents.clearOpenFolders).not.toHaveBeenCalled()
   })
 
   it('read-only mode disables the Save and Save-As buttons', async () => {
@@ -394,11 +396,13 @@ describe('EditorPane — close & open', () => {
     expect(useUIStore.getState().activeDocumentId).toBeNull()
   })
 
-  it('does not watch a file when no document is active', async () => {
-    // activeDocumentId stays null (beforeEach default) → the watch effect returns early.
+  it('never registers an open folder itself (watching is main-process owned)', async () => {
+    // The chokidar watcher lives in the main process and is told about opened
+    // folders by useOpenPaths, not by the editor pane.
     mount()
+    await openDoc()
     await flush()
-    expect(api.documents.watch).not.toHaveBeenCalled()
+    expect(api.documents.setOpenFolder).not.toHaveBeenCalled()
   })
 })
 

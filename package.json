@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.20",
+    "chokidar": "^5.0.0",
     "comlink": "^4.4.2",
     "dompurify": "^3.4.13",
     "franc": "^6.2.0",

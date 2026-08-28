@@ -105,7 +105,14 @@ export function setupMenu(): void {
               // Recursively collect all .md files
               const mdFiles = collectMarkdownFiles(folderPath)
               if (mdFiles.length > 0) {
-                getMainWindow()?.webContents.send('menu:open-files', mdFiles)
+                // Send the *folder*, not the expanded file list: the renderer expands
+                // folders itself (files:resolve-paths), and only the folder path lets it
+                // pin `activeFolder` — and therefore the watched root — to the directory
+                // the user actually chose. Sending the file list made the renderer fall
+                // back to the parent directory of whichever file happened to be listed
+                // first, which is a subdirectory whenever the picked folder has no .md
+                // files at its top level.
+                getMainWindow()?.webContents.send('menu:open-files', [folderPath])
               }
             }
           },

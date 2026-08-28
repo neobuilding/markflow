@@ -78,6 +78,7 @@ npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 to
 | `electron-builder.json5`                 | 打包配置（输出目录、图标、DMG/NSIS 设置）              |
 | `electron/main/`                         | Electron 主进程                                        |
 | `electron/main/model/documentStore.ts`   | 内存文档存储                                           |
+| `electron/main/model/folderWatcher.ts`   | chokidar 递归目录监听（磁盘变更同步进 store）          |
 | `electron/main/ipc/documents.ts`         | 文档 CRUD IPC 处理器                                   |
 | `electron/main/ipc/search.ts`            | minisearch 全文搜索 IPC 处理器                         |
 | `electron/preload/index.ts`              | contextBridge 暴露 API                                 |

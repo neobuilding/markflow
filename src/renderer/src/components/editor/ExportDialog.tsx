@@ -59,9 +59,9 @@ export function ExportDialog(): React.ReactElement {
     }
   }
 
-  // Perform the actual write (temporarily stop watching the current document's disk file during
-  // export to avoid false "file changed" reports on some platforms when writing the sibling .html;
-  // resume watching after export so the current file/workspace is never closed).
+  // Perform the actual write. No need to pause any watcher around it: the main
+  // process ignores the export artefacts it produces (.html/.pdf/.docx) when
+  // watching, so writing a sibling .html cannot raise a bogus "file changed".
   const doExport = async (overwrite: boolean): Promise<void> => {
     if (!targetPath) return
     setBusy(true)
@@ -71,13 +71,6 @@ export function ExportDialog(): React.ReactElement {
     // the current file/workspace.
     useUIStore.getState().setExporting(true)
     try {
-      if (activeDocumentId) {
-        try {
-          await window.api.documents.unwatch(activeDocumentId)
-        } catch {
-          /* ignored */
-        }
-      }
       await exportDocument({
         path: targetPath,
         theme: resolveTheme(themeChoice, uiTheme),
@@ -89,13 +82,6 @@ export function ExportDialog(): React.ReactElement {
       console.error('Export failed', e)
       setError(t('export.failed'))
     } finally {
-      if (activeDocumentId) {
-        try {
-          await window.api.documents.watch(activeDocumentId)
-        } catch {
-          /* ignored */
-        }
-      }
       useUIStore.getState().setExporting(false)
       setBusy(false)
     }

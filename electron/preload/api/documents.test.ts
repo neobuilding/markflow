@@ -82,10 +82,13 @@ describe('preload documentsApi', () => {
     expect(invokes[0]).toEqual({ channel: 'documents:eol', args: ['/a.md'] })
   })
 
-  it('watch / unwatch invoke the matching channels with the id', () => {
-    documentsApi.watch('d1')
-    documentsApi.unwatch('d1')
-    expect(invokes[0]).toEqual({ channel: 'documents:watch', args: ['d1'] })
-    expect(invokes[1]).toEqual({ channel: 'documents:unwatch', args: ['d1'] })
+  it('setOpenFolder invokes documents:set-open-folder with the folder path', () => {
+    documentsApi.setOpenFolder('/notes')
+    expect(invokes[0]).toEqual({ channel: 'documents:set-open-folder', args: ['/notes'] })
+  })
+
+  it('clearOpenFolders invokes documents:clear-open-folders with no arguments', () => {
+    documentsApi.clearOpenFolders()
+    expect(invokes[0]).toEqual({ channel: 'documents:clear-open-folders', args: [] })
   })
 })

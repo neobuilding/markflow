@@ -119,8 +119,12 @@ describe('useUIStore — all setters and toggles', () => {
   })
 
   it('closeWorkspace removes an unsaved memory-only draft via the api', async () => {
-    ;(window as unknown as { api: { documents: { delete: ReturnType<typeof vi.fn> } } }).api = {
-      documents: { delete: vi.fn().mockResolvedValue(true) },
+    ;(
+      window as unknown as {
+        api: { documents: { delete: ReturnType<typeof vi.fn>; clearOpenFolders?: unknown } }
+      }
+    ).api = {
+      documents: { delete: vi.fn().mockResolvedValue(true), clearOpenFolders: vi.fn() },
     }
     const s = useUIStore.getState()
     s.setActiveDocumentId('draft-1')
@@ -129,5 +133,46 @@ describe('useUIStore — all setters and toggles', () => {
     expect(window.api.documents.delete).toHaveBeenCalledWith('draft-1')
     // the draft flag is cleared
     expect(useUIStore.getState().isNewUnsaved).toBe(false)
+  })
+
+  it('closeWorkspace tells the main process to drop the folder watcher', () => {
+    const clearOpenFolders = vi.fn().mockResolvedValue(undefined)
+    ;(
+      window as unknown as { api: { documents: { clearOpenFolders: typeof clearOpenFolders } } }
+    ).api = { documents: { clearOpenFolders } }
+    useUIStore.getState().setActiveFolder('/watched')
+
+    useUIStore.getState().closeWorkspace()
+
+    expect(clearOpenFolders).toHaveBeenCalledTimes(1)
+    expect(useUIStore.getState().activeFolder).toBeNull()
+  })
+
+  it('closeWorkspace still closes when the watcher teardown rejects', async () => {
+    const clearOpenFolders = vi.fn().mockRejectedValue(new Error('ipc down'))
+    ;(
+      window as unknown as { api: { documents: { clearOpenFolders: typeof clearOpenFolders } } }
+    ).api = { documents: { clearOpenFolders } }
+    const s = useUIStore.getState()
+    s.setActiveDocumentId('x')
+    s.setActiveFolder('/watched')
+
+    useUIStore.getState().closeWorkspace()
+    await Promise.resolve()
+
+    // The workspace must still be cleared: teardown is best-effort, never a gate.
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+    expect(useUIStore.getState().activeFolder).toBeNull()
+  })
+
+  it('closeWorkspace still closes when the preload bridge is unavailable', () => {
+    ;(window as unknown as { api?: unknown }).api = undefined
+    const s = useUIStore.getState()
+    s.setActiveDocumentId('x')
+    s.setActiveFolder('/watched')
+
+    expect(() => useUIStore.getState().closeWorkspace()).not.toThrow()
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+    expect(useUIStore.getState().activeFolder).toBeNull()
   })
 })

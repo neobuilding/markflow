@@ -122,8 +122,6 @@ export function EditorPane(): React.ReactElement {
         markSaved(updated.content, updated.title)
         useUIStore.getState().setJustSaved(true)
         useUIStore.getState().setIsNewUnsaved(false) // document now lives at the chosen path
-        window.api.documents.unwatch(id)
-        window.api.documents.watch(id)
       }
     } catch (e) {
       console.error('Save As failed', e)
@@ -162,9 +160,6 @@ export function EditorPane(): React.ReactElement {
       if (updated) {
         markSaved(updated.content, updated.title)
         useUIStore.getState().setJustSaved(true)
-        // Re-watch (the file name may have changed due to a title edit)
-        window.api.documents.unwatch(id)
-        window.api.documents.watch(id)
       }
     } catch (e) {
       console.error('Save failed', e)
@@ -222,16 +217,9 @@ export function EditorPane(): React.ReactElement {
     }
   }, [handleSave, handleSaveAs, handleReload])
 
-  // Watch the current document's file for on-disk changes
-  useEffect(() => {
-    if (!activeDocumentId) return
-    window.api.documents.watch(activeDocumentId).catch(() => {})
-    return () => {
-      window.api.documents.unwatch(activeDocumentId).catch(() => {})
-    }
-  }, [activeDocumentId])
-
-  // Receive the "file changed on disk" event sent from the main process
+  // Receive the "file changed on disk" event sent from the main process.
+  // The watcher itself lives entirely in the main process (chokidar over the
+  // opened folders), so the renderer no longer has to attach/detach per document.
   useEffect(() => {
     const rm = window.api.onFileChanged((data: { id: string; filePath: string }) => {
       if (data.id === useUIStore.getState().activeDocumentId) {

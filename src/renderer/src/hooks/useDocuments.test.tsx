@@ -59,6 +59,8 @@ const api = {
     stat: vi.fn(async () => ({ size: 1, created: 1, modified: 1 })),
     import: vi.fn(async (_p: string): Promise<Document | null> => doc('imp')),
     importMany: vi.fn(async (paths: string[]) => paths.map((p) => doc(p))),
+    setOpenFolder: vi.fn(async (_folder: string) => undefined),
+    clearOpenFolders: vi.fn(async () => undefined),
   },
   files: {
     resolvePaths: vi.fn(async (paths: string[]) => ({ directories: paths, markdownFiles: paths })),
@@ -342,6 +344,36 @@ describe('useOpenPaths', () => {
     expect(out).toEqual({ folder: '/opened', documentId: '/opened/a.md' })
     expect(useUIStore.getState().activeFolder).toBe('/opened')
     expect(useUIStore.getState().activeDocumentId).toBe('/opened/a.md')
+    // The folder is registered with the main process so it can be watched recursively.
+    expect(api.documents.setOpenFolder).toHaveBeenCalledWith('/opened')
+  })
+
+  it('registers the fallback parent dir for watching when only a file is opened', async () => {
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: [],
+      markdownFiles: ['/only/file.md'],
+    })
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    await act(async () => {
+      await result.current.mutateAsync(['/only/file.md'])
+    })
+    expect(api.documents.setOpenFolder).toHaveBeenCalledWith('/only')
+  })
+
+  it('still opens the folder when watcher registration fails', async () => {
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: ['/opened'],
+      markdownFiles: ['/opened/a.md'],
+    })
+    api.documents.setOpenFolder.mockRejectedValueOnce(new Error('ipc down'))
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    let out: { folder: string; documentId: string } | null = null
+    await act(async () => {
+      out = await result.current.mutateAsync(['/opened'])
+    })
+    // Registering the watcher is best-effort: the imported files still open.
+    expect(out).toEqual({ folder: '/opened', documentId: '/opened/a.md' })
+    expect(useUIStore.getState().activeFolder).toBe('/opened')
   })
 
   it('falls back to the file parent dir when no directory is resolved', async () => {

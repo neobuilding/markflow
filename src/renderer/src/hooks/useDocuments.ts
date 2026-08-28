@@ -179,6 +179,18 @@ export function useOpenPaths() {
       const imported = await importMut.mutateAsync(markdownFiles)
       if (imported.length === 0) return null
       const folder = directories[0] ?? dirName(markdownFiles[0])
+      // Hand the folder to the main process *after* the import above: the watcher
+      // starts with ignoreInitial, so files already imported are not re-reported,
+      // and it only picks up files created or deleted from here on.
+      // Best-effort: the files are already imported, so a watcher that cannot start
+      // must not stop us from opening the folder (it only costs live refresh).
+      // Awaited so the watcher is live before the folder becomes active — otherwise a
+      // file created in between would never be reported.
+      try {
+        await window.api.documents.setOpenFolder(folder)
+      } catch {
+        // Watcher unavailable: the folder still opens, just without live refresh.
+      }
       const ui = useUIStore.getState()
       ui.setActiveFolder(folder)
       ui.setActiveDocumentId(imported[0].id)

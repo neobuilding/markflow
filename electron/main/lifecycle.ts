@@ -13,6 +13,7 @@
 import { ipcMain, app } from 'electron'
 import { getMainWindow, setIsQuiting, getReadyToQuit, setReadyToQuit } from './state'
 import { purgeUnsavedDrafts as storePurgeUnsavedDrafts } from './model/documentStore'
+import { stopFolderWatching } from './model/folderWatcher'
 
 export function setupLifecycle(): void {
   function purgeUnsavedDrafts(): void {
@@ -36,6 +37,9 @@ export function setupLifecycle(): void {
 
   app.on('before-quit', (event) => {
     if (getReadyToQuit()) {
+      // Tear the recursive watcher down before quitting: it holds filesystem
+      // handles, and leaving them open can delay (or on Windows even block) exit.
+      void stopFolderWatching()
       purgeUnsavedDrafts()
       return
     }

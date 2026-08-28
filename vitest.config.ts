@@ -62,6 +62,7 @@ export default defineConfig({
         'electron/main/ipc/appdoc.ts',
         'electron/main/handlers/**/*.ts',
         'electron/main/lib/**/*.ts',
+        'electron/main/model/**/*.ts',
         'electron/main/state.ts',
         'electron/main/window.ts',
         'electron/main/i18n.ts',
@@ -137,6 +138,15 @@ export default defineConfig({
           lines: 100,
         },
         'electron/main/handlers/**': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        // In-memory model layer (document store, folder matching, open-folder set,
+        // folder watcher). This is the single source of truth after the database
+        // layer was removed, so it is held to the same 100% bar as the IPC layer.
+        'electron/main/model/**': {
           statements: 100,
           branches: 100,
           functions: 100,

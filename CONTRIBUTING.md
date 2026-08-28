@@ -67,21 +67,21 @@ markflow/
 
 ## Tech Stack
 
-| Layer             | Technology                                                                   |
-| ----------------- | ---------------------------------------------------------------------------- |
-| Build             | Vite 8 + vite-plugin-electron                                                |
-| Desktop           | Electron 43                                                                  |
-| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                              |
-| UI Components     | Radix UI primitives (shadcn/ui style)                                        |
-| State             | Zustand (UI) + TanStack Query v5 (IPC)                                       |
-| Storage           | In-memory document store (Map) + minisearch index + Markdown file dual-write |
-| Editor            | CodeMirror 6 with Markdown syntax highlighting                               |
-| Math              | KaTeX (LaTeX formula rendering)                                              |
-| Diagrams          | Mermaid.js                                                                   |
-| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                |
-| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)                        |
-| Testing           | Vitest + jsdom                                                               |
-| Packaging         | electron-builder                                                             |
+| Layer             | Technology                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| Build             | Vite 8 + vite-plugin-electron                                                                          |
+| Desktop           | Electron 43                                                                                            |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                        |
+| UI Components     | Radix UI primitives (shadcn/ui style)                                                                  |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                 |
+| Storage           | In-memory document store (Map) + minisearch index + chokidar folder watcher + Markdown file dual-write |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                         |
+| Math              | KaTeX (LaTeX formula rendering)                                                                        |
+| Diagrams          | Mermaid.js                                                                                             |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                          |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)                                                  |
+| Testing           | Vitest + jsdom                                                                                         |
+| Packaging         | electron-builder                                                                                       |
 
 ## Coding Conventions
 
