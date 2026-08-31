@@ -163,7 +163,13 @@ jobs:
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
             - run: npm run build
-            - name: Run e2e
+            # `npm run e2e` runs exactly two Playwright projects: electron-app
+            # (functional) and electron-perf-gate — the main-process stall
+            # regression gate that stops the folder watcher from going back to
+            # watching every file instead of markdown only.
+            # The diagnostic project (electron-perf) has no thresholds and is slow
+            # by design, so it is NOT part of this run; use `npm run e2e:perf`.
+            - name: Run e2e (functional + performance gate)
               run: xvfb-run --auto-servernum -- npm run e2e
             - name: Upload e2e report
               if: always()

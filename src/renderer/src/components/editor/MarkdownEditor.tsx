@@ -38,6 +38,14 @@ export function MarkdownEditor({
   // On a document switch we must force-apply the new content even if isInternalChange is true
   // from just having edited.
   const currentDocIdRef = useRef<string | null | undefined>(undefined)
+  // True from the moment the doc id changes until the new document's content has
+  // actually been written. Needed because a switch now spans TWO commits: the
+  // panes are first emptied (still the new id) and only filled once the query
+  // data lands. `isDocSwitch` is true on the first of those and FALSE on the
+  // second, so keying the undo-history isolation off it alone would leave the
+  // fill un-isolated — Ctrl+Z would then undo across the document boundary back
+  // into the previous file.
+  const pendingSwitchRef = useRef(false)
   // A programmatic write (document switch / external sync) is in progress: suppress the
   // updateListener echo during it, otherwise the normalized editor content would be mistaken
   // for user input and written back, causing a false "unsaved" flag after switching documents.
@@ -222,6 +230,7 @@ export function MarkdownEditor({
     // recently-edited isInternalChange would make this effect return early, leaving the editor
     // on the previous document while the preview has already switched).
     const isDocSwitch = docId !== currentDocIdRef.current
+    if (isDocSwitch) pendingSwitchRef.current = true
     currentDocIdRef.current = docId
     if (isInternalChange.current && !isDocSwitch) {
       isInternalChange.current = false
@@ -235,15 +244,25 @@ export function MarkdownEditor({
     // may not re-run — leaving the editor out of sync with the toolbar). Reconfigure BOTH facets
     // together so read-only and editable can never diverge.
     if (isDocSwitch) {
-      // On a doc switch the target is read-only (the store resets editable to false), so the hard
-      // readOnly lock would be ON. But we still must write the new content programmatically, and
-      // EditorState.readOnly blocks programmatic dispatches too. So: first flip readOnly OFF (and
-      // editable ON) to allow the write below, then re-apply the real read-only state afterwards.
+      // NOTE on EditorState.readOnly: it is an advisory facet. CodeMirror's own
+      // code only reads it to disable its built-in commands / input handling and
+      // to set aria-readonly — it does NOT block a programmatic view.dispatch()
+      // (verified against @codemirror/view: the only read of state.readOutside of
+      // input & command paths is contentAttrs["aria-readonly"]). The content write
+      // below would therefore succeed with the lock ON.
+      //
+      // We still reconfigure to the real state explicitly, because the switch also
+      // has to settle the DOM: editable is a global flag the switch itself does not
+      // change, so its dedicated effect may not re-run, and leaving the previous
+      // document's state in place would desync the editor from the toolbar.
       view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(true)) })
     }
 
     const currentContent = view.state.doc.toString()
     if (isDocSwitch || currentContent !== content) {
+      // The whole switch sequence (empty → fill) must be isolated, not just the
+      // frame where the id changed: see pendingSwitchRef above.
+      const isolateUndo = pendingSwitchRef.current
       // Mark as a programmatic write: suppress this frame's updateListener echo so the 400ms
       // debounce doesn't mistake the normalized content for "unsaved changes" (dirty flag)
       // after a document switch.
@@ -256,12 +275,16 @@ export function MarkdownEditor({
           // Isolate undo history at the document boundary so edits to the previous document can't
           // be undone from the new one (we keep a single persistent EditorView instead of remounting
           // per document, which is what fixed the "can't type after switching files" focus bug).
-          annotations: isDocSwitch ? (isolateHistory as any).of(undefined) : undefined,
+          annotations: isolateUndo ? (isolateHistory as any).of(undefined) : undefined,
         }
         view.dispatch(tr as Parameters<typeof view.dispatch>[0])
       } finally {
         isApplyingExternal.current = false
       }
+      // Non-empty content means the new document has actually landed, so the
+      // switch sequence is over. (An empty document leaves the flag set until the
+      // next switch resets it, which only costs one redundant isolation.)
+      if (content !== '') pendingSwitchRef.current = false
     }
 
     // After a document switch, apply the REAL read-only/edit state (the write above happened with

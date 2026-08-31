@@ -45,6 +45,9 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   // dependency and cause a re-parse loop). This ref gates the "parse immediately on first paint"
   // path instead of checking `renderedHtml === ''` reactively.
   const hasContentRef = useRef(false)
+  // The content seen on the previous render. Used to detect "recovering from an
+  // empty pane" — see `isRecovering` below.
+  const prevContentRef = useRef('')
   const { t } = useT()
   // Mirror `t` in a ref so effects can read the latest translator without making it a
   // dependency (which would re-run the parse effect on every language switch). The
@@ -62,7 +65,14 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     const token = ++renderToken.current
     const isDocSwitch = docId !== lastDocIdRef.current
     lastDocIdRef.current = docId
-    const immediate = isDocSwitch || !hasContentRef.current
+    // Recovering from an empty pane: the document switch empties the panes first
+    // (docId already changed on that commit) and fills in the real content on the
+    // NEXT commit, where isDocSwitch is already false. Without this the fill would
+    // take the 150ms keystroke-debounce path and the preview would sit blank for
+    // 150ms after every switch to an uncached document.
+    const isRecovering = prevContentRef.current === '' && content !== ''
+    prevContentRef.current = content
+    const immediate = isDocSwitch || isRecovering || !hasContentRef.current
     let cancelled = false
 
     // On document switch: clear old content immediately and show Loading to avoid stale content.

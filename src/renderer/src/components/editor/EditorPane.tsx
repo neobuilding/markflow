@@ -503,21 +503,31 @@ export function EditorPane(): React.ReactElement {
     )
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-[var(--color-surface)]">
-        <div className="text-sm text-[var(--color-text-tertiary)]">{t('editor.loading')}</div>
-      </div>
-    )
-  }
-
-  if (!doc) {
+  // Document record missing (deleted, or never existed): a TERMINAL state, so
+  // the editor subtree is torn down here — there is nothing left to keep mounted.
+  if (!isLoading && !doc) {
     return (
       <div className="flex-1 flex items-center justify-center bg-[var(--color-surface)]">
         <div className="text-sm text-[var(--color-text-tertiary)]">{t('editor.notFound')}</div>
       </div>
     )
   }
+
+  // While the document is still in flight, keep the editor and preview MOUNTED
+  // and cover them with an opaque overlay.
+  //
+  // Unmounting (the previous `if (isLoading)` early return) destroyed the
+  // CodeMirror view — MarkdownEditor's cleanup calls view.destroy() — so
+  // switching to a document with no cached entry rebuilt the whole editor from
+  // scratch: new EditorState + new EditorView + a re-parse of the markdown
+  // language data. That rebuild is the visible stutter when switching files, and
+  // it only happened for entries evicted from the React Query cache (gcTime 5m),
+  // which is why the lag felt intermittent. The overlay gives the same
+  // "cleared immediately" feedback at a fraction of the cost.
+  const showLoading = isLoading
+  // Feed '' while loading so both panes are genuinely empty the moment the
+  // overlay lifts, instead of flashing the previous document's text for a frame.
+  const editorContent = showLoading ? '' : localContent
 
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface)]">
@@ -542,7 +552,7 @@ export function EditorPane(): React.ReactElement {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleTitleSave()
                     if (e.key === 'Escape') {
-                      setLocalTitle(doc.title)
+                      setLocalTitle(doc?.title ?? '')
                       setEditingTitle(false)
                     }
                   }}
@@ -554,12 +564,12 @@ export function EditorPane(): React.ReactElement {
                   onClick={() => setEditingTitle(true)}
                   className="text-sm font-semibold text-[var(--color-text-primary)] hover:text-accent transition-colors truncate max-w-[280px] text-left block"
                 >
-                  {doc.title}
+                  {doc?.title ?? ''}
                 </button>
               )
             ) : (
               <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate max-w-[280px] block">
-                {doc.title}
+                {doc?.title ?? ''}
               </span>
             )}
           </div>
@@ -658,68 +668,74 @@ export function EditorPane(): React.ReactElement {
         </div>
       </div>
 
-      {/* File-path breadcrumb: shows the current path as "folder / file name" */}
-      <div className="flex items-center gap-1 px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 text-xs overflow-hidden">
-        <button
-          onClick={() => doc.filePath && window.api.app.showInFolder(doc.filePath)}
-          className="shrink-0 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
-          title={t('editor.showInFolder')}
-        >
-          <FolderOpen size={12} />
-        </button>
-        <div
-          className="flex items-center gap-0.5 min-w-0 overflow-hidden text-[var(--color-text-tertiary)]"
-          title={doc.filePath}
-        >
-          {(() => {
-            const segments = doc.filePath.replace(/\\/g, '/').split('/').filter(Boolean)
-            return segments.map((seg: string, i: number, arr: string[]) => {
-              const isLast = i === arr.length - 1
-              return (
-                <span key={i} className="flex items-center gap-0.5 min-w-0">
-                  {isLast ? (
-                    <span className="truncate text-[var(--color-text-primary)] font-medium">
-                      {seg}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => handleNavigateToSegment(segments, i)}
-                      className="truncate hover:text-accent transition-colors"
-                      title={t('editor.openSegmentFolder')}
-                    >
-                      {seg}
-                    </button>
-                  )}
-                  {!isLast && <span className="text-[var(--color-border-strong)] shrink-0">/</span>}
-                </span>
-              )
-            })
-          })()}
+      {/* File-path breadcrumb: shows the current path as "folder / file name".
+          Hidden entirely while the document is in flight — every branch below
+          dereferences doc.filePath, and `doc` is still undefined then. */}
+      {doc && (
+        <div className="flex items-center gap-1 px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 text-xs overflow-hidden">
+          <button
+            onClick={() => doc.filePath && window.api.app.showInFolder(doc.filePath)}
+            className="shrink-0 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
+            title={t('editor.showInFolder')}
+          >
+            <FolderOpen size={12} />
+          </button>
+          <div
+            className="flex items-center gap-0.5 min-w-0 overflow-hidden text-[var(--color-text-tertiary)]"
+            title={doc.filePath}
+          >
+            {(() => {
+              const segments = doc.filePath.replace(/\\/g, '/').split('/').filter(Boolean)
+              return segments.map((seg: string, i: number, arr: string[]) => {
+                const isLast = i === arr.length - 1
+                return (
+                  <span key={i} className="flex items-center gap-0.5 min-w-0">
+                    {isLast ? (
+                      <span className="truncate text-[var(--color-text-primary)] font-medium">
+                        {seg}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleNavigateToSegment(segments, i)}
+                        className="truncate hover:text-accent transition-colors"
+                        title={t('editor.openSegmentFolder')}
+                      >
+                        {seg}
+                      </button>
+                    )}
+                    {!isLast && (
+                      <span className="text-[var(--color-border-strong)] shrink-0">/</span>
+                    )}
+                  </span>
+                )
+              })
+            })()}
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="shrink-0 ml-1 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
+                title={t('editor.copyPath')}
+              >
+                <Copy size={12} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => handleCopyPath('full')}>
+                {t('editor.copyFullPath')}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleCopyPath('name')}>
+                {t('editor.copyFileName')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="shrink-0 ml-1 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
-              title={t('editor.copyPath')}
-            >
-              <Copy size={12} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => handleCopyPath('full')}>
-              {t('editor.copyFullPath')}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleCopyPath('name')}>
-              {t('editor.copyFileName')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      )}
 
       {/* Editor / Preview / Split */}
-      <div ref={splitContainerRef} className="flex-1 flex min-h-0 overflow-hidden">
+      <div ref={splitContainerRef} className="relative flex-1 flex min-h-0 overflow-hidden">
         {/* Editor: shown in edit / split; hidden in preview mode */}
         {viewMode !== 'preview' && (
           <div
@@ -729,7 +745,7 @@ export function EditorPane(): React.ReactElement {
             style={viewMode === 'split' ? { width: `${splitRatio * 100}%` } : undefined}
           >
             <MarkdownEditor
-              content={localContent}
+              content={editorContent}
               onChange={handleContentChange}
               editable={editable}
               docId={activeDocumentId}
@@ -754,8 +770,22 @@ export function EditorPane(): React.ReactElement {
         {/* Preview: shown in preview / split; hidden in edit mode but still mounted so the single
             export-HTML data source stays ready (R7) */}
         <div className={viewMode === 'edit' ? 'hidden' : 'flex-1 min-w-0 overflow-hidden'}>
-          <MarkdownPreview content={localContent} />
+          <MarkdownPreview content={editorContent} />
         </div>
+
+        {/* Switch overlay: an OPAQUE cover over both panes while the document is
+            in flight. This replaces the old `if (isLoading)` early return, which
+            unmounted this whole subtree and destroyed the CodeMirror view. The
+            panes stay mounted (their content is '' — see editorContent), so when
+            the document lands only a content swap happens, not a rebuild. */}
+        {showLoading && (
+          <div
+            data-testid="doc-loading-overlay"
+            className="absolute inset-0 z-20 flex items-center justify-center bg-[var(--color-surface)]"
+          >
+            <div className="text-sm text-[var(--color-text-tertiary)]">{t('editor.loading')}</div>
+          </div>
+        )}
       </div>
 
       {/* Prompt shown when the on-disk file was changed by another program */}

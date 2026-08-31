@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useLocalDocument } from './useLocalDocument'
@@ -16,7 +16,13 @@ beforeEach(() => {
   }
 })
 
-function renderLocalDocument(doc: Parameters<typeof useLocalDocument>[0]) {
+// `strict` renders inside <StrictMode>, which remounts effects once — the only
+// way the switch effect re-runs for an UNCHANGED document id, exercising its
+// early-return branch (production runs under StrictMode, see main.tsx).
+function renderLocalDocument(
+  doc: Parameters<typeof useLocalDocument>[0],
+  options: { strict?: boolean } = {},
+) {
   let currentDoc = doc
   const result = { current: undefined as unknown as ReturnType<typeof useLocalDocument> }
   function Wrapper() {
@@ -27,24 +33,22 @@ function renderLocalDocument(doc: Parameters<typeof useLocalDocument>[0]) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root: Root = createRoot(container)
-  act(() => {
-    root.render(
+  const draw = () => {
+    const tree = (
       <QueryClientProvider client={client}>
         <Wrapper />
-      </QueryClientProvider>,
+      </QueryClientProvider>
     )
-  })
+    act(() => {
+      root.render(options.strict ? <StrictMode>{tree}</StrictMode> : tree)
+    })
+  }
+  draw()
   // Re-render with a different doc prop on the SAME hook instance (simulates the
   // parent passing a refreshed document while staying on the same document id).
   function setDoc(next: Parameters<typeof useLocalDocument>[0]) {
     currentDoc = next
-    act(() => {
-      root.render(
-        <QueryClientProvider client={client}>
-          <Wrapper />
-        </QueryClientProvider>,
-      )
-    })
+    draw()
   }
   return {
     result,
@@ -182,6 +186,36 @@ describe('useLocalDocument — content refresh on the same doc (dirty preserved)
     // `doc.content.includes('\r\n') ? '\r\n' : '\n'` true branch in the refresh path.
     h.setDoc({ ...baseDoc, content: 'line one\r\nline two\r\n', updatedAt: 9 })
     expect(h.result.current.localContent).toBe('line one\r\nline two\r\n')
+    h.unmount()
+  })
+})
+
+describe('useLocalDocument — document switch (layout effect)', () => {
+  it('follows the new document when the id changes', () => {
+    const h = renderLocalDocument(baseDoc)
+    expect(h.result.current.localContent).toBe(baseDoc.content)
+    // Switch to a DIFFERENT document id: the local draft must adopt the new
+    // document's content/title and drop any dirty state. This is handled by the
+    // layout effect (before paint), not the refresh effect, so EditorPane never
+    // paints a frame holding the previous document's text.
+    act(() => h.result.current.handleContentChange('unsaved edit\n'))
+    expect(h.result.current.dirty).toBe(true)
+    h.setDoc({ ...baseDoc, id: 'doc-2', title: 'Second', content: '# Second\n' })
+    expect(h.result.current.localContent).toBe('# Second\n')
+    expect(h.result.current.localTitle).toBe('Second')
+    expect(h.result.current.dirty).toBe(false)
+    expect(useUIStore.getState().dirty).toBe(false)
+    h.unmount()
+  })
+
+  it('is a no-op when the switch effect re-runs for an unchanged id (StrictMode)', () => {
+    // StrictMode (enabled in main.tsx) mounts, unmounts and remounts, so the
+    // switch effect runs twice with the same document id. The second pass must
+    // return early instead of resetting the draft again.
+    const h = renderLocalDocument(baseDoc, { strict: true })
+    expect(h.result.current.localContent).toBe(baseDoc.content)
+    expect(h.result.current.localTitle).toBe(baseDoc.title)
+    expect(h.result.current.dirty).toBe(false)
     h.unmount()
   })
 })

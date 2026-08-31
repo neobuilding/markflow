@@ -215,6 +215,16 @@ npm run e2e             # End-to-end: drives the REAL Electron app via Playwrigh
   Vite dev server and waits for `dist-electron/index.js`, so the main process must be built first
   (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you must
   run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e`.
+- **Performance**: `npm run e2e` runs two Playwright projects — `electron-app` (functional) and
+  `electron-perf-gate`. The gate asserts that opening a folder buried in non-Markdown build output
+  and immediately switching documents does not stall the main-process event loop, which is the
+  regression guard for the folder watcher watching markdown only. A threshold-free diagnostic spec
+  sits beside it and is run on demand when numbers (not pass/fail) are what you need:
+
+  ```bash
+  npm run e2e:perf                              # synthetic fixture
+  PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf   # measure a real folder
+  ```
 
 ### Create-PR GitHub Action (local build & preview)
 

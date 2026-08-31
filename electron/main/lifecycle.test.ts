@@ -31,7 +31,15 @@ const h = vi.hoisted(() => {
       closeDevTools: vi.fn(),
     },
   }
-  return { appHandlers, ipcOn, fakeQuit, fakeWebContentsSend, fakeWindow, purgeThrows: false }
+  return {
+    appHandlers,
+    ipcOn,
+    fakeQuit,
+    fakeWebContentsSend,
+    fakeWindow,
+    purgeThrows: false,
+    stopFolderWatchingCalled: false,
+  }
 })
 
 // Mock `electron` FIRST (before importing lifecycle), so the module-top-level
@@ -105,6 +113,7 @@ vi.mock('./state', () => {
   let mainWindow: unknown = null
   let isQuiting = false
   let readyToQuit = false
+  let quitPending = false
   return {
     getMainWindow: () => mainWindow,
     setMainWindow: (w: unknown) => {
@@ -118,6 +127,10 @@ vi.mock('./state', () => {
     setReadyToQuit: (v: boolean) => {
       readyToQuit = v
     },
+    getQuitPending: () => quitPending,
+    setQuitPending: (v: boolean) => {
+      quitPending = v
+    },
     pendingInitialPaths: [] as string[],
   }
 })
@@ -126,6 +139,12 @@ vi.mock('./model/documentStore', () => ({
   purgeUnsavedDrafts: vi.fn(() => {
     if (h.purgeThrows) throw new Error('purge failed')
     return 0
+  }),
+}))
+
+vi.mock('./model/folderWatcher', () => ({
+  stopFolderWatching: vi.fn(async () => {
+    h.stopFolderWatchingCalled = true
   }),
 }))
 
@@ -138,14 +157,26 @@ async function loadLifecycle(): Promise<void> {
   lifecycle.setupLifecycle()
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules()
   vi.useFakeTimers()
   // Default: window considered destroyed (so the prompt/safety-net branch is skipped).
   h.fakeWindow.isDestroyed = () => true
   h.purgeThrows = false
+  h.stopFolderWatchingCalled = false
   h.fakeQuit.mockClear()
   h.fakeWebContentsSend.mockClear()
+  // Reset the state mock's closure-scoped flags. vi.resetModules() invalidates the
+  // module cache but the mock factory's closure variables (isQuiting / readyToQuit /
+  // quitPending) persist across re-imports within the same test file, so a flag set
+  // by a previous test would leak into the next one and change the before-quit /
+  // safety-net branch. Importing here returns the same singleton instance the
+  // production code will use, so resetting it zeroes the shared state for each test.
+  const state = await import('./state.js')
+  state.setIsQuiting(false)
+  state.setReadyToQuit(false)
+  state.setQuitPending(false)
+  state.setMainWindow(null)
 })
 
 afterEach(() => {
@@ -276,5 +307,124 @@ describe('main process — before-quit safety net', () => {
     // not prevented, so the OS quit continues).
     expect(evt.preventDefault).not.toHaveBeenCalled()
     expect(docStore.purgeUnsavedDrafts).toHaveBeenCalled()
+  })
+
+  it('does NOT force quit when the renderer reports an unsaved-changes prompt is open (app:quit-pending)', async () => {
+    // Regression: dirty workspace + close → renderer shows confirm box and sends
+    // app:quit-pending. The 5s safety net must be disarmed so the user has unlimited
+    // time to decide; otherwise the safety net would force-quit 5s after the prompt
+    // opened, silently discarding the user's edits.
+    h.fakeWindow.isDestroyed = () => false
+    const state = await import('./state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
+
+    const evt = { preventDefault: vi.fn() }
+    h.appHandlers['before-quit'](evt)
+    expect(h.fakeWebContentsSend).toHaveBeenCalledWith('app:request-quit')
+    h.fakeQuit.mockClear()
+
+    // Renderer opens the unsaved-changes confirm and immediately reports it.
+    h.ipcOn['app:quit-pending']()
+    expect(state.getQuitPending()).toBe(true)
+
+    // Even after the grace period elapses, the safety net must NOT force-quit because
+    // quitPending is true (the renderer is alive, just waiting on the user).
+    vi.advanceTimersByTime(5000)
+    expect(h.fakeQuit).not.toHaveBeenCalled()
+    expect(state.getQuitPending()).toBe(true)
+  })
+
+  it('still force-quits after the grace period when the renderer never replies AND never reports pending', async () => {
+    // The "renderer is dead" path: no app:quit-pending, no app:quit-allowed. The
+    // safety net must still fire so the app can never get stuck un-exitable.
+    // (This is the original safety-net behavior, preserved.)
+    h.fakeWindow.isDestroyed = () => false
+    const state = await import('./state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
+
+    const evt = { preventDefault: vi.fn() }
+    h.appHandlers['before-quit'](evt)
+    h.fakeQuit.mockClear()
+
+    // Renderer is silent (crashed / detached). quitPending stays false.
+    expect(state.getQuitPending()).toBe(false)
+    vi.advanceTimersByTime(5000)
+    expect(h.fakeQuit).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears quitPending and proceeds when the renderer later confirms (app:quit-allowed)', async () => {
+    // User clicked "discard" in the unsaved-changes confirm: renderer sends
+    // app:quit-allowed. quitPending must be cleared so a subsequent quit attempt
+    // (e.g. user closes again after cancelling the first prompt) re-arms the
+    // safety net rather than treating the now-stale pending as still active.
+    h.fakeWindow.isDestroyed = () => false
+    const state = await import('./state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    await loadLifecycle()
+
+    const evt = { preventDefault: vi.fn() }
+    h.appHandlers['before-quit'](evt)
+    h.ipcOn['app:quit-pending']()
+    expect(state.getQuitPending()).toBe(true)
+
+    h.fakeQuit.mockClear()
+    h.ipcOn['app:quit-allowed']()
+    expect(state.getQuitPending()).toBe(false)
+    expect(state.getReadyToQuit()).toBe(true)
+    expect(h.fakeQuit).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears a stale quitPending at the start of every before-quit attempt', async () => {
+    // Mirror of the window.ts close-handler guard. app:quit-allowed clears the flag
+    // when the user CONFIRMS, but a prompt the user DISMISSED never sends anything,
+    // so the flag stayed true for the rest of the process and this safety net was
+    // skipped on every later attempt as well. A renderer that died afterwards could
+    // then never be force-quit — un-exitable, the exact failure the net exists to
+    // prevent. quitPending is per-attempt: re-arm it and let the renderer re-report.
+    h.fakeWindow.isDestroyed = () => false
+    const state = await import('./state.js')
+    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    state.setQuitPending(true) // stale: left over from a dismissed prompt
+    await loadLifecycle()
+
+    const evt = { preventDefault: vi.fn() }
+    h.appHandlers['before-quit'](evt)
+    expect(state.getQuitPending()).toBe(false) // re-armed for this attempt
+    h.fakeQuit.mockClear()
+    vi.advanceTimersByTime(5000)
+    expect(h.fakeQuit).toHaveBeenCalledTimes(1) // dead renderer still forced out
+  })
+})
+
+describe('main process — will-quit watcher teardown', () => {
+  it('awaits stopFolderWatching on will-quit so native handles close before exit', async () => {
+    // will-quit fires after all windows are closed and before the process tears down.
+    // The watcher must be closed (awaited) here so chokidar's native handles release.
+    vi.useRealTimers()
+    try {
+      await loadLifecycle()
+      h.stopFolderWatchingCalled = false
+      await h.appHandlers['will-quit']({ preventDefault: vi.fn() })
+      expect(h.stopFolderWatchingCalled).toBe(true)
+    } finally {
+      vi.useFakeTimers()
+    }
+  })
+
+  it('does not throw when stopFolderWatching rejects on will-quit', async () => {
+    vi.useRealTimers()
+    try {
+      const folderWatcher = await import('./model/folderWatcher.js')
+      ;(folderWatcher.stopFolderWatching as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('watcher close failed'),
+      )
+      await loadLifecycle()
+      // Should not throw — the catch in will-quit must swallow it so exit proceeds.
+      await expect(h.appHandlers['will-quit']({ preventDefault: vi.fn() })).resolves.toBeUndefined()
+    } finally {
+      vi.useFakeTimers()
+    }
   })
 })

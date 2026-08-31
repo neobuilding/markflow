@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeAll } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import {
   writeFileSync,
   mkdtempSync,
@@ -18,6 +18,7 @@ import {
   detectEncoding,
   readMarkdownText,
   countWords,
+  __flushFolderChanged,
 } from './documents'
 // Test seam of model/folderWatcher.ts: drives the exact dispatch the real chokidar
 // listeners use, so these tests never depend on filesystem event timing.
@@ -83,6 +84,26 @@ const { docs, fakeStore } = vi.hoisted(() => {
 })
 vi.mock('../model/documentStore', () => fakeStore)
 
+// Controllable stand-in for jschardet-ultra's detector.
+//
+// Real detection is so accurate that one branch of detectEncoding is effectively
+// unreachable with natural input: the CJK second pass only runs when the primary
+// decodes WITH replacement chars, but on real bytes the detector either names the
+// right codec (zero replacements -> early return) or returns a high-confidence
+// non-CJK codec (skipped by the inCjkScope gate). Forcing a specific detector
+// verdict is the only way to exercise that path.
+const detectState = vi.hoisted(() => ({
+  override: null as null | ((buf: Buffer) => { encoding: string | null; confidence: number }),
+}))
+vi.mock('jschardet-ultra', async () => {
+  const actual = await vi.importActual<typeof import('jschardet-ultra')>('jschardet-ultra')
+  return {
+    ...actual,
+    detect: (buf: Buffer) =>
+      detectState.override ? detectState.override(buf) : actual.detect(buf),
+  }
+})
+
 // Stand-in for chokidar: records every watcher the module under test creates, and
 // captures the paths handed to `add()` / whether `close()` was called, so the
 // watcher lifecycle can be asserted without any real filesystem watching.
@@ -139,6 +160,14 @@ let fakeMainWindow: any = {
 beforeAll(() => {
   docs.clear()
   registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+})
+
+// Safety net: drain (send + clear the timer of) any folder-changed broadcast a test
+// queued via __emitFolderEvent but never consumed, so a leaked 300ms coalesce timer
+// cannot fire midway into a later test and pollute its `sentFolderChanged` assertions.
+// Drain happens after the test's assertions have run, so this never masks a failure.
+afterEach(() => {
+  __flushFolderChanged()
 })
 
 function call(ch: string, ...args: any[]) {
@@ -418,6 +447,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     sentFolderChanged.length = 0
 
     __emitFolderEvent('add', file)
+    __flushFolderChanged()
 
     const doc: any = docFor(file)
     expect(doc).toBeTruthy()
@@ -474,6 +504,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     sentFolderChanged.length = 0
 
     __emitFolderEvent('unlink', created.filePath)
+    __flushFolderChanged()
 
     expect(docFor(created.filePath)).toBeUndefined()
     expect(sentFolderChanged).toEqual([{ dirPath: dir }])
@@ -524,11 +555,151 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     try {
       __emitFolderEvent('change', imported.filePath)
       __emitFolderEvent('unlink', imported.filePath)
+      __flushFolderChanged()
     } finally {
       fakeMainWindow = prev
     }
     expect(sentFileChanged).toEqual([])
     expect(sentFolderChanged).toEqual([])
+  })
+
+  it('stops notifying once the renderer window is destroyed (not just null)', async () => {
+    const dir = tmpDir('mf-watch-destroyed-')
+    const imported = await importDoc(dir, 'destroyed.md')
+    const prev = fakeMainWindow
+    // Quit flow: the window object still exists but isDestroyed() is true. Sending to a
+    // destroyed webContents throws; both change and folder paths must skip it.
+    fakeMainWindow = { webContents: prev.webContents, isDestroyed: () => true }
+    sentFileChanged.length = 0
+    sentFolderChanged.length = 0
+    try {
+      __emitFolderEvent('change', imported.filePath)
+      __emitFolderEvent('unlink', imported.filePath)
+      __flushFolderChanged()
+    } finally {
+      fakeMainWindow = prev
+    }
+    expect(sentFileChanged).toEqual([])
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('cancels a pending folder-changed broadcast when the workspace closes', async () => {
+    const dir = tmpDir('mf-watch-cancel-')
+    const file = join(dir, 'cancelled.md')
+    writeFileSync(file, '# Cancelled\n\ndropped', 'utf-8')
+    sentFolderChanged.length = 0
+
+    // Queue a broadcast through the normal dispatch path…
+    __emitFolderEvent('add', file)
+    // …then close the workspace before the coalesce window elapses: the watcher is
+    // gone, so the pending refresh must be dropped rather than delivered.
+    await call('documents:clear-open-folders')
+
+    expect(sentFolderChanged).toEqual([])
+    // Nothing may be left behind for the afterEach drain to deliver.
+    __flushFolderChanged()
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('coalesces per directory, so an unrelated folder cannot swallow a pending refresh', () => {
+    const dirA = tmpDir('mf-watch-coalesce-a-')
+    const dirB = tmpDir('mf-watch-coalesce-b-')
+    const fileA = join(dirA, 'a.md')
+    const fileB = join(dirB, 'b.md')
+    writeFileSync(fileA, '# A\n\nalpha', 'utf-8')
+    writeFileSync(fileB, '# B\n\nbravo', 'utf-8')
+    sentFolderChanged.length = 0
+
+    // Two directories change inside the same coalesce window. With one shared pending
+    // slot, the second event would overwrite the first and dirA — the folder the
+    // renderer is showing — would never be told to refresh.
+    __emitFolderEvent('add', fileA)
+    __emitFolderEvent('add', fileB)
+    __flushFolderChanged()
+
+    expect(sentFolderChanged).toHaveLength(2)
+    expect(sentFolderChanged).toEqual(
+      expect.arrayContaining([{ dirPath: dirA }, { dirPath: dirB }]),
+    )
+  })
+
+  it('still collapses a burst of events under one directory into a single broadcast', () => {
+    const dir = tmpDir('mf-watch-coalesce-same-')
+    for (const name of ['one.md', 'two.md', 'three.md']) {
+      writeFileSync(join(dir, name), `# ${name}\n\nbody`, 'utf-8')
+    }
+    sentFolderChanged.length = 0
+
+    __emitFolderEvent('add', join(dir, 'one.md'))
+    __emitFolderEvent('add', join(dir, 'two.md'))
+    __emitFolderEvent('add', join(dir, 'three.md'))
+    __flushFolderChanged()
+
+    // The lag fix depends on this: N events under one directory mean one refresh, not N.
+    expect(sentFolderChanged).toEqual([{ dirPath: dir }])
+  })
+
+  it('delivers the coalesced broadcast when the real timer fires (no flush shortcut)', () => {
+    vi.useFakeTimers()
+    try {
+      const dir = tmpDir('mf-watch-timer-')
+      const fileA = join(dir, 'timer-a.md')
+      const fileB = join(dir, 'timer-b.md')
+      writeFileSync(fileA, '# A\n\nfired', 'utf-8')
+      writeFileSync(fileB, '# B\n\nskipped', 'utf-8')
+      sentFolderChanged.length = 0
+
+      // Live window: only the real 300ms timer may deliver this — no __flush
+      // shortcut, so the delayed-send path itself is what gets exercised.
+      __emitFolderEvent('add', fileA)
+      expect(sentFolderChanged).toEqual([]) // still inside the coalesce window
+      vi.advanceTimersByTime(400)
+      expect(sentFolderChanged).toEqual([{ dirPath: dir }])
+
+      // Window gone by the time a later timer fires: the delayed send is skipped.
+      const prev = fakeMainWindow
+      sentFolderChanged.length = 0
+      fakeMainWindow = null
+      try {
+        __emitFolderEvent('add', fileB)
+        vi.advanceTimersByTime(400)
+      } finally {
+        fakeMainWindow = prev
+      }
+      expect(sentFolderChanged).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('skips the coalesced broadcast (timer and flush) once the window is destroyed', () => {
+    vi.useFakeTimers()
+    try {
+      const dir = tmpDir('mf-watch-dead-')
+      const fileA = join(dir, 'dead-a.md')
+      const fileB = join(dir, 'dead-b.md')
+      writeFileSync(fileA, '# A\n\nalpha', 'utf-8')
+      writeFileSync(fileB, '# B\n\nbravo', 'utf-8')
+      sentFolderChanged.length = 0
+      const prev = fakeMainWindow
+      // The quit flow can destroy the window while the main process (and a pending
+      // coalesce timer) is still alive; sending to a destroyed webContents throws.
+      fakeMainWindow = { webContents: prev.webContents, isDestroyed: () => true }
+      try {
+        // Delayed-timer path: fire the real coalesce timer after the window died
+        // (advance well past the 300ms coalesce window).
+        __emitFolderEvent('add', fileA)
+        vi.advanceTimersByTime(1000)
+        // Flush path: the test seam / afterEach drain must skip destroyed windows too.
+        __emitFolderEvent('add', fileB)
+        __flushFolderChanged()
+      } finally {
+        fakeMainWindow = prev
+      }
+      expect(sentFolderChanged).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -1080,6 +1251,52 @@ describe('documents — pure encoding / text utilities', () => {
       expect(res.confidence).toBeGreaterThanOrEqual(0.6)
     })
 
+    it('trusts a forced high-confidence non-CJK primary without the second pass', () => {
+      // Explicitly exercise the `!inCjkScope` early return. The byte-level test
+      // below (Cyrillic/cp1251) only asserts the OUTCOME, and the real detector's
+      // verdict for those bytes can route it elsewhere — so pin the verdict here
+      // to make the branch under test unambiguous.
+      detectState.override = () => ({ encoding: 'windows-1252', confidence: 0.95 })
+      try {
+        const res = detectEncoding(Buffer.from([0x80, 0x9f, 0xe9, 0xff]))
+        expect(res.enc).not.toBe('gbk')
+        expect(res.confidence).toBe(0.95)
+      } finally {
+        detectState.override = null
+      }
+    })
+
+    it('treats a low-confidence non-CJK primary as in-scope', () => {
+      // `primaryConf < 0.6` is the third arm of inCjkScope and the only one that
+      // can pull a NON-CJK codec into the second pass. Short-circuit evaluation
+      // means it is never even reached unless the first two arms are false, so a
+      // forced low-confidence non-CJK verdict is required to cover it.
+      detectState.override = () => ({ encoding: 'windows-1252', confidence: 0.3 })
+      try {
+        const res = detectEncoding(Buffer.from([0x80, 0x9f, 0xe9, 0xff]))
+        expect(typeof res.enc).toBe('string')
+        expect(res.enc.length).toBeGreaterThan(0)
+      } finally {
+        detectState.override = null
+      }
+    })
+
+    it('runs the CJK second pass when the in-scope primary decodes with replacements', () => {
+      // Force the detector to claim utf-8 for bytes that are NOT valid utf-8, so
+      // the primary decodes with replacement chars and the second pass must run.
+      // (See the detectState comment above for why this needs a forced verdict.)
+      // GBK bytes for "中文" are invalid under utf-8, so gbk should win.
+      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4])
+      detectState.override = () => ({ encoding: 'utf-8', confidence: 0.9 })
+      try {
+        const res = detectEncoding(gbkBuf)
+        expect(res.enc).toBe('gbk')
+        expect(res.confidence).toBeGreaterThan(0)
+      } finally {
+        detectState.override = null
+      }
+    })
+
     it('routes an in-scope primary (utf-8 / ascii) through the CJK second pass', () => {
       // Pure ASCII is detected as 'ascii' (an in-scope primary), which must still be
       // routed into the CJK second pass and return a usable encoding with a numeric confidence.
@@ -1088,6 +1305,27 @@ describe('documents — pure encoding / text utilities', () => {
       expect(typeof res.enc).toBe('string')
       expect(res.enc.length).toBeGreaterThan(0)
       expect(typeof res.confidence).toBe('number')
+    })
+
+    it('skips the CJK second pass when the in-scope primary decodes with zero replacements', () => {
+      // Performance guard for the chokidar-lag fix: cjkSecondPass decodes the sample
+      // once per candidate (utf-8 + gbk + big5 + shift_jis + euc-kr) — five full
+      // decodes. When the primary encoding already decodes cleanly (0 replacement
+      // chars), no candidate can do better, so the pass is pure waste.
+      //
+      // Verify the fast return by forcing the detector to a utf-8 verdict for bytes
+      // that are valid utf-8: the primary decodes with 0 replacements, so the only
+      // way to reach utf-8/0.99 is the early "primaryRep === 0" return — entering
+      // the second pass could only change or lower the confidence, never confirm 0.99.
+      detectState.override = () => ({ encoding: 'utf-8', confidence: 0.9 })
+      try {
+        const buf = Buffer.from('hello world, this is valid utf-8', 'utf-8')
+        const res = detectEncoding(buf)
+        expect(res.enc).toBe('utf-8')
+        expect(res.confidence).toBeGreaterThanOrEqual(0.99)
+      } finally {
+        detectState.override = null
+      }
     })
   })
 

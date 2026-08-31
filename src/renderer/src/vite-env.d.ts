@@ -72,6 +72,7 @@ export interface Api {
     showInFolder: (filePath: string) => Promise<void>
     setLanguage: (locale: 'en' | 'zh-CN') => void
     allowQuit: () => void
+    notifyQuitPending: () => void
   }
   files: {
     resolvePaths: (paths: string[]) => Promise<{ directories: string[]; markdownFiles: string[] }>

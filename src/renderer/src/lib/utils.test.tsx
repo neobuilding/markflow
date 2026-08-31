@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { computeDirty, isMac, baseName, isInFolder, buildFileTree } from './utils'
+import { computeDirty, isMac, baseName, isInFolder, isDirInFolder, buildFileTree } from './utils'
 import { useCreateDocument } from '../hooks/useDocuments'
 import { useUIStore } from '../store/ui'
 
@@ -80,6 +80,25 @@ describe('isInFolder / buildFileTree', () => {
 
   it('returns false when the folder is empty', () => {
     expect(isInFolder('/a/b/foo.md', '')).toBe(false)
+  })
+
+  it('isDirInFolder: accepts the folder itself and its subtree, rejects prefixed siblings', () => {
+    expect(isDirInFolder('/a/b', '/a/b')).toBe(true)
+    expect(isDirInFolder('/a/b/c', '/a/b')).toBe(true)
+    // '/a/b-x' shares the '/a/b' prefix but is NOT inside '/a/b' — the separator guard.
+    expect(isDirInFolder('/a/b-x', '/a/b')).toBe(false)
+    expect(isDirInFolder('/x', '/a/b')).toBe(false)
+  })
+
+  it('isDirInFolder: normalizes separators, trailing slashes and case', () => {
+    expect(isDirInFolder('A:\\B\\C', 'a:\\b')).toBe(true)
+    expect(isDirInFolder('/a/b/', '/a/b')).toBe(true)
+    expect(isDirInFolder('/a/b', '/a/b/')).toBe(true)
+    expect(isDirInFolder('D:\\Docs', 'd:\\docs')).toBe(true)
+  })
+
+  it('isDirInFolder: returns false when the folder is empty', () => {
+    expect(isDirInFolder('/a/b', '')).toBe(false)
   })
 
   it('builds a tree whose file nodes carry the base name with extension', () => {

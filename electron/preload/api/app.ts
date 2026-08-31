@@ -11,4 +11,9 @@ export const appApi = {
   // Main asks the renderer to close the workspace (running the unified unsaved-changes
   // prompt) before quitting; renderer calls allowQuit() once it's safe to exit.
   allowQuit: () => ipcRenderer.send('app:quit-allowed'),
+  // Sent synchronously from tryCloseWorkspace() right before opening the unsaved-changes
+  // confirm box. Tells the main process to disarm the 5s "renderer is dead" safety net
+  // so the user has unlimited time to decide — otherwise the safety net would force-quit
+  // and silently discard the user's edits while the confirm box is still open.
+  notifyQuitPending: () => ipcRenderer.send('app:quit-pending'),
 }

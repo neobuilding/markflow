@@ -12,10 +12,11 @@ import {
   existsSync,
   statSync,
   openSync,
-  readSync,
   writeSync,
   closeSync,
+  promises as fsPromises,
 } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
 import iconv from 'iconv-lite'
@@ -136,6 +137,25 @@ export function cjkSecondPass(
   return { enc: best, confidence }
 }
 
+// True when the buffer is plain ASCII text: every byte <= 0x7f AND no NUL bytes.
+// Such a buffer decodes identically under every encoding, so it is unambiguously
+// UTF-8 and needs no detection at all. This is a plain byte scan — orders of
+// magnitude cheaper than iconv.decode, which has to build a full JS string
+// before it can be inspected.
+//
+// The NUL check is not optional. UTF-16/32 encode ASCII text as NUL-interleaved
+// bytes (0x41 0x00 …), so EVERY byte passes a naive <= 0x7f test; letting those
+// through classifies a BOM-less UTF-16 note as UTF-8 and hands the caller
+// NUL-interleaved garbage. jschardet detects them correctly (UTF-16 / UTF-32),
+// but only if it is given the chance.
+function isPlainAsciiText(buf: Buffer): boolean {
+  for (let i = 0; i < buf.length; i++) {
+    const b = buf[i]
+    if (b > 0x7f || b === 0x00) return false
+  }
+  return true
+}
+
 export function detectEncoding(buf: Buffer): { enc: string; confidence: number } {
   if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return { enc: 'utf-8', confidence: 1 }
   if (buf[0] === 0xff && buf[1] === 0xfe && buf[2] === 0x00 && buf[3] === 0x00)
@@ -143,6 +163,15 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   if (buf[0] === 0xff && buf[1] === 0xfe) return { enc: 'utf-16le', confidence: 1 }
   if (buf[0] === 0xfe && buf[1] === 0xff) return { enc: 'utf-16be', confidence: 1 }
   const sample = buf.subarray(0, Math.min(buf.length, SAMPLE_LIMIT))
+  // Fast path: ASCII-only input is UTF-8 by definition — skip the detector and
+  // every decode below. (BOMs were handled above.) Large English notes hit this
+  // and go from hundreds of milliseconds to a fraction of one.
+  //
+  // An EMPTY buffer deliberately falls through: it contains no bytes to judge,
+  // so claiming confidence 1 would invent certainty the detector never gave.
+  // Letting detect() run preserves the "no encoding -> utf-8, confidence 0"
+  // fallback that callers rely on.
+  if (sample.length > 0 && isPlainAsciiText(sample)) return { enc: 'utf-8', confidence: 1 }
   const r = detect(sample)
   if (!r.encoding) return { enc: 'utf-8', confidence: 0 }
   const primary = normEnc(r.encoding)
@@ -156,6 +185,30 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
     // the `primaryConf < 0.6` term above would have routed it into the CJK second pass). Trust it directly.
     return { enc: primary, confidence: primaryConf }
   }
+
+  // Fast path — the single biggest cost in this function used to be right here.
+  //
+  // cjkSecondPass decodes the WHOLE sample once per candidate encoding (utf-8 +
+  // gbk + big5 + shift_jis + euc-kr = 5 full decodes) and scans every character
+  // for U+FFFD. With SAMPLE_LIMIT at 1MB a 146KB note costs ~274ms of
+  // SYNCHRONOUS main-process CPU, and importing a folder of such notes freezes
+  // the whole app: everything is on the same single thread.
+  //
+  // But the loop only ever replaces `best` when a candidate yields FEWER
+  // replacement chars. Zero is already the floor — no candidate can beat it. So
+  // when the primary encoding decodes cleanly, the other four decodes are pure
+  // waste and can be skipped with identical results.
+  const primaryRep = countReplacements(sample, primary)
+  if (primaryRep === 0) {
+    return { enc: primary, confidence: Math.max(primaryConf, 0.99) }
+  }
+  // Deliberately NOT truncated to a small window. Encoding is a property of the
+  // whole file, and a note whose first kilobytes are English (byte-identical in
+  // ASCII, UTF-8 and GBK) with Chinese only appearing further in looks perfectly
+  // clean as UTF-8 inside a short window — which silently garbles the file.
+  // Decoding the full sample here is affordable precisely because reaching this
+  // line already requires the primary decode to have produced replacement chars;
+  // the common, clean case exits via the fast path above instead.
   // The CJK second pass already floors the returned confidence (utf-8: 0.1, CJK candidates: 0.7),
   // so its result is always a safe, decisive pick — return it directly.
   return cjkSecondPass(sample, primary)
@@ -185,10 +238,14 @@ function getDefaultDocsDir(): string {
 }
 
 // Get a reference to the main window (registerDocumentHandlers is called before createWindow,
-// so we fetch it lazily via a getter to avoid the closure capturing null).
+// so we fetch it lazily via a getter to avoid the closure capturing null). `isDestroyed` is
+// optional so test fakes (plain objects with just webContents.send) still satisfy the type.
 let _getMainWindow:
-  (() => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null) | null =
-  null
+  | (() => {
+      webContents: { send: (channel: string, ...args: unknown[]) => void }
+      isDestroyed?: () => boolean
+    } | null)
+  | null = null
 
 // ─── Disk folder watching ────────────────────────────────────────────
 // The store is the single source of truth; a recursive chokidar watcher over the
@@ -199,15 +256,64 @@ let _getMainWindow:
 // prompt.
 
 // Ask the renderer to refresh the sidebar list for the folder containing `dirPath`.
+//
+// Chokidar can fire a burst of add/unlink events in quick succession (e.g. when a tool
+// touches several files at once, or when the OS reports a rename as unlink+add). Without
+// coalescing, each event triggers a cross-process IPC message and a full list refetch on
+// the renderer — which stacks onto whatever the user is doing (notably file switching)
+// and surfaces as intermittent UI lag. We coalesce into a single broadcast per directory
+// per ~300ms window, so a burst becomes one refresh.
+//
+// Coalescing is keyed PER DIRECTORY, not globally: the renderer scopes a refresh to the
+// folder it is currently showing, so collapsing events from different directories into a
+// single broadcast would silently drop the refresh for all but the last one — a file
+// created in the active folder would stay invisible in the sidebar until some later
+// event happened to touch that folder again.
+const FOLDER_CHANGED_COALESCE_MS = 300
+const folderChangedTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
 function notifyFolderChanged(dirPath: string): void {
+  // Already queued for this directory: the pending broadcast will pick up everything
+  // that changed in the meantime, because the renderer re-reads the whole folder list.
+  if (folderChangedTimers.has(dirPath)) return
+  const timer = setTimeout(() => {
+    folderChangedTimers.delete(dirPath)
+    // The coalesce window delays this send, and the quit flow keeps the main process
+    // alive briefly after the window is destroyed — sending to a destroyed webContents
+    // throws. Guard, same as the other delayed senders (menu.ts / lifecycle.ts).
+    const win = _getMainWindow?.()
+    if (win && !win.isDestroyed?.()) win.webContents.send('app:folder-changed', { dirPath })
+  }, FOLDER_CHANGED_COALESCE_MS)
+  folderChangedTimers.set(dirPath, timer)
+}
+
+// Test seam: deliver every coalesced folder-changed broadcast immediately and cancel its
+// timer, so tests can assert `sentFolderChanged` synchronously without waiting for the
+// real 300ms coalesce window. Production code never calls this.
+export function __flushFolderChanged(): void {
+  const dirs = [...folderChangedTimers.keys()]
+  for (const timer of folderChangedTimers.values()) clearTimeout(timer)
+  folderChangedTimers.clear()
   const win = _getMainWindow?.()
-  if (win) win.webContents.send('app:folder-changed', { dirPath })
+  if (!win || win.isDestroyed?.()) return
+  for (const dir of dirs) win.webContents.send('app:folder-changed', { dirPath: dir })
+}
+
+// Drop every coalesced-but-not-yet-sent broadcast and its timer without sending anything.
+// Called when the watcher is torn down (workspace closed): any folder event still pending
+// was produced by the watcher being discarded, so telling the renderer to "refresh"
+// because of it would be a spurious post-teardown refetch.
+function cancelPendingFolderChanged(): void {
+  for (const timer of folderChangedTimers.values()) clearTimeout(timer)
+  folderChangedTimers.clear()
 }
 
 // Tell the renderer that `filePath` changed on disk (backs the "reload?" prompt).
+// Guarded the same way as notifyFolderChanged: the reload-prompt IPC is pointless once
+// the window is gone, and a destroyed webContents would throw on send.
 function notifyFileChanged(id: string, filePath: string): void {
   const win = _getMainWindow?.()
-  if (win) win.webContents.send('app:file-changed', { id, filePath })
+  if (win && !win.isDestroyed?.()) win.webContents.send('app:file-changed', { id, filePath })
 }
 
 // Read a Markdown file that just appeared on disk into the store.
@@ -252,6 +358,7 @@ export function registerDocumentHandlers(
   _app = app
   _getMainWindow = getMainWindow as () => {
     webContents: { send: (channel: string, ...args: unknown[]) => void }
+    isDestroyed?: () => boolean
   } | null
 
   // Recursive folder watching: keep the store in sync with the filesystem for every
@@ -511,6 +618,9 @@ export function registerDocumentHandlers(
     } catch {
       // The watcher is being discarded anyway; a failed close must not propagate.
     }
+    // The watcher is gone: a folder-changed broadcast still pending came from it and
+    // must not reach the renderer as a refresh for a workspace that is already closed.
+    cancelPendingFolderChanged()
   })
 
   // Delete document
@@ -631,20 +741,30 @@ export function registerDocumentHandlers(
   // Read the file's original line endings (only the first 64KB, to avoid cost on large files): restored on save.
   // Trust the on-disk file itself, not the stored content (which an older version may have rewritten).
   // Avoid existsSync/openSync TOCTOU: try opening directly and treat any failure as "use default \n".
-  ipcMain.handle('documents:eol', (_event, filePath: string) => {
-    let fd: number | undefined
+  //
+  // ASYNC on purpose. This used to be openSync/readSync, which blocked the whole
+  // main process — and it fires twice on every document switch (once from
+  // useLocalDocument for the save baseline, once from StatusBar for the CRLF/LF
+  // pill). On a healthy local SSD that is sub-millisecond and invisible, but on a
+  // network drive, an antivirus-scanned path, or a sleeping disk the same call
+  // can take tens of milliseconds — during which EVERY other IPC (including the
+  // sidebar list and the document fetch) stalls. That is the "the whole app
+  // freezes for a moment when I switch files" symptom, and it is intermittent
+  // precisely because it depends on the storage path's current latency.
+  ipcMain.handle('documents:eol', async (_event, filePath: string) => {
+    let handle: FileHandle | undefined
     try {
-      fd = openSync(filePath, 'r')
+      handle = await fsPromises.open(filePath, 'r')
       const buf = Buffer.alloc(65536)
-      const n = readSync(fd, buf, 0, buf.length, 0)
-      const sample = buf.subarray(0, n).toString('utf-8')
+      const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
+      const sample = buf.subarray(0, bytesRead).toString('utf-8')
       return sample.includes('\r\n') ? '\r\n' : '\n'
     } catch {
       return '\n'
     } finally {
-      if (fd !== undefined) {
+      if (handle !== undefined) {
         try {
-          closeSync(fd)
+          await handle.close()
         } catch {
           /* ignore */
         }

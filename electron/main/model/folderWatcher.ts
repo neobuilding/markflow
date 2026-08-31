@@ -27,17 +27,34 @@ export type FolderWatchHandlers = {
 
 export type FolderEvent = 'add' | 'unlink' | 'change'
 
-// Paths we ignore: dot files/dirs (notably .git, .DS_Store), node_modules, and the
-// export artefacts the app can write into the very folder being watched (without
-// this, exporting a .html next to the document would look like a "new file").
-const IGNORED: Array<string | RegExp> = [
-  /(^|[/\\])\.[^/\\]*/,
-  /[/\\]node_modules([/\\]|$)/,
-  '**/*.html',
-  '**/*.pdf',
-  '**/*.docx',
-  '**/*.tmp',
-]
+// Directories never worth crawling: dot dirs (notably .git, .DS_Store) and
+// node_modules.
+const IGNORED_DIRS: RegExp[] = [/(^|[/\\])\.[^/\\]*/, /[/\\]node_modules([/\\]|$)/]
+
+// Which paths chokidar should WATCH.
+//
+// This is the expensive decision, not `dispatch`'s isMarkdownFile check: watching
+// costs a recursive crawl plus a watch handle per entry, and that cost is paid for
+// EVERY file regardless of whether its events are later used. The previous config
+// only excluded a handful of extensions, so in a real workspace chokidar watched
+// all 680 files (build output, coverage reports, images, sources…) while only 16
+// of them were markdown — and ~97% of the events it paid for were then discarded
+// by isMarkdownFile in dispatch(). Measured on the markflow repo, that overhead
+// showed up as up to 8 main-process stalls of up to 2s right after opening a
+// folder; the same run on an 8-file folder had zero stalls.
+//
+// So: watch markdown only. Directories must still be traversed (chokidar cannot
+// recurse into a directory it is told to ignore), hence the isDirectory branch.
+function shouldIgnore(path: string, stats?: { isDirectory(): boolean }): boolean {
+  const isDir = stats ? stats.isDirectory() : !/\.[^/\\]+$/.test(path)
+  if (isDir) return IGNORED_DIRS.some((r) => r.test(path))
+  return !isMarkdownFile(path)
+}
+
+// Kept as a `Matcher[]` so addOpenFolder-style callers could still extend it;
+// the function form is supported (chokidar's own example uses
+// `(f, stats) => stats?.isFile() && !f.endsWith('.js')`).
+const IGNORED = [shouldIgnore]
 
 // How long a write performed by us suppresses the "changed externally" signal.
 // Saving is write-then-return, and the watcher sees the write asynchronously, so

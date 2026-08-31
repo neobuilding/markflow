@@ -51,6 +51,13 @@ npm run e2e             # 端到端：用 Playwright 驱动真实的 Electron �
   xvfb-run --auto-servernum -- npm run e2e
   ```
 
+- **性能门禁**：`npm run e2e` 实际跑两个 Playwright project——`electron-app`（功能）与 `electron-perf-gate`（性能门禁）。后者守护"文件夹监视器只监视 Markdown 文件"这条修复：在一个塞满非 Markdown 构建产物的文件夹里打开并立刻切换文档时，断言主进程事件循环不会被卡住（尖峰数与最大卡顿均有阈值）。旁边另有一份**不带阈值**的诊断 spec，需要具体数字而非通过与失败时按需运行：
+
+  ```bash
+  npm run e2e:perf                                  # 合成 fixture
+  PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf   # 实测真实目录
+  ```
+
 ## Create-PR Action（本地构建与预览）
 
 `actions/create-pr/` 是随仓库内置的 GitHub Action，用于从 head 分支幂等创建/刷新到 `main` 的 PR（完整设计与插件机制见 [`actions/create-pr/README.md`](actions/create-pr/README.md)）。两个根级脚本封装了它：

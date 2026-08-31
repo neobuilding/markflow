@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type { Document } from '../types'
 import { computeDirty } from '../lib/utils'
 import { useUIStore } from '../store/ui'
@@ -17,6 +17,10 @@ export function useLocalDocument(
   const savedTitleRef = useRef('')
   // The current document id, used to distinguish "switching documents" from "refreshing the same document's content"
   const prevIdRef = useRef<string | null>(null)
+  // Set by the switch branch (layout effect) so the refresh effect below can skip
+  // the same pass instead of repeating it — notably re-issuing setDirty(false),
+  // which would push another global store update for no reason.
+  const justSwitchedRef = useRef(false)
   // The encoding currently applied to the document (used to detect a "manual encoding switch" event)
   const appliedEncodingRef = useRef<string | undefined>(undefined)
   // The latest dirty flag, for use inside effects (avoids capturing a stale value in the closure).
@@ -30,19 +34,36 @@ export function useLocalDocument(
   // (CodeMirror internally uses \n as the line separator).
   const eolRef = useRef<'\r\n' | '\n'>('\n')
 
+  // Switching to a different document: always overwrite the local draft with the
+  // authoritative content (disk).
+  //
+  // This runs as a LAYOUT effect, not a plain effect, so the new content is
+  // committed before the browser paints. This hook's state necessarily lags the
+  // query data by one commit; with useEffect the panes would paint a frame still
+  // holding the PREVIOUS document's text right after the loading overlay lifts.
+  // Keeping the switch here means EditorPane never renders new-id/old-content.
+  useLayoutEffect(() => {
+    if (!doc) return
+    if (doc.id === prevIdRef.current) return
+    prevIdRef.current = doc.id
+    appliedEncodingRef.current = doc.encoding
+    eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
+    setLocalContent(doc.content)
+    setLocalTitle(doc.title)
+    savedContentRef.current = doc.content
+    savedTitleRef.current = doc.title
+    setDirtyState(false)
+    useUIStore.getState().setDirty(false)
+    justSwitchedRef.current = true
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc?.id])
+
   useEffect(() => {
     if (!doc) return
-    // Switching to a different document: always overwrite the local draft with the authoritative content (disk)
-    if (doc.id !== prevIdRef.current) {
-      prevIdRef.current = doc.id
-      appliedEncodingRef.current = doc.encoding
-      eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
-      setLocalContent(doc.content)
-      setLocalTitle(doc.title)
-      savedContentRef.current = doc.content
-      savedTitleRef.current = doc.title
-      setDirtyState(false)
-      useUIStore.getState().setDirty(false)
+    // A document switch was just handled by the layout effect above: everything
+    // this effect would do has already been done.
+    if (justSwitchedRef.current) {
+      justSwitchedRef.current = false
       return
     }
     // The same document's authoritative content changed (save / reload / reopen / import):

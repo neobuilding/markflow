@@ -21,16 +21,20 @@ const state = vi.hoisted(() => ({
     added: string[]
     closed: boolean
     handlers: Record<string, (p: string) => void>
+    // The real options handed to chokidar, so tests can exercise the very
+    // `ignored` matcher production installs (rather than a copy of it).
+    options: { ignored?: unknown } | undefined
   }>,
 }))
 
 vi.mock('chokidar', () => ({
-  watch: (paths: string | string[], _opts?: unknown) => {
+  watch: (paths: string | string[], opts?: { ignored?: unknown }) => {
     const inst = {
       paths: Array.isArray(paths) ? paths : [paths],
       added: [] as string[],
       closed: false,
       handlers: {} as Record<string, (p: string) => void>,
+      options: opts as { ignored?: unknown } | undefined,
       add(p: string | string[]) {
         inst.added.push(...(Array.isArray(p) ? p : [p]))
         return inst
@@ -199,6 +203,60 @@ describe('folderWatcher — dispatching real chokidar events', () => {
     __emitFolderEvent('add', '/w/UPPER.MD')
     __emitFolderEvent('add', '/w/Mixed.Markdown')
     expect(seen.added).toEqual(['/w/UPPER.MD', '/w/Mixed.Markdown'])
+  })
+})
+
+describe('folderWatcher — the ignored matcher handed to chokidar', () => {
+  type Ignored = (path: string, stats?: { isDirectory(): boolean }) => boolean
+
+  function grabIgnored(): Ignored {
+    install()
+    addWatchedFolder(tmpDir('fw-ignored-'))
+    const opts = state.instances[0]?.options
+    const ignored = Array.isArray(opts?.ignored) ? opts?.ignored[0] : opts?.ignored
+    expect(typeof ignored).toBe('function')
+    return ignored as Ignored
+  }
+
+  const file = { isDirectory: () => false }
+  const dir = { isDirectory: () => true }
+
+  it('watches markdown files and ignores everything else', () => {
+    const ignored = grabIgnored()
+    // Markdown must be watched (ignored === false), whatever the case.
+    expect(ignored('/w/note.md', file)).toBe(false)
+    expect(ignored('/w/NOTE.MD', file)).toBe(false)
+    expect(ignored('/w/n.markdown', file)).toBe(false)
+    // Non-markdown files must NOT be watched: this is what keeps build output,
+    // coverage reports and images out of the watch set.
+    expect(ignored('/w/script.js', file)).toBe(true)
+    expect(ignored('/w/style.css', file)).toBe(true)
+    expect(ignored('/w/shot.png', file)).toBe(true)
+    // The previously hand-listed export artefacts are covered by the same rule.
+    expect(ignored('/w/export.html', file)).toBe(true)
+    expect(ignored('/w/out.pdf', file)).toBe(true)
+    expect(ignored('/w/doc.docx', file)).toBe(true)
+    expect(ignored('/w/tmp.tmp', file)).toBe(true)
+  })
+
+  it('still traverses directories, except dot dirs and node_modules', () => {
+    const ignored = grabIgnored()
+    // Directories must be traversed or chokidar cannot recurse into them.
+    expect(ignored('/w/sub', dir)).toBe(false)
+    expect(ignored('/w/deep/nested', dir)).toBe(false)
+    // …but never the ones that are pure noise.
+    expect(ignored('/w/.git', dir)).toBe(true)
+    expect(ignored('/w/node_modules', dir)).toBe(true)
+    expect(ignored('/w/a/node_modules/b', dir)).toBe(true)
+  })
+
+  it('falls back to the path shape when chokidar passes no stats', () => {
+    // chokidar may call the matcher without stats; a path with an extension is
+    // then treated as a file, one without as a directory.
+    const ignored = grabIgnored()
+    expect(ignored('/w/note.md')).toBe(false)
+    expect(ignored('/w/script.js')).toBe(true)
+    expect(ignored('/w/some-dir')).toBe(false)
   })
 })
 

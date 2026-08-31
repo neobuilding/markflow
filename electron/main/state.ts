@@ -21,6 +21,11 @@ export const setMainWindow = (w: BrowserWindow | null): void => {
 // Quit-flow flags shared by window.ts (close handler) and lifecycle.ts.
 let isQuiting = false
 let readyToQuit = false
+// Set when the renderer is actively showing the unsaved-changes confirm box.
+// While true, the 5s "renderer is dead" safety net stays disarmed so the user
+// has unlimited time to decide; clearing on the next quit attempt preserves the
+// safety net for the dead-renderer case.
+let quitPending = false
 export const getIsQuiting = () => isQuiting
 export const setIsQuiting = (v: boolean) => {
   isQuiting = v
@@ -28,6 +33,10 @@ export const setIsQuiting = (v: boolean) => {
 export const getReadyToQuit = () => readyToQuit
 export const setReadyToQuit = (v: boolean) => {
   readyToQuit = v
+}
+export const getQuitPending = () => quitPending
+export const setQuitPending = (v: boolean) => {
+  quitPending = v
 }
 
 // Paths accumulated before the app is ready: fed from open-file / second-instance
