@@ -54,6 +54,65 @@ async function waitForMainEntry(timeoutMs: number): Promise<void> {
 let devServer: ChildProcess | null = null
 
 /**
+ * TEMP-DIAG: TEMPORARY DEBUG HELPER — REMOVE AFTER ETXTBSY ROOT CAUSE IS FIXED.
+ * Collect forensic evidence about what currently holds the Electron binary open.
+ * Used only when verifyElectronBinary fails, so we capture the ETXTBSY holder at
+ * the exact moment of failure (the pre-e2e CI diagnostic step may show a clean
+ * state because the race only materializes at spawn time). Best-effort: any error
+ * here is swallowed into the returned string so it never masks the real failure.
+ * CLEANUP: delete this function and its call site in verifyElectronBinary once a
+ * permanent ETXTBSY fix is in place.
+ */
+function dumpHolders(bin: string): string {
+  const lines: string[] = []
+  try {
+    const inode = spawnSync('stat', ['-c', '%i', bin], { timeout: 5000 })
+    const ino = inode.stdout?.toString().trim()
+    if (ino) {
+      lines.push(`  binary inode: ${ino}`)
+      // Walk /proc to find every fd that points at the same inode, even via a
+      // different path/hard link (overlayfs-safe). This catches holders that
+      // fuser/lsof on the literal path would miss.
+      const procs = spawnSync(
+        'sh',
+        [
+          '-c',
+          `for p in /proc/[0-9]*/fd/*; do ` +
+            `[ -e "$p" ] || continue; ` +
+            `i=$(stat -c %i "$p" 2>/dev/null); ` +
+            `[ "$i" = "${ino}" ] || continue; ` +
+            `pid=$(echo "$p" | cut -d/ -f4); ` +
+            `cmd=$(tr '\\0' ' ' < /proc/$pid/cmdline 2>/dev/null); ` +
+            `echo "pid=$pid cmd=$cmd"; ` +
+            `done | head -40`,
+        ],
+        { timeout: 15000 },
+      )
+      const out = procs.stdout?.toString().trim()
+      lines.push(
+        out
+          ? `  processes holding the same inode:\n${out
+              .split('\n')
+              .map((l) => '    ' + l)
+              .join('\n')}`
+          : '  no cross-path inode holders found',
+      )
+    }
+    const fuser = spawnSync('fuser', ['-v', bin], { timeout: 5000 })
+    lines.push(
+      `  fuser -v:\n${(fuser.stdout ?? fuser.stderr ?? Buffer.alloc(0)).toString().trim() || '    (none / unavailable)'}`,
+    )
+    const lsof = spawnSync('lsof', [bin], { timeout: 5000 })
+    lines.push(
+      `  lsof:\n${(lsof.stdout ?? lsof.stderr ?? Buffer.alloc(0)).toString().trim() || '    (none / unavailable)'}`,
+    )
+  } catch (e) {
+    lines.push(`  holder dump error: ${(e as Error)?.message ?? String(e)}`)
+  }
+  return lines.join('\n')
+}
+
+/**
  * Fail FAST if the Electron binary cannot be executed (e.g. `spawn ETXTBSY`
  * "Text file busy" while a prior download/unzip still holds the file open, or a
  * stale cache entry is mid-extraction). Without this guard the error surfaces
@@ -91,10 +150,16 @@ async function verifyElectronBinary(): Promise<void> {
     const detail = res.error
       ? `${res.error.name}: ${res.error.message}`
       : `exit code ${res.status}, stderr: ${(res.stderr ?? Buffer.alloc(0)).toString().trim()}`
+    // TEMP-DIAG: dumpHolders is a temporary forensic helper (see its header).
     throw new Error(
-      `Electron binary is not executable (${detail}). This is usually a transient ` +
-        `download/extraction race (ETXTBSY / Text file busy). Re-run the job; if it ` +
-        `persists, clear the Electron cache (~/.cache/electron).`,
+      `Electron binary is not executable (${detail}). If this is ` +
+        `ETXTBSY (Text file busy), some process still holds the extracted binary ` +
+        `open when e2e tries to spawn it.\n` +
+        `Holder forensics at failure time:\n${dumpHolders(bin)}\n` +
+        `Also inspect the CI "Diagnose Electron binary before e2e" step output ` +
+        `(holders via fuser/lsof, inode scan, ps snapshot, electron --version ` +
+        `decision). Re-run the job; if it persists, clear the Electron cache ` +
+        `(~/.cache/electron) and node_modules/electron/dist.`,
     )
   }
 }
