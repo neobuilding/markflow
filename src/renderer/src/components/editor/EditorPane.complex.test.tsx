@@ -177,7 +177,14 @@ async function makeDirty(
   container: HTMLElement,
 ): Promise<void> {
   await user.click(screen.getByText('A')) // title button → edit mode
-  await flush()
+  // Wait for the title <input> to actually mount. editingTitle → input render
+  // happens in a later tick after user.click's async state update; the old
+  // flush()+querySelector raced that render and could return null, so
+  // user.clear(null) threw "Cannot read properties of null (reading
+  // 'namespaceURI')". Use waitFor to retry until the input exists (querySelector
+  // is used rather than findByRole('textbox') because the pane can render
+  // multiple textboxes, causing findByRole to be ambiguous).
+  await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
   const input = container.querySelector('input') as HTMLInputElement
   await user.clear(input)
   await user.type(input, 'Renamed')
@@ -429,7 +436,7 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
     await flush()
 
     await user.click(screen.getByText('A'))
-    await flush()
+    await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
     const input = container.querySelector('input') as HTMLInputElement
     expect(input).toBeTruthy()
     await user.clear(input)
@@ -519,7 +526,7 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     await flush()
 
     await user.click(screen.getByText('A'))
-    await flush()
+    await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
     const input = container.querySelector('input') as HTMLInputElement
     await user.clear(input)
     await user.type(input, 'Renamed')
@@ -536,7 +543,7 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     await flush()
 
     await user.click(screen.getByText('A'))
-    await flush()
+    await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
     const input = container.querySelector('input') as HTMLInputElement
     await user.clear(input)
     await user.type(input, 'Renamed')
