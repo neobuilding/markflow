@@ -86,6 +86,21 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
+            # TEMP-DIAG: READ-ONLY observation — track when node_modules/electron's
+            # installed binary disappears. The e2e failure shows "Downloading
+            # Electron binary..." at e2e start, meaning isInstalled() returned
+            # false, yet `npm ci`'s own log shows no "Downloading" (so it was
+            # installed). This snapshot pins the state right after npm ci.
+            # CLEANUP: remove this step once the root cause is confirmed.
+            - name: TEMP-DIAG Electron state after npm ci
+              if: always()
+              shell: bash
+              run: |
+                echo "== after npm ci =="
+                test -e node_modules/electron/dist/electron && echo "dist/electron: EXISTS" || echo "dist/electron: MISSING"
+                cat node_modules/electron/dist/version 2>/dev/null && echo " <- dist/version" || echo "dist/version: MISSING"
+                cat node_modules/electron/path.txt 2>/dev/null && echo " <- path.txt" || echo "path.txt: MISSING"
+                ls -l node_modules/electron/dist/electron 2>/dev/null || true
             # The Create/Refresh PR Action under actions/create-pr/ is intentionally
             # self-contained: its runtime dep `@actions/core` lives ONLY in
             # actions/create-pr/node_modules (never hoisted to the repo root, so the
@@ -163,6 +178,20 @@ jobs:
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
             - run: npm run build
+            # TEMP-DIAG: READ-ONLY observation — second snapshot of the electron
+            # binary state, after `npm run build` (which runs vite build →
+            # vite-plugin-electron's build branch). If the binary is MISSING here
+            # but was EXISTS after npm ci, the build step is what removed it.
+            # CLEANUP: remove this step once the root cause is confirmed.
+            - name: TEMP-DIAG Electron state after build
+              if: always()
+              shell: bash
+              run: |
+                echo "== after npm run build =="
+                test -e node_modules/electron/dist/electron && echo "dist/electron: EXISTS" || echo "dist/electron: MISSING"
+                cat node_modules/electron/dist/version 2>/dev/null && echo " <- dist/version" || echo "dist/version: MISSING"
+                cat node_modules/electron/path.txt 2>/dev/null && echo " <- path.txt" || echo "path.txt: MISSING"
+                ls -l node_modules/electron/dist/electron 2>/dev/null || true
             # Reuse the Electron download cache (~/.cache/electron) so `npm ci`'s
             # electron postinstall does not re-download the artifact on every run.
             # This only speeds up the download; it does NOT affect the chrome-sandbox
@@ -183,6 +212,27 @@ jobs:
                   key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
                   restore-keys: |
                       ${{ runner.os }}-electron-
+            # TEMP-DIAG: READ-ONLY observation — third snapshot, right before e2e
+            # starts. This is the moment that matters: verifyElectronBinary (in
+            # globalSetup) and vite-plugin-electron's auto-startup both run
+            # require('electron') next. If the binary is MISSING here, we will see
+            # "Downloading Electron binary..." in the e2e step (lazy install). If it
+            # is EXISTS here but the e2e still shows "Downloading...", then something
+            # DURING e2e startup (vite-plugin-electron's auto-startup, or the probe
+            # itself) removed it — the ELECTRON_STARTUP_PREVENT=1 fix in globalSetup
+            # should prevent the auto-startup path.
+            # CLEANUP: remove this step once the root cause is confirmed.
+            - name: TEMP-DIAG Electron state before e2e
+              if: always()
+              shell: bash
+              run: |
+                echo "== before e2e =="
+                test -e node_modules/electron/dist/electron && echo "dist/electron: EXISTS" || echo "dist/electron: MISSING"
+                cat node_modules/electron/dist/version 2>/dev/null && echo " <- dist/version" || echo "dist/version: MISSING"
+                cat node_modules/electron/path.txt 2>/dev/null && echo " <- path.txt" || echo "path.txt: MISSING"
+                ls -l node_modules/electron/dist/electron 2>/dev/null || true
+                echo "== electron cache state =="
+                ls -la ~/.cache/electron 2>/dev/null | head -10 || echo "no ~/.cache/electron"
             # `npm run e2e` runs exactly two Playwright projects: electron-app
             # (functional) and electron-perf-gate — the main-process stall
             # regression gate that stops the folder watcher from going back to
