@@ -41,7 +41,16 @@ export async function launchApp(): Promise<AppHandle> {
   const userDataDir = mkdtempSync(join(tmpdir(), 'markflow-e2e-'))
 
   const electronApp = await electron.launch({
-    args: [join(PROJECT_ROOT, 'dist-electron', 'index.js'), `--user-data-dir=${userDataDir}`],
+    // --no-sandbox: required for Electron to launch under the non-root CI runner
+    // (GitHub Actions ubuntu-latest). Without it, Electron's chrome-sandbox helper
+    // aborts because it expects root:4755 ownership, which `npm ci` never sets and
+    // the runner does not grant sudo for. This flag is ONLY used by the e2e path
+    // (npm run e2e); production builds go through electron-builder and are unaffected.
+    args: [
+      join(PROJECT_ROOT, 'dist-electron', 'index.js'),
+      `--user-data-dir=${userDataDir}`,
+      '--no-sandbox',
+    ],
     env: {
       ...process.env,
       VITE_DEV_SERVER_URL: devUrl,

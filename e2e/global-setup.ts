@@ -54,72 +54,18 @@ async function waitForMainEntry(timeoutMs: number): Promise<void> {
 let devServer: ChildProcess | null = null
 
 /**
- * TEMP-DIAG: TEMPORARY DEBUG HELPER — REMOVE AFTER ETXTBSY ROOT CAUSE IS FIXED.
- * Collect forensic evidence about what currently holds the Electron binary open.
- * Used only when verifyElectronBinary fails, so we capture the ETXTBSY holder at
- * the exact moment of failure (the pre-e2e CI diagnostic step may show a clean
- * state because the race only materializes at spawn time). Best-effort: any error
- * here is swallowed into the returned string so it never masks the real failure.
- * CLEANUP: delete this function and its call site in verifyElectronBinary once a
- * permanent ETXTBSY fix is in place.
- */
-function dumpHolders(bin: string): string {
-  const lines: string[] = []
-  try {
-    const inode = spawnSync('stat', ['-c', '%i', bin], { timeout: 5000 })
-    const ino = inode.stdout?.toString().trim()
-    if (ino) {
-      lines.push(`  binary inode: ${ino}`)
-      // Walk /proc to find every fd that points at the same inode, even via a
-      // different path/hard link (overlayfs-safe). This catches holders that
-      // fuser/lsof on the literal path would miss.
-      const procs = spawnSync(
-        'sh',
-        [
-          '-c',
-          `for p in /proc/[0-9]*/fd/*; do ` +
-            `[ -e "$p" ] || continue; ` +
-            `i=$(stat -c %i "$p" 2>/dev/null); ` +
-            `[ "$i" = "${ino}" ] || continue; ` +
-            `pid=$(echo "$p" | cut -d/ -f4); ` +
-            `cmd=$(tr '\\0' ' ' < /proc/$pid/cmdline 2>/dev/null); ` +
-            `echo "pid=$pid cmd=$cmd"; ` +
-            `done | head -40`,
-        ],
-        { timeout: 15000 },
-      )
-      const out = procs.stdout?.toString().trim()
-      lines.push(
-        out
-          ? `  processes holding the same inode:\n${out
-              .split('\n')
-              .map((l) => '    ' + l)
-              .join('\n')}`
-          : '  no cross-path inode holders found',
-      )
-    }
-    const fuser = spawnSync('fuser', ['-v', bin], { timeout: 5000 })
-    lines.push(
-      `  fuser -v:\n${(fuser.stdout ?? fuser.stderr ?? Buffer.alloc(0)).toString().trim() || '    (none / unavailable)'}`,
-    )
-    const lsof = spawnSync('lsof', [bin], { timeout: 5000 })
-    lines.push(
-      `  lsof:\n${(lsof.stdout ?? lsof.stderr ?? Buffer.alloc(0)).toString().trim() || '    (none / unavailable)'}`,
-    )
-  } catch (e) {
-    lines.push(`  holder dump error: ${(e as Error)?.message ?? String(e)}`)
-  }
-  return lines.join('\n')
-}
-
-/**
- * Fail FAST if the Electron binary cannot be executed (e.g. `spawn ETXTBSY`
- * "Text file busy" while a prior download/unzip still holds the file open, or a
- * stale cache entry is mid-extraction). Without this guard the error surfaces
- * later inside every spec's `electron.launch()` (via test.beforeEach), so all
- * N cases fail twice (CI retries) before the run exits — wasting minutes on a
- * problem that is environmental, not a test regression. Verifying here means a
- * busy/incomplete binary aborts the whole run immediately at globalSetup.
+ * Fail FAST if the Electron binary cannot be executed. Without this guard the
+ * error surfaces later inside every spec's `electron.launch()` (via
+ * test.beforeEach), so all N cases fail (and CI retries them) before the run
+ * exits — wasting minutes on an environmental problem, not a test regression.
+ * Verifying here aborts the whole run immediately at globalSetup.
+ *
+ * The probe runs `--version --no-sandbox`: the `--no-sandbox` flag is the same
+ * one the real e2e launch uses (see e2e/helpers/launch.ts). It MUST be present
+ * here too, otherwise a correct binary would still abort under the non-root CI
+ * runner's chrome-sandbox permission check, masking the real "can we spawn
+ * Electron at all" question with a sandbox error. `--version` only prints the
+ * version string, so the flag is safe (no renderer / no webpage is loaded).
  */
 async function verifyElectronBinary(): Promise<void> {
   // The `electron` package's main export is the absolute path to the Electron
@@ -145,21 +91,23 @@ async function verifyElectronBinary(): Promise<void> {
       `Expected import("electron") to yield the binary path string, got ${typeof bin}`,
     )
   }
-  const res = spawnSync(bin, ['--version'], { timeout: 60_000 })
+  const res = spawnSync(bin, ['--version', '--no-sandbox'], { timeout: 60_000 })
   if (res.error || res.status !== 0) {
     const detail = res.error
       ? `${res.error.name}: ${res.error.message}`
       : `exit code ${res.status}, stderr: ${(res.stderr ?? Buffer.alloc(0)).toString().trim()}`
-    // TEMP-DIAG: dumpHolders is a temporary forensic helper (see its header).
+    // Surface the REAL error verbatim (do not hard-code an ETXTBSY assumption —
+    // the historical failure was actually a chrome-sandbox SUID permission error
+    // under the non-root CI runner, fixed by passing --no-sandbox in launch.ts).
     throw new Error(
-      `Electron binary is not executable (${detail}). If this is ` +
-        `ETXTBSY (Text file busy), some process still holds the extracted binary ` +
-        `open when e2e tries to spawn it.\n` +
-        `Holder forensics at failure time:\n${dumpHolders(bin)}\n` +
-        `Also inspect the CI "Diagnose Electron binary before e2e" step output ` +
-        `(holders via fuser/lsof, inode scan, ps snapshot, electron --version ` +
-        `decision). Re-run the job; if it persists, clear the Electron cache ` +
-        `(~/.cache/electron) and node_modules/electron/dist.`,
+      `Electron binary could not be executed during the pre-flight probe ` +
+        `(${detail}).\n` +
+        `This means every e2e spec would fail to launch Electron. Common causes:\n` +
+        `  - chrome-sandbox permission error on a non-root CI runner: ensure ` +
+        `--no-sandbox is passed (already done in e2e/helpers/launch.ts and this probe).\n` +
+        `  - binary not downloaded/extracted: check the "Cache Electron binaries" ` +
+        `step and clear ~/.cache/electron + node_modules/electron/dist if stale.\n` +
+        `Raw probe stderr is shown above — use it to diagnose, not a generic message.`,
     )
   }
 }
@@ -178,9 +126,10 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   await waitForServer(DEV_SERVER_URL, 120_000)
   await waitForMainEntry(120_000)
 
-  // Fail fast on an unexecutable Electron binary (e.g. ETXTBSY) BEFORE any spec
-  // runs, so a transient download/extraction race aborts the run immediately
-  // instead of failing every case (and its CI retry) one by one.
+  // Fail fast on an unexecutable Electron binary BEFORE any spec runs, so an
+  // environmental launch failure (e.g. a sandbox permission error or a stale
+  // binary) aborts the run immediately instead of failing every case (and its
+  // CI retry) one by one.
   await verifyElectronBinary()
 
   // Share the URL with all tests (file is the reliable channel across

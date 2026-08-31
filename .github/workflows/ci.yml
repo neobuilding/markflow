@@ -165,11 +165,11 @@ jobs:
             - run: npm run build
             # Reuse the Electron download cache (~/.cache/electron) so `npm ci`'s
             # electron postinstall does not re-download the artifact on every run.
-            # NOTE: this only speeds up the download; it does NOT prevent the
-            # `spawn ETXTBSY` (Text file busy) seen at e2e launch — that race is on the
-            # extracted binary `node_modules/electron/dist/electron`, not the cache. The
-            # ETXTBSY mitigation lives in e2e/global-setup.ts (verifyElectronBinary) and
-            # the diagnostic step below.
+            # This only speeds up the download; it does NOT affect the chrome-sandbox
+            # permission error that previously broke e2e under the non-root CI runner.
+            # That is fixed by passing --no-sandbox in e2e/helpers/launch.ts (and the
+            # global-setup probe). The fail-fast guard lives in e2e/global-setup.ts
+            # (verifyElectronBinary).
             - name: Cache Electron binaries (e2e)
               uses: actions/cache@v6
               with:
@@ -183,96 +183,6 @@ jobs:
                   key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
                   restore-keys: |
                       ${{ runner.os }}-electron-
-            # >>> TEMP-DIAG: TEMPORARY DEBUG STEP — REMOVE AFTER ETXTBSY ROOT CAUSE IS FIXED <<<
-            # Diagnostic step: surface the actual Electron binary state BEFORE e2e
-            # spawns it. This is READ-ONLY and must never fail the job, and — CRITICAL —
-            # it must NOT execute dist/electron. Specifically: no `electron`, no
-            # `npx electron`, no `node -e "require('child_process')..."` that spawns it.
-            # NOTE: `node -e "console.log(require('electron'))"` below is FINE — the
-            # electron package's main export is just the binary PATH string, so requiring
-            # it does NOT run the binary. Executing the binary would (a) act as a
-            # "warm-up" that can mask the very ETXTBSY race e2e hits seconds later, and
-            # (b) trigger electron's lazy download/extract, mutating the file under
-            # inspection. We only stat/ls/cat/require-path — never run the binary.
-            # Evidence goals for the intermittent `spawn ETXTBSY` (Text file busy):
-            #   - resolved path + existence/size/mtime/inode of dist/electron
-            #   - ANY process currently holding it (or its inode / parent dir) open
-            #   - whether electron's cache already has the artifact (vs will re-download)
-            # NOTE: this is a BEFORE snapshot. A clean snapshot does NOT prove e2e will
-            # succeed — the race is at e2e's spawn time. The authoritative evidence at
-            # the moment of failure is dumped by e2e/global-setup.ts (dumpHolders).
-            # >>> TO CLEAN UP: delete this entire step (from "TEMP-DIAG" comment through
-            #     the "- name: Diagnose Electron binary before e2e" block) once the
-            #     ETXTBSY root cause is resolved and a permanent fix is in place. <<<
-            - name: TEMP-DIAG Diagnose Electron binary before e2e
-              if: always()
-              shell: bash
-              run: |
-                set -u
-                echo "== node version =="
-                node -v
-                npm ls electron 2>/dev/null || true
-                echo "== resolved electron binary path (READ-ONLY, no execute) =="
-                ELECTRON_PATH="$(node -e "console.log(require('electron'))" 2>/dev/null || echo UNKNOWN)"
-                echo "electron path: ${ELECTRON_PATH}"
-                if [ "${ELECTRON_PATH}" != "UNKNOWN" ] && [ -e "${ELECTRON_PATH}" ]; then
-                  echo "== ls -l (size/mtime/inode/link count) =="
-                  ls -l "${ELECTRON_PATH}"
-                  echo "== stat (inode + times) =="
-                  stat "${ELECTRON_PATH}" || true
-                  echo "== file system type of the binary (overlayfs?) [Linux only] =="
-                  stat -f "${ELECTRON_PATH}" 2>/dev/null || df -T "${ELECTRON_PATH}" 2>/dev/null || true
-                  echo "== file type =="
-                  file "${ELECTRON_PATH}" || true
-                  # inode of the binary, used to find holders that may reference it
-                  # through a DIFFERENT path or hard link (common on overlayfs).
-                  BIN_INODE="$(stat -c %i "${ELECTRON_PATH}" 2>/dev/null || echo "")"
-                  BIN_DIR="$(dirname "${ELECTRON_PATH}")"
-                  echo "== holders of the binary path (fuser/lsof) =="
-                  if command -v fuser >/dev/null 2>&1; then
-                    fuser -v "${ELECTRON_PATH}" 2>&1 || echo "fuser: no holders on path"
-                  elif command -v lsof >/dev/null 2>&1; then
-                    lsof "${ELECTRON_PATH}" 2>&1 || echo "lsof: no holders on path"
-                  else
-                    echo "neither fuser nor lsof available on this runner"
-                  fi
-                  echo "== holders of the SAME inode across ALL paths (overlayfs-safe) =="
-                  if [ -n "${BIN_INODE}" ]; then
-                    for p in /proc/[0-9]*/fd/*; do
-                      tgt="$(readlink "$p" 2>/dev/null || true)"
-                      [ -e "$p" ] || continue
-                      ino="$(stat -c %i "$p" 2>/dev/null || true)"
-                      if [ "$ino" = "${BIN_INODE}" ]; then
-                        pid="$(echo "$p" | cut -d/ -f4)"
-                        cmd="$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null || true)"
-                        echo "INODE HOLDER pid=$pid cmd=$cmd (fd=$p -> $tgt)"
-                      fi
-                    done 2>/dev/null | head -40
-                    echo "inode scan done (empty above = no cross-path holders)"
-                  fi
-                  echo "== holders of the parent dist/ directory fd =="
-                  if command -v lsof >/dev/null 2>&1; then
-                    lsof +D "${BIN_DIR}" 2>&1 | head -30 || echo "lsof +D: none"
-                  else
-                    echo "lsof unavailable; skipping directory fd scan"
-                  fi
-                  echo "== electron dist install state (READ-ONLY) =="
-                  ls -la "$(dirname "${BIN_DIR}")" 2>/dev/null | head -40 || true
-                  echo "== electron path.txt (where electron thinks its binary is) =="
-                  cat "${BIN_DIR}/../path.txt" 2>/dev/null || echo "(no path.txt)"
-                  echo "== electron version resolved by the package =="
-                  node -e "console.log(require('electron/package.json').version)" 2>/dev/null || true
-                else
-                  echo "electron binary NOT present at resolved path"
-                  echo "== node_modules/electron tree (head) =="
-                  ls -la node_modules/electron 2>/dev/null | head -40 || true
-                fi
-                echo "== electron DOWNLOAD cache state (does artifact already exist?) =="
-                ls -la ~/.cache/electron 2>/dev/null | head -40 || echo "no ~/.cache/electron"
-                echo "== full process snapshot (ps aux) — leftover electron/node/jobs =="
-                ps aux 2>/dev/null | head -60 || true
-                echo "== relevant env (Electron / Playwright / cache) =="
-                env | grep -iE 'electron|playwright|cache|tmpdir' | sed 's/=.*/=<redacted>/' || true
             # `npm run e2e` runs exactly two Playwright projects: electron-app
             # (functional) and electron-perf-gate — the main-process stall
             # regression gate that stops the folder watcher from going back to
@@ -285,8 +195,9 @@ jobs:
               # (verifyElectronBinary) — which fails the run at globalSetup BEFORE any
               # spec runs. This timeout is only the last-resort backstop for silent
               # hangs (stuck Electron spawn, zombie child, etc.) that never surface as
-              # an error. If verifyElectronBinary fails, inspect the "Diagnose
-              # Electron binary before e2e" step output for the holding process.
+              # an error. If verifyElectronBinary fails, its error message shows the
+              # raw probe stderr — use that to diagnose (e.g. a chrome-sandbox
+              # permission error means --no-sandbox is missing from the launch args).
               timeout-minutes: 20
               run: xvfb-run --auto-servernum -- npm run e2e
             - name: Upload e2e report
