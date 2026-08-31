@@ -122,20 +122,22 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // Prevent vite-plugin-electron from auto-starting an Electron instance.
       //
       // vite-plugin-electron (simple) builds main+preload in dev, then — via its
-      // `:startup` plugin's closeBundle hook — calls triggerStartup(), which with
-      // no `onstart` option spawns Electron immediately. That spawn calls
-      // require('electron'), and electron/index.js is a LAZY installer: if
-      // node_modules/electron/dist/electron is missing it synchronously downloads
-      // + extracts (printing "Downloading Electron binary..."). That write races
-      // with this very probe (verifyElectronBinary below) → ETXTBSY.
+      // `:startup` plugin's closeBundle hook — calls triggerStartup() →
+      // startup() → startupWithRoot(), which resolves the `electron` package and
+      // spawns it. Resolving the `electron` package is what triggers
+      // electron/index.js's LAZY install: if node_modules/electron/dist/electron
+      // is missing it synchronously downloads + extracts (printing
+      // "Downloading Electron binary..."). That write races with this very probe
+      // (verifyElectronBinary below, which also resolves `electron`) → ETXTBSY.
       //
       // e2e does NOT use that auto-started instance: every spec launches its OWN
       // isolated Electron via launchApp() (Playwright _electron.launch with a
       // per-test user-data-dir + MARKFLOW_E2E=1). So suppressing the auto-startup
       // loses nothing the tests rely on, and removes the race entirely.
       //
-      // ELECTRON_STARTUP_PREVENT is the official escape hatch (checked at the top
-      // of startup() in vite-plugin-electron).
+      // ELECTRON_STARTUP_PREVENT is the official escape hatch (read at the top of
+      // startup() in vite-plugin-electron/dist/base-*.mjs — when set, triggerStartup
+      // skips startupWithRoot entirely). Verified present in the installed version.
       ELECTRON_STARTUP_PREVENT: '1',
     },
   })
