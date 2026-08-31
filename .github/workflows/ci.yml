@@ -163,6 +163,24 @@ jobs:
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
             - run: npm run build
+            # Reuse the Electron binary download cache for the e2e run. Without this,
+            # every e2e run freshly downloads Electron and immediately spawns it, which
+            # races with the still-in-flight download/unzip and surfaces as
+            # `spawn ETXTBSY` (Text file busy). Sharing the cache with the build job's
+            # key (below) makes hits likely and removes the "download-then-exec" race.
+            - name: Cache Electron binaries (e2e)
+              uses: actions/cache@v6
+              with:
+                  path: |
+                      ~/.cache/electron
+                      ~/.cache/electron-builder
+                      ~/Library/Caches/electron
+                      ~/Library/Caches/electron-builder
+                      %LOCALAPPDATA%\electron\Cache
+                      %LOCALAPPDATA%\electron-builder\Cache
+                  key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+                  restore-keys: |
+                      ${{ runner.os }}-electron-
             # `npm run e2e` runs exactly two Playwright projects: electron-app
             # (functional) and electron-perf-gate — the main-process stall
             # regression gate that stops the folder watcher from going back to
@@ -170,6 +188,11 @@ jobs:
             # The diagnostic project (electron-perf) has no thresholds and is slow
             # by design, so it is NOT part of this run; use `npm run e2e:perf`.
             - name: Run e2e (functional + performance gate)
+              # Hard wall-clock cap on the whole step. The globalSetup guard
+              # (verifyElectronBinary) already fails fast on a bad binary, but this
+              # is the last-resort backstop for silent hangs (stuck Electron
+              # download, zombie child, etc.) that never surface as an error.
+              timeout-minutes: 20
               run: xvfb-run --auto-servernum -- npm run e2e
             - name: Upload e2e report
               if: always()

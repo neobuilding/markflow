@@ -88,9 +88,11 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
     // 1MB+ buffer (proves the decodes are skipped, not just that the answer is right).
     const oneMbAscii = Buffer.alloc(1_200_000, 0x41) // 1.2MB of 'A'
     // Best-of-N rather than a single shot. A one-shot wall-clock bound is pure
-    // noise once the whole suite runs in parallel: this case failed at 47.8ms
-    // against a 20ms limit under full-suite load while measuring ~1ms alone. The
-    // minimum is what the code can actually do, so that is what gets asserted.
+    // noise under load: this case historically failed at 47.8ms against a 20ms
+    // limit (full-suite load) while measuring ~1ms alone, and later brushed the
+    // 50ms boundary at 51ms even on a LOCAL run. The minimum is what the code can
+    // actually do, so that is what gets asserted — it absorbs scheduling jitter /
+    // GC / other processes competing for the CPU.
     let elapsed = Infinity
     let r = { enc: '', confidence: 0 }
     for (let i = 0; i < 5; i++) {
@@ -102,8 +104,10 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
     expect(r.confidence).toBe(1)
     // The fast path is a plain byte scan — low single-digit ms for 1.2MB. Going
     // the long way round (detector + five iconv decodes of the same buffer) costs
-    // hundreds of ms. 50ms is far above scheduling noise and far below that.
-    expect(elapsed).toBeLessThan(50)
+    // HUNDREDS of ms. 100ms is far above any realistic scheduling jitter (this
+    // case measures ~1ms in isolation) yet still an order of magnitude below the
+    // cost it is supposed to rule out, so it proves the decodes were skipped.
+    expect(elapsed).toBeLessThan(100)
   })
 
   it('does not mistake a BOM-less UTF-16LE file for ASCII text', () => {
