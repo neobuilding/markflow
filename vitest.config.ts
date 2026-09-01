@@ -170,10 +170,16 @@ export default defineConfig({
           functions: 100,
           lines: 100,
         },
-        // Preload composition root (window.api assembly). It is a pure
-        // composition module with no native/IPC logic of its own, so the
-        // entire api contract is asserted by electron/preload/index.test.ts.
-        'electron/preload/index.ts': {
+        // Preload layer: the composition root (window.api assembly) is a pure
+        // module with no native/IPC logic of its own, and every `api/*.ts`
+        // namespace is a thin ipcRenderer wrapper. The whole tree is asserted
+        // by the preload test suite (index.test.ts + api/*.test.ts), so it is
+        // held to 100%.
+        // NOTE: this glob deliberately matches EVERY preload file, mirroring the
+        // `coverage.include` entry. A narrower key (index.ts alone) leaves
+        // `api/**` measured but UNGATED — that gap let a 50%-branch file sit in
+        // the report unnoticed, so keep the two globs in sync.
+        'electron/preload/**/*.ts': {
           statements: 100,
           branches: 100,
           functions: 100,

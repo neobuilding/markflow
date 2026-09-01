@@ -684,4 +684,25 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     act(() => cb!({ id: 'a', filePath: '/a.md' }))
     expect(useUIStore.getState().externalChange).toEqual({ id: 'a', filePath: '/a.md' })
   })
+
+  it("ignores on-file-changed events for a document that isn't currently active", async () => {
+    // The main-process watcher reports every changed file in an opened folder,
+    // not just the one the renderer is looking at. The pane must only flag the
+    // change for the active document; other ids must be dropped so the user
+    // never gets a "file changed on disk" dialog for the wrong file.
+    let cb: ((data: { id: string; filePath: string }) => void) | null = null
+    api.onFileChanged = vi.fn((handler) => {
+      cb = handler
+      return () => {}
+    }) as unknown as ApiShape['onFileChanged']
+    mount()
+    await openDoc() // active = 'a'
+    expect(cb).not.toBeNull()
+    // A change to a different document id should be silently ignored.
+    act(() => cb!({ id: 'other-doc', filePath: '/other.md' }))
+    expect(useUIStore.getState().externalChange).toBeNull()
+    // The active-document branch still works after a non-matching event.
+    act(() => cb!({ id: 'a', filePath: '/a.md' }))
+    expect(useUIStore.getState().externalChange).toEqual({ id: 'a', filePath: '/a.md' })
+  })
 })
