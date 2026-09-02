@@ -134,6 +134,31 @@ What's covered (see `src/renderer/src/lib/*.test.ts`):
 > the behavior stays locked. The single sanitization gate (`SafeHtml` →
 > `sanitizeHtml`) must never be bypassed.
 
+### Coverage policy
+
+The coverage gate (`npm run ci` = typecheck + `test:coverage`) enforces **100%** on the
+repository's **unit-testable logic surface** (statements / branches / functions / lines all at
+100%, with `perFile: true` so every file must hit 100% individually rather than only the project
+aggregate). The conventions are:
+
+1. **The threshold is 100%.** Every file in the unit-testable logic surface (see
+   `vitest.include` in `vitest.config.ts`) must reach 100%. The DOM / native integration surface
+   (React components, the Electron native main process, workers, the CodeMirror editor, …) is held
+   out via `coverage.exclude` and validated by other means (E2E, etc.), so it is outside this gate.
+2. **If it falls short, add tests first.** When the coverage gate goes red, **extend the test suite
+   to cover the branch/statement to 100%** — do not reach for `v8 ignore` to skip logic that is
+   genuinely testable.
+3. **Delete dead code that is truly unreachable.** If the red comes from a genuinely unreachable
+   dead branch / dead code (e.g. an unreachable `else` caused by a constant-true condition),
+   **delete the dead code** rather than masking it with an ignore comment.
+4. **If it is genuinely untestable _and_ undeletable, add `v8 ignore` with an explanatory comment.**
+   Only as a last resort — when a block can neither be reached under unit tests nor be removed for
+   good reason (e.g. it depends on a build-mode value like `import.meta.env.DEV`, or sits at a
+   process-entry / child-process boundary) — may you skip it with `/* v8 ignore next N */`. The
+   comment **must** say why it is unreachable, why it cannot be deleted, and what other means
+   validate it (see the style in `src/renderer/src/store/ui.ts`). `v8 ignore` is a last resort, not
+   a shortcut.
+
 ## Release Process
 
 MarkFlow releases are **automated** via a single `ci.yml` workflow:
