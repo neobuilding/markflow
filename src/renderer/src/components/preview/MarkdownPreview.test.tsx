@@ -114,6 +114,22 @@ describe('MarkdownPreview', () => {
     expect(await screen.findByText(/Image failed to load: pic/i)).toBeInTheDocument()
   })
 
+  it('falls back to the generic placeholder for a broken image without alt text', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<img src="missing.png">',
+      mermaid: [],
+    }))
+    const { container } = render(<MarkdownPreview content="x" />)
+    await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
+    const img = container.querySelector('img') as HTMLImageElement
+    fireEvent.error(img)
+    // No alt attribute: getAttribute('alt') returns null, so the `?? ''` fallback and the
+    // generic (alt-less) message branch are both exercised — the text must NOT carry the
+    // ": <alt>" suffix used when alt text is present.
+    const placeholder = await screen.findByText(/Image failed to load/)
+    expect(placeholder.textContent).toBe('⚠ Image failed to load')
+  })
+
   it('realigns scroll on image load without throwing', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       html: '<img src="ok.png">',
@@ -217,5 +233,33 @@ describe('MarkdownPreview', () => {
 
     // After the debounce window the keystroke parse lands.
     await waitFor(() => expect(calls).toEqual(['a', 'ab']), { timeout: 1000 })
+  })
+
+  it('ignores an error event that does not target an image', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<div>not an image</div>',
+      mermaid: [],
+    }))
+    const { container } = render(<MarkdownPreview content="x" />)
+    await waitFor(() => expect(container.querySelector('div')).toBeTruthy())
+    // Firing an error on a non-IMG element must not throw.
+    fireEvent.error(container.querySelector('div') as HTMLElement)
+    expect(container.querySelector('div')).toBeTruthy()
+  })
+
+  it('does not re-apply the image fallback on a second error', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<img src="missing.png" alt="pic">',
+      mermaid: [],
+    }))
+    const { container } = render(<MarkdownPreview content="x" />)
+    await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
+    const img = container.querySelector('img') as HTMLImageElement
+    fireEvent.error(img)
+    await waitFor(() => expect(screen.getByText(/Image failed to load: pic/i)).toBeInTheDocument())
+    // A second error on the same (already-fallback-applied) image is a no-op.
+    fireEvent.error(img)
+    const placeholders = screen.queryAllByText(/Image failed to load: pic/i)
+    expect(placeholders).toHaveLength(1)
   })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react'
 import { ExportDialog } from './ExportDialog'
 import { useUIStore } from '../../store/ui'
 import type { Document } from '../../types'
@@ -24,7 +24,9 @@ const exportDocument = vi.fn(async () => {})
 const getExportHtml = vi.fn<() => string | null>(() => '<h1>hi</h1>')
 
 vi.mock('../../hooks/useDocuments', () => ({
-  useDocument: () => ({ data: doc }),
+  // Mirror the real hook: no active document means no data. This keeps the
+  // "no document open" branch of the default-path effect reachable in tests.
+  useDocument: (id: string | null) => ({ data: id ? doc : undefined }),
 }))
 vi.mock('../../lib/export', () => ({
   exportDocument: (...a: unknown[]) => (globalThis as any).__exportDocument(...a),
@@ -150,6 +152,12 @@ describe('ExportDialog', () => {
     useUIStore.getState().setActiveDocumentId(null)
     useUIStore.getState().setExportOpen(true)
     render(<ExportDialog />)
+    // Let the open effect settle first: with no active document it leaves
+    // targetPath null, so the click below goes through the picker instead of
+    // racing the deferred default-path assignment.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
     const exportBtn = screen.getByRole('button', { name: 'Export' })
     // First click only picks the path (handleConfirm returns early when targetPath is null);
     // the second click performs the actual export.
@@ -280,5 +288,101 @@ describe('ExportDialog', () => {
     await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: 'Export' }))
     await waitFor(() => expect(exportDocument).toHaveBeenCalled())
+  })
+
+  it('falls back to "Untitled.html" when there is no file path and no title', async () => {
+    const originalPath = doc.filePath
+    const originalTitle = doc.title
+    doc.filePath = ''
+    doc.title = ''
+    try {
+      useUIStore.getState().setExportOpen(true)
+      render(<ExportDialog />)
+      // defaultHtmlPath('', '') → `${'' || 'Untitled'}.html` === 'Untitled.html'
+      await waitFor(() => expect(screen.getByDisplayValue('Untitled.html')).toBeInTheDocument())
+    } finally {
+      doc.filePath = originalPath
+      doc.title = originalTitle
+    }
+  })
+
+  it('surfaces an error when picking the path fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;(
+      window as unknown as {
+        api: {
+          dialog: { saveHtmlFile: (path?: string) => Promise<string> }
+          documents: {
+            stat: () => Promise<{ exists: boolean }>
+            watch: () => Promise<void>
+            unwatch: () => Promise<void>
+          }
+        }
+      }
+    ).api = {
+      dialog: {
+        saveHtmlFile: vi.fn(async () => {
+          throw new Error('picker cancelled')
+        }),
+      },
+      documents: {
+        stat: vi.fn(async () => ({ exists: false })),
+        watch: vi.fn(async () => {}),
+        unwatch: vi.fn(async () => {}),
+      },
+    }
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    // activeDocumentId is null → useEffect sets targetPath to null.
+    const exportBtn = screen.getByRole('button', { name: 'Export' })
+    fireEvent.click(exportBtn)
+    // handleConfirm with no targetPath picks a path; the picker throws and is swallowed.
+    await waitFor(() => expect(exportDocument).not.toHaveBeenCalled())
+    errorSpy.mockRestore()
+  })
+
+  it('seeds the picker from the document when choosing a path', async () => {
+    const saveHtmlFile = vi.fn(async () => '/picked.html')
+    const apiWindow = window as unknown as {
+      api: { dialog: Record<string, unknown>; documents: Record<string, unknown> }
+    }
+    apiWindow.api.dialog.saveHtmlFile = saveHtmlFile
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    // The "Choose" button runs handlePickPath directly, seeding the dialog from the document.
+    fireEvent.click(screen.getByRole('button', { name: /choose/i }))
+    await waitFor(() => expect(saveHtmlFile).toHaveBeenCalledWith('/docs/a.html'))
+    await waitFor(() => expect(screen.getByDisplayValue('/picked.html')).toBeInTheDocument())
+  })
+
+  it('keeps the path empty when the picker is cancelled', async () => {
+    const saveHtmlFile = vi.fn(async () => null)
+    const apiWindow = window as unknown as {
+      api: { dialog: Record<string, unknown>; documents: Record<string, unknown> }
+    }
+    apiWindow.api.dialog.saveHtmlFile = saveHtmlFile
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    // The picker returns nothing (user cancelled) → no path is set and nothing is written.
+    await waitFor(() => expect(saveHtmlFile).toHaveBeenCalled())
+    expect(exportDocument).not.toHaveBeenCalled()
+  })
+
+  it('shows the busy label while the export is in flight', async () => {
+    const pending = new Promise<void>(() => {})
+    exportDocument.mockReturnValue(pending as unknown as Promise<void>)
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    const exportBtn = screen.getByRole('button', { name: 'Export' })
+    fireEvent.click(exportBtn)
+    await waitFor(() => expect(screen.getByText('Exporting…')).toBeInTheDocument())
   })
 })

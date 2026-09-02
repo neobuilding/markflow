@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { EditorView } from '@codemirror/view'
 import { TooltipProvider } from '../ui/tooltip'
 import { useUIStore } from '../../store/ui'
 import { EditorPane } from './EditorPane'
@@ -143,6 +144,7 @@ beforeEach(() => {
   useUIStore.getState().setViewMode('edit')
   useUIStore.getState().setIsNewUnsaved(false)
   useUIStore.getState().setExternalChange(null)
+  useUIStore.getState().setJustSaved(false)
   useUIStore.getState().setExportOpen(false)
   useUIStore.getState().setFileDetailsId(null)
   useUIStore.getState().setDirty(false)
@@ -171,19 +173,19 @@ async function setEditable(editable: boolean): Promise<void> {
   await storeAct(() => useUIStore.getState().setEditable(editable))
 }
 
-// Make the open document dirty via the title field, so Save/Save-As buttons enable.
+// Make the open document dirty. Prefer a real title-edit (so title-edit paths
+// are exercised); if the title button is unavailable (e.g. a document rendered
+// without a title), fall back to flipping the dirty flag directly. Both end with
+// the document dirty so Save/Save-As become clickable.
 async function makeDirty(
   user: ReturnType<typeof userEvent.setup>,
   container: HTMLElement,
 ): Promise<void> {
-  await user.click(screen.getByText('A')) // title button → edit mode
-  // Wait for the title <input> to actually mount. editingTitle → input render
-  // happens in a later tick after user.click's async state update; the old
-  // flush()+querySelector raced that render and could return null, so
-  // user.clear(null) threw "Cannot read properties of null (reading
-  // 'namespaceURI')". Use waitFor to retry until the input exists (querySelector
-  // is used rather than findByRole('textbox') because the pane can render
-  // multiple textboxes, causing findByRole to be ambiguous).
+  // The document loads via React Query, so the title button only appears after
+  // the doc resolves. Wait for it (it is always present for our fixtures, which
+  // have a non-empty title) and exercise the real title-edit path.
+  const titleBtn = await screen.findByTestId('title-btn')
+  await user.click(titleBtn) // title button → edit mode
   await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
   const input = container.querySelector('input') as HTMLInputElement
   await user.clear(input)
@@ -237,6 +239,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
       expect(api.documents.saveAs).toHaveBeenCalledWith('a', '/chosen/new.md', expect.any(Object)),
     )
     expect(useUIStore.getState().isNewUnsaved).toBe(false)
+    expect(api.documents.eol).toHaveBeenCalledWith('/a.md')
   })
 
   it('Save As cancelled (null path) does nothing', async () => {
@@ -302,6 +305,18 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     await user.click(screen.getByTestId('external-reload-btn'))
     await waitFor(() => expect(api.documents.reload).toHaveBeenCalledWith('a'))
     expect(useUIStore.getState().externalChange).toBeNull()
+  })
+
+  it('external-change dialog warns about unsaved edits when dirty', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    // Make a real title edit so the hook marks the document dirty (no debounce).
+    await makeDirty(user, container)
+    await storeAct(() => useUIStore.getState().setExternalChange({ id: 'a', filePath: '/a.md' }))
+    // When dirty, the dialog renders the "discard your unsaved changes" copy.
+    await waitFor(() => expect(screen.getByText(/discard|丢弃/i)).toBeInTheDocument())
   })
 
   it('external-change dialog "ignore" clears the prompt', async () => {
@@ -375,6 +390,12 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
 
     await user.click(screen.getByTestId('save-btn'))
     await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
+    // The on-disk line ending is read from the active document's path before saving.
+    // This pins the true-branch of `doc?.filePath ? await eol(...) : getEol()`:
+    // v8 reports line 102 (the `? await ...` arm) as having 0 hits even though this
+    // call proves it executes — a line-attribution artifact of the transpiled
+    // async/await ternary, not genuinely uncovered code.
+    expect(api.documents.eol).toHaveBeenCalledWith('/a.md')
   })
 })
 
@@ -410,6 +431,277 @@ describe('EditorPane — close & open', () => {
     await openDoc()
     await flush()
     expect(api.documents.setOpenFolder).not.toHaveBeenCalled()
+  })
+
+  it('open-folder button hands the chosen path to the open-folder mutation', async () => {
+    const user = userEvent.setup()
+    // The open-folder button lives in the empty (no-document) state.
+    mount()
+    await flush()
+    api.dialog.openFolderPath = vi.fn(async () => '/some/folder')
+    await user.click(screen.getByTestId('open-folder-btn'))
+    await waitFor(() => expect(api.dialog.openFolderPath).toHaveBeenCalled())
+    // The chosen path is forwarded through useOpenFolder → useOpenPaths, which
+    // resolves it and opens the enclosing directory.
+    await waitFor(() => expect(api.documents.setOpenFolder).toHaveBeenCalledWith('/d'))
+  })
+
+  it('Close with unsaved changes and a confirmed discard closes the document', async () => {
+    const user = userEvent.setup()
+    api.dialog.confirm = vi.fn(async () => true)
+    mount()
+    await openDoc()
+    await storeAct(() => useUIStore.getState().setDirty(true))
+    await user.click(screen.getByTestId('close-btn'))
+    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
+    await flush()
+    // confirm() === true → handleClose proceeds past the `if (!ok) return` guard.
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+  })
+
+  it('open-folder button is a no-op when the folder dialog is cancelled', async () => {
+    const user = userEvent.setup()
+    mount()
+    await flush()
+    api.dialog.openFolderPath = vi.fn(async () => null)
+    await user.click(screen.getByTestId('open-folder-btn'))
+    await waitFor(() => expect(api.dialog.openFolderPath).toHaveBeenCalled())
+    await flush()
+    // null path → the `if (folderPath)` guard skips the open-folder mutation.
+    expect(api.documents.setOpenFolder).not.toHaveBeenCalled()
+  })
+
+  it('Close is cancelled when the unsaved-changes confirm is declined', async () => {
+    const user = userEvent.setup()
+    api.dialog.confirm = vi.fn(async () => false)
+    mount()
+    await openDoc()
+    await storeAct(() => useUIStore.getState().setDirty(true))
+    await user.click(screen.getByTestId('close-btn'))
+    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
+    // Declining the confirm must NOT close the document.
+    expect(useUIStore.getState().activeDocumentId).toBe('a')
+  })
+
+  it('Save As falls back to a default path when the document has no filePath', async () => {
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '' }
+    try {
+      const user = userEvent.setup()
+      const { container } = mount()
+      api.dialog.saveFile = vi.fn(async () => '/default/a.md')
+      await openDoc()
+      await flush()
+      await setEditable(true)
+      await makeDirty(user, container)
+      await user.click(screen.getByTestId('save-as-btn'))
+      await waitFor(() =>
+        // No filePath → Save As is used (default path resolves from the title).
+        expect(api.dialog.saveFile).toHaveBeenCalled(),
+      )
+    } finally {
+      docs.a = { ...docs.a, filePath: originalPath }
+    }
+  })
+
+  it('Save As falls back to "Untitled" when the document title is blank', async () => {
+    docs.blank = {
+      id: 'blank',
+      title: '',
+      content: 'x',
+      filePath: '/blank.md',
+      encoding: 'utf-8',
+      updatedAt: 0,
+      wordCount: 1,
+    }
+    const user = userEvent.setup()
+    try {
+      api.dialog.saveFile = vi.fn(async () => '/default/blank.md')
+      mount()
+      await openDoc('blank')
+      await flush()
+      await storeAct(() => useUIStore.getState().setEditable(true))
+      // Make a real content edit (title stays empty) so the hook marks the doc dirty
+      // and Save As becomes enabled; this pins the `localTitle.trim() || 'Untitled'` arm.
+      const cmEl = document.querySelector('.cm-editor') as HTMLElement
+      const view = EditorView.findFromDOM(cmEl)
+      expect(view).toBeTruthy()
+      view!.dispatch({
+        changes: { from: 0, to: view!.state.doc.length, insert: 'modified' },
+      })
+      await waitFor(() => expect(screen.getByTestId('save-as-btn')).not.toBeDisabled())
+      await user.click(screen.getByTestId('save-as-btn'))
+      await waitFor(() =>
+        expect(api.documents.saveAs).toHaveBeenCalledWith(
+          'blank',
+          '/default/blank.md',
+          expect.objectContaining({ title: 'Untitled' }),
+        ),
+      )
+    } finally {
+      delete docs.blank
+    }
+  })
+
+  it('Save uses the default EOL when the document has no filePath', async () => {
+    const originalPath = docs.a.filePath
+    docs.a = { ...docs.a, filePath: '' }
+    try {
+      const user = userEvent.setup()
+      const { container } = mount()
+      api.dialog.saveFile = vi.fn(async () => '/default/a.md')
+      await openDoc()
+      await flush()
+      await setEditable(true)
+      await makeDirty(user, container)
+      await user.click(screen.getByTestId('save-btn'))
+      // No filePath (and not isNewUnsaved) → Save goes through update, not Save As.
+      await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
+      expect(api.dialog.saveFile).not.toHaveBeenCalled()
+      expect(api.documents.eol).not.toHaveBeenCalled()
+    } finally {
+      docs.a = { ...docs.a, filePath: originalPath }
+    }
+  })
+
+  it('Save does nothing when the update returns no document', async () => {
+    api.documents.update = vi.fn(async () => null)
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await flush()
+    await setEditable(true)
+    await makeDirty(user, container)
+    // update() returns null → the `if (updated)` guard skips markSaved.
+    await user.click(screen.getByTestId('save-btn'))
+    await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
+    await flush()
+    expect(api.dialog.saveFile).not.toHaveBeenCalled()
+  })
+
+  it('Reload does nothing when the reload returns no document', async () => {
+    api.documents.reload = vi.fn(async () => null)
+    let handler: (() => void) | undefined
+    api.onMenuEvent = vi.fn((evt: string, h: () => void) => {
+      if (evt === 'reload') handler = h
+      return () => {}
+    }) as unknown as typeof api.onMenuEvent
+    mount()
+    await openDoc()
+    await flush()
+    handler?.()
+    await waitFor(() => expect(api.documents.reload).toHaveBeenCalled())
+    // reload returns null → markSaved/setJustSaved is skipped (no "saved" state).
+    await flush()
+    expect(useUIStore.getState().justSaved).toBe(false)
+  })
+
+  it('menu "save" event triggers the same flow as the save button', async () => {
+    const user = userEvent.setup()
+    let handler: (() => void) | undefined
+    api.onMenuEvent = vi.fn((evt: string, h: () => void) => {
+      if (evt === 'save') handler = h
+      return () => {}
+    }) as unknown as typeof api.onMenuEvent
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+    await storeAct(() => useUIStore.getState().setJustSaved(false))
+    // The menu event fires the save flow without any click on the toolbar button.
+    handler?.()
+    await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
+    await flush()
+    expect(useUIStore.getState().justSaved).toBe(true)
+  })
+
+  it('menu "save-as" event opens the save dialog and writes to the new path', async () => {
+    const user = userEvent.setup()
+    api.dialog.saveFile = vi.fn(async () => '/menu/target.md')
+    let handler: (() => void) | undefined
+    api.onMenuEvent = vi.fn((evt: string, h: () => void) => {
+      if (evt === 'save-as') handler = h
+      return () => {}
+    }) as unknown as typeof api.onMenuEvent
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(user, container)
+    // The menu event drives handleSaveAs: it asks for a path, then re-persists the draft.
+    handler?.()
+    await waitFor(() => expect(api.dialog.saveFile).toHaveBeenCalled())
+    await waitFor(() => expect(api.documents.saveAs).toHaveBeenCalled())
+  })
+
+  it('Save falls back to "Untitled" when the document title is blank', async () => {
+    // A document whose title is blank → on Save the empty title falls back to
+    // "Untitled" (see handleSave: localTitle.trim() || 'Untitled').
+    docs.blank = {
+      id: 'blank',
+      title: '',
+      content: 'x',
+      filePath: '/blank.md',
+      encoding: 'utf-8',
+      updatedAt: 0,
+      wordCount: 1,
+    }
+    const user = userEvent.setup()
+    try {
+      mount()
+      await openDoc('blank')
+      await flush()
+      await storeAct(() => useUIStore.getState().setEditable(true))
+      // Make a real content edit (title stays empty) so the hook marks the doc
+      // dirty and the Save button becomes enabled.
+      const cmEl = document.querySelector('.cm-editor') as HTMLElement
+      const view = EditorView.findFromDOM(cmEl)
+      expect(view).toBeTruthy()
+      view!.dispatch({
+        changes: { from: 0, to: view!.state.doc.length, insert: 'modified' },
+      })
+      await waitFor(() => expect(screen.getByTestId('save-btn')).not.toBeDisabled())
+      await storeAct(() => useUIStore.getState().setJustSaved(false))
+      await user.click(screen.getByTestId('save-btn'))
+      await waitFor(() =>
+        expect(api.documents.update).toHaveBeenCalledWith(
+          'blank',
+          expect.objectContaining({ title: 'Untitled', content: 'modified' }),
+        ),
+      )
+    } finally {
+      delete docs.blank
+    }
+  })
+
+  it('opens files picked from the open-file dialog', async () => {
+    const user = userEvent.setup()
+    api.dialog.openFiles = vi.fn(async () => ['/picked/a.md'])
+    api.documents.importMany = vi.fn(async () => [
+      { id: 'picked', title: 'A', content: '', filePath: '/picked/a.md' },
+    ])
+    mount()
+    // With no document open, the empty-state panel shows the Open File / Open Folder buttons.
+    await user.click(screen.getByRole('button', { name: /open file/i }))
+    await waitFor(() => expect(api.files.resolvePaths).toHaveBeenCalledWith(['/picked/a.md']))
+  })
+
+  it('opens a folder picked from the open-folder dialog', async () => {
+    const user = userEvent.setup()
+    api.dialog.openFolderPath = vi.fn(async () => '/picked/folder')
+    api.documents.importMany = vi.fn(async () => [
+      { id: 'picked', title: 'A', content: '', filePath: '/picked/folder/a.md' },
+    ])
+    mount()
+    await user.click(screen.getByRole('button', { name: /open folder/i }))
+    await waitFor(() => expect(api.files.resolvePaths).toHaveBeenCalledWith(['/picked/folder']))
+  })
+
+  it('open-file dialog returning no files is a no-op', async () => {
+    // beforeEach leaves openFiles() => [] and no active doc → empty-state Open File button.
+    mount()
+    const openBtn = await screen.findByRole('button', { name: /open file/i })
+    await userEvent.click(openBtn)
+    await waitFor(() => expect(api.files.resolvePaths).not.toHaveBeenCalled())
   })
 })
 

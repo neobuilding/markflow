@@ -147,4 +147,94 @@ describe('StatusBar', () => {
     expect(screen.queryByText(/Saved/)).toBeNull()
     vi.useRealTimers()
   })
+
+  it('does not switch encoding when the same encoding is chosen', async () => {
+    const eol = vi.fn().mockResolvedValue('\n')
+    ;(window as unknown as { api: { documents: { eol: typeof eol } } }).api = {
+      documents: { eol },
+    }
+    render(<StatusBar />)
+    fireEvent.click(await screen.findByTitle(/encoding/i))
+    // The active document is already GBK; picking GBK is a no-op.
+    const gbk = await screen.findByText('GBK')
+    fireEvent.click(gbk)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockMutateAsync).not.toHaveBeenCalled()
+  })
+
+  it('shows CRLF for Windows-style line endings', async () => {
+    const eol = vi.fn().mockResolvedValue('\r\n')
+    ;(window as unknown as { api: { documents: { eol: typeof eol } } }).api = {
+      documents: { eol },
+    }
+    render(<StatusBar />)
+    expect(await screen.findByText('CRLF')).toBeInTheDocument()
+  })
+
+  it('renders an empty word count when there is no active document', async () => {
+    docState.doc = undefined as unknown as (typeof docState)['doc']
+    render(<StatusBar />)
+    // No active document => empty word-count slot and no encoding pill.
+    expect(screen.queryByText(/words/)).toBeNull()
+    expect(screen.queryByTitle(/encoding/i)).toBeNull()
+  })
+
+  it('shows a normal encoding pill without a warning when confidence is high', async () => {
+    docState.doc = { ...docState.doc, encodingConfidence: 1 }
+    render(<StatusBar />)
+    const pill = await screen.findByTitle(/encoding/i)
+    // High confidence => no ⚠ in the label and a neutral border class.
+    expect(pill).toHaveTextContent('GBK')
+    expect(pill).not.toHaveTextContent('⚠')
+    expect(pill.className).toContain('border-[var(--color-border)]')
+  })
+
+  it('ignores a line-ending lookup failure', async () => {
+    const eol = vi.fn().mockRejectedValue(new Error('nope'))
+    ;(window as unknown as { api: { documents: { eol: typeof eol } } }).api = {
+      documents: { eol },
+    }
+    render(<StatusBar />)
+    // A rejected eol() hits the defensive .catch: no pill, no crash.
+    expect(await screen.findByText('42 words')).toBeInTheDocument()
+    expect(screen.queryByText('LF')).toBeNull()
+    expect(screen.queryByText('CRLF')).toBeNull()
+  })
+
+  it('skips the line-ending update when unmounted before the lookup resolves', async () => {
+    let resolveEol: ((v: string) => void) | undefined
+    const eol = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveEol = resolve
+        }),
+    )
+    ;(window as unknown as { api: { documents: { eol: typeof eol } } }).api = {
+      documents: { eol },
+    }
+    const { unmount } = render(<StatusBar />)
+    await screen.findByText('42 words')
+    // Unmount first: the effect cleanup sets cancelled = true.
+    unmount()
+    await act(async () => {
+      resolveEol?.('\r\n')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    // No CRLF was ever rendered because the resolved value was discarded.
+    expect(screen.queryByText('CRLF')).toBeNull()
+  })
+
+  it('keeps the dropdown open when clicking inside the encoding pill', async () => {
+    const eol = vi.fn().mockResolvedValue('\n')
+    ;(window as unknown as { api: { documents: { eol: typeof eol } } }).api = {
+      documents: { eol },
+    }
+    render(<StatusBar />)
+    const pill = await screen.findByTitle(/encoding/i)
+    fireEvent.click(pill)
+    expect(await screen.findByText('UTF-8')).toBeInTheDocument()
+    // mousedown lands inside the pill container, so the outside-click guard ignores it.
+    fireEvent.mouseDown(pill)
+    expect(screen.getByText('UTF-8')).toBeInTheDocument()
+  })
 })

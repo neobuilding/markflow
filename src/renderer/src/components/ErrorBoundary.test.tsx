@@ -55,7 +55,14 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     )
     expect(screen.getByText('safe content')).toBeInTheDocument()
-    // Switch language to trigger the subscribe callback's forceUpdate branch.
+    // Ensure a known starting language, then make two real changes so the
+    // `if (state.language !== prev.language)` branch is entered both times.
+    act(() => {
+      useUIStore.getState().setLanguage('en')
+    })
+    act(() => {
+      useUIStore.getState().setLanguage('zh-CN')
+    })
     act(() => {
       useUIStore.getState().setLanguage('en')
     })

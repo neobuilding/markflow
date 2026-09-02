@@ -89,6 +89,29 @@ describe('Sidebar', () => {
     expect(container.querySelector('aside')).toBeNull()
   })
 
+  it('applies the platform-specific header padding (mac vs non-mac)', () => {
+    // jsdom's default user agent is not a Mac, so the compact padding applies first.
+    const { container, unmount } = mount()
+    const header = container.querySelector('.titlebar-drag') as HTMLElement
+    expect(header).toBeTruthy()
+    expect(header.style.paddingLeft).toBe('0.75rem')
+    unmount()
+
+    // Re-render with a Mac user agent: the header reserves room for the traffic lights.
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      configurable: true,
+    })
+    try {
+      const { container: macContainer } = mount()
+      const macHeader = macContainer.querySelector('.titlebar-drag') as HTMLElement
+      expect(macHeader.style.paddingLeft).toBe('5rem')
+    } finally {
+      // Drop the instance-level override so later tests see jsdom's default platform again.
+      delete (navigator as unknown as { userAgent?: string }).userAgent
+    }
+  })
+
   it('shows the welcome state when no folder and no drafts', () => {
     // Force an empty document list so the welcome guidance shows.
     allDocs.length = 0
@@ -152,6 +175,24 @@ describe('Sidebar', () => {
     const openBtn = screen.getByRole('button', { name: 'Open File…' })
     fireEvent.click(openBtn)
     await waitFor(() => expect(openPathsMock).toHaveBeenCalled())
+  })
+
+  it('does nothing when the open-file dialog returns no files', async () => {
+    ;(
+      window as unknown as {
+        api: { dialog: { openFiles: unknown; openFolderPath: unknown; confirm: unknown } }
+      }
+    ).api = {
+      dialog: {
+        openFiles: vi.fn(async () => []),
+        openFolderPath: vi.fn(async () => null),
+        confirm: vi.fn(async () => true),
+      },
+    }
+    mount()
+    const openBtn = screen.getByRole('button', { name: 'Open File…' })
+    fireEvent.click(openBtn)
+    await waitFor(() => expect(openPathsMock).not.toHaveBeenCalled())
   })
 })
 
@@ -280,6 +321,42 @@ describe('Sidebar — interactions', () => {
     await waitFor(() => expect(useUIStore.getState().activeFolder).toBeNull())
   })
 
+  it('closes the workspace directly with no unsaved changes (skips confirm)', async () => {
+    useUIStore.getState().setDirty(false)
+    const confirm = vi.fn(async () => true)
+    ;(
+      window as unknown as {
+        api: { dialog: { openFiles: unknown; openFolderPath: unknown; confirm: unknown } }
+      }
+    ).api = {
+      dialog: { openFiles: vi.fn(), openFolderPath: vi.fn(), confirm },
+    }
+    mount()
+    await userEvent.click(screen.getByTestId('close-workspace-btn'))
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBeNull())
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('clears the active document when the last listed document is deleted', async () => {
+    // Make 'a' the only listed document so deleting it leaves no `next`.
+    const saved = allDocs.slice()
+    allDocs.length = 0
+    allDocs.push(saved[0])
+    try {
+      useUIStore.getState().setActiveDocumentId('a')
+      mount()
+      const items = await screen.findAllByTestId('doc-item')
+      const aItem = items.find((li) => li.textContent?.includes('a.md'))
+      await userEvent.click(within(aItem as HTMLElement).getByRole('button'))
+      const del = await screen.findByText('Delete')
+      fireEvent.click(del)
+      await waitFor(() => expect(useUIStore.getState().activeDocumentId).toBeNull())
+    } finally {
+      allDocs.length = 0
+      allDocs.push(...saved)
+    }
+  })
+
   it('shows the empty state and creates the first document', async () => {
     seedDocs([])
     mount()
@@ -310,6 +387,15 @@ describe('Sidebar — interactions', () => {
     await userEvent.click(screen.getByTestId('import-folder-btn'))
     // openFolderPath resolves to null in beforeEach → handleImportFolder returns early.
     await waitFor(() => expect(openFolderMock).not.toHaveBeenCalled())
+  })
+
+  it('imports a chosen folder via openFolder', async () => {
+    ;(window as unknown as { api: { dialog: { openFolderPath: unknown } } }).api = {
+      dialog: { openFolderPath: vi.fn(async () => '/chosen/folder') },
+    }
+    mount()
+    await userEvent.click(screen.getByTestId('import-folder-btn'))
+    await waitFor(() => expect(openFolderMock).toHaveBeenCalledWith('/chosen/folder'))
   })
 
   it('cleans up the resize state on mouse-up after a drag', async () => {

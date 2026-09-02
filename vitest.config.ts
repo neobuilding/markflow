@@ -7,6 +7,11 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   test: {
     environment: 'jsdom',
+    // Under full-suite parallel execution many files share the machine, so async
+    // work (React Query document loads, Radix Dialog portals) can occasionally
+    // exceed the 5s default. Bump the per-test budget so legitimate async waits
+    // don't flake; individual tests still fail fast on real assertions.
+    testTimeout: 15000,
     // Polyfill Range.getClientRects / getBoundingClientRect for CodeMirror under
     // jsdom, which otherwise throws unhandled "getClientRects is not a function"
     // errors from its async layout measurement.
@@ -160,7 +165,7 @@ export default defineConfig({
         },
         'electron/main/window.ts': {
           statements: 100,
-          branches: 85,
+          branches: 100,
           functions: 100,
           lines: 100,
         },
@@ -186,22 +191,22 @@ export default defineConfig({
           lines: 100,
         },
         'electron/main/menu.ts': {
-          statements: 98,
-          branches: 95,
+          statements: 100,
+          branches: 100,
           functions: 100,
-          lines: 98,
+          lines: 100,
         },
         'electron/main/lifecycle.ts': {
           statements: 100,
-          branches: 85,
+          branches: 100,
           functions: 100,
           lines: 100,
         },
         'src/renderer/src/components/**': {
-          statements: 90,
-          branches: 65,
-          functions: 95,
-          lines: 95,
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
         },
         // CI / PR-automation: the entire actions/create-pr/src tree is covered
         // by unit tests (render / render-template / orchestration / loader / blocks

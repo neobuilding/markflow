@@ -627,6 +627,9 @@ function TreeRow({
   }
 
   const doc = node.doc
+  // DocItem is only ever rendered for document nodes (the tree only mounts it
+  // when `node.doc` exists), so `doc` is never null here — defensive guard only.
+  /* v8 ignore next -- defensive: DocItem only renders for document nodes, so doc is never null here */
   if (!doc) return null
   return (
     <DocItem

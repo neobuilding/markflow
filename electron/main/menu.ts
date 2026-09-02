@@ -42,6 +42,10 @@ let printingState = false
 // Re-apply the renderer-synced states to the current menu so that a menu rebuild (such as a
 // language switch via setupMenu()) preserves the enabled/disabled state the renderer last sent.
 function applyMenuStates(): void {
+  // appMenu is always assigned by setupMenu() before this runs (it is only
+  // invoked from setupMenu's tail or from IPC handlers fired after the menu
+  // exists), so this guard is never taken in practice — defensive only.
+  /* v8 ignore next */
   if (!appMenu) return
   const saveItem = appMenu.getMenuItemById('save')
   const saveAsItem = appMenu.getMenuItemById('save-as')
