@@ -101,16 +101,13 @@ export function EditorPane(): React.ReactElement {
     /* v8 ignore next -- defensive: the save-as menu item is disabled in read-only mode, so this is never hit */
     if (!useUIStore.getState().editable) return
     const { localContent, localTitle } = draftRef.current
-    /* v8 ignore next -- v8 mis-reports this line; the `||` arms are both exercised by the Save As tests (filePath present and blank-title) */
     const defaultPath = doc?.filePath || `${localTitle.trim() || 'Untitled'}.md`
-    // (the `||` branches above are both exercised by the Save As tests; v8
-    // mis-reports this line as uncovered — a known v8 quirk)
     // Save As: follow the source document's on-disk line ending (the new file is a copy of this document)
     const eol = doc?.filePath
       ? // v8 mis-attributes the executed `await ….catch()` branch of this ternary to
         // the `:` line below, so it reports the `?` line as uncovered even though the
         // Save As test asserts the eol call runs. Mirror of the identical handleSave
-        // expression (line 149) which v8 records correctly — a known v8 quirk.
+        // expression (line 165) which v8 records correctly — a known v8 quirk.
         /* v8 ignore next -- v8 mis-attributes the executed `await ….catch()` of this ternary branch to the `:` line, so it reports this branch as uncovered even though the Save As test asserts eol() runs */
         await window.api.documents.eol(doc.filePath).catch(() => getEol())
       : getEol()
@@ -131,7 +128,7 @@ export function EditorPane(): React.ReactElement {
           content: toDiskFormat(localContent, eol),
         },
       })
-      /* v8 ignore next -- defensive: the saveAs IPC always resolves to a Document on success; the null branch is only hit on a contract violation, already exercised by useDocuments.test.tsx */
+      /* v8 ignore next -- defensive: the saveAs IPC always resolves to a Document on success; the null branch is only hit on a contract violation (saveAs returning null), which is unreachable in normal flow */
       if (updated) {
         markSaved(updated.content, updated.title)
         useUIStore.getState().setJustSaved(true)

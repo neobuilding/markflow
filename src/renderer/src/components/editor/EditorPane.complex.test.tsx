@@ -543,6 +543,40 @@ describe('EditorPane — close & open', () => {
     }
   })
 
+  it('Save As resolves the default path to "Untitled" when the document has no filePath and a blank title', async () => {
+    docs.blank = {
+      id: 'blank',
+      title: '',
+      content: 'x',
+      filePath: '',
+      encoding: 'utf-8',
+      updatedAt: 0,
+      wordCount: 1,
+    }
+    const user = userEvent.setup()
+    try {
+      api.dialog.saveFile = vi.fn(async () => '/default/blank.md')
+      mount()
+      await openDoc('blank')
+      await flush()
+      await storeAct(() => useUIStore.getState().setEditable(true))
+      // Make a real content edit so the hook marks the doc dirty and Save As is enabled.
+      const cmEl = document.querySelector('.cm-editor') as HTMLElement
+      const view = EditorView.findFromDOM(cmEl)
+      expect(view).toBeTruthy()
+      view!.dispatch({
+        changes: { from: 0, to: view!.state.doc.length, insert: 'modified' },
+      })
+      await waitFor(() => expect(screen.getByTestId('save-as-btn')).not.toBeDisabled())
+      await user.click(screen.getByTestId('save-as-btn'))
+      // No filePath + blank title → defaultPath = `${''.trim() || 'Untitled'}.md` = 'Untitled.md'.
+      // Covers the `localTitle.trim() || 'Untitled'` fallback arm at EditorPane.tsx line 104.
+      await waitFor(() => expect(api.dialog.saveFile).toHaveBeenCalledWith('Untitled.md'))
+    } finally {
+      delete docs.blank
+    }
+  })
+
   it('Save uses the default EOL when the document has no filePath', async () => {
     const originalPath = docs.a.filePath
     docs.a = { ...docs.a, filePath: '' }

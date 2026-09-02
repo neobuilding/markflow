@@ -85,7 +85,6 @@ export function MarkdownEditor({
       if (typeof document !== 'undefined' && document.hasFocus() && view.hasFocus) return
       focusDom()
       frames += 1
-      /* v8 ignore next -- defensive focus-retry: the loop only stops recursing after 5 frames, which jsdom's rAF timing doesn't drive */
       if (frames < 5) requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)

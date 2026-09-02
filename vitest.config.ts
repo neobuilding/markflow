@@ -61,10 +61,6 @@ export default defineConfig({
         'src/renderer/src/components/**/*.{ts,tsx}',
         'electron/preload/**/*.ts',
         'electron/main/ipc/**/*.ts',
-        'electron/main/ipc/documents.ts',
-        'electron/main/ipc/export.ts',
-        'electron/main/ipc/search.ts',
-        'electron/main/ipc/appdoc.ts',
         'electron/main/handlers/**/*.ts',
         'electron/main/lib/**/*.ts',
         'electron/main/model/**/*.ts',
@@ -96,129 +92,18 @@ export default defineConfig({
         'actions/create-pr/src/__fixtures__/**',
       ],
       thresholds: {
-        // No global gate: the project mixes pure logic with DOM / native
-        // integration surface, so coverage is enforced per-tier below.
-        'src/renderer/src/lib/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'src/renderer/src/store/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'src/renderer/src/i18n/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'src/renderer/src/hooks/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'shared/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'electron/main/lib/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        // All pure-logic IPC handlers are held to 100%; this glob covers
-        // documents.ts, export.ts, search.ts, appdoc.ts and any future ipc file.
-        'electron/main/ipc/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'electron/main/handlers/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        // In-memory model layer (document store, folder matching, open-folder set,
-        // folder watcher). This is the single source of truth after the database
-        // layer was removed, so it is held to the same 100% bar as the IPC layer.
-        'electron/main/model/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'electron/main/state.ts': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'electron/main/window.ts': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'electron/main/i18n.ts': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        // Preload layer: the composition root (window.api assembly) is a pure
-        // module with no native/IPC logic of its own, and every `api/*.ts`
-        // namespace is a thin ipcRenderer wrapper. The whole tree is asserted
-        // by the preload test suite (index.test.ts + api/*.test.ts), so it is
-        // held to 100%.
-        // NOTE: this glob deliberately matches EVERY preload file, mirroring the
-        // `coverage.include` entry. A narrower key (index.ts alone) leaves
-        // `api/**` measured but UNGATED — that gap let a 50%-branch file sit in
-        // the report unnoticed, so keep the two globs in sync.
-        'electron/preload/**/*.ts': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'electron/main/menu.ts': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'electron/main/lifecycle.ts': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        'src/renderer/src/components/**': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
-        // CI / PR-automation: the entire actions/create-pr/src tree is covered
-        // by unit tests (render / render-template / orchestration / loader / blocks
-        // via direct tests; cli-render via a child-process integration test; index
-        // and the I/O services via the orchestration tests using fakes). The whole
-        // directory is held to 100% so any untested branch in the PR logic surfaces.
-        'actions/create-pr/src/**/*.mjs': {
-          statements: 100,
-          branches: 100,
-          functions: 100,
-          lines: 100,
-        },
+        // Single global gate: every file matched by `coverage.include` (and not
+        // dropped by `coverage.exclude`) must reach 100%. The DOM / native
+        // integration surface is held out via `exclude`, so the gated set is the
+        // unit-testable logic surface — all held to 100%. `perFile` keeps the
+        // original per-file intent (each file 100%, not just the project aggregate)
+        // and also closes the "new included file matches no glob and escapes the
+        // gate" gap that the old per-tier config had.
+        perFile: true,
+        statements: 100,
+        branches: 100,
+        functions: 100,
+        lines: 100,
       },
     },
   },
