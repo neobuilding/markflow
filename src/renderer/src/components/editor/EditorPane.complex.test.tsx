@@ -173,24 +173,28 @@ async function setEditable(editable: boolean): Promise<void> {
   await storeAct(() => useUIStore.getState().setEditable(editable))
 }
 
-// Make the open document dirty. Prefer a real title-edit (so title-edit paths
-// are exercised); if the title button is unavailable (e.g. a document rendered
-// without a title), fall back to flipping the dirty flag directly. Both end with
-// the document dirty so Save/Save-As become clickable.
-async function makeDirty(
-  user: ReturnType<typeof userEvent.setup>,
-  container: HTMLElement,
-): Promise<void> {
+// Make the open document dirty by performing a real title edit (so the title-edit
+// path is exercised). The document must already be in edit mode (editable=true) for
+// the title button to render. Ends with the document dirty so Save/Save-As become
+// clickable.
+async function makeDirty(container: HTMLElement): Promise<void> {
   // The document loads via React Query, so the title button only appears after
   // the doc resolves. Wait for it (it is always present for our fixtures, which
   // have a non-empty title) and exercise the real title-edit path.
   const titleBtn = await screen.findByTestId('title-btn')
-  await user.click(titleBtn) // title button → edit mode
-  await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
+  // Use fireEvent (not userEvent) for the whole sequence. userEvent's click
+  // restores the previously-focused element at the end of the interaction, which
+  // steals focus from the just-mounted autoFocus <input>; its onBlur fires
+  // handleTitleSave → setEditingTitle(false) and the <input> vanishes before the
+  // next step can hold it — a racy flake ("expected null not to be null" /
+  // user.clear on null). fireEvent dispatches synchronously inside act, and we
+  // grab + edit + commit the input in the SAME sync flush, so the async focus
+  // restore never gets a window to remove it.
+  fireEvent.click(titleBtn) // title button → inline title edit (synchronous in act)
   const input = container.querySelector('input') as HTMLInputElement
-  await user.clear(input)
-  await user.type(input, 'Renamed')
-  await user.click(container) // blur → handleTitleSave marks dirty
+  expect(input).not.toBeNull()
+  fireEvent.change(input, { target: { value: 'Renamed' } })
+  fireEvent.blur(input) // onBlur → handleTitleSave marks dirty
   await flush()
 }
 
@@ -200,7 +204,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
 
     await user.click(screen.getByTestId('save-btn'))
     await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
@@ -232,7 +236,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
 
     await user.click(screen.getByTestId('save-as-btn'))
     await waitFor(() =>
@@ -263,7 +267,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
 
     await user.click(screen.getByTestId('save-btn'))
     await waitFor(() => expect(alertSpy).toHaveBeenCalled())
@@ -308,12 +312,11 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
   })
 
   it('external-change dialog warns about unsaved edits when dirty', async () => {
-    const user = userEvent.setup()
     const { container } = mount()
     await openDoc()
     await setEditable(true)
     // Make a real title edit so the hook marks the document dirty (no debounce).
-    await makeDirty(user, container)
+    await makeDirty(container)
     await storeAct(() => useUIStore.getState().setExternalChange({ id: 'a', filePath: '/a.md' }))
     // When dirty, the dialog renders the "discard your unsaved changes" copy.
     await waitFor(() => expect(screen.getByText(/discard|丢弃/i)).toBeInTheDocument())
@@ -335,7 +338,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
     await storeAct(() => useUIStore.getState().setIsNewUnsaved(true))
 
     await user.click(screen.getByTestId('save-btn'))
@@ -352,7 +355,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
     await storeAct(() => useUIStore.getState().setIsNewUnsaved(true))
 
     await user.click(screen.getByTestId('save-btn'))
@@ -370,7 +373,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
     await storeAct(() => useUIStore.getState().setIsNewUnsaved(true))
 
     await user.click(screen.getByTestId('save-btn'))
@@ -386,7 +389,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
 
     await user.click(screen.getByTestId('save-btn'))
     await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
@@ -493,7 +496,7 @@ describe('EditorPane — close & open', () => {
       await openDoc()
       await flush()
       await setEditable(true)
-      await makeDirty(user, container)
+      await makeDirty(container)
       await user.click(screen.getByTestId('save-as-btn'))
       await waitFor(() =>
         // No filePath → Save As is used (default path resolves from the title).
@@ -587,7 +590,7 @@ describe('EditorPane — close & open', () => {
       await openDoc()
       await flush()
       await setEditable(true)
-      await makeDirty(user, container)
+      await makeDirty(container)
       await user.click(screen.getByTestId('save-btn'))
       // No filePath (and not isNewUnsaved) → Save goes through update, not Save As.
       await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
@@ -605,7 +608,7 @@ describe('EditorPane — close & open', () => {
     await openDoc()
     await flush()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
     // update() returns null → the `if (updated)` guard skips markSaved.
     await user.click(screen.getByTestId('save-btn'))
     await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
@@ -631,7 +634,6 @@ describe('EditorPane — close & open', () => {
   })
 
   it('menu "save" event triggers the same flow as the save button', async () => {
-    const user = userEvent.setup()
     let handler: (() => void) | undefined
     api.onMenuEvent = vi.fn((evt: string, h: () => void) => {
       if (evt === 'save') handler = h
@@ -640,7 +642,7 @@ describe('EditorPane — close & open', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
     await storeAct(() => useUIStore.getState().setJustSaved(false))
     // The menu event fires the save flow without any click on the toolbar button.
     handler?.()
@@ -650,7 +652,6 @@ describe('EditorPane — close & open', () => {
   })
 
   it('menu "save-as" event opens the save dialog and writes to the new path', async () => {
-    const user = userEvent.setup()
     api.dialog.saveFile = vi.fn(async () => '/menu/target.md')
     let handler: (() => void) | undefined
     api.onMenuEvent = vi.fn((evt: string, h: () => void) => {
@@ -660,7 +661,7 @@ describe('EditorPane — close & open', () => {
     const { container } = mount()
     await openDoc()
     await setEditable(true)
-    await makeDirty(user, container)
+    await makeDirty(container)
     // The menu event drives handleSaveAs: it asks for a path, then re-persists the draft.
     handler?.()
     await waitFor(() => expect(api.dialog.saveFile).toHaveBeenCalled())
