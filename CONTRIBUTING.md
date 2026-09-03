@@ -136,7 +136,7 @@ What's covered (see `src/renderer/src/lib/*.test.ts`):
 
 ### Coverage policy
 
-The coverage gate (`npm run ci` = typecheck + `test:coverage`) enforces **100%** on the
+The coverage gate (`npm run test:coverage`, run in the CI `ut` job, which starts only after the separate `quality` job passes) enforces **100%** on the
 repository's **unit-testable logic surface** (statements / branches / functions / lines all at
 100%, with `perFile: true` so every file must hit 100% individually rather than only the project
 aggregate). The conventions are:

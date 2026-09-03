@@ -198,7 +198,7 @@ npm run format    # Auto-format everything with Prettier
 
 A Husky `pre-commit` hook runs **lint-staged**, applying Stylelint + Markdownlint + Prettier to
 staged `*.css` / `*.md` / source files. Run `npm run quality` before opening a PR so the CI
-`Test, Build & E2E` job stays green.
+`quality` gate and the `ut` (Unit Tests & Coverage) and `e2e` (Electron) jobs stay green.
 
 ## 🧪 Testing & CI
 
@@ -255,16 +255,20 @@ node actions/create-pr/src/cli-render.mjs --head feature/my-branch
 
 ### CI pipeline (`.github/workflows/ci.yml`)
 
-The `Test, Build & E2E` job (ubuntu) chains: `npm run quality` (Prettier + ESLint + Stylelint +
-Markdownlint + Secretlint + typecheck, enforced as a fast-fail gate) → unit tests + coverage →
-Playwright browser install → `npm run build` → `npm run e2e` (under `xvfb-run`). The e2e steps are
-merged into the test job on purpose — they share the same runner, one `npm ci` install, and a single
-`npm run build`, avoiding a separate runner (saves one full install + one build). The Playwright HTML
-report and
-`test-results/` are uploaded as artifacts on every run (even on failure) for inspection.
+The CI gates everything behind a separate `quality` job, then runs `ut` and `e2e` **in parallel**:
 
-The three-platform `build` job (`Build (macos|windows|ubuntu)`) runs after the test job and is the
-only three-platform build in the repo, used for both PR validation and releases.
+- `quality` (ubuntu): `npm run quality` (Prettier + ESLint + Stylelint + Markdownlint + Secretlint +
+  typecheck) as a fast-fail gate. It runs once and must pass before either test job starts.
+- `ut` (ubuntu, after `quality`): unit tests + coverage (Vitest + jsdom; no Electron build needed).
+- `e2e` (ubuntu, after `quality`): Playwright browser install → `npm run build` → `npm run e2e`
+  (under `xvfb-run`).
+  Each test job runs on its own runner (e2e does its own `npm ci` + a single `npm run build`), trading one
+  extra install for wall-clock time ≈ max(ut, e2e) instead of chained. The `build` / `release` jobs run
+  only after both test jobs and the version computation pass. The Playwright HTML report and
+  `test-results/` are uploaded as artifacts on every run (even on failure) for inspection.
+
+The three-platform `build` job (`Build (macos|windows|ubuntu)`) runs only after both the `ut` and `e2e`
+jobs pass and is the only three-platform build in the repo, used for both PR validation and releases.
 
 ### Viewing test results
 

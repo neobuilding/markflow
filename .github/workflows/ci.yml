@@ -20,29 +20,33 @@ concurrency:
     group: ci-${{ github.ref }}
     cancel-in-progress: false
 
-# The version's single source of truth is the test job: it only "computes" (never "tags"),
+# The version's single source of truth is the `version` job: it only "computes" (never "tags"),
 # calculating the tag/version after checkout and emitting them as outputs;
-# build / release read from the test job's outputs, avoiding duplicate inference and staying consistent.
-#   - push to main / dispatch   → test computes v{ver}-{commit-time}.{shortSHA} (not pushed)
-#   - push of a v* tag           → test reuses the existing tag (version = tag with the v stripped)
-#   - PR / non-main branch push → test emits empty outputs: build injects nothing (uses the base version), release does not run
+# build / release read from the version job's outputs, avoiding duplicate inference and staying consistent.
+#   - push to main / dispatch   → version computes v{ver}-{commit-time}.{shortSHA} (not pushed)
+#   - push of a v* tag           → version reuses the existing tag (version = tag with the v stripped)
+#   - PR / non-main branch push → version emits empty outputs: build injects nothing (uses the base version), release does not run
 # The actual "tag push" is deferred to the release stage via the gh api (no checkout needed), so it is idempotent and reproducible;
 # re-running on the same commit yields the same tag (commit time comes from the committer date, which is stable).
+#
+# Pipeline shape: a separate `quality` job (Prettier + ESLint + Stylelint + Markdownlint + Secretlint +
+# full `typecheck`) is the fast-fail gate. `ut` and `e2e` both depend on it, so type checking / linting
+# run exactly ONCE and must pass before either test job starts. `ut` and `e2e` then run in parallel;
+# `build` / `release` wait for both plus the computed version.
 env:
     CSC_IDENTITY_AUTOMATION: false # mac does not use signing/notarization automation (consistent with history)
 
 jobs:
-    test:
-        name: Test, Build & E2E
+    # Single source of truth for the version: only "compute" (never "tag"); after
+    # checkout it calculates the tag/version and emits them as outputs for downstream
+    # jobs. Kept as its own job so `ut` and `e2e` can start in parallel once `quality`
+    # passes, while `build` / `release` read the computed version.
+    #   - push to main / dispatch   → v{ver}-{commit-time}.{shortSHA} (not pushed)
+    #   - push of a v* tag           → reuse the existing tag (version = tag with the v stripped)
+    #   - PR / non-main branch push → empty outputs: build injects nothing, release does not run
+    version:
+        name: Compute Version
         runs-on: ubuntu-latest
-        # Elevated from the workflow-wide `contents: read` so dorny/test-reporter can
-        # publish the JUnit summaries as a PR comment and Checks annotations.
-        permissions:
-            contents: read
-            pull-requests: write
-            checks: write
-        # Single source of truth for the version: only "compute" (never "tag"); after checkout it
-        # calculates the tag/version and emits them as outputs for downstream jobs.
         outputs:
             tag: ${{ steps.compute.outputs.tag }}
             version: ${{ steps.compute.outputs.version }}
@@ -83,6 +87,39 @@ jobs:
                   fi
                   echo "tag=$TAG" >> "$GITHUB_OUTPUT"
                   echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    # ── Static quality gate (fast-fail, runs ONCE and gates both test jobs) ─────
+    # `npm run quality` = Prettier format check + ESLint (TS7 side-by-side via the
+    # `postinstall` shim in scripts/install-eslint-ts6.mjs) + Stylelint (CSS) +
+    # Markdownlint (docs) + Secretlint (secrets) + full TypeScript type check
+    # (`typecheck`). Both `ut` and `e2e` depend on this job, so style/rule/type
+    # violations fail fast and are never checked twice.
+    quality:
+        name: Quality Gate
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-node@v7
+              with: { node-version: 22, cache: npm }
+            - run: npm ci
+            - run: npm run quality
+
+    # ── Unit tests + coverage (runs after `quality` passes, in parallel with e2e) ─
+    # UT (Vitest + jsdom) does NOT need the Electron build, so this job is otherwise
+    # independent of the e2e job below. Type checking / linting already happened once
+    # upstream in the `quality` job, so this run only adds the covered unit tests.
+    ut:
+        name: Unit Tests & Coverage
+        runs-on: ubuntu-latest
+        needs: [quality]
+        # Elevated from the workflow-wide `contents: read` so dorny/test-reporter can
+        # publish the JUnit summaries as a PR comment and Checks annotations.
+        permissions:
+            contents: read
+            pull-requests: write
+            checks: write
+        steps:
+            - uses: actions/checkout@v7
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
@@ -91,18 +128,13 @@ jobs:
             # actions/create-pr/node_modules (never hoisted to the repo root, so the
             # directory stays extractable to its own repo). The root Vitest suite
             # imports core.mjs, which imports `@actions/core`, so CI must install that
-            # local package before running `npm run ci`. (Root `npm ci` does not walk
+            # local package before running `npm run test:coverage`. (Root `npm ci` does not walk
             # into actions/create-pr — there are no npm workspaces here.)
             - name: Install the self-contained PR Action's dependencies
               working-directory: actions/create-pr
               run: npm ci
-            # Static quality gate (enforced `npm run quality`): Prettier format check + ESLint
-            # (TS7 side-by-side via the `postinstall` shim in scripts/install-eslint-ts6.mjs) + Stylelint
-            # (CSS) + Markdownlint (docs) + Secretlint (secrets) + full TypeScript type check (`typecheck`).
-            # Runs first so style/rule/type violations fail fast before the expensive test + build + E2E
-            # steps below, without needing a separate runner install.
-            - run: npm run quality
-            - run: npm run ci
+            # Unit tests + coverage (Vitest + jsdom; no Electron build needed).
+            - run: npm run test:coverage
 
             # Upload the coverage report (text + html + lcov) so it can be inspected from the run.
             - name: Upload coverage report
@@ -153,15 +185,32 @@ jobs:
                   fail_ci_if_error: false
                   token: ${{ secrets.CODECOV_TOKEN }}
 
-            # ── E2E: drive the REAL Electron app via Playwright ──────────────────
-            # global-setup.ts starts a shared Vite dev server and waits for
-            # dist-electron/index.js (globalSetup + launch.ts consume it), so the
-            # main process must be built first. Electron runs headful, so a virtual
-            # display (xvfb) is required on headless Linux runners. These steps are
-            # merged into the test job to reuse its single `npm ci` + one build
-            # instead of spinning up a separate runner (saves one full install + build).
+    # ── E2E: drive the REAL Electron app via Playwright (after `quality`, parallel with ut) ──
+    # global-setup.ts starts a shared Vite dev server and waits for
+    # dist-electron/index.js (globalSetup + launch.ts consume it), so the
+    # main process must be built first. Electron runs headful, so a virtual
+    # display (xvfb) is required on headless Linux runners. This job is a separate
+    # runner from `ut` (it needs its own `npm ci` + one `npm run build`), which is
+    # the trade-off for running unit tests and e2e concurrently instead of chained.
+    e2e:
+        name: E2E (Electron)
+        runs-on: ubuntu-latest
+        needs: [quality]
+        # Elevated for dorny/test-reporter (e2e JUnit) + Codecov annotations.
+        permissions:
+            contents: read
+            pull-requests: write
+            checks: write
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-node@v7
+              with: { node-version: 22, cache: npm }
+            - run: npm ci
+            # Install Playwright browsers + OS deps for the Electron-driven specs.
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
+            # The main process must be built before e2e (global-setup waits for
+            # dist-electron/index.js). This build is local to the e2e runner.
             - run: npm run build
             # Reuse the Electron download cache (~/.cache/electron) so the
             # first-time lazy install (electron/index.js's install.js, triggered by
@@ -240,12 +289,12 @@ jobs:
 
     # Always runs (PR / non-main push / main push / tag push / dispatch): three-platform build + dist.
     # This is the only three-platform build in the whole repo — PRs use it for validation, main/tag pushes for shipping,
-    # avoiding duplicate builds.
-    # The version comes from the test job's outputs (the single source of truth): injected only when non-empty;
+    # avoiding duplicate builds. Waits for BOTH test suites (ut + e2e) and the computed version.
+    # The version comes from the version job (the single source of truth): injected only when non-empty;
     # empty (PR) means the base package.json version is used.
     build:
         name: Build (${{ matrix.os }})
-        needs: [test]
+        needs: [ut, e2e, version]
         runs-on: ${{ matrix.os }}
         strategy:
             fail-fast: false
@@ -294,14 +343,14 @@ jobs:
 
             - run: npm ci
 
-            # Inject the version computed by the test job (the single source of truth).
+            # Inject the version computed by the version job (the single source of truth).
             # Non-empty (main/tag/dispatch) → the app's "About" and file names carry the full rolling version;
             # empty (PR) → not injected, the base package.json version is used.
-            - name: Inject version from test
-              if: needs.test.outputs.version != ''
+            - name: Inject version from version job
+              if: needs.version.outputs.version != ''
               shell: bash
               run: |
-                  npm version --no-git-tag-version --no-commit-hooks "${{ needs.test.outputs.version }}"
+                  npm version --no-git-tag-version --no-commit-hooks "${{ needs.version.outputs.version }}"
 
             - run: npm run build
             - run: npm run dist:${{ matrix.target }}
@@ -310,7 +359,7 @@ jobs:
             # Only upload final release formats (dmg/zip/AppImage), excluding unpacked dirs and other intermediates
             # to drastically shrink the artifact size.
             - name: Upload artifact (release path only)
-              if: needs.test.outputs.version != ''
+              if: needs.version.outputs.version != ''
               uses: actions/upload-artifact@v7
               with:
                   name: ${{ matrix.artifact-name }}
@@ -323,18 +372,18 @@ jobs:
 
     # Download the three-platform artifacts → push the tag (via API, idempotent) → generate SHA256SUMS →
     # create a draft release (not published).
-    # File names already carry the full version (injected by build from the test job's version), so no renaming is needed;
+    # File names already carry the full version (injected by build from the version job's version), so no renaming is needed;
     # only the allow-listed files are published, so nothing needs to be deleted.
-    # "Tag push" is deferred here from the test job: create the git ref via gh api (no checkout needed);
+    # "Tag push" is deferred here from the version job: create the git ref via gh api (no checkout needed);
     # if the tag already exists (e.g. on a re-run) it is skipped to avoid conflicts. Whether or not the draft is kept,
     # the tag remains (for traceability).
     release:
         name: Draft Release
-        # Needs both build (download artifacts) and test (read its computed tag) directly.
-        # Note: the needs context only exposes outputs of *directly* depended-on jobs; test is an indirect
-        # dependency of build, so if it were not listed here, needs.test.* would resolve to undefined (invalid CI context error).
-        needs: [build, test]
-        if: needs.test.outputs.tag != ''
+        # Needs both build (download artifacts) and version (read its computed tag) directly.
+        # Note: the needs context only exposes outputs of *directly* depended-on jobs; version is an indirect
+        # dependency of build, so if it were not listed here, needs.version.* would resolve to undefined (invalid CI context error).
+        needs: [build, version]
+        if: needs.version.outputs.tag != ''
         permissions:
             contents: write # Push tag + create draft release needs write permission.
         runs-on: ubuntu-latest
@@ -346,7 +395,7 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   set -e
-                  TAG="${{ needs.test.outputs.tag }}"
+                  TAG="${{ needs.version.outputs.tag }}"
                   # Idempotent: skip if it already exists; if creation fails, re-check whether it already exists
                   # (a concurrent re-run), and only error if it still cannot be created.
                   # Swallow stdout only, keep stderr so gh api anomalies (e.g. returning HTML) can be diagnosed.
@@ -381,8 +430,8 @@ jobs:
             - name: Create draft Release
               uses: softprops/action-gh-release@v3
               with:
-                  name: ${{ needs.test.outputs.tag }}
-                  tag_name: ${{ needs.test.outputs.tag }}
+                  name: ${{ needs.version.outputs.tag }}
+                  tag_name: ${{ needs.version.outputs.tag }}
                   draft: true
                   prerelease: false
                   overwrite_files: true # On a re-release (re-run on the same tag), overwrite the same-named files of the existing draft instead of failing.
