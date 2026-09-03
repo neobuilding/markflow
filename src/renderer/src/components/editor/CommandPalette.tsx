@@ -15,10 +15,11 @@ export function CommandPalette(): React.ReactElement | null {
 
   useEffect(() => {
     if (searchOpen) {
-      setTimeout(() => {
+      const id = setTimeout(() => {
         inputRef.current?.focus()
         setSelectedIndex(0)
       }, 50)
+      return () => clearTimeout(id)
     } else {
       setSearchQuery('')
     }
