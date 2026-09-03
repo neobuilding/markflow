@@ -368,6 +368,13 @@ export function registerDocumentHandlers(
   startFolderWatching({
     onFileAdded: (filePath) => syncAddedFile(filePath),
     onFileRemoved: (filePath) => {
+      // A rename reaches chokidar as `unlink <old>` + `add <new>`, and the two are not
+      // paired: either can be delivered long after the filesystem has moved on. Renaming
+      // a.md -> b.md -> back to a.md therefore replays an `unlink` for a.md at a moment
+      // when that path EXISTS again and is still the open document — deleting the record
+      // then closed the file (and emptied the sidebar). Never trust the removal while
+      // the file is still on disk; a genuinely deleted file is gone by now.
+      if (existsSync(filePath)) return
       const existing = storeGetByPath(filePath)
       if (!existing) return
       storeDelete(existing.id)
@@ -499,7 +506,12 @@ export function registerDocumentHandlers(
       const existing = storeGet(id)
       if (!existing) return null
 
-      const newTitle = updates.title ?? existing.title
+      // Titles are stored WITHOUT the Markdown extension — that is how `import`
+      // derives them and how the rename below re-appends the file's own extension.
+      // The renderer sends the name as the title bar shows it (`notes.md`), so strip
+      // the extension once here; otherwise a rename would build `notes.md.md`.
+      const newTitle =
+        updates.title === undefined ? existing.title : stripMarkdownExt(updates.title)
       const newContent = updates.content ?? existing.content
       const wordCount = countWords(newContent)
 
@@ -555,7 +567,10 @@ export function registerDocumentHandlers(
       if (!existing) return null
 
       const content = updates.content ?? existing.content
-      const title = updates.title ?? existing.title
+      // The document is being re-pointed at a brand-new file the user picked, so the
+      // file name is the title — the caller's (possibly stale, possibly
+      // extension-bearing) title would leave the two out of sync.
+      const title = stripMarkdownExt(basename(newFilePath))
       const wordCount = countWords(content)
       const now = Date.now()
 

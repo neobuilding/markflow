@@ -112,12 +112,36 @@ describe('useLocalDocument — dirty computation', () => {
   })
 })
 
+// The draft title is kept in DISPLAY form: the file name WITH its extension.
+const baseDisplayTitle = 'hi.md'
+
+describe('useLocalDocument — title draft is in display form', () => {
+  it('seeds the draft from the file name (with extension), not the extension-free title', () => {
+    // `title` is 'Hi' but the file is hi.md — the title bar must show `hi.md`.
+    const { result, unmount } = renderLocalDocument(baseDoc)
+    expect(result.current.localTitle).toBe(baseDisplayTitle)
+    unmount()
+  })
+
+  it('falls back to `<title>.md` for a memory-only draft that has no file yet', () => {
+    const { result, unmount } = renderLocalDocument({ ...baseDoc, filePath: '' })
+    expect(result.current.localTitle).toBe('Hi.md')
+    unmount()
+  })
+
+  it('shows nothing for a memory-only draft with a blank title', () => {
+    const { result, unmount } = renderLocalDocument({ ...baseDoc, filePath: '', title: '' })
+    expect(result.current.localTitle).toBe('')
+    unmount()
+  })
+})
+
 describe('useLocalDocument — handleTitleSave', () => {
   it('reverts to the saved title and clears dirty when the new title is empty', () => {
     const { result } = renderLocalDocument(baseDoc)
     act(() => result.current.setLocalTitle('   '))
     act(() => result.current.handleTitleSave())
-    expect(result.current.localTitle).toBe(baseDoc.title)
+    expect(result.current.localTitle).toBe(baseDisplayTitle)
     expect(result.current.dirty).toBe(false)
   })
 
@@ -128,12 +152,79 @@ describe('useLocalDocument — handleTitleSave', () => {
     expect(result.current.dirty).toBe(true)
   })
 
+  it('adopts the new name immediately so the title bar shows it without a save', () => {
+    // The whole point of showing the draft: Enter is enough, no Save required.
+    const { result } = renderLocalDocument(baseDoc)
+    act(() => result.current.setLocalTitle('Renamed.md'))
+    act(() => result.current.handleTitleSave())
+    expect(result.current.localTitle).toBe('Renamed.md')
+    expect(result.current.dirty).toBe(true)
+  })
+
+  it('re-attaches the extension when only the base name was typed', () => {
+    // Typing `Renamed` for `hi.md` must yield `Renamed.md`, not a bare `Renamed`.
+    const { result } = renderLocalDocument(baseDoc)
+    act(() => result.current.setLocalTitle('Renamed'))
+    act(() => result.current.handleTitleSave())
+    expect(result.current.localTitle).toBe('Renamed.md')
+    expect(result.current.dirty).toBe(true)
+  })
+
   it('clears dirty when the trimmed title equals the saved title', () => {
     const { result } = renderLocalDocument(baseDoc)
-    act(() => result.current.setLocalTitle('  Hi  '))
+    act(() => result.current.setLocalTitle('  hi.md  '))
     act(() => result.current.handleTitleSave())
     expect(result.current.dirty).toBe(false)
-    expect(result.current.localTitle).toBe('  Hi  ')
+    expect(result.current.localTitle).toBe(baseDisplayTitle)
+  })
+
+  it('does not clear dirty for content edits committed together with an unchanged title', () => {
+    const { result } = renderLocalDocument(baseDoc)
+    act(() => result.current.handleContentChange('edited\n'))
+    expect(result.current.dirty).toBe(true)
+    // Re-committing the same title must not wipe the unsaved content.
+    act(() => result.current.handleTitleSave())
+    expect(result.current.dirty).toBe(true)
+  })
+
+  it('keeps an unsaved rename across an unrelated content edit', () => {
+    const { result } = renderLocalDocument(baseDoc)
+    act(() => result.current.setLocalTitle('Renamed.md'))
+    act(() => result.current.handleTitleSave())
+    expect(result.current.dirty).toBe(true)
+    // Editing the content and then reverting it byte-for-byte must not drop the rename.
+    act(() => result.current.handleContentChange('scratch\n'))
+    act(() => result.current.handleContentChange(baseDoc.content))
+    expect(result.current.dirty).toBe(true)
+  })
+})
+
+describe('useLocalDocument — start/cancel title edit', () => {
+  it('restores the draft as it was when the edit started', () => {
+    const { result } = renderLocalDocument(baseDoc)
+    act(() => result.current.startTitleEdit())
+    act(() => result.current.setLocalTitle('typo.md'))
+    act(() => result.current.cancelTitleEdit())
+    expect(result.current.localTitle).toBe(baseDisplayTitle)
+    expect(result.current.editingTitle).toBe(false)
+  })
+
+  it('restores an already committed (but unsaved) rename when the next edit is cancelled', () => {
+    const { result } = renderLocalDocument(baseDoc)
+    act(() => result.current.setLocalTitle('Renamed.md'))
+    act(() => result.current.handleTitleSave())
+    // Open the rename input again, type, then Escape: the committed rename survives.
+    act(() => result.current.startTitleEdit())
+    act(() => result.current.setLocalTitle('changed.md'))
+    act(() => result.current.cancelTitleEdit())
+    expect(result.current.localTitle).toBe('Renamed.md')
+  })
+
+  it('enters the edit on startTitleEdit', () => {
+    const { result } = renderLocalDocument(baseDoc)
+    expect(result.current.editingTitle).toBe(false)
+    act(() => result.current.startTitleEdit())
+    expect(result.current.editingTitle).toBe(true)
   })
 })
 
@@ -200,9 +291,16 @@ describe('useLocalDocument — document switch (layout effect)', () => {
     // paints a frame holding the previous document's text.
     act(() => h.result.current.handleContentChange('unsaved edit\n'))
     expect(h.result.current.dirty).toBe(true)
-    h.setDoc({ ...baseDoc, id: 'doc-2', title: 'Second', content: '# Second\n' })
+    h.setDoc({
+      ...baseDoc,
+      id: 'doc-2',
+      title: 'Second',
+      filePath: '/a/second.md',
+      content: '# Second\n',
+    })
     expect(h.result.current.localContent).toBe('# Second\n')
-    expect(h.result.current.localTitle).toBe('Second')
+    // Display form: the new document's file name with its extension.
+    expect(h.result.current.localTitle).toBe('second.md')
     expect(h.result.current.dirty).toBe(false)
     expect(useUIStore.getState().dirty).toBe(false)
     h.unmount()
@@ -214,7 +312,7 @@ describe('useLocalDocument — document switch (layout effect)', () => {
     // return early instead of resetting the draft again.
     const h = renderLocalDocument(baseDoc, { strict: true })
     expect(h.result.current.localContent).toBe(baseDoc.content)
-    expect(h.result.current.localTitle).toBe(baseDoc.title)
+    expect(h.result.current.localTitle).toBe(baseDisplayTitle)
     expect(h.result.current.dirty).toBe(false)
     h.unmount()
   })

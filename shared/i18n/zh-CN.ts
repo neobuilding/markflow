@@ -40,6 +40,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'editor.export': '导出为 HTML…',
   'editor.exportShortcut': '导出为 HTML… (⌘⇧E)',
   'editor.closeFile': '关闭文件',
+  'editor.renameTitle': '重命名文件',
   'editor.toggleSidebarShortcut': '切换侧边栏 (⌘\\)',
   'editor.switchReadOnly': '切换到只读模式',
   'editor.switchEdit': '切换到编辑模式',

@@ -281,6 +281,32 @@ describe('documents IPC — update', () => {
     expect(updated.filePath).toBe(join(stableDocsRoot, 'MarkFlow', 'RenTarget-1.md'))
     expect(readFileSync(updated.filePath, 'utf-8')).toBe('a')
   })
+
+  it('strips a Markdown extension from the incoming title so a rename does not double it', async () => {
+    // The title bar shows `name.ext`, so the renderer sends `Renamed.md`. The stored
+    // title is extension-free and the rename re-appends the extension itself — without
+    // stripping, the file would become `Renamed.md.md`.
+    const created = await call('documents:create', {
+      title: 'RenameExt',
+      content: 'x',
+      memoryOnly: false,
+    })
+    const updated = await call('documents:update', created.id, { title: 'ExtStripped.md' })
+    expect(updated.title).toBe('ExtStripped')
+    expect(updated.filePath).toBe(join(dirname(created.filePath), 'ExtStripped.md'))
+  })
+
+  it('does not rename when the requested title differs only by the extension', async () => {
+    // Typing the same base name (with or without the extension) is not a rename.
+    const created = await call('documents:create', {
+      title: 'Keep',
+      content: 'x',
+      memoryOnly: false,
+    })
+    const updated = await call('documents:update', created.id, { title: 'Keep.md' })
+    expect(updated.filePath).toBe(created.filePath)
+    expect(updated.title).toBe('Keep')
+  })
 })
 
 describe('documents IPC — delete', () => {
@@ -333,6 +359,24 @@ describe('documents IPC — saveAs', () => {
     expect(updated.filePath).toBe(newPath)
     expect(readFileSync(newPath, 'utf-8')).toBe('saved')
     expect(readFileSync(created.filePath, 'utf-8')).toBe('orig')
+  })
+
+  it('derives the stored title from the new file path', async () => {
+    // The document is re-pointed at a file the user picked, so that file name IS the
+    // title. Keeping the caller's title would leave title and filePath out of sync
+    // (and would store an extension-bearing title).
+    const created = await call('documents:create', {
+      title: 'Old',
+      content: 'orig',
+      memoryOnly: false,
+    })
+    const newPath = join(fakeApp.getPath(), 'brand new name.md')
+    const updated = await call('documents:save-as', created.id, newPath, {
+      title: 'Old.md',
+      content: 'saved',
+    })
+    expect(updated.title).toBe('brand new name')
+    expect(updated.filePath).toBe(newPath)
   })
 })
 
@@ -513,6 +557,34 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
   it('ignores a removal for a file the store does not track', () => {
     sentFolderChanged.length = 0
     __emitFolderEvent('unlink', join(tmpdir(), 'tracked-by-nobody.md'))
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('ignores a removal for a path that is still on disk (stale rename unlink)', async () => {
+    // Regression: renaming a.md -> b.md and back to a.md replays the step-1 `unlink`
+    // for a.md. chokidar reports a rename as an unpaired `unlink` + `add`, so that
+    // event can be delivered AFTER the file exists again — at which point a.md is the
+    // OPEN document. Deleting the record on the stale event closed the file and
+    // emptied the sidebar, which is what made it look like the workspace closed.
+    const dir = tmpDir('mf-watch-rename-')
+    const original = await importDoc(dir, 'a.md')
+    const aPath = original.filePath
+    const bPath = join(dir, 'b.md')
+
+    const renamed = await call('documents:update', original.id, {
+      title: 'b',
+      content: '# imported',
+    })
+    expect(renamed.filePath).toBe(bPath)
+    const back = await call('documents:update', original.id, { title: 'a', content: '# imported' })
+    expect(back.filePath).toBe(aPath)
+
+    sentFolderChanged.length = 0
+    // The step-1 unlink, delivered late: a.md is back on disk and is the open doc.
+    __emitFolderEvent('unlink', aPath)
+    __flushFolderChanged()
+
+    expect(docs.get(original.id)).toBeTruthy()
     expect(sentFolderChanged).toEqual([])
   })
 
@@ -977,7 +1049,7 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     expect(await call('documents:save-as', 'nope', join(dir, 'x.md'), {})).toBeNull()
   })
 
-  it('save-as falls back to the existing content/title when they are omitted', async () => {
+  it('save-as falls back to the existing content when it is omitted', async () => {
     const created = await call('documents:create', {
       title: 'SaveFallback',
       content: 'orig-content',
@@ -986,7 +1058,9 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     const dir = fakeApp.getPath()
     const newPath = join(dir, 'saved-fallback.md')
     const updated = await call('documents:save-as', created.id, newPath, {})
-    expect(updated.title).toBe('SaveFallback')
+    // The title is NOT inherited: the document is re-pointed at a file the user
+    // picked, so that file name is the title.
+    expect(updated.title).toBe('saved-fallback')
     expect(updated.content).toBe('orig-content')
     expect(readFileSync(newPath, 'utf-8')).toBe('orig-content')
   })

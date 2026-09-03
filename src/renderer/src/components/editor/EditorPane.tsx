@@ -23,7 +23,7 @@ import {
   FileOutput,
   Copy,
 } from 'lucide-react'
-import { cn, baseName } from '../../lib/utils'
+import { cn, baseName, displayTitle, stripMarkdownExt, withMarkdownExt } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
   useDocument,
@@ -73,7 +73,8 @@ export function EditorPane(): React.ReactElement {
     localTitle,
     setLocalTitle,
     editingTitle,
-    setEditingTitle,
+    startTitleEdit,
+    cancelTitleEdit,
     handleContentChange,
     handleTitleSave,
     dirty,
@@ -101,7 +102,9 @@ export function EditorPane(): React.ReactElement {
     /* v8 ignore next -- defensive: the save-as menu item is disabled in read-only mode, so this is never hit */
     if (!useUIStore.getState().editable) return
     const { localContent, localTitle } = draftRef.current
-    const defaultPath = doc?.filePath || `${localTitle.trim() || 'Untitled'}.md`
+    // The draft title already carries the extension (`notes.md`), so it is used as-is
+    // rather than getting a second `.md` appended.
+    const defaultPath = doc?.filePath || withMarkdownExt(localTitle.trim() || 'Untitled')
     // Save As: follow the source document's on-disk line ending (the new file is a copy of this document)
     const eol = doc?.filePath
       ? // v8 mis-attributes the executed `await ….catch()` branch of this ternary to
@@ -124,13 +127,15 @@ export function EditorPane(): React.ReactElement {
         id,
         filePath: newFilePath,
         updates: {
-          title: localTitle.trim() || 'Untitled',
+          // The stored title is extension-free — the main process re-appends the file's
+          // own extension when it renames — so strip the one the title bar shows.
+          title: stripMarkdownExt(localTitle.trim()) || 'Untitled',
           content: toDiskFormat(localContent, eol),
         },
       })
       /* v8 ignore next -- defensive: the saveAs IPC always resolves to a Document on success; the null branch is only hit on a contract violation (saveAs returning null), which is unreachable in normal flow */
       if (updated) {
-        markSaved(updated.content, updated.title)
+        markSaved(updated.content, displayTitle(updated))
         useUIStore.getState().setJustSaved(true)
         useUIStore.getState().setIsNewUnsaved(false) // document now lives at the chosen path
       }
@@ -169,12 +174,13 @@ export function EditorPane(): React.ReactElement {
       const updated = await updateMut.mutateAsync({
         id,
         updates: {
-          title: localTitle.trim() || 'Untitled',
+          // Extension-free: see the Save As comment above.
+          title: stripMarkdownExt(localTitle.trim()) || 'Untitled',
           content: toDiskFormat(localContent, eol),
         },
       })
       if (updated) {
-        markSaved(updated.content, updated.title)
+        markSaved(updated.content, displayTitle(updated))
         useUIStore.getState().setJustSaved(true)
       }
     } catch (e) {
@@ -195,7 +201,7 @@ export function EditorPane(): React.ReactElement {
     try {
       const updated = await reloadMut.mutateAsync(id)
       if (updated) {
-        markSaved(updated.content, updated.title)
+        markSaved(updated.content, displayTitle(updated))
         useUIStore.getState().setJustSaved(true)
         useUIStore.getState().clearExternalChange()
       } else {
@@ -552,10 +558,14 @@ export function EditorPane(): React.ReactElement {
   // Feed '' while loading so both panes are genuinely empty the moment the
   // overlay lifts, instead of flashing the previous document's text for a frame.
   const editorContent = showLoading ? '' : localContent
-  // Title is only rendered inside the toolbar block, which is only mounted when
-  // `doc` is present (the empty state replaces this whole view otherwise), so
-  // `doc?.title` is never null here — defensive fallback only.
-  const title = doc?.title ?? ''
+  // The title bar shows the DRAFT title, which is kept in display form
+  // (`notes.md`) by useLocalDocument. Showing the draft rather than `doc.title` is
+  // what makes a rename appear immediately on Enter: the new name is adopted into
+  // the draft without waiting for the Save that writes it to disk.
+  // Empty while the document is still in flight — the draft still holds the previous
+  // document's title until the switch effect runs, and the loading overlay covers the
+  // panes but not the toolbar.
+  const title = doc ? localTitle : ''
   // The external-change dialog is controlled by the `externalChange` store flag,
   // not by onOpenChange, so `onOpenChange(true)` (opening) never occurs in
   // practice — only `false` (closing) fires and clears the change.
@@ -576,37 +586,49 @@ export function EditorPane(): React.ReactElement {
 
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
 
-          {/* Title */}
+          {/* Title: display-only, with its own Rename button.
+              Clicking the name itself no longer starts an edit — that affordance was
+              invisible — so the pencil next to it is the single entry point. */}
           <div className="flex-1 min-w-0 mr-2">
-            {editable ? (
-              editingTitle ? (
-                <input
-                  value={localTitle}
-                  onChange={(e) => setLocalTitle(e.target.value)}
-                  onBlur={handleTitleSave}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleTitleSave()
-                    if (e.key === 'Escape') {
-                      setLocalTitle(title)
-                      setEditingTitle(false)
-                    }
-                  }}
-                  className="w-full text-sm font-semibold bg-transparent border-none outline-none text-[var(--color-text-primary)] focus:ring-0"
-                  autoFocus
-                />
-              ) : (
-                <button
+            {editable && editingTitle ? (
+              <input
+                value={localTitle}
+                onChange={(e) => setLocalTitle(e.target.value)}
+                onBlur={handleTitleSave}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleTitleSave()
+                  if (e.key === 'Escape') cancelTitleEdit()
+                }}
+                className="w-full text-sm font-semibold bg-transparent border-none outline-none text-[var(--color-text-primary)] focus:ring-0"
+                autoFocus
+              />
+            ) : (
+              <div className="flex items-center gap-1 min-w-0">
+                <span
                   data-testid="title-btn"
-                  onClick={() => setEditingTitle(true)}
-                  className="text-sm font-semibold text-[var(--color-text-primary)] hover:text-accent transition-colors truncate max-w-[280px] text-left block"
+                  title={title}
+                  className="text-sm font-semibold text-[var(--color-text-primary)] truncate max-w-[280px] block"
                 >
                   {title}
-                </button>
-              )
-            ) : (
-              <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate max-w-[280px] block">
-                {title}
-              </span>
+                </span>
+                {editable && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 shrink-0"
+                        onClick={startTitleEdit}
+                        aria-label={t('editor.renameTitle')}
+                        data-testid="rename-title-btn"
+                      >
+                        <PenLine size={12} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t('editor.renameTitle')}</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
             )}
           </div>
 
