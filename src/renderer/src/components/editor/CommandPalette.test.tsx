@@ -38,6 +38,16 @@ describe('CommandPalette', () => {
     expect(screen.getByText('Banana')).toBeInTheDocument()
   })
 
+  it('focuses the search input shortly after opening', async () => {
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('a')
+    render(<CommandPalette />)
+    const input = await screen.findByPlaceholderText('Search documents…')
+    // The open effect schedules inputRef.focus() + setSelectedIndex(0) on a 50ms
+    // timer; awaiting focus drives that callback so its lines are covered.
+    await waitFor(() => expect(input).toHaveFocus(), { timeout: 1000 })
+  })
+
   it('selects a result and closes the palette', async () => {
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('a')
