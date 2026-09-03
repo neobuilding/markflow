@@ -50,5 +50,28 @@ export default defineConfig({
     {
       name: 'electron-app',
     },
+    // ── Performance: one CI gate + one on-demand diagnostic ──────────────────
+    //
+    // These are separate projects because Playwright runs EVERY project when no
+    // --project is given, so `npm run e2e` lists its projects explicitly
+    // (see package.json): electron-app + electron-perf-gate.
+    //
+    //   electron-perf-gate  → runs in CI on every PR, has hard thresholds.
+    //   electron-perf       → diagnostic only, no thresholds, run by hand.
+    {
+      name: 'electron-perf-gate',
+      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf'),
+      testMatch: /switch-perf-gate\.e2e\.spec\.ts$/,
+      timeout: 600_000,
+      // Inherits the global retries (1 on CI) so a noisy shared runner cannot
+      // turn a one-off scheduling hiccup into a red build.
+    },
+    {
+      name: 'electron-perf',
+      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf'),
+      testMatch: /switch-perf\.e2e\.spec\.ts$/,
+      timeout: 600_000,
+      retries: 0,
+    },
   ],
 })

@@ -1,9 +1,16 @@
 // createWindow: builds the main BrowserWindow. Extracted from index.ts.
-import { BrowserWindow, screen, shell } from 'electron'
+import { BrowserWindow, screen, shell, ipcMain } from 'electron'
 import { join, dirname } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST } from './lib/app-paths'
-import { setMainWindow, getIsQuiting } from './state'
+import {
+  setMainWindow,
+  getIsQuiting,
+  setIsQuiting,
+  setReadyToQuit,
+  getQuitPending,
+  setQuitPending,
+} from './state'
 
 // ESM shim for __dirname: under "type": "module" vite-plugin-electron no longer
 // injects __dirname via esmShim() (that path only runs for CJS output), so we
@@ -28,7 +35,6 @@ export function createWindow(): void {
     x: workArea.x + Math.floor((workArea.width - w) / 2),
     y: workArea.y + Math.floor((workArea.height - h) / 2),
   }
-  const startMaximized = true
 
   const win = new BrowserWindow({
     width: winBounds.width,
@@ -72,9 +78,12 @@ export function createWindow(): void {
     } catch {
       /* ignore */
     }
-    if (startMaximized) {
-      win.maximize()
-    }
+    // Always maximized: window size is not persisted, so the bounds above only
+    // serve as the restore size when the user un-maximizes. There is no
+    // "start un-maximized" mode — the previous `if (startMaximized)` guarded a
+    // constant `true`, so its else-branch was unreachable dead code that also
+    // showed up as an uncoverable branch in the coverage gate.
+    win.maximize()
     win.show()
   })
 
@@ -106,9 +115,55 @@ export function createWindow(): void {
   // Only once the renderer replies with app:quit-allowed do we set isQuiting and let the
   // close proceed. This guarantees the prompt always happens while the window is alive,
   // eliminating the race where before-quit fires after the window is already destroyed.
+  //
+  // Safety net mirrors lifecycle.ts's before-quit grace period: if the renderer never
+  // replies (crashed / detached / dev server gone in e2e), force the quit after 5s so
+  // the app can never get stuck un-exitable — both app.quit() (before-quit) and the
+  // window X (this handler) paths are now bounded. Without this, closing the window on
+  // a dead renderer left the main process waiting forever and the user could not even
+  // close the window by hand (every X re-armed the preventDefault).
+  //
+  // The safety net is DISARMED when the renderer sends app:quit-pending (it is actively
+  // showing the unsaved-changes confirm box). Without that, a dirty workspace would
+  // force-quit 5s after the prompt opened, silently discarding the user's edits — see
+  // the dirty-confirm regression. The renderer sends app:quit-pending synchronously
+  // from tryCloseWorkspace() before opening the async dialog, so there's no race
+  // between the prompt opening and the safety net firing.
+  let closeForceTimer: NodeJS.Timeout | null = null
+  ipcMain.on('app:quit-pending', () => {
+    // Renderer is showing the unsaved-changes confirm — disarmed the safety net so
+    // the user has unlimited time to decide. Registered here (not in lifecycle.ts) so
+    // the close handler and the pending signal share the same closeForceTimer handle.
+    setQuitPending(true)
+    if (closeForceTimer) {
+      clearTimeout(closeForceTimer)
+      closeForceTimer = null
+    }
+  })
   win.on('close', (event) => {
     if (getIsQuiting()) return
+    // Every close attempt starts with the safety net ARMED. quitPending is a
+    // PER-ATTEMPT signal — the renderer sends app:quit-pending only once it is
+    // actually showing the confirm box — so a leftover `true` from a prompt the
+    // user dismissed must not carry over: it would disarm the net for every later
+    // attempt too. Then a renderer that died in the meantime (crashed tab, gone
+    // dev server) could never be force-closed — an un-exitable app, which is the
+    // exact failure the net exists to prevent.
+    setQuitPending(false)
     event.preventDefault()
     win.webContents.send('app:request-quit')
+    if (closeForceTimer) clearTimeout(closeForceTimer)
+    closeForceTimer = setTimeout(() => {
+      // Renderer never replied within the grace period AND is not showing the
+      // unsaved-changes prompt (app:quit-pending would have cleared this timer).
+      // Only then force the quit so the window (and, via window-all-closed, the app)
+      // can actually exit. The quitPending check is belt-and-suspenders: if the
+      // timer was already cleared by app:quit-pending this callback won't run, but
+      // guard anyway in case of a late re-arm.
+      if (getIsQuiting() || getQuitPending()) return
+      setIsQuiting(true)
+      setReadyToQuit(true)
+      if (!win.isDestroyed()) win.close()
+    }, 5000)
   })
 }

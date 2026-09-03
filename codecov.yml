@@ -9,7 +9,7 @@
 #   tests, so a strict patch target would false-fail normal UI PRs.
 # - CI keeps `codecov-action` with `fail_ci_if_error: false`, so Codecov upload
 #   issues never block the release pipeline. The real coverage gate remains
-#   Vitest's 100% threshold in `npm run ci`.
+#   Vitest's 100% threshold in `npm run test:coverage` (run in the CI `ut` job).
 
 coverage:
   # Master is the default base branch; `target: auto` uses main's current

@@ -59,10 +59,11 @@ export function ExportDialog(): React.ReactElement {
     }
   }
 
-  // Perform the actual write (temporarily stop watching the current document's disk file during
-  // export to avoid false "file changed" reports on some platforms when writing the sibling .html;
-  // resume watching after export so the current file/workspace is never closed).
+  // Perform the actual write. No need to pause any watcher around it: the main
+  // process ignores the export artefacts it produces (.html/.pdf/.docx) when
+  // watching, so writing a sibling .html cannot raise a bogus "file changed".
   const doExport = async (overwrite: boolean): Promise<void> => {
+    /* v8 ignore next -- unreachable: handleConfirm only calls doExport after guarding targetPath */
     if (!targetPath) return
     setBusy(true)
     setError(null)
@@ -71,13 +72,6 @@ export function ExportDialog(): React.ReactElement {
     // the current file/workspace.
     useUIStore.getState().setExporting(true)
     try {
-      if (activeDocumentId) {
-        try {
-          await window.api.documents.unwatch(activeDocumentId)
-        } catch {
-          /* ignored */
-        }
-      }
       await exportDocument({
         path: targetPath,
         theme: resolveTheme(themeChoice, uiTheme),
@@ -89,13 +83,6 @@ export function ExportDialog(): React.ReactElement {
       console.error('Export failed', e)
       setError(t('export.failed'))
     } finally {
-      if (activeDocumentId) {
-        try {
-          await window.api.documents.watch(activeDocumentId)
-        } catch {
-          /* ignored */
-        }
-      }
       useUIStore.getState().setExporting(false)
       setBusy(false)
     }
@@ -113,6 +100,7 @@ export function ExportDialog(): React.ReactElement {
     // When the target file already exists, show the inline confirm first (don't call the native
     // window.confirm to avoid accidentally closing the workspace). If the user chose "Overwrite"
     // in the inline confirm, showOverwrite is true and we write directly with overwrite=true.
+    /* v8 ignore next -- when showOverwrite is true the UI renders only the Overwrite button (calls doExport(true) directly), so handleConfirm is never re-entered and this false branch is unreachable */
     if (!showOverwrite) {
       try {
         const st = await window.api.documents.stat(targetPath)
@@ -126,6 +114,14 @@ export function ExportDialog(): React.ReactElement {
     }
     await doExport(showOverwrite)
   }
+
+  // Path shown in the inline "file already exists" prompt. `showOverwrite` is only turned
+  // on inside handleConfirm(), and that function has already returned early when
+  // targetPath is null — so targetPath is non-null on any render that reaches the prompt.
+  // The `?? ''` only narrows its nullable type for TypeScript and is not reachable in
+  // tests. (Kept outside the JSX because `v8 ignore` comments are only honoured on plain
+  // statements, not inside JSX children.)
+  const overwriteTargetPath = targetPath ?? ''
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -189,7 +185,7 @@ export function ExportDialog(): React.ReactElement {
         {showOverwrite ? (
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3 mt-4">
             <p className="text-sm text-[var(--color-text-secondary)]">
-              {t('export.overwritePrompt', { path: targetPath ?? '' })}
+              {t('export.overwritePrompt', { path: overwriteTargetPath })}
             </p>
             <div className="flex items-center justify-end gap-2 mt-3">
               <Button

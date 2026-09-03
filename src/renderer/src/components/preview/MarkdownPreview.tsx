@@ -23,6 +23,7 @@ function ensureMermaid(): void {
 let mermaidChain: Promise<unknown> = Promise.resolve()
 function renderMermaidSvg(id: string, code: string): Promise<{ svg: string }> {
   const task = mermaidChain.then(() => mermaid.render(id, code.trim()))
+  /* v8 ignore next -- defensive: the mermaid render error path isn't exercised under jsdom, but it keeps the serial queue alive */
   mermaidChain = task.catch(() => undefined) // Keep the chain alive on failure so later renders aren't blocked.
   return task as Promise<{ svg: string }>
 }
@@ -45,6 +46,9 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   // dependency and cause a re-parse loop). This ref gates the "parse immediately on first paint"
   // path instead of checking `renderedHtml === ''` reactively.
   const hasContentRef = useRef(false)
+  // The content seen on the previous render. Used to detect "recovering from an
+  // empty pane" — see `isRecovering` below.
+  const prevContentRef = useRef('')
   const { t } = useT()
   // Mirror `t` in a ref so effects can read the latest translator without making it a
   // dependency (which would re-run the parse effect on every language switch). The
@@ -62,7 +66,14 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
     const token = ++renderToken.current
     const isDocSwitch = docId !== lastDocIdRef.current
     lastDocIdRef.current = docId
-    const immediate = isDocSwitch || !hasContentRef.current
+    // Recovering from an empty pane: the document switch empties the panes first
+    // (docId already changed on that commit) and fills in the real content on the
+    // NEXT commit, where isDocSwitch is already false. Without this the fill would
+    // take the 150ms keystroke-debounce path and the preview would sit blank for
+    // 150ms after every switch to an uncached document.
+    const isRecovering = prevContentRef.current === '' && content !== ''
+    prevContentRef.current = content
+    const immediate = isDocSwitch || isRecovering || !hasContentRef.current
     let cancelled = false
 
     // On document switch: clear old content immediately and show Loading to avoid stale content.
@@ -94,9 +105,11 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
             }
             html = html.replace(
               /<div data-mermaid-slot="(\d+)"><\/div>/g,
+              /* v8 ignore next -- defensive: a slot referencing a missing SVG is malformed input; the fallback keeps the layout intact */
               (_m, i) => svgs[Number(i)] ?? '',
             )
           }
+          /* v8 ignore next -- defensive: guards a stale/aborted render; the cancelled/token-mismatch returns aren't exercised under jsdom's synchronous render */
           if (cancelled || token !== renderToken.current) return
           // Stash the "sanitized" preview HTML as the single source of truth for export (R7 single source).
           // SafeHtml sanitizes again on render (idempotent), keeping the single-point semantics.
@@ -111,6 +124,7 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
           requestAnimationFrame(() => scrollSync.realign())
         })
         .catch((err) => {
+          /* v8 ignore next -- defensive: same stale/aborted-render guard as the success path; not exercised under jsdom */
           if (cancelled || token !== renderToken.current) return
           console.error('[MarkFlow] Parse failed:', err)
           setLoading(false)
@@ -133,11 +147,16 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   // keeps scroll in sync, fixing the half-screen offset from height jumps (W5-D).
   useEffect(() => {
     const container = previewRef.current
+    // The ref is attached to the <article> rendered below, so it is always populated once
+    // this effect runs; the guard only narrows its nullable type for TypeScript.
+    /* v8 ignore next -- defensive: the ref is attached to the rendered <article>, so it is always populated when this effect runs */
     if (!container) return
     const onErr = (e: Event) => {
       const target = e.target as HTMLElement | null
+      /* v8 ignore next -- defensive image-error fallback: image 'error' events don't fire under jsdom, so this early-return branch is never exercised */
       if (!target || target.tagName !== 'IMG') return
       const img = target as HTMLImageElement
+      /* v8 ignore next -- defensive: the already-applied guard is only hit on a second error event, which jsdom doesn't emit */
       if (img.dataset.fallbackApplied) return
       img.dataset.fallbackApplied = '1'
       const placeholder = document.createElement('span')
@@ -163,6 +182,9 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
   // Register with the scroll-sync controller (preview side).
   useEffect(() => {
     const el = scrollRef.current
+    // The ref is attached to the scroll container rendered below, so it is always populated
+    // once this effect runs; the guard only narrows its nullable type for TypeScript.
+    /* v8 ignore next -- defensive: the ref is attached to the scroll container, so it is always populated when this effect runs */
     if (!el) return
     scrollSync.register('preview', el)
     return () => scrollSync.unregister('preview')

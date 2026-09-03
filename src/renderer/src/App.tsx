@@ -13,6 +13,7 @@ import { TooltipProvider } from './components/ui/tooltip'
 import { buildStandaloneHtml, resolveTheme } from './lib/export'
 import { getExportHtml } from './lib/exportStore'
 import { queryClient, DOCS_KEY } from './lib/queryClient'
+import { isDirInFolder } from './lib/utils'
 import { t, useT, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
 
@@ -42,6 +43,12 @@ export default function App(): React.ReactElement {
     // returning false and firing an async app-modal confirm instead of blocking. If the user
     // accepts, close the workspace and tell the main process it is safe to quit. Replaces the
     // old window.confirm, whose OS-modal close triggered a window blur that broke typing.
+    //
+    // BEFORE opening the async confirm, tell the main process we're about to prompt the
+    // user. This disarms the 5s "renderer is dead" safety net so the user has unlimited
+    // time to decide; without it, the safety net would force-quit 5s after the prompt
+    // opened, silently discarding the user's edits (the dirty-confirm regression).
+    window.api.app.notifyQuitPending()
     void window.api.dialog
       .confirm({
         message: t('app.unsavedCloseWorkspace'),
@@ -241,12 +248,50 @@ export default function App(): React.ReactElement {
   // When files are added/removed in the directory of an open document, refresh the sidebar
   // list. This does not prompt to reload the active document (that is onFileChanged's job) —
   // it only re-fetches the document list so new/deleted sibling files show up.
+  //
+  // The main process already coalesces a burst of folder events into one broadcast, but we
+  // additionally scope the invalidation to the active folder: an event under an unrelated
+  // subtree (e.g. a sibling folder the user opened but isn't currently viewing) would
+  // otherwise force a refetch of the *current* folder's list, stacking onto whatever the
+  // renderer is doing (notably while switching files) and showing up as intermittent lag.
   useEffect(() => {
     if (!window.api?.onFolderChanged) return
-    const remove = window.api.onFolderChanged(() => {
-      queryClient.invalidateQueries({ queryKey: DOCS_KEY })
+    let buf: ReturnType<typeof setTimeout> | null = null
+    const remove = window.api.onFolderChanged((data) => {
+      const active = useUIStore.getState().activeFolder
+      // Only refresh when the event touches the folder currently displayed (or its subtree).
+      // When no folder is open yet, fall back to refreshing so early events aren't lost.
+      if (active && !isDirInFolder(data?.dirPath ?? '', active)) return
+      // Coalesce a final burst on the renderer side too: the main-process timer already
+      // merges one burst, but if several folders report near-simultaneously we still want
+      // a single invalidate rather than N.
+      if (buf) clearTimeout(buf)
+      buf = setTimeout(() => {
+        buf = null
+        // Scope the refresh to the LIST only. A folder event says "the set of
+        // files under this directory changed"; it says nothing about the content
+        // of the document currently open, so invalidating DOCS_KEY wholesale also
+        // refetches every 'detail' entry — including the active document, whose
+        // refetch competes with the very switch/edit the renderer may be busy
+        // with. Narrowing to the active folder's list keeps the sidebar current
+        // without touching the open document.
+        const active = useUIStore.getState().activeFolder
+        // Two separate calls, NOT one ternary: DOCS_KEY is `as const` (a 1-tuple),
+        // so a ternary mixing it with the 3-element list key makes TypeScript
+        // infer the filter's key type from one branch and reject the other (TS2345).
+        if (active) {
+          queryClient.invalidateQueries({ queryKey: [...DOCS_KEY, 'list', active] })
+        } else {
+          // No folder open: fall back to refreshing everything so early
+          // events are not lost (there is no list key to narrow to yet).
+          queryClient.invalidateQueries({ queryKey: DOCS_KEY })
+        }
+      }, 300)
     })
-    return () => remove()
+    return () => {
+      if (buf) clearTimeout(buf)
+      remove()
+    }
   }, [])
 
   // Open files/folders dragged into the window (cross-platform)

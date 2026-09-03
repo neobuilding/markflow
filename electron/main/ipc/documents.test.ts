@@ -1,19 +1,28 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { writeFileSync, mkdtempSync, readFileSync, mkdirSync, existsSync } from 'node:fs'
+import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
+import {
+  writeFileSync,
+  mkdtempSync,
+  readFileSync,
+  mkdirSync,
+  existsSync,
+  unlinkSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname, basename } from 'node:path'
+import { join, dirname } from 'node:path'
 import {
   registerDocumentHandlers,
-  shouldIgnoreExternalChange,
-  notifyExternalChange,
   normEnc,
   countReplacements,
   cjkSecondPass,
   detectEncoding,
   readMarkdownText,
   countWords,
+  __flushFolderChanged,
 } from './documents'
+// Test seam of model/folderWatcher.ts: drives the exact dispatch the real chokidar
+// listeners use, so these tests never depend on filesystem event timing.
+import { __emitFolderEvent } from '../model/folderWatcher'
 // Import the REAL isInFolder (from the un-mocked folderMatch module) so the fake
 // store's listDocuments matches production semantics exactly — no drift between the
 // test double and documentStore.listDocuments.
@@ -25,11 +34,8 @@ import { isInFolder } from '../model/folderMatch'
 // NOTE: vi.mock factories are hoisted above top-level const declarations, so the
 // fake store + its backing Map must live in vi.hoisted() to be initialized before
 // the hoisted factory runs.
-const { docs, fakeStore, flags } = vi.hoisted(() => {
+const { docs, fakeStore } = vi.hoisted(() => {
   const docs = new Map<string, any>()
-  // Mutable flags consulted by the fake store at call time (so tests can flip
-  // behavior without reassigning the imported function binding).
-  const flags = { throwOnSelectById: false }
   const fakeStore = {
     createDocumentStore: () => docs.clear(),
     listDocuments: (folderPath?: string) => {
@@ -40,10 +46,7 @@ const { docs, fakeStore, flags } = vi.hoisted(() => {
         : all
       return filtered.sort((a: any, b: any) => b.updatedAt - a.updatedAt)
     },
-    getDocumentById: (id: string) => {
-      if (flags.throwOnSelectById) throw new Error('simulated store failure')
-      return docs.get(id) ?? null
-    },
+    getDocumentById: (id: string) => docs.get(id) ?? null,
     getDocumentByFilePath: (filePath: string) => {
       for (const d of docs.values()) if (d.filePath === filePath) return d
       return null
@@ -77,15 +80,55 @@ const { docs, fakeStore, flags } = vi.hoisted(() => {
       return removed
     },
   }
-  return { docs, fakeStore, flags }
+  return { docs, fakeStore }
 })
 vi.mock('../model/documentStore', () => fakeStore)
 
-// When true, getDocumentById throws, exercising the defensive catch block in
-// watchDocument (the store read failing should not crash watching).
-function setThrowOnSelectById(v: boolean) {
-  flags.throwOnSelectById = v
-}
+// Controllable stand-in for jschardet-ultra's detector.
+//
+// Real detection is so accurate that one branch of detectEncoding is effectively
+// unreachable with natural input: the CJK second pass only runs when the primary
+// decodes WITH replacement chars, but on real bytes the detector either names the
+// right codec (zero replacements -> early return) or returns a high-confidence
+// non-CJK codec (skipped by the inCjkScope gate). Forcing a specific detector
+// verdict is the only way to exercise that path.
+const detectState = vi.hoisted(() => ({
+  override: null as null | ((buf: Buffer) => { encoding: string | null; confidence: number }),
+}))
+vi.mock('jschardet-ultra', async () => {
+  const actual = await vi.importActual<typeof import('jschardet-ultra')>('jschardet-ultra')
+  return {
+    ...actual,
+    detect: (buf: Buffer) =>
+      detectState.override ? detectState.override(buf) : actual.detect(buf),
+  }
+})
+
+// Stand-in for chokidar: records every watcher the module under test creates, and
+// captures the paths handed to `add()` / whether `close()` was called, so the
+// watcher lifecycle can be asserted without any real filesystem watching.
+const chokidarState = vi.hoisted(() => ({ instances: [] as any[] }))
+vi.mock('chokidar', () => ({
+  watch: (paths: string | string[], _opts?: unknown) => {
+    const inst: any = {
+      paths: Array.isArray(paths) ? paths : [paths],
+      added: [] as string[],
+      closed: false,
+      add(p: string | string[]) {
+        inst.added.push(...(Array.isArray(p) ? p : [p]))
+        return inst
+      },
+      on() {
+        return inst
+      },
+      async close() {
+        inst.closed = true
+      },
+    }
+    chokidarState.instances.push(inst)
+    return inst
+  },
+}))
 
 // app:getInitialPaths etc. not used by documents handlers; also need app for getPath.
 const handlers: Record<string, (...a: any[]) => any> = {}
@@ -100,12 +143,11 @@ const stableDocsRoot = mkdtempSync(join(tmpdir(), 'mf-docs-'))
 const fakeApp = { getPath: () => stableDocsRoot } as any
 
 // A fake main window that captures 'app:file-changed' and 'app:folder-changed'
-// notifications, so the notifyExternalChange / directory-watch paths can be
-// exercised end-to-end.
+// notifications, so the folder-watcher paths can be exercised end-to-end.
 const sentFileChanged: Array<{ id: string; filePath: string }> = []
 const sentFolderChanged: Array<{ dirPath: string }> = []
 // Mutable so tests can simulate the main window being gone (null) to exercise
-// the early-return branch in watchDirectory.
+// the "no window -> send nothing" branches.
 let fakeMainWindow: any = {
   webContents: {
     send: (channel: string, payload: any) => {
@@ -118,6 +160,14 @@ let fakeMainWindow: any = {
 beforeAll(() => {
   docs.clear()
   registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+})
+
+// Safety net: drain (send + clear the timer of) any folder-changed broadcast a test
+// queued via __emitFolderEvent but never consumed, so a leaked 300ms coalesce timer
+// cannot fire midway into a later test and pollute its `sentFolderChanged` assertions.
+// Drain happens after the test's assertions have run, so this never masks a failure.
+afterEach(() => {
+  __flushFolderChanged()
 })
 
 function call(ch: string, ...args: any[]) {
@@ -363,61 +413,337 @@ describe('documents IPC — import / importMany', () => {
 })
 
 describe('documents IPC — list', () => {
-  it('returns non-archived documents sorted by updated_at desc', async () => {
+  it('returns documents sorted by updatedAt desc', async () => {
     const rows = await call('documents:list')
     expect(Array.isArray(rows)).toBe(true)
     for (const r of rows) expect(r).toHaveProperty('id')
   })
 })
 
-describe('documents IPC — watch / unwatch', () => {
-  it('registers and removes a file watcher for the document', async () => {
-    const created = await call('documents:create', {
-      title: 'Watch',
-      content: 'x',
-      memoryOnly: false,
-    })
-    expect(() => call('documents:watch', created.id)).not.toThrow()
-    expect(() => call('documents:unwatch', created.id)).not.toThrow()
+describe('documents — folder watching (chokidar-driven store sync)', () => {
+  function tmpDir(prefix: string): string {
+    return mkdtempSync(join(tmpdir(), prefix))
+  }
+  // The fake store keeps a `path:` alias next to the id key so lookups mirror the
+  // real store's getDocumentByFilePath; assertions count the id-keyed entries only.
+  function storedDocs(): any[] {
+    return [...docs.entries()].filter(([k]) => !k.startsWith('path:')).map(([, v]) => v)
+  }
+  function docFor(filePath: string) {
+    return storedDocs().find((d: any) => d.filePath === filePath)
+  }
+  // Create a store entry for an existing file *without* going through the create
+  // handler, which records an own-write suppression of its own.
+  async function importDoc(dir: string, name: string): Promise<any> {
+    const file = join(dir, name)
+    writeFileSync(file, '# imported', 'utf-8')
+    return call('documents:import', file)
+  }
+
+  it('folds a Markdown file that appears on disk into the store and refreshes the list', () => {
+    const dir = tmpDir('mf-watch-add-')
+    const file = join(dir, 'fresh.md')
+    writeFileSync(file, '# Fresh\n\nhello world', 'utf-8')
+    sentFolderChanged.length = 0
+
+    __emitFolderEvent('add', file)
+    __flushFolderChanged()
+
+    const doc: any = docFor(file)
+    expect(doc).toBeTruthy()
+    expect(doc.title).toBe('fresh')
+    expect(doc.folderPath).toBe(dir)
+    expect(doc.content).toContain('hello world')
+    expect(doc.wordCount).toBe(3)
+    expect(sentFolderChanged).toEqual([{ dirPath: dir }])
   })
 
-  it('watch is a no-op when the document has no file path (memory-only draft)', async () => {
-    const created = await call('documents:create', {
-      title: 'WatchDraft',
-      content: 'x',
-      memoryOnly: true,
-    })
-    expect(() => call('documents:watch', created.id)).not.toThrow()
-    expect(() => call('documents:unwatch', created.id)).not.toThrow()
+  it('ignores an add for a file the store already tracks (own save must not duplicate)', async () => {
+    const dir = tmpDir('mf-watch-known-')
+    const imported = await importDoc(dir, 'known.md')
+    sentFolderChanged.length = 0
+
+    __emitFolderEvent('add', imported.filePath)
+
+    expect(storedDocs().filter((d: any) => d.filePath === imported.filePath)).toHaveLength(1)
+    expect(sentFolderChanged).toEqual([])
   })
 
-  it('watch swallows a store read failure without throwing (defensive catch)', async () => {
-    setThrowOnSelectById(true)
+  it('ignores an add for a file that cannot be read (defensive catch)', () => {
+    sentFolderChanged.length = 0
+
+    __emitFolderEvent('add', join(tmpdir(), 'definitely-missing-add.md'))
+
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('ignores non-Markdown files entirely', () => {
+    const dir = tmpDir('mf-watch-other-')
+    const file = join(dir, 'notes.txt')
+    writeFileSync(file, 'hello', 'utf-8')
+    sentFileChanged.length = 0
+    sentFolderChanged.length = 0
+
+    __emitFolderEvent('add', file)
+    __emitFolderEvent('change', file)
+    __emitFolderEvent('unlink', file)
+
+    expect(docFor(file)).toBeUndefined()
+    expect(sentFileChanged).toEqual([])
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('drops the store entry when a watched file disappears', async () => {
+    const dir = tmpDir('mf-watch-unlink-')
+    const created = await call('documents:create', {
+      title: 'Gone',
+      content: 'x',
+      folderPath: dir,
+    })
+    unlinkSync(created.filePath)
+    sentFolderChanged.length = 0
+
+    __emitFolderEvent('unlink', created.filePath)
+    __flushFolderChanged()
+
+    expect(docFor(created.filePath)).toBeUndefined()
+    expect(sentFolderChanged).toEqual([{ dirPath: dir }])
+  })
+
+  it('ignores a removal for a file the store does not track', () => {
+    sentFolderChanged.length = 0
+    __emitFolderEvent('unlink', join(tmpdir(), 'tracked-by-nobody.md'))
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('notifies the renderer when a tracked file changes on disk', async () => {
+    const dir = tmpDir('mf-watch-change-')
+    const imported = await importDoc(dir, 'edited.md')
+    sentFileChanged.length = 0
+
+    __emitFolderEvent('change', imported.filePath)
+
+    expect(sentFileChanged).toEqual([{ id: imported.id, filePath: imported.filePath }])
+  })
+
+  it('suppresses the change raised by our own write', async () => {
+    const dir = tmpDir('mf-watch-own-')
+    const imported = await importDoc(dir, 'mine.md')
+    // documents:update writes the file and marks it as ours, so the watcher echo
+    // must not raise the "changed externally" prompt.
+    await call('documents:update', imported.id, { content: 'y' })
+    sentFileChanged.length = 0
+
+    __emitFolderEvent('change', imported.filePath)
+
+    expect(sentFileChanged).toEqual([])
+  })
+
+  it('ignores a change for a file the store does not track', () => {
+    sentFileChanged.length = 0
+    __emitFolderEvent('change', join(tmpdir(), 'untracked-change.md'))
+    expect(sentFileChanged).toEqual([])
+  })
+
+  it('stops notifying once the renderer window is gone', async () => {
+    const dir = tmpDir('mf-watch-nowin-')
+    const imported = await importDoc(dir, 'nowin.md')
+    const prev = fakeMainWindow
+    fakeMainWindow = null
+    sentFileChanged.length = 0
+    sentFolderChanged.length = 0
     try {
-      expect(() => call('documents:watch', 'any-id')).not.toThrow()
+      __emitFolderEvent('change', imported.filePath)
+      __emitFolderEvent('unlink', imported.filePath)
+      __flushFolderChanged()
     } finally {
-      setThrowOnSelectById(false)
+      fakeMainWindow = prev
+    }
+    expect(sentFileChanged).toEqual([])
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('stops notifying once the renderer window is destroyed (not just null)', async () => {
+    const dir = tmpDir('mf-watch-destroyed-')
+    const imported = await importDoc(dir, 'destroyed.md')
+    const prev = fakeMainWindow
+    // Quit flow: the window object still exists but isDestroyed() is true. Sending to a
+    // destroyed webContents throws; both change and folder paths must skip it.
+    fakeMainWindow = { webContents: prev.webContents, isDestroyed: () => true }
+    sentFileChanged.length = 0
+    sentFolderChanged.length = 0
+    try {
+      __emitFolderEvent('change', imported.filePath)
+      __emitFolderEvent('unlink', imported.filePath)
+      __flushFolderChanged()
+    } finally {
+      fakeMainWindow = prev
+    }
+    expect(sentFileChanged).toEqual([])
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('cancels a pending folder-changed broadcast when the workspace closes', async () => {
+    const dir = tmpDir('mf-watch-cancel-')
+    const file = join(dir, 'cancelled.md')
+    writeFileSync(file, '# Cancelled\n\ndropped', 'utf-8')
+    sentFolderChanged.length = 0
+
+    // Queue a broadcast through the normal dispatch path…
+    __emitFolderEvent('add', file)
+    // …then close the workspace before the coalesce window elapses: the watcher is
+    // gone, so the pending refresh must be dropped rather than delivered.
+    await call('documents:clear-open-folders')
+
+    expect(sentFolderChanged).toEqual([])
+    // Nothing may be left behind for the afterEach drain to deliver.
+    __flushFolderChanged()
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('coalesces per directory, so an unrelated folder cannot swallow a pending refresh', () => {
+    const dirA = tmpDir('mf-watch-coalesce-a-')
+    const dirB = tmpDir('mf-watch-coalesce-b-')
+    const fileA = join(dirA, 'a.md')
+    const fileB = join(dirB, 'b.md')
+    writeFileSync(fileA, '# A\n\nalpha', 'utf-8')
+    writeFileSync(fileB, '# B\n\nbravo', 'utf-8')
+    sentFolderChanged.length = 0
+
+    // Two directories change inside the same coalesce window. With one shared pending
+    // slot, the second event would overwrite the first and dirA — the folder the
+    // renderer is showing — would never be told to refresh.
+    __emitFolderEvent('add', fileA)
+    __emitFolderEvent('add', fileB)
+    __flushFolderChanged()
+
+    expect(sentFolderChanged).toHaveLength(2)
+    expect(sentFolderChanged).toEqual(
+      expect.arrayContaining([{ dirPath: dirA }, { dirPath: dirB }]),
+    )
+  })
+
+  it('still collapses a burst of events under one directory into a single broadcast', () => {
+    const dir = tmpDir('mf-watch-coalesce-same-')
+    for (const name of ['one.md', 'two.md', 'three.md']) {
+      writeFileSync(join(dir, name), `# ${name}\n\nbody`, 'utf-8')
+    }
+    sentFolderChanged.length = 0
+
+    __emitFolderEvent('add', join(dir, 'one.md'))
+    __emitFolderEvent('add', join(dir, 'two.md'))
+    __emitFolderEvent('add', join(dir, 'three.md'))
+    __flushFolderChanged()
+
+    // The lag fix depends on this: N events under one directory mean one refresh, not N.
+    expect(sentFolderChanged).toEqual([{ dirPath: dir }])
+  })
+
+  it('delivers the coalesced broadcast when the real timer fires (no flush shortcut)', () => {
+    vi.useFakeTimers()
+    try {
+      const dir = tmpDir('mf-watch-timer-')
+      const fileA = join(dir, 'timer-a.md')
+      const fileB = join(dir, 'timer-b.md')
+      writeFileSync(fileA, '# A\n\nfired', 'utf-8')
+      writeFileSync(fileB, '# B\n\nskipped', 'utf-8')
+      sentFolderChanged.length = 0
+
+      // Live window: only the real 300ms timer may deliver this — no __flush
+      // shortcut, so the delayed-send path itself is what gets exercised.
+      __emitFolderEvent('add', fileA)
+      expect(sentFolderChanged).toEqual([]) // still inside the coalesce window
+      vi.advanceTimersByTime(400)
+      expect(sentFolderChanged).toEqual([{ dirPath: dir }])
+
+      // Window gone by the time a later timer fires: the delayed send is skipped.
+      const prev = fakeMainWindow
+      sentFolderChanged.length = 0
+      fakeMainWindow = null
+      try {
+        __emitFolderEvent('add', fileB)
+        vi.advanceTimersByTime(400)
+      } finally {
+        fakeMainWindow = prev
+      }
+      expect(sentFolderChanged).toEqual([])
+    } finally {
+      vi.useRealTimers()
     }
   })
 
-  it('watch tolerates a missing file on disk (statSync throws -> defensive catch)', async () => {
-    // Inject a row whose file_path points at a file that does not exist on disk,
-    // so statSync(filePath) throws and the watchDocument catch deletes the mtime baseline
-    // instead of crashing the watch setup.
-    const id = 'watch-missing-' + Date.now()
-    docs.set(id, {
-      id,
-      title: 'MissingFile',
-      folderPath: '',
-      filePath: join(tmpdir(), 'does-not-exist-watch-' + id + '.md'),
-      content: 'x',
-      wordCount: 1,
-      encoding: 'utf-8',
-      encodingConfidence: 1,
-    })
-    expect(() => call('documents:watch', id)).not.toThrow()
-    expect(() => call('documents:unwatch', id)).not.toThrow()
-    docs.delete(id)
+  it('skips the coalesced broadcast (timer and flush) once the window is destroyed', () => {
+    vi.useFakeTimers()
+    try {
+      const dir = tmpDir('mf-watch-dead-')
+      const fileA = join(dir, 'dead-a.md')
+      const fileB = join(dir, 'dead-b.md')
+      writeFileSync(fileA, '# A\n\nalpha', 'utf-8')
+      writeFileSync(fileB, '# B\n\nbravo', 'utf-8')
+      sentFolderChanged.length = 0
+      const prev = fakeMainWindow
+      // The quit flow can destroy the window while the main process (and a pending
+      // coalesce timer) is still alive; sending to a destroyed webContents throws.
+      fakeMainWindow = { webContents: prev.webContents, isDestroyed: () => true }
+      try {
+        // Delayed-timer path: fire the real coalesce timer after the window died
+        // (advance well past the 300ms coalesce window).
+        __emitFolderEvent('add', fileA)
+        vi.advanceTimersByTime(1000)
+        // Flush path: the test seam / afterEach drain must skip destroyed windows too.
+        __emitFolderEvent('add', fileB)
+        __flushFolderChanged()
+      } finally {
+        fakeMainWindow = prev
+      }
+      expect(sentFolderChanged).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('documents IPC — open folder registration', () => {
+  // The most recently created watcher (Array.prototype.at is not in this project's
+  // TS target lib, so index into the array directly).
+  function latestWatcher() {
+    return chokidarState.instances[chokidarState.instances.length - 1]
+  }
+
+  it('starts a watcher over the folder the user opened', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mf-open-a-'))
+    call('documents:set-open-folder', dir)
+    expect(latestWatcher()?.paths).toEqual([dir])
+  })
+
+  it('reuses the running watcher when another folder is opened', () => {
+    const before = chokidarState.instances.length
+    call('documents:set-open-folder', mkdtempSync(join(tmpdir(), 'mf-open-b-')))
+    expect(chokidarState.instances).toHaveLength(before)
+    expect(latestWatcher()?.added.length).toBeGreaterThan(0)
+  })
+
+  it('does not re-register a folder already covered by a broader one', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mf-open-root-'))
+    call('documents:set-open-folder', root)
+    const inst = latestWatcher()
+    const before = inst?.added?.length ?? 0
+    call('documents:set-open-folder', join(root, 'nested'))
+    expect(inst?.added).toHaveLength(before)
+  })
+
+  it('closes the watcher when the workspace is closed, and tolerates a second clear', async () => {
+    const inst = latestWatcher()
+    await call('documents:clear-open-folders')
+    expect(inst?.closed).toBe(true)
+    // No watcher left: clearing again must not throw.
+    await expect(call('documents:clear-open-folders')).resolves.toBeUndefined()
+  })
+
+  it('creates a fresh watcher when a folder is opened after a clear', () => {
+    const before = chokidarState.instances.length
+    call('documents:set-open-folder', mkdtempSync(join(tmpdir(), 'mf-open-c-')))
+    expect(chokidarState.instances).toHaveLength(before + 1)
   })
 })
 
@@ -547,17 +873,6 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     expect(rows.map((r: any) => r.id)).toContain(created.id)
     const all = await call('documents:list')
     expect(all.map((r: any) => r.id)).toContain(created.id)
-  })
-
-  it('documents:watch is idempotent (second call is a no-op)', async () => {
-    const created = await call('documents:create', {
-      title: 'WatchTwice',
-      content: 'x',
-      memoryOnly: false,
-    })
-    expect(() => call('documents:watch', created.id)).not.toThrow()
-    expect(() => call('documents:watch', created.id)).not.toThrow() // hits `if (fileWatchers.has(id)) return`
-    expect(() => call('documents:unwatch', created.id)).not.toThrow()
   })
 
   it('create uses defaults when title/content/ext are omitted', async () => {
@@ -722,247 +1037,6 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     unlinkSync(created.filePath) // file already gone -> unlink throws ENOENT -> no error logged
     expect(await call('documents:delete', created.id)).toBe(true)
     expect(docs.has(created.id)).toBe(false)
-  })
-})
-
-describe('documents — watch change detection (pure logic)', () => {
-  it('ignores a sibling-file write when the reported filename differs from the watched file', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
-    const watched = join(dir, 'doc.md')
-    writeFileSync(watched, 'hi')
-    // A different filename in the same directory (e.g. an exported HTML) should be ignored.
-    expect(shouldIgnoreExternalChange('other.html', watched)).toBe(true)
-  })
-
-  it('does not ignore when the reported filename matches the watched file', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
-    const watched = join(dir, 'doc.md')
-    writeFileSync(watched, 'hi')
-    expect(shouldIgnoreExternalChange('doc.md', watched)).toBe(false)
-  })
-
-  it('treats an unreadable/missing file (filename omitted) as a real change, not ignore', () => {
-    const missing = join(tmpdir(), 'does-not-exist-watch.md')
-    expect(shouldIgnoreExternalChange(undefined, missing)).toBe(false)
-  })
-
-  it('notifyExternalChange sends app:file-changed to the main window', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
-    const watched = join(dir, 'doc.md')
-    writeFileSync(watched, 'hi')
-    sentFileChanged.length = 0
-    notifyExternalChange('doc-id-1', watched)
-    expect(sentFileChanged).toEqual([{ id: 'doc-id-1', filePath: watched }])
-  })
-
-  it('notifyExternalChange is a no-op (no throw) when there is no main window', () => {
-    // Re-register the handlers with a getMainWindow that yields null, exercising the
-    // `if (win)` guard. Without the guard this would throw on `win.webContents`.
-    const localHandlers: Record<string, (...a: any[]) => any> = {}
-    registerDocumentHandlers(
-      { handle: (ch: string, fn: (...a: any[]) => any) => (localHandlers[ch] = fn) } as any,
-      fakeApp,
-      () => null,
-    )
-    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
-    const watched = join(dir, 'doc.md')
-    writeFileSync(watched, 'hi')
-    sentFileChanged.length = 0
-    expect(() => notifyExternalChange('doc-id-nowin', watched)).not.toThrow()
-    // Nothing was delivered to the (previously captured) window either.
-    expect(sentFileChanged).toEqual([])
-    // Restore the real window provider for any later tests in this file.
-    registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
-  })
-
-  it('notifyExternalChange still notifies when the file is unreadable (stat throws)', () => {
-    // The mtime refresh is best-effort: a missing file must not prevent the renderer
-    // from being told the file changed (it may have just been deleted/replaced).
-    const missing = join(tmpdir(), 'mf-notify-missing-' + Date.now() + '.md')
-    sentFileChanged.length = 0
-    notifyExternalChange('doc-id-2', missing)
-    expect(sentFileChanged).toEqual([{ id: 'doc-id-2', filePath: missing }])
-  })
-
-  it('ignores an event that lands inside the self-write suppression window', async () => {
-    // documents:update sets suppressUntil for the written path (~2s). An fs.watch event
-    // arriving in that window is our own save echoing back and must be suppressed —
-    // even though the reported filename matches the watched file exactly.
-    const created = await call('documents:create', {
-      title: 'SuppressMe',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:update', created.id, { content: 'v2' })
-    expect(shouldIgnoreExternalChange(basename(created.filePath), created.filePath)).toBe(true)
-    // Sanity: the same filename on a path with no suppression entry is NOT ignored.
-    const other = join(dirname(created.filePath), 'not-suppressed.md')
-    writeFileSync(other, 'x')
-    expect(shouldIgnoreExternalChange(basename(other), other)).toBe(false)
-  })
-
-  it('accepts a Buffer filename and compares it by basename', () => {
-    // fs.watch may hand back a Buffer instead of a string; it must be decoded, not stringified
-    // into something like "[object Object]".
-    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
-    const watched = join(dir, 'doc.md')
-    writeFileSync(watched, 'hi')
-    expect(shouldIgnoreExternalChange(Buffer.from('doc.md'), watched)).toBe(false)
-    expect(shouldIgnoreExternalChange(Buffer.from('other.md'), watched)).toBe(true)
-  })
-
-  it('treats an empty filename like an omitted one (falls back to the mtime check)', () => {
-    // '' is falsy, so the name comparison is skipped; with no recorded baseline the
-    // `?? -1` fallback makes the real mtime differ, i.e. a genuine change.
-    const dir = mkdtempSync(join(tmpdir(), 'mf-watch-'))
-    const watched = join(dir, 'doc.md')
-    writeFileSync(watched, 'hi')
-    expect(shouldIgnoreExternalChange('', watched)).toBe(false)
-    expect(shouldIgnoreExternalChange(null, watched)).toBe(false)
-  })
-
-  it('ignores a filename-less event when the watched file mtime is unchanged', async () => {
-    // Start watching to record the mtime baseline, then fire the check without a filename:
-    // the mtime still matches the baseline, so this was a sibling write -> ignore.
-    const created = await call('documents:create', {
-      title: 'MtimeBaseline',
-      content: 'x',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    // Let the self-write suppression window from create/watch elapse conceptually:
-    // create() does not set suppressUntil, so the mtime branch is reached directly.
-    expect(shouldIgnoreExternalChange(undefined, created.filePath)).toBe(true)
-    await call('documents:unwatch', created.id)
-  })
-})
-
-describe('documents IPC — watch/unwatch lifecycle', () => {
-  it('delivers app:file-changed when the watched file is modified externally', async () => {
-    const created = await call('documents:create', {
-      title: 'WatchLive',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    sentFileChanged.length = 0
-    // Simulate an external editor writing the file. The watcher debounces for 300ms.
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(created.filePath, 'externally changed')
-    await new Promise((r) => setTimeout(r, 900))
-    expect(sentFileChanged).toContainEqual({ id: created.id, filePath: created.filePath })
-    await call('documents:unwatch', created.id)
-  })
-
-  it('drops a sibling-file event delivered by the real watcher', async () => {
-    // fs.watch on a file can still fire for activity in the same directory. The callback's
-    // early return must swallow those so an unrelated write (e.g. an HTML export landing
-    // next to the document) never surfaces as "your file changed on disk".
-    const created = await call('documents:create', {
-      title: 'SiblingNoise',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    sentFileChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    // Write a *different* file in the same folder, leaving the watched file untouched.
-    writeFileSync(join(dirname(created.filePath), 'SiblingNoise.export.html'), '<p>x</p>')
-    await new Promise((r) => setTimeout(r, 900))
-    expect(sentFileChanged.filter((e) => e.id === created.id)).toEqual([])
-    await call('documents:unwatch', created.id)
-  })
-
-  it('drops the watcher event echoed back by our own save', async () => {
-    // documents:update writes the file itself and arms the suppression window, so the
-    // watcher event it provokes must be ignored rather than bounced to the renderer.
-    const created = await call('documents:create', {
-      title: 'SelfWriteEcho',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    sentFileChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    await call('documents:update', created.id, { content: 'v2 written by us' })
-    await new Promise((r) => setTimeout(r, 900))
-    expect(sentFileChanged.filter((e) => e.id === created.id)).toEqual([])
-    await call('documents:unwatch', created.id)
-  })
-
-  it('stops delivering notifications after unwatch', async () => {
-    const created = await call('documents:create', {
-      title: 'WatchStop',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    await call('documents:unwatch', created.id)
-    sentFileChanged.length = 0
-    writeFileSync(created.filePath, 'changed after unwatch')
-    await new Promise((r) => setTimeout(r, 700))
-    expect(sentFileChanged).toEqual([])
-  })
-
-  it('covers the debounce clearTimeout branch when a second event lands inside the 300ms window', async () => {
-    // Two external writes within the 300ms debounce window: the first arms a setTimeout,
-    // the second hits `if (timer) clearTimeout(timer)` before the timer fires. This is the
-    // only path that exercises that line, so the branch must be reached at least once.
-    const created = await call('documents:create', {
-      title: 'DebounceReset',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    sentFileChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(created.filePath, 'externally changed once')
-    await new Promise((r) => setTimeout(r, 80)) // still inside the 300ms window
-    writeFileSync(created.filePath, 'externally changed twice')
-    await new Promise((r) => setTimeout(r, 900))
-    const mine = sentFileChanged.filter((e) => e.id === created.id)
-    // Both writes collapse into a single debounced notification.
-    expect(mine).toHaveLength(1)
-    expect(mine[0]).toEqual({ id: created.id, filePath: created.filePath })
-    await call('documents:unwatch', created.id)
-  })
-
-  it('watching twice reuses the existing watcher and emits a single notification', async () => {
-    const created = await call('documents:create', {
-      title: 'WatchTwice',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    await call('documents:watch', created.id) // early-return: already watching
-    sentFileChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(created.filePath, 'changed once')
-    await new Promise((r) => setTimeout(r, 900))
-    const mine = sentFileChanged.filter((e) => e.id === created.id)
-    // A duplicate watch must not double-register and double-notify.
-    expect(mine).toHaveLength(1)
-    await call('documents:unwatch', created.id)
-  })
-
-  it('unwatching a document that was never watched is a no-op', () => {
-    expect(() => call('documents:unwatch', 'never-watched')).not.toThrow()
-    expect(call('documents:unwatch', 'never-watched')).toBeUndefined()
-  })
-
-  it('does not watch a memory-only draft (no file_path)', async () => {
-    const created = await call('documents:create', {
-      title: 'WatchDraft',
-      content: 'x',
-      memoryOnly: true,
-    })
-    // watchDocument bails out on an empty file_path, so no watcher is registered and
-    // a subsequent external write cannot produce a notification.
-    expect(() => call('documents:watch', created.id)).not.toThrow()
-    sentFileChanged.length = 0
-    await new Promise((r) => setTimeout(r, 400))
-    expect(sentFileChanged.filter((e) => e.id === created.id)).toEqual([])
-    expect(() => call('documents:unwatch', created.id)).not.toThrow()
   })
 })
 
@@ -1177,6 +1251,52 @@ describe('documents — pure encoding / text utilities', () => {
       expect(res.confidence).toBeGreaterThanOrEqual(0.6)
     })
 
+    it('trusts a forced high-confidence non-CJK primary without the second pass', () => {
+      // Explicitly exercise the `!inCjkScope` early return. The byte-level test
+      // below (Cyrillic/cp1251) only asserts the OUTCOME, and the real detector's
+      // verdict for those bytes can route it elsewhere — so pin the verdict here
+      // to make the branch under test unambiguous.
+      detectState.override = () => ({ encoding: 'windows-1252', confidence: 0.95 })
+      try {
+        const res = detectEncoding(Buffer.from([0x80, 0x9f, 0xe9, 0xff]))
+        expect(res.enc).not.toBe('gbk')
+        expect(res.confidence).toBe(0.95)
+      } finally {
+        detectState.override = null
+      }
+    })
+
+    it('treats a low-confidence non-CJK primary as in-scope', () => {
+      // `primaryConf < 0.6` is the third arm of inCjkScope and the only one that
+      // can pull a NON-CJK codec into the second pass. Short-circuit evaluation
+      // means it is never even reached unless the first two arms are false, so a
+      // forced low-confidence non-CJK verdict is required to cover it.
+      detectState.override = () => ({ encoding: 'windows-1252', confidence: 0.3 })
+      try {
+        const res = detectEncoding(Buffer.from([0x80, 0x9f, 0xe9, 0xff]))
+        expect(typeof res.enc).toBe('string')
+        expect(res.enc.length).toBeGreaterThan(0)
+      } finally {
+        detectState.override = null
+      }
+    })
+
+    it('runs the CJK second pass when the in-scope primary decodes with replacements', () => {
+      // Force the detector to claim utf-8 for bytes that are NOT valid utf-8, so
+      // the primary decodes with replacement chars and the second pass must run.
+      // (See the detectState comment above for why this needs a forced verdict.)
+      // GBK bytes for "中文" are invalid under utf-8, so gbk should win.
+      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4])
+      detectState.override = () => ({ encoding: 'utf-8', confidence: 0.9 })
+      try {
+        const res = detectEncoding(gbkBuf)
+        expect(res.enc).toBe('gbk')
+        expect(res.confidence).toBeGreaterThan(0)
+      } finally {
+        detectState.override = null
+      }
+    })
+
     it('routes an in-scope primary (utf-8 / ascii) through the CJK second pass', () => {
       // Pure ASCII is detected as 'ascii' (an in-scope primary), which must still be
       // routed into the CJK second pass and return a usable encoding with a numeric confidence.
@@ -1185,6 +1305,27 @@ describe('documents — pure encoding / text utilities', () => {
       expect(typeof res.enc).toBe('string')
       expect(res.enc.length).toBeGreaterThan(0)
       expect(typeof res.confidence).toBe('number')
+    })
+
+    it('skips the CJK second pass when the in-scope primary decodes with zero replacements', () => {
+      // Performance guard for the chokidar-lag fix: cjkSecondPass decodes the sample
+      // once per candidate (utf-8 + gbk + big5 + shift_jis + euc-kr) — five full
+      // decodes. When the primary encoding already decodes cleanly (0 replacement
+      // chars), no candidate can do better, so the pass is pure waste.
+      //
+      // Verify the fast return by forcing the detector to a utf-8 verdict for bytes
+      // that are valid utf-8: the primary decodes with 0 replacements, so the only
+      // way to reach utf-8/0.99 is the early "primaryRep === 0" return — entering
+      // the second pass could only change or lower the confidence, never confirm 0.99.
+      detectState.override = () => ({ encoding: 'utf-8', confidence: 0.9 })
+      try {
+        const buf = Buffer.from('hello world, this is valid utf-8', 'utf-8')
+        const res = detectEncoding(buf)
+        expect(res.enc).toBe('utf-8')
+        expect(res.confidence).toBeGreaterThanOrEqual(0.99)
+      } finally {
+        detectState.override = null
+      }
     })
   })
 
@@ -1221,152 +1362,6 @@ describe('documents — pure encoding / text utilities', () => {
       // Markdown symbols are replaced with spaces, so punctuation-only input is 0 words.
       expect(countWords('# * ` ~ [ ] ( ) > |')).toBe(0)
     })
-  })
-})
-
-describe('documents IPC — directory watch (folder-changed)', () => {
-  it('emits a debounced app:folder-changed when a sibling file appears in the watched directory', async () => {
-    const created = await call('documents:create', {
-      title: 'DirWatch1',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    sentFolderChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(join(dirname(created.filePath), 'DirWatch1.sibling.md'), '# sibling')
-    // The directory watcher debounces for 400ms before notifying.
-    await new Promise((r) => setTimeout(r, 700))
-    expect(sentFolderChanged).toContainEqual({ dirPath: dirname(created.filePath) })
-    await call('documents:unwatch', created.id)
-  })
-
-  it('collapses a burst of directory events into a single debounced notification', async () => {
-    const created = await call('documents:create', {
-      title: 'DirBurst',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    sentFolderChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    const dir = dirname(created.filePath)
-    writeFileSync(join(dir, 'b1.md'), '1')
-    await new Promise((r) => setTimeout(r, 80)) // still inside the 400ms window
-    writeFileSync(join(dir, 'b2.md'), '2')
-    await new Promise((r) => setTimeout(r, 700))
-    const mine = sentFolderChanged.filter((e) => e.dirPath === dir)
-    // Both writes collapse into a single debounced notification.
-    expect(mine).toHaveLength(1)
-    await call('documents:unwatch', created.id)
-  })
-
-  it('shares one watcher across documents in the same directory via reference counting', async () => {
-    const a = await call('documents:create', { title: 'RefA', content: 'v1', memoryOnly: false })
-    const b = await call('documents:create', { title: 'RefB', content: 'v2', memoryOnly: false })
-    expect(dirname(a.filePath)).toBe(dirname(b.filePath))
-    const dir = dirname(a.filePath)
-    await call('documents:watch', a.id)
-    await call('documents:watch', b.id)
-    // With both documents open, exactly one watcher exists; a change is reported once.
-    sentFolderChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(join(dir, 'ref-touch-1.md'), 'x')
-    await new Promise((r) => setTimeout(r, 700))
-    expect(sentFolderChanged.filter((e) => e.dirPath === dir)).toHaveLength(1)
-
-    // Unwatching one document keeps the shared watcher alive (refcount > 0).
-    await call('documents:unwatch', a.id)
-    sentFolderChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(join(dir, 'ref-touch-2.md'), 'y')
-    await new Promise((r) => setTimeout(r, 700))
-    expect(sentFolderChanged.filter((e) => e.dirPath === dir)).toHaveLength(1)
-
-    // Unwatching the last document closes the watcher; further changes are silent.
-    await call('documents:unwatch', b.id)
-    sentFolderChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(join(dir, 'ref-touch-3.md'), 'z')
-    await new Promise((r) => setTimeout(r, 700))
-    expect(sentFolderChanged.filter((e) => e.dirPath === dir)).toEqual([])
-  })
-
-  it('does not throw and emits nothing when the main window is missing', async () => {
-    const created = await call('documents:create', {
-      title: 'NoWin',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    await call('documents:watch', created.id)
-    const saved = fakeMainWindow
-    fakeMainWindow = null
-    sentFolderChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(join(dirname(created.filePath), 'nowin.md'), 'z')
-    await new Promise((r) => setTimeout(r, 700))
-    // The watch callback early-returns when there is no window, so no event is sent.
-    expect(sentFolderChanged).toEqual([])
-    fakeMainWindow = saved
-    await call('documents:unwatch', created.id)
-  })
-
-  it('reuses the shared watcher and bumps the refcount when watching a second document in the same directory', async () => {
-    const a = await call('documents:create', { title: 'ReuseA', content: 'v1', memoryOnly: false })
-    const b = await call('documents:create', { title: 'ReuseB', content: 'v2', memoryOnly: false })
-    const dir = dirname(a.filePath)
-    expect(dirname(b.filePath)).toBe(dir)
-    await call('documents:watch', a.id)
-    // Second watch of the same directory must hit the existing-watcher branch (refcount 1 -> 2).
-    await call('documents:watch', b.id)
-    // A change is still reported exactly once even though two documents reference the watcher.
-    sentFolderChanged.length = 0
-    await new Promise((r) => setTimeout(r, 30))
-    writeFileSync(join(dir, 'reuse-touch.md'), 'x')
-    await new Promise((r) => setTimeout(r, 700))
-    expect(sentFolderChanged.filter((e) => e.dirPath === dir)).toHaveLength(1)
-    await call('documents:unwatch', a.id)
-    await call('documents:unwatch', b.id)
-  })
-
-  it('unwatches a document whose directory has no registered watcher without error', async () => {
-    const created = await call('documents:create', {
-      title: 'NoWatcher',
-      content: 'v1',
-      memoryOnly: false,
-    })
-    // Never call documents:watch — unwatchDirectory must handle a missing watcher (`if (w)` falsy).
-    expect(() => call('documents:unwatch', created.id)).not.toThrow()
-  })
-
-  it('clears a pending debounce timer when unwatching while a directory change is still debouncing', async () => {
-    // Coverage for documents.ts:251 — the `if (t) clearTimeout(t)` branch fires when
-    // unwatchDirectory runs while a 400ms debounce timer is still pending (a change was
-    // observed but not yet flushed). We fake only setTimeout/clearTimeout so the watcher's
-    // 400ms timer stays deterministically pending; setImmediate stays real so the real
-    // fs.watch IO event can still be delivered and register that pending timer.
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    try {
-      const created = await call('documents:create', {
-        title: 'PendingTimer',
-        content: 'v1',
-        memoryOnly: false,
-      })
-      await call('documents:watch', created.id)
-      const dir = dirname(created.filePath)
-      // Trigger a directory change so the watcher schedules a (now fake, pending) debounce timer.
-      writeFileSync(join(dir, 'pending-touch.md'), 'x')
-      // Let the real fs.watch IO event fire and register the pending timer.
-      await new Promise((r) => setImmediate(r))
-      sentFolderChanged.length = 0
-      // Unwatching now must clearTimeout() the pending timer, so no folder-changed is sent later.
-      await call('documents:unwatch', created.id)
-      // Flush any fake timers; because the pending timer was cleared, no notification fires.
-      vi.runAllTimers()
-      expect(sentFolderChanged).not.toContainEqual({ dirPath: dir })
-    } finally {
-      vi.useRealTimers()
-    }
   })
 })
 

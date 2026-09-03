@@ -51,4 +51,13 @@ describe('preload appApi', () => {
     appApi.allowQuit()
     expect(sends[0]).toEqual({ channel: 'app:quit-allowed', args: [] })
   })
+
+  it('notifyQuitPending sends app:quit-pending (fire-and-forget, sync)', () => {
+    // Regression: the renderer must tell the main process it's showing the
+    // unsaved-changes confirm so the 5s safety net is disarmed. This call is
+    // synchronous (send, not invoke) so it lands before the async dialog opens.
+    appApi.notifyQuitPending()
+    expect(sends[0]).toEqual({ channel: 'app:quit-pending', args: [] })
+    expect(invokes).toHaveLength(0)
+  })
 })

@@ -155,21 +155,21 @@ markflow/
 
 ## 🛠️ Tech Stack
 
-| Layer             | Technology                                                                   |
-| ----------------- | ---------------------------------------------------------------------------- |
-| Build             | Vite 8 + vite-plugin-electron                                                |
-| Desktop           | Electron 43                                                                  |
-| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                              |
-| UI Components     | Radix UI primitives (shadcn/ui style)                                        |
-| State             | Zustand (UI) + TanStack Query v5 (IPC)                                       |
-| Storage           | In-memory document store (Map) + minisearch index + Markdown file dual-write |
-| Editor            | CodeMirror 6 with Markdown syntax highlighting                               |
-| Math              | KaTeX (LaTeX formula rendering)                                              |
-| Diagrams          | Mermaid.js                                                                   |
-| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                |
-| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)                        |
-| Testing           | Vitest + jsdom                                                               |
-| Packaging         | electron-builder                                                             |
+| Layer             | Technology                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| Build             | Vite 8 + vite-plugin-electron                                                                          |
+| Desktop           | Electron 43                                                                                            |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                        |
+| UI Components     | Radix UI primitives (shadcn/ui style)                                                                  |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                 |
+| Storage           | In-memory document store (Map) + minisearch index + chokidar folder watcher + Markdown file dual-write |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                         |
+| Math              | KaTeX (LaTeX formula rendering)                                                                        |
+| Diagrams          | Mermaid.js                                                                                             |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                          |
+| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)                                                  |
+| Testing           | Vitest + jsdom                                                                                         |
+| Packaging         | electron-builder                                                                                       |
 
 ## 📦 Packaging Configuration
 
@@ -198,7 +198,7 @@ npm run format    # Auto-format everything with Prettier
 
 A Husky `pre-commit` hook runs **lint-staged**, applying Stylelint + Markdownlint + Prettier to
 staged `*.css` / `*.md` / source files. Run `npm run quality` before opening a PR so the CI
-`Test, Build & E2E` job stays green.
+`quality` gate and the `ut` (Unit Tests & Coverage) and `e2e` (Electron) jobs stay green.
 
 ## 🧪 Testing & CI
 
@@ -215,6 +215,16 @@ npm run e2e             # End-to-end: drives the REAL Electron app via Playwrigh
   Vite dev server and waits for `dist-electron/index.js`, so the main process must be built first
   (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you must
   run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e`.
+- **Performance**: `npm run e2e` runs two Playwright projects — `electron-app` (functional) and
+  `electron-perf-gate`. The gate asserts that opening a folder buried in non-Markdown build output
+  and immediately switching documents does not stall the main-process event loop, which is the
+  regression guard for the folder watcher watching markdown only. A threshold-free diagnostic spec
+  sits beside it and is run on demand when numbers (not pass/fail) are what you need:
+
+  ```bash
+  npm run e2e:perf                              # synthetic fixture
+  PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf   # measure a real folder
+  ```
 
 ### Create-PR GitHub Action (local build & preview)
 
@@ -245,16 +255,20 @@ node actions/create-pr/src/cli-render.mjs --head feature/my-branch
 
 ### CI pipeline (`.github/workflows/ci.yml`)
 
-The `Test, Build & E2E` job (ubuntu) chains: `npm run quality` (Prettier + ESLint + Stylelint +
-Markdownlint + Secretlint + typecheck, enforced as a fast-fail gate) → unit tests + coverage →
-Playwright browser install → `npm run build` → `npm run e2e` (under `xvfb-run`). The e2e steps are
-merged into the test job on purpose — they share the same runner, one `npm ci` install, and a single
-`npm run build`, avoiding a separate runner (saves one full install + one build). The Playwright HTML
-report and
-`test-results/` are uploaded as artifacts on every run (even on failure) for inspection.
+The CI gates everything behind a separate `quality` job, then runs `ut` and `e2e` **in parallel**:
 
-The three-platform `build` job (`Build (macos|windows|ubuntu)`) runs after the test job and is the
-only three-platform build in the repo, used for both PR validation and releases.
+- `quality` (ubuntu): `npm run quality` (Prettier + ESLint + Stylelint + Markdownlint + Secretlint +
+  typecheck) as a fast-fail gate. It runs once and must pass before either test job starts.
+- `ut` (ubuntu, after `quality`): unit tests + coverage (Vitest + jsdom; no Electron build needed).
+- `e2e` (ubuntu, after `quality`): Playwright browser install → `npm run build` → `npm run e2e`
+  (under `xvfb-run`).
+  Each test job runs on its own runner (e2e does its own `npm ci` + a single `npm run build`), trading one
+  extra install for wall-clock time ≈ max(ut, e2e) instead of chained. The `build` / `release` jobs run
+  only after both test jobs and the version computation pass. The Playwright HTML report and
+  `test-results/` are uploaded as artifacts on every run (even on failure) for inspection.
+
+The three-platform `build` job (`Build (macos|windows|ubuntu)`) runs only after both the `ut` and `e2e`
+jobs pass and is the only three-platform build in the repo, used for both PR validation and releases.
 
 ### Viewing test results
 

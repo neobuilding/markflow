@@ -11,6 +11,7 @@ beforeEach(() => {
   state.setMainWindow(null)
   state.setIsQuiting(false)
   state.setReadyToQuit(false)
+  state.setQuitPending(false)
   state.pendingInitialPaths.length = 0
 })
 
@@ -34,6 +35,18 @@ describe('main-process state', () => {
     expect(state.getReadyToQuit()).toBe(false)
     state.setReadyToQuit(true)
     expect(state.getReadyToQuit()).toBe(true)
+  })
+
+  it('tracks the quit-pending flag', () => {
+    // Added for coverage of the real setter/getter: every other suite mocks
+    // ./state to observe the flag, so only this file exercises it for real.
+    // The flag must also be resettable — both safety nets re-arm it at the start
+    // of every quit attempt, so a stale `true` would disarm them permanently.
+    expect(state.getQuitPending()).toBe(false)
+    state.setQuitPending(true)
+    expect(state.getQuitPending()).toBe(true)
+    state.setQuitPending(false)
+    expect(state.getQuitPending()).toBe(false)
   })
 
   it('accumulates pending initial paths and allows draining', () => {

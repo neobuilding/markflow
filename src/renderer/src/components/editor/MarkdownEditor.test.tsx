@@ -1,108 +1,78 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, cleanup, act, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
+import { EditorView } from '@codemirror/view'
 import { MarkdownEditor } from './MarkdownEditor'
 
-import '../../i18n'
-
-function ce(container: HTMLElement): string | null {
-  return container.querySelector('.cm-content')?.getAttribute('contentEditable') ?? null
-}
-
-function mount(editable: boolean) {
-  const onChange = vi.fn()
-  const container = document.createElement('div')
-  document.body.appendChild(container)
-  const { unmount } = render(
-    <MarkdownEditor content="# hi" onChange={onChange} editable={editable} />,
-    {
-      container,
-    },
-  )
-  return { container, onChange, unmount }
-}
-
 beforeEach(() => {
-  vi.useRealTimers()
-})
-
-afterEach(() => {
   cleanup()
 })
 
+function getView(): EditorView {
+  const el = document.querySelector('.cm-editor') as HTMLElement
+  const view = EditorView.findFromDOM(el)
+  if (!view) throw new Error('EditorView not found')
+  return view
+}
+
 describe('MarkdownEditor', () => {
-  it('renders a CodeMirror editor that is editable by default', () => {
-    const { container, unmount } = mount(true)
-    expect(container.querySelector('.cm-content')).not.toBeNull()
-    expect(ce(container)).toBe('true')
-    unmount()
+  it('renders the given content', () => {
+    render(<MarkdownEditor content="# Hello" docId="d1" onChange={() => {}} />)
+    expect(screen.getByText('# Hello')).toBeTruthy()
   })
 
-  it('is read-only when editable is false', () => {
-    const { container, unmount } = mount(false)
-    expect(ce(container)).toBe('false')
-    unmount()
-  })
+  it('skips re-applying an internal (echo) change on the same document', async () => {
+    const onChange = vi.fn()
+    const { rerender } = render(<MarkdownEditor content="a" docId="d1" onChange={onChange} />)
 
-  it('writes the provided content into the editor', () => {
-    const { container, unmount } = mount(true)
-    expect(container.querySelector('.cm-content')?.textContent).toContain('hi')
-    unmount()
-  })
+    // Simulate a user keystroke by dispatching through the real EditorView.
+    // This fires the updateListener, which marks the change as internal.
+    const view = getView()
+    view.dispatch(view.state.replaceSelection('b'))
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
 
-  it('reconfigures editability when the prop changes', () => {
-    const { container, unmount } = mount(true)
-    expect(ce(container)).toBe('true')
-    render(<MarkdownEditor content="# hi" onChange={vi.fn()} editable={false} />, {
-      container,
+    const callsAfterType = onChange.mock.calls.length
+
+    // The parent echoes the new content back (same document, same id) — the
+    // effect must NOT re-apply it (isInternalChange && !isDocSwitch), so the
+    // editor keeps the user's text and no extra onChange fires.
+    rerender(<MarkdownEditor content="ba" docId="d1" onChange={onChange} />)
+
+    await waitFor(() => {
+      expect(getView().state.doc.toString()).toBe('ba')
     })
-    act(() => {
-      // rerender already applied; give effects a tick
-    })
-    expect(ce(container)).toBe('false')
-    unmount()
+    expect(onChange.mock.calls.length).toBe(callsAfterType)
   })
 
-  it('ignores markdown:insert events in read-only mode', () => {
-    const { container, onChange, unmount } = mount(false)
+  it('inserts text from a markdown:insert toolbar event', async () => {
+    const onChange = vi.fn()
+    render(<MarkdownEditor content="hi" docId="d1" onChange={onChange} />)
+    const view = getView()
+    // Select the whole document, then fire a bold insert (**...**).
+    view.dispatch({ selection: { anchor: 0, head: 2 } })
     document.dispatchEvent(
       new CustomEvent('markdown:insert', { detail: { before: '**', after: '**' } }),
     )
-    expect(container.querySelector('.cm-content')?.textContent).toContain('# hi')
-    expect(onChange).not.toHaveBeenCalled()
-    unmount()
+    await waitFor(() => expect(view.state.doc.toString()).toBe('**hi**'))
   })
 
-  it('inserts text on a markdown:insert event in edit mode', () => {
-    const { container, unmount } = mount(true)
+  it('inserts the placeholder when there is no selection', async () => {
+    const onChange = vi.fn()
+    render(<MarkdownEditor content="hi" docId="d1" onChange={onChange} />)
+    const view = getView()
+    // Collapse the selection (no selected text) before firing the insert.
+    view.dispatch({ selection: { anchor: 1, head: 1 } })
     document.dispatchEvent(
       new CustomEvent('markdown:insert', { detail: { before: '**', after: '**' } }),
     )
-    // No text is selected, so the placeholder 'text' is wrapped with the markers at the cursor.
-    expect(container.querySelector('.cm-content')?.textContent).toContain('**text**')
-    // The internal-edit guard (echo suppression) is exercised when the parent re-feeds the same
-    // document id with new content right after an internal insert.
-    render(<MarkdownEditor content="# hi" onChange={vi.fn()} editable={true} docId="a" />, {
-      container,
-    })
-    expect(container.querySelector('.cm-content')?.textContent).toContain('hi')
-    unmount()
+    // selectedText is empty → the placeholder 'text' is wrapped: **text** at the caret.
+    await waitFor(() => expect(view.state.doc.toString()).toBe('h**text**i'))
   })
 
-  it('syncs new content when the document switches', () => {
-    const { container, unmount } = mount(true)
-    expect(container.querySelector('.cm-content')?.textContent).toContain('hi')
-    render(<MarkdownEditor content="# switched" onChange={vi.fn()} editable={true} docId="b" />, {
-      container,
-    })
-    expect(container.querySelector('.cm-content')?.textContent).toContain('switched')
-    unmount()
-  })
-
-  it('focuses the editor on a real pointer down', () => {
-    const { container, unmount } = mount(true)
-    const root = container.firstChild as HTMLElement
-    // The root div carries onPointerDown={handlePointerDown}, which focuses the CodeMirror view.
-    expect(() => fireEvent.pointerDown(root)).not.toThrow()
-    unmount()
+  it('focuses the editor on a real pointerdown gesture', () => {
+    const onChange = vi.fn()
+    render(<MarkdownEditor content="hi" docId="d1" onChange={onChange} />)
+    const div = document.querySelector('.editor-content') as HTMLElement
+    // Must not throw; the handler focuses the underlying CodeMirror view.
+    expect(() => fireEvent.pointerDown(div)).not.toThrow()
   })
 })

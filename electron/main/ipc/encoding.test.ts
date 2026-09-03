@@ -70,6 +70,71 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
     expect(r.confidence).toBe(0)
   })
 
+  it('treats an empty buffer as "no detection" and does NOT claim confidence 1', () => {
+    // Regression guard for the ASCII fast path: an empty buffer has no bytes to
+    // judge, so it must fall through to the detector's utf-8/confidence-0 fallback
+    // rather than the fast path's confidence:1. Callers rely on the 0 to mean "we
+    // are unsure", e.g. to keep an existing stored encoding instead of overriding it.
+    const r = detectEncoding(Buffer.alloc(0))
+    expect(r.enc).toBe('utf-8')
+    expect(r.confidence).toBe(0)
+  })
+
+  it('short-circuits pure-ASCII input to utf-8/confidence 1 without decoding', () => {
+    // The single biggest cost in detectEncoding used to be the CJK second pass,
+    // which decodes up to 1MB of sample five times. Pure-ASCII bytes decode
+    // identically under every encoding, so there is nothing to detect — the fast
+    // path must return immediately. Assert the RESULT, and assert it is FAST on a
+    // 1MB+ buffer (proves the decodes are skipped, not just that the answer is right).
+    const oneMbAscii = Buffer.alloc(1_200_000, 0x41) // 1.2MB of 'A'
+    // Best-of-N rather than a single shot. A one-shot wall-clock bound is pure
+    // noise under load: this case historically failed at 47.8ms against a 20ms
+    // limit (full-suite load) while measuring ~1ms alone, and later brushed the
+    // 50ms boundary at 51ms even on a LOCAL run. The minimum is what the code can
+    // actually do, so that is what gets asserted — it absorbs scheduling jitter /
+    // GC / other processes competing for the CPU.
+    let elapsed = Infinity
+    let r = { enc: '', confidence: 0 }
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now()
+      r = detectEncoding(oneMbAscii)
+      elapsed = Math.min(elapsed, performance.now() - t0)
+    }
+    expect(r.enc).toBe('utf-8')
+    expect(r.confidence).toBe(1)
+    // The fast path is a plain byte scan — low single-digit ms for 1.2MB. Going
+    // the long way round (detector + five iconv decodes of the same buffer) costs
+    // HUNDREDS of ms. 100ms is far above any realistic scheduling jitter (this
+    // case measures ~1ms in isolation) yet still an order of magnitude below the
+    // cost it is supposed to rule out, so it proves the decodes were skipped.
+    expect(elapsed).toBeLessThan(100)
+  })
+
+  it('does not mistake a BOM-less UTF-16LE file for ASCII text', () => {
+    // UTF-16LE without a BOM encodes ASCII text as NUL-interleaved bytes, every
+    // single one of them <= 0x7f. A naive "all bytes < 0x80 => utf-8" fast path
+    // would swallow it and hand the caller NUL-interleaved garbage, so the fast
+    // path has to bail out on NUL bytes and let the real detector decide.
+    const buf = Buffer.from('# Note\n\nHello, this is an ASCII-only note.\n', 'utf16le')
+    const r = detectEncoding(buf)
+    // jschardet reports BOM-less UTF-16 as 'UTF-16' without a byte order, and
+    // normEnc has no alias for that spelling, so the canonical name stays
+    // 'utf-16'. That is fine: iconv-lite's utf-16 codec resolves the byte order
+    // itself (BOM, else a NUL-position heuristic), so decoding is still correct.
+    expect(r.enc).toBe('utf-16')
+  })
+
+  it('detects GBK even when the CJK text only starts after the first kilobytes', () => {
+    // Guard against truncating the CJK second pass to a short head window: a note
+    // whose beginning is English (byte-identical under ASCII / UTF-8 / GBK) and
+    // whose Chinese only appears further in must still be judged by its WHOLE
+    // content, otherwise it is reported as clean UTF-8 and read back garbled.
+    const head = Buffer.alloc(9_000, 0x41) // 9KB of ASCII 'A'
+    const buf = Buffer.concat([head, gbk('中文内容出现在文件的后半部分，这里是正文。')])
+    const r = detectEncoding(buf)
+    expect(r.enc).toBe('gbk')
+  })
+
   it('trusts a high-confidence non-CJK encoding directly (inCjkScope false)', () => {
     // Latin-1 bytes (invalid as utf-8) are detected as iso-8859-1 with high confidence.
     const r = detectEncoding(

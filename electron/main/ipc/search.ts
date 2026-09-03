@@ -57,7 +57,11 @@ function buildIndex() {
     folderPath: string
     content: string
   }>({
-    fields: ['title', 'content'],
+    // `folderPath` is also indexed (Q2): searching a path fragment (e.g. a subfolder
+    // name or a file extension) surfaces the matching documents, enabling Ctrl+P-style
+    // file/path lookup. `title` already covers the bare file name, so this mainly adds
+    // directory-hierarchy and extension matching.
+    fields: ['title', 'content', 'folderPath'],
     storeFields: ['title', 'folderPath'],
     tokenize,
     processTerm: (t) => t.toLowerCase(),
@@ -108,7 +112,11 @@ export function registerSearchHandlers(ipcMainInstance: IpcMain): void {
     const q = (query ?? '').trim()
     if (!q) return []
     const mini = buildIndex()
-    const results = mini.search(q, { fuzzy: 0.2, prefix: true, boost: { title: 2 } })
+    const results = mini.search(q, {
+      fuzzy: 0.2,
+      prefix: true,
+      boost: { title: 2, folderPath: 1.5 },
+    })
     return results.map((r) => {
       const doc = getAllDocuments().find((d) => d.id === r.id)
       const content = doc?.content ?? ''

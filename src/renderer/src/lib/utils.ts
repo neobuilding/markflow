@@ -53,12 +53,18 @@ export function dirName(filePath: string): string {
   return idx <= 0 ? '' : norm.slice(0, idx)
 }
 
-// Whether a file's directory is inside `folder` (including folder itself); case-insensitive (Windows)
-export function isInFolder(filePath: string, folder: string): boolean {
+// Whether a directory path is `folder` itself or inside it (its subtree); case-insensitive
+// (Windows), tolerant of backslashes and a trailing separator on either argument.
+export function isDirInFolder(dirPath: string, folder: string): boolean {
   if (!folder) return false
   const f = folder.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
-  const d = dirName(filePath).replace(/\\/g, '/').toLowerCase()
+  const d = dirPath.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
   return d === f || d.startsWith(f + '/')
+}
+
+// Whether a file's directory is inside `folder` (including folder itself); case-insensitive (Windows)
+export function isInFolder(filePath: string, folder: string): boolean {
+  return isDirInFolder(dirName(filePath), folder)
 }
 
 // Return the file-name part of a path (with extension); cross-platform, normalized to forward slashes

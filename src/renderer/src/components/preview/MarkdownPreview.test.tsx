@@ -114,6 +114,22 @@ describe('MarkdownPreview', () => {
     expect(await screen.findByText(/Image failed to load: pic/i)).toBeInTheDocument()
   })
 
+  it('falls back to the generic placeholder for a broken image without alt text', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<img src="missing.png">',
+      mermaid: [],
+    }))
+    const { container } = render(<MarkdownPreview content="x" />)
+    await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
+    const img = container.querySelector('img') as HTMLImageElement
+    fireEvent.error(img)
+    // No alt attribute: getAttribute('alt') returns null, so the `?? ''` fallback and the
+    // generic (alt-less) message branch are both exercised — the text must NOT carry the
+    // ": <alt>" suffix used when alt text is present.
+    const placeholder = await screen.findByText(/Image failed to load/)
+    expect(placeholder.textContent).toBe('⚠ Image failed to load')
+  })
+
   it('realigns scroll on image load without throwing', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       html: '<img src="ok.png">',
@@ -149,5 +165,101 @@ describe('MarkdownPreview', () => {
     resolveFirst!({ html: '<p>stale</p>', mermaid: [] })
     await waitFor(() => expect(screen.getByText('b')).toBeInTheDocument())
     expect(screen.queryByText('stale')).toBeNull()
+  })
+
+  it('fills a previously empty pane without waiting the 150ms keystroke debounce', async () => {
+    // PR fix: when the panes are emptied by a document switch and then filled
+    // on the next commit (`docId` already changed on the prior commit so the
+    // second render is NOT a doc-switch by the preview's own gate), the parse
+    // must run `immediate`, not sit blank for 150ms.
+    //
+    // We mount on a fresh document with empty content (so prevContentRef stays
+    // empty), then flip to non-empty content on the same doc. With the fix,
+    // the second parse runs on the 0ms timer (`isRecovering` branch); without
+    // it, the call would only land after the 150ms keystroke debounce.
+    //
+    // The component's mocked parseClient delegates to `globalThis.__parseMarkdown`,
+    // so we observe via our own closure (the top-level `parseMarkdown` vi.fn
+    // would only count calls routed through the default test mock).
+    const calls: Array<{ content: string; docId: string | null }> = []
+    ;(globalThis as any).__parseMarkdown = vi.fn(
+      (content: string, docId: string | null): Promise<RenderResult> => {
+        calls.push({ content, docId })
+        return new Promise<RenderResult>(() => {})
+      },
+    )
+    // Fresh doc so docId differs from any previous test's lastDocIdRef.
+    useUIStore.getState().setActiveDocumentId('d-recover')
+    const { rerender } = render(<MarkdownPreview content="" />)
+    // Flip to non-empty content on the same doc — `isRecovering` should fire.
+    rerender(<MarkdownPreview content="recovered" />)
+    // Wait well under 150ms (the keystroke-debounce window). With `isRecovering`
+    // the second parse lands on the 0ms timer; without it the call would only
+    // land after 150ms.
+    await waitFor(
+      () => {
+        expect(calls.some((c) => c.content === 'recovered')).toBe(true)
+      },
+      { timeout: 60 },
+    )
+    // Sanity: the parse ran with the expected docId (the active doc at the
+    // time of the rerender) — not some leftover value.
+    expect(calls.find((c) => c.content === 'recovered')?.docId).toBe('d-recover')
+  })
+
+  it('debounces consecutive keystrokes within the same document', async () => {
+    // Complementary to the `isRecovering` case above: typing inside ONE document
+    // is NOT a doc switch and NOT a recovery, so the parse must take the 150ms
+    // keystroke-debounce path instead of firing immediately. This exercises the
+    // third operand of `immediate` (`!hasContentRef.current`): after the first
+    // parse has rendered, `hasContentRef.current` is true, so the operand
+    // evaluates to false and the debounce applies.
+    const calls: string[] = []
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (content: string) => {
+      calls.push(content)
+      return Promise.resolve({ html: `<p>${content}</p>`, mermaid: [] })
+    })
+    useUIStore.getState().setActiveDocumentId('d-keys')
+    const { rerender } = render(<MarkdownPreview content="a" />)
+    // First parse is immediate (mount counts as a doc switch); wait until it has
+    // rendered so hasContentRef.current flips to true.
+    await waitFor(() => expect(screen.getByText('a')).toBeInTheDocument())
+    expect(calls).toEqual(['a'])
+
+    // Type in the same document: debounced, so nothing new within 50ms.
+    rerender(<MarkdownPreview content="ab" />)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(calls).toEqual(['a'])
+
+    // After the debounce window the keystroke parse lands.
+    await waitFor(() => expect(calls).toEqual(['a', 'ab']), { timeout: 1000 })
+  })
+
+  it('ignores an error event that does not target an image', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<div>not an image</div>',
+      mermaid: [],
+    }))
+    const { container } = render(<MarkdownPreview content="x" />)
+    await waitFor(() => expect(container.querySelector('div')).toBeTruthy())
+    // Firing an error on a non-IMG element must not throw.
+    fireEvent.error(container.querySelector('div') as HTMLElement)
+    expect(container.querySelector('div')).toBeTruthy()
+  })
+
+  it('does not re-apply the image fallback on a second error', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<img src="missing.png" alt="pic">',
+      mermaid: [],
+    }))
+    const { container } = render(<MarkdownPreview content="x" />)
+    await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
+    const img = container.querySelector('img') as HTMLImageElement
+    fireEvent.error(img)
+    await waitFor(() => expect(screen.getByText(/Image failed to load: pic/i)).toBeInTheDocument())
+    // A second error on the same (already-fallback-applied) image is a no-op.
+    fireEvent.error(img)
+    const placeholders = screen.queryAllByText(/Image failed to load: pic/i)
+    expect(placeholders).toHaveLength(1)
   })
 })

@@ -136,7 +136,7 @@ npm run local-test-render   # preview the rendered PR body for a branch (no toke
 ```
 
 In the host `markflow` repo, `npm run build:action` triggers the same build via
-the local `actions/create-pr` package, and `npm run ci` exercises the unit
+the local `actions/create-pr` package, and `npm run test:coverage` exercises the unit
 tests through the root vitest config (which points at `actions/create-pr/src`).
 
 The bundled `dist/index.mjs` is committed on purpose (GitHub requires it for a

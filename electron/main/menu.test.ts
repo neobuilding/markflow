@@ -378,6 +378,8 @@ describe('native menu', () => {
       if (h.openFilesSent.length > before) sent = true
     }
     expect(sent).toBe(true)
-    expect(h.openFilesSent).toContainEqual(['menu:open-files', ['/x/a.md', '/x/b.md']])
+    // The folder path itself is sent (not the expanded file list) so the renderer can
+    // pin activeFolder — and the watched root — to the directory the user picked.
+    expect(h.openFilesSent).toContainEqual(['menu:open-files', ['/some/folder']])
   })
 })

@@ -23,7 +23,13 @@ import { registerAppHandlers } from './handlers/app'
 import { registerWindowHandlers } from './handlers/window'
 import { createDocumentStore } from './model/documentStore'
 import { initMenuI18n } from './i18n'
-import { getMainWindow, setIsQuiting, setReadyToQuit, pendingInitialPaths } from './state'
+import {
+  getMainWindow,
+  setIsQuiting,
+  setReadyToQuit,
+  setQuitPending,
+  pendingInitialPaths,
+} from './state'
 
 // NOTE: This module must not reference __dirname. Under "type": "module" the
 // main process is ESM, where __dirname is undefined; vite-plugin-electron's
@@ -36,10 +42,17 @@ import { getMainWindow, setIsQuiting, setReadyToQuit, pendingInitialPaths } from
 // %TEMP%/markflow so all framework runtime data lands in the temp directory and is
 // cleaned up automatically with the system, satisfying the "no business-data persistence"
 // privacy requirement.
-try {
-  app.setPath('userData', join(tmpdir(), 'markflow'))
-} catch {
-  // If setting fails (rare), fall back to the default path
+//
+// In e2e mode, skip this redirect: each e2e spec passes its own --user-data-dir via
+// launchApp (see e2e/helpers/launch.ts) for test isolation, and overriding it here
+// would make every spec share %TEMP%/markflow, defeating that isolation and causing
+// Chromium singleton-lock contention between concurrent instances.
+if (process.env.MARKFLOW_E2E !== '1') {
+  try {
+    app.setPath('userData', join(tmpdir(), 'markflow'))
+  } catch {
+    // If setting fails (rare), fall back to the default path
+  }
 }
 
 // ─── appdoc: privileged protocol registration (must be at module top level, before
@@ -163,6 +176,7 @@ if (!shouldStart) {
         // quitting flags or it would skip the unsaved-changes prompt on next close.
         setIsQuiting(false)
         setReadyToQuit(false)
+        setQuitPending(false)
         createWindow()
       }
     })

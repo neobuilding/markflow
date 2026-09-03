@@ -140,4 +140,16 @@ describe('CommandPalette', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(useUIStore.getState().searchOpen).toBe(false)
   })
+
+  it('does nothing when Enter is pressed with no selected result', async () => {
+    ;(globalThis as any).__searchState = { data: [], isFetching: false }
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('zzz')
+    render(<CommandPalette />)
+    const input = await screen.findByPlaceholderText('Search documents…')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    // No result selected => active document stays unchanged.
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+    expect(useUIStore.getState().searchOpen).toBe(true)
+  })
 })

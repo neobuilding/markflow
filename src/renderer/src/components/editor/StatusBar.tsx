@@ -46,7 +46,9 @@ export function StatusBar(): React.ReactElement {
       .then((e) => {
         if (!cancelled) setEol(e)
       })
-      .catch(() => {})
+      .catch(() => {
+        /* never hit */
+      })
     return () => {
       cancelled = true
     }

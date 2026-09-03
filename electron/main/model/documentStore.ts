@@ -28,10 +28,10 @@ export { isInFolder }
 const docs = new Map<string, Document>()
 
 export function createDocumentStore(): void {
-  // Phase one: the store starts empty and is populated by the IPC handlers as
-  // documents are created/imported. (Phase two will cold-fill from disk via
-  // fsScanner and maintain openFolders; the openFolders set is not needed yet
-  // because listDocuments filters by the activeFolder passed from the renderer.)
+  // The store starts empty and is populated by the IPC handlers as documents are
+  // created/imported. From then on it is kept in sync with the filesystem by the
+  // recursive folder watcher (model/folderWatcher.ts), which folds in files that
+  // appear or disappear under the folders the user opened.
   docs.clear()
 }
 

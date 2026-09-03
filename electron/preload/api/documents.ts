@@ -23,6 +23,9 @@ export const documentsApi = {
     ipcRenderer.invoke('documents:set-encoding', id, encoding),
   stat: (filePath: string) => ipcRenderer.invoke('documents:stat', filePath),
   eol: (filePath: string) => ipcRenderer.invoke('documents:eol', filePath),
-  watch: (id: string) => ipcRenderer.invoke('documents:watch', id),
-  unwatch: (id: string) => ipcRenderer.invoke('documents:unwatch', id),
+  // Folder watching is owned entirely by the main process (chokidar): the renderer
+  // only tells it which folder was opened, and when the workspace is closed.
+  setOpenFolder: (folderPath: string) =>
+    ipcRenderer.invoke('documents:set-open-folder', folderPath),
+  clearOpenFolders: () => ipcRenderer.invoke('documents:clear-open-folders'),
 }

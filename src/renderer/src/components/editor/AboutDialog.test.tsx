@@ -83,4 +83,24 @@ describe('AboutDialog', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('1.0.0'))
     expect(screen.getByText('Copied')).toBeInTheDocument()
   })
+
+  it('resets the copied state after the timeout', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    const getVersion = vi.fn().mockResolvedValue('1.0.0')
+    ;(window as unknown as { api: { app: { getVersion: typeof getVersion } } }).api = {
+      app: { getVersion },
+    }
+    useUIStore.getState().setAboutOpen(true)
+    render(<AboutDialog />)
+    await screen.findByText('1.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    await waitFor(() => expect(screen.getByText('Copied')).toBeInTheDocument())
+    // The copy hint auto-hides after 1.5s.
+    await new Promise((r) => setTimeout(r, 1600))
+    expect(screen.queryByText('Copied')).toBeNull()
+  })
 })

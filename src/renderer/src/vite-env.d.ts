@@ -51,8 +51,10 @@ export interface Api {
     setEncoding: (id: string, encoding: string) => Promise<Document | null>
     stat: (filePath: string) => Promise<FileStat | null>
     eol: (filePath: string) => Promise<'\r\n' | '\n'>
-    watch: (id: string) => Promise<void>
-    unwatch: (id: string) => Promise<void>
+    // Folder watching is owned by the main process (chokidar); the renderer only
+    // reports which folder was opened / that the workspace was closed.
+    setOpenFolder: (folderPath: string) => Promise<void>
+    clearOpenFolders: () => Promise<void>
   }
   export: {
     embedImages: (html: string) => Promise<string>
@@ -70,6 +72,7 @@ export interface Api {
     showInFolder: (filePath: string) => Promise<void>
     setLanguage: (locale: 'en' | 'zh-CN') => void
     allowQuit: () => void
+    notifyQuitPending: () => void
   }
   files: {
     resolvePaths: (paths: string[]) => Promise<{ directories: string[]; markdownFiles: string[] }>

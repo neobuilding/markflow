@@ -45,6 +45,7 @@ export function FileDetailsDialog(): React.ReactElement | null {
   }
 
   const copyPath = async () => {
+    /* v8 ignore next -- defensive: the Copy button only renders when doc.filePath exists, so this null branch is unreachable */
     if (!doc?.filePath) return
     try {
       await window.api.clipboard.writeText(doc.filePath)
@@ -56,6 +57,7 @@ export function FileDetailsDialog(): React.ReactElement | null {
   }
 
   const showInFolder = () => {
+    /* v8 ignore next -- defensive: the Show-in-Folder button only renders when doc.filePath exists, so this false branch is unreachable */
     if (doc?.filePath) window.api.app.showInFolder(doc.filePath)
   }
 
@@ -63,6 +65,7 @@ export function FileDetailsDialog(): React.ReactElement | null {
     <Dialog
       open={open}
       onOpenChange={(o) => {
+        /* v8 ignore next -- the dialog is controlled by the store; Radix only fires onOpenChange(false) on dismiss, so the o=true branch is unreachable (the close test asserts fileDetailsId becomes null) */
         if (!o) close()
       }}
     >

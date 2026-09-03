@@ -10,17 +10,23 @@ import {
   mkdirSync,
   renameSync,
   existsSync,
-  watch,
   statSync,
   openSync,
-  readSync,
   writeSync,
   closeSync,
+  promises as fsPromises,
 } from 'node:fs'
-import type { FSWatcher } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
 import iconv from 'iconv-lite'
+import { MD_EXTS, stripMarkdownExt } from '../lib/markdown-ext'
+import {
+  addWatchedFolder,
+  markOwnWrite,
+  startFolderWatching,
+  stopFolderWatching,
+} from '../model/folderWatcher'
 import {
   type Document,
   listDocuments as storeList,
@@ -88,10 +94,6 @@ export function normEnc(name: string): string {
   return ENC_ALIAS.get(name.toUpperCase()) ?? name.toLowerCase()
 }
 
-// Supported Markdown extensions (kept in sync with the main-process MD_EXTS).
-// Used to validate the extension passed to documents:create.
-const MD_EXTS = new Set(['.md', '.markdown', '.mdx', '.mdtxt', '.mdtext'])
-
 // Count U+FFFD replacement chars produced when decoding with a given encoding (fewer = better match; Infinity = undecodable).
 export function countReplacements(sample: Buffer, encName: string): number {
   if (!iconv.encodingExists(encName)) return Infinity
@@ -135,6 +137,25 @@ export function cjkSecondPass(
   return { enc: best, confidence }
 }
 
+// True when the buffer is plain ASCII text: every byte <= 0x7f AND no NUL bytes.
+// Such a buffer decodes identically under every encoding, so it is unambiguously
+// UTF-8 and needs no detection at all. This is a plain byte scan — orders of
+// magnitude cheaper than iconv.decode, which has to build a full JS string
+// before it can be inspected.
+//
+// The NUL check is not optional. UTF-16/32 encode ASCII text as NUL-interleaved
+// bytes (0x41 0x00 …), so EVERY byte passes a naive <= 0x7f test; letting those
+// through classifies a BOM-less UTF-16 note as UTF-8 and hands the caller
+// NUL-interleaved garbage. jschardet detects them correctly (UTF-16 / UTF-32),
+// but only if it is given the chance.
+function isPlainAsciiText(buf: Buffer): boolean {
+  for (let i = 0; i < buf.length; i++) {
+    const b = buf[i]
+    if (b > 0x7f || b === 0x00) return false
+  }
+  return true
+}
+
 export function detectEncoding(buf: Buffer): { enc: string; confidence: number } {
   if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return { enc: 'utf-8', confidence: 1 }
   if (buf[0] === 0xff && buf[1] === 0xfe && buf[2] === 0x00 && buf[3] === 0x00)
@@ -142,6 +163,15 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   if (buf[0] === 0xff && buf[1] === 0xfe) return { enc: 'utf-16le', confidence: 1 }
   if (buf[0] === 0xfe && buf[1] === 0xff) return { enc: 'utf-16be', confidence: 1 }
   const sample = buf.subarray(0, Math.min(buf.length, SAMPLE_LIMIT))
+  // Fast path: ASCII-only input is UTF-8 by definition — skip the detector and
+  // every decode below. (BOMs were handled above.) Large English notes hit this
+  // and go from hundreds of milliseconds to a fraction of one.
+  //
+  // An EMPTY buffer deliberately falls through: it contains no bytes to judge,
+  // so claiming confidence 1 would invent certainty the detector never gave.
+  // Letting detect() run preserves the "no encoding -> utf-8, confidence 0"
+  // fallback that callers rely on.
+  if (sample.length > 0 && isPlainAsciiText(sample)) return { enc: 'utf-8', confidence: 1 }
   const r = detect(sample)
   if (!r.encoding) return { enc: 'utf-8', confidence: 0 }
   const primary = normEnc(r.encoding)
@@ -155,6 +185,30 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
     // the `primaryConf < 0.6` term above would have routed it into the CJK second pass). Trust it directly.
     return { enc: primary, confidence: primaryConf }
   }
+
+  // Fast path — the single biggest cost in this function used to be right here.
+  //
+  // cjkSecondPass decodes the WHOLE sample once per candidate encoding (utf-8 +
+  // gbk + big5 + shift_jis + euc-kr = 5 full decodes) and scans every character
+  // for U+FFFD. With SAMPLE_LIMIT at 1MB a 146KB note costs ~274ms of
+  // SYNCHRONOUS main-process CPU, and importing a folder of such notes freezes
+  // the whole app: everything is on the same single thread.
+  //
+  // But the loop only ever replaces `best` when a candidate yields FEWER
+  // replacement chars. Zero is already the floor — no candidate can beat it. So
+  // when the primary encoding decodes cleanly, the other four decodes are pure
+  // waste and can be skipped with identical results.
+  const primaryRep = countReplacements(sample, primary)
+  if (primaryRep === 0) {
+    return { enc: primary, confidence: Math.max(primaryConf, 0.99) }
+  }
+  // Deliberately NOT truncated to a small window. Encoding is a property of the
+  // whole file, and a note whose first kilobytes are English (byte-identical in
+  // ASCII, UTF-8 and GBK) with Chinese only appearing further in looks perfectly
+  // clean as UTF-8 inside a short window — which silently garbles the file.
+  // Decoding the full sample here is affordable precisely because reaching this
+  // line already requires the primary decode to have produced replacement chars;
+  // the common, clean case exits via the fast path above instead.
   // The CJK second pass already floors the returned confidence (utf-8: 0.1, CJK candidates: 0.7),
   // so its result is always a safe, decisive pick — return it directly.
   return cjkSecondPass(sample, primary)
@@ -184,174 +238,116 @@ function getDefaultDocsDir(): string {
 }
 
 // Get a reference to the main window (registerDocumentHandlers is called before createWindow,
-// so we fetch it lazily via a getter to avoid the closure capturing null).
+// so we fetch it lazily via a getter to avoid the closure capturing null). `isDestroyed` is
+// optional so test fakes (plain objects with just webContents.send) still satisfy the type.
 let _getMainWindow:
-  (() => { webContents: { send: (channel: string, ...args: unknown[]) => void } } | null) | null =
-  null
+  | (() => {
+      webContents: { send: (channel: string, ...args: unknown[]) => void }
+      isDestroyed?: () => boolean
+    } | null)
+  | null = null
 
-// ─── Disk file change watching ────────────────────────────────────────
-// Maintain one fs.FSWatcher per document id. When the watched file is modified on disk by another
-// program, proactively notify the renderer, which asks the user whether to reload.
-// We temporarily suppress notifications while we write the file ourselves, to avoid false "file changed" alerts.
-const fileWatchers = new Map<string, FSWatcher>()
-const suppressUntil = new Map<string, number>()
-// Baseline mtime of the "last confirmed unchanged" state of the watched file. Used when filename is null
-// to determine whether the file itself changed (see the watchDocument callback).
-const watchedMtime = new Map<string, number>()
+// ─── Disk folder watching ────────────────────────────────────────────
+// The store is the single source of truth; a recursive chokidar watcher over the
+// folders the user opened (model/folderWatcher.ts) keeps it in sync with the
+// filesystem. Files that appear or disappear at any depth are folded into the
+// store and the renderer is told to refresh the list; a file modified by another
+// program raises `app:file-changed`, which the renderer turns into the "reload?"
+// prompt.
 
-// Directory watchers: one FSWatcher per directory, shared by all open documents in that directory
-// (reference-counted). Used to notify the renderer when files are added/removed in the directory so
-// the sidebar list can be refreshed. Keyed by the absolute directory path.
-const dirWatchers = new Map<string, FSWatcher>()
-const dirRefCount = new Map<string, number>()
-const dirNotifyTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// Ask the renderer to refresh the sidebar list for the folder containing `dirPath`.
+//
+// Chokidar can fire a burst of add/unlink events in quick succession (e.g. when a tool
+// touches several files at once, or when the OS reports a rename as unlink+add). Without
+// coalescing, each event triggers a cross-process IPC message and a full list refetch on
+// the renderer — which stacks onto whatever the user is doing (notably file switching)
+// and surfaces as intermittent UI lag. We coalesce into a single broadcast per directory
+// per ~300ms window, so a burst becomes one refresh.
+//
+// Coalescing is keyed PER DIRECTORY, not globally: the renderer scopes a refresh to the
+// folder it is currently showing, so collapsing events from different directories into a
+// single broadcast would silently drop the refresh for all but the last one — a file
+// created in the active folder would stay invisible in the sidebar until some later
+// event happened to touch that folder again.
+const FOLDER_CHANGED_COALESCE_MS = 300
+const folderChangedTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-function watchDirectory(dirPath: string): void {
-  const existing = dirWatchers.get(dirPath)
-  if (existing) {
-    dirRefCount.set(dirPath, dirRefCount.get(dirPath)! + 1)
-    return
-  }
-  try {
-    const watcher = watch(dirPath, () => {
-      // A directory change may be a sibling file write (e.g. exporting HTML) or an add/remove of
-      // another document. We don't try to classify it here — we just debounce and tell the renderer
-      // to refresh the list. Debouncing collapses burst events (e.g. an editor writing temp files).
-      const t = dirNotifyTimers.get(dirPath)
-      if (t) clearTimeout(t)
-      dirNotifyTimers.set(
-        dirPath,
-        setTimeout(() => {
-          dirNotifyTimers.delete(dirPath)
-          const win = _getMainWindow?.()
-          if (win) win.webContents.send('app:folder-changed', { dirPath })
-        }, 400),
-      )
-    })
-    dirWatchers.set(dirPath, watcher)
-    dirRefCount.set(dirPath, 1)
-  } catch {
-    // ignore — directory may be inaccessible
-  }
+function notifyFolderChanged(dirPath: string): void {
+  // Already queued for this directory: the pending broadcast will pick up everything
+  // that changed in the meantime, because the renderer re-reads the whole folder list.
+  if (folderChangedTimers.has(dirPath)) return
+  const timer = setTimeout(() => {
+    folderChangedTimers.delete(dirPath)
+    // The coalesce window delays this send, and the quit flow keeps the main process
+    // alive briefly after the window is destroyed — sending to a destroyed webContents
+    // throws. Guard, same as the other delayed senders (menu.ts / lifecycle.ts).
+    const win = _getMainWindow?.()
+    if (win && !win.isDestroyed?.()) win.webContents.send('app:folder-changed', { dirPath })
+  }, FOLDER_CHANGED_COALESCE_MS)
+  folderChangedTimers.set(dirPath, timer)
 }
 
-function unwatchDirectory(dirPath: string): void {
-  const count = (dirRefCount.get(dirPath) ?? 0) - 1
-  if (count > 0) {
-    dirRefCount.set(dirPath, count)
-    return
-  }
-  dirRefCount.delete(dirPath)
-  const t = dirNotifyTimers.get(dirPath)
-  if (t) clearTimeout(t)
-  dirNotifyTimers.delete(dirPath)
-  const w = dirWatchers.get(dirPath)
-  if (w) {
-    try {
-      w.close()
-    } catch {
-      // ignore
-    }
-    dirWatchers.delete(dirPath)
-  }
-}
-
-function watchDocument(id: string): void {
-  if (fileWatchers.has(id)) return
-  // Defensive: a store read failure (e.g. the store is unavailable) must not crash
-  // watch setup. Skip watching rather than throw (regression guard for the
-  // "watch swallows a store read failure" path).
-  let doc: Document | null
-  try {
-    doc = storeGet(id)
-  } catch {
-    return
-  }
-  if (!doc?.filePath || typeof doc.filePath !== 'string') return
-  const filePath = doc.filePath
-  // Record the starting mtime as the "unchanged" baseline (for comparison when filename is null).
-  // If the file is missing/unreadable, just skip watching instead of pre-checking with existsSync.
-  try {
-    watchedMtime.set(filePath, statSync(filePath).mtimeMs)
-  } catch {
-    watchedMtime.delete(filePath)
-  }
-  let timer: ReturnType<typeof setTimeout> | null = null
-  try {
-    const watcher = watch(filePath, (_event, filename) => {
-      // Decide whether this fs.watch event is a genuine external change to the watched file
-      // (vs. a sibling-file write in the same directory, e.g. exporting HTML). Logic extracted
-      // into shouldIgnoreExternalChange so it can be unit-tested without real fs.watch events.
-      if (shouldIgnoreExternalChange(filename, filePath)) return
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(() => notifyExternalChange(id, filePath), 300)
-    })
-    fileWatchers.set(id, watcher)
-  } catch {
-    // ignore — file may be inaccessible
-  }
-  // Also watch the enclosing directory so add/remove of sibling files triggers a list refresh.
-  try {
-    watchDirectory(dirname(filePath))
-  } catch {
-    // ignore — directory may be inaccessible
-  }
-}
-
-// Re-confirm the file's mtime changed (avoid a tiny race window) and notify the renderer that
-// the watched file changed externally. Extracted from the fs.watch timer so it is unit-testable.
-export function notifyExternalChange(id: string, filePath: string): void {
-  try {
-    watchedMtime.set(filePath, statSync(filePath).mtimeMs)
-  } catch {
-    /* ignore */
-  }
+// Test seam: deliver every coalesced folder-changed broadcast immediately and cancel its
+// timer, so tests can assert `sentFolderChanged` synchronously without waiting for the
+// real 300ms coalesce window. Production code never calls this.
+export function __flushFolderChanged(): void {
+  const dirs = [...folderChangedTimers.keys()]
+  for (const timer of folderChangedTimers.values()) clearTimeout(timer)
+  folderChangedTimers.clear()
   const win = _getMainWindow?.()
-  if (win) win.webContents.send('app:file-changed', { id, filePath })
+  if (!win || win.isDestroyed?.()) return
+  for (const dir of dirs) win.webContents.send('app:folder-changed', { dirPath: dir })
 }
 
-// Decide whether an fs.watch event should be IGNORED (i.e. is NOT a genuine external change
-// to the watched file). Returns true when the event should be suppressed.
-//  - A suppressed write (our own save, within the suppressUntil window) is ignored.
-//  - When the changed filename is reported, only the watched file's own name counts; sibling
-//    writes in the same directory (e.g. exporting HTML) are ignored.
-//  - When the platform omits the filename, fall back to comparing the watched file's own mtime;
-//    if it is unchanged the write was a sibling's, so ignore it.
-export function shouldIgnoreExternalChange(
-  filename: string | Buffer | null | undefined,
-  filePath: string,
-): boolean {
-  const now = Date.now()
-  if (now < (suppressUntil.get(filePath) ?? 0)) return true
-  const name = typeof filename === 'string' ? filename : filename?.toString()
-  if (name && name.length > 0) {
-    return basename(name) !== basename(filePath)
-  }
-  // filename omitted: compare mtimes. If the watched file's mtime is unchanged it was a
-  // sibling write; treat as ignore. An unreadable file is conservatively treated as a change.
+// Drop every coalesced-but-not-yet-sent broadcast and its timer without sending anything.
+// Called when the watcher is torn down (workspace closed): any folder event still pending
+// was produced by the watcher being discarded, so telling the renderer to "refresh"
+// because of it would be a spurious post-teardown refetch.
+function cancelPendingFolderChanged(): void {
+  for (const timer of folderChangedTimers.values()) clearTimeout(timer)
+  folderChangedTimers.clear()
+}
+
+// Tell the renderer that `filePath` changed on disk (backs the "reload?" prompt).
+// Guarded the same way as notifyFolderChanged: the reload-prompt IPC is pointless once
+// the window is gone, and a destroyed webContents would throw on send.
+function notifyFileChanged(id: string, filePath: string): void {
+  const win = _getMainWindow?.()
+  if (win && !win.isDestroyed?.()) win.webContents.send('app:file-changed', { id, filePath })
+}
+
+// Read a Markdown file that just appeared on disk into the store.
+// Files we already know about are left alone: our own saves and Save As already
+// upserted them, and their watcher events must not create a second record for the
+// same path (which would show up as a duplicate entry in the sidebar).
+function syncAddedFile(filePath: string): void {
+  if (storeGetByPath(filePath)) return
+  let text: string
+  let encoding: string
+  let confidence: number
   try {
-    return statSync(filePath).mtimeMs === (watchedMtime.get(filePath) ?? -1)
+    ;({ text, encoding, confidence } = readMarkdownText(filePath))
   } catch {
-    return false
+    // Unreadable or already gone: leave the store untouched rather than let the
+    // watcher callback throw.
+    return
   }
-}
-
-function unwatchDocument(id: string): void {
-  const w = fileWatchers.get(id)
-  if (w) {
-    try {
-      w.close()
-    } catch {
-      // ignore
-    }
-    fileWatchers.delete(id)
-  }
-  // Release the directory watch (decrement ref count; only closes when last document leaves).
-  const doc = storeGet(id)
-  if (doc?.filePath) {
-    unwatchDirectory(dirname(doc.filePath))
-    watchedMtime.delete(doc.filePath)
-  }
+  const now = Date.now()
+  const doc = makeDocument({
+    id: randomUUID(),
+    title: stripMarkdownExt(basename(filePath)),
+    folderPath: dirname(filePath),
+    filePath,
+    content: text,
+    wordCount: countWords(text),
+    encoding,
+    encodingConfidence: confidence,
+    createdAt: now,
+    updatedAt: now,
+    memoryOnly: false,
+  })
+  storeUpsert(doc)
+  notifyFolderChanged(dirname(filePath))
 }
 
 export function registerDocumentHandlers(
@@ -362,9 +358,30 @@ export function registerDocumentHandlers(
   _app = app
   _getMainWindow = getMainWindow as () => {
     webContents: { send: (channel: string, ...args: unknown[]) => void }
+    isDestroyed?: () => boolean
   } | null
-  // List all documents (sorted by updated_at). Phase one: read directly from the store
-  // (the single source of truth). In phase two this is backed by chokidar-driven store state.
+
+  // Recursive folder watching: keep the store in sync with the filesystem for every
+  // folder the user opened. Handlers are installed here (rather than in
+  // model/folderWatcher.ts) so that folderWatcher stays free of any dependency on the
+  // document store — otherwise documents.ts and folderWatcher.ts would import each other.
+  startFolderWatching({
+    onFileAdded: (filePath) => syncAddedFile(filePath),
+    onFileRemoved: (filePath) => {
+      const existing = storeGetByPath(filePath)
+      if (!existing) return
+      storeDelete(existing.id)
+      notifyFolderChanged(dirname(filePath))
+    },
+    onFileChanged: (filePath) => {
+      const existing = storeGetByPath(filePath)
+      if (!existing) return
+      notifyFileChanged(existing.id, filePath)
+    },
+  })
+
+  // List all documents (sorted by updated_at): read directly from the store, the single
+  // source of truth (kept in sync with the filesystem by the folder watcher above).
   ipcMain.handle('documents:list', (_event, folderPath?: string) => {
     return storeList(folderPath)
   })
@@ -452,6 +469,12 @@ export function registerDocumentHandlers(
       } finally {
         closeSync(fd)
       }
+      // Suppress the watcher events this write raises (some platforms report a
+      // follow-up `change` right after `add`, which would otherwise pop the
+      // "changed externally" prompt for a document the user just created).
+      // Anchored *after* the write on purpose: the watcher only reports once the file
+      // settles, so the window must start there — a slow write would otherwise outlive it.
+      markOwnWrite(filePath)
 
       const doc = makeDocument({
         id,
@@ -485,8 +508,11 @@ export function registerDocumentHandlers(
       // A memory-only draft (file_path === '') has no file yet; the first Save is always routed to
       // Save As, so this branch is defensive only. Skip the disk write to avoid writing to an empty path.
       if (existing.filePath) {
-        suppressUntil.set(existing.filePath, Date.now() + 2000)
         writeFileSync(existing.filePath, iconv.encode(newContent, existing.encoding || 'utf-8'))
+        // Suppress the "file changed" notification this write raises. Anchored after the
+        // write rather than before it: the watcher reports once the file settles, so a
+        // slow write would otherwise outlive the window and pop a bogus prompt.
+        markOwnWrite(existing.filePath)
       }
 
       // Rename file if title changed
@@ -533,11 +559,12 @@ export function registerDocumentHandlers(
       const wordCount = countWords(content)
       const now = Date.now()
 
-      // Suppress the new file's "file changed" notification (our own write)
-      suppressUntil.set(newFilePath, Date.now() + 2000)
       mkdirSync(dirname(newFilePath), { recursive: true })
       // Save As: write back in the source document's original encoding (the copy inherits that encoding, R5).
       writeFileSync(newFilePath, iconv.encode(content, existing.encoding || 'utf-8'))
+      // Suppress the "file changed" notification this write raises, anchored after the
+      // write so that a slow write cannot outlive the window.
+      markOwnWrite(newFilePath)
 
       const folderPath = dirname(newFilePath)
       return storeUpdate(id, {
@@ -576,12 +603,24 @@ export function registerDocumentHandlers(
     })
   })
 
-  // Watch / unwatch disk changes for the file backing a document
-  ipcMain.handle('documents:watch', (_event, id: string) => {
-    watchDocument(id)
+  // Register a folder the user opened so the watcher picks up files created or
+  // deleted anywhere beneath it (at any depth, not just the active subfolder).
+  ipcMain.handle('documents:set-open-folder', (_event, folderPath: string) => {
+    addWatchedFolder(folderPath)
   })
-  ipcMain.handle('documents:unwatch', (_event, id: string) => {
-    unwatchDocument(id)
+
+  // The workspace was closed: stop watching and forget every opened folder.
+  // Never rejects — the renderer fires this call and ignores the result, so a
+  // rejection here would surface as an unhandled promise rejection.
+  ipcMain.handle('documents:clear-open-folders', async () => {
+    try {
+      await stopFolderWatching()
+    } catch {
+      // The watcher is being discarded anyway; a failed close must not propagate.
+    }
+    // The watcher is gone: a folder-changed broadcast still pending came from it and
+    // must not reach the renderer as a refresh for a workspace that is already closed.
+    cancelPendingFolderChanged()
   })
 
   // Delete document
@@ -615,7 +654,7 @@ export function registerDocumentHandlers(
     } catch {
       return null
     }
-    const title = basename(filePath).replace(/\.(md|markdown|mdx|mdtxt|mdtext)$/i, '')
+    const title = stripMarkdownExt(basename(filePath))
     const now = Date.now()
     const wordCount = countWords(text)
 
@@ -663,7 +702,7 @@ export function registerDocumentHandlers(
         continue
       }
       const content = parsed.text
-      const title = basename(filePath).replace(/\.(md|markdown|mdx|mdtxt|mdtext)$/i, '')
+      const title = stripMarkdownExt(basename(filePath))
       const wordCount = countWords(content)
 
       const existing = storeGetByPath(filePath)
@@ -702,20 +741,30 @@ export function registerDocumentHandlers(
   // Read the file's original line endings (only the first 64KB, to avoid cost on large files): restored on save.
   // Trust the on-disk file itself, not the stored content (which an older version may have rewritten).
   // Avoid existsSync/openSync TOCTOU: try opening directly and treat any failure as "use default \n".
-  ipcMain.handle('documents:eol', (_event, filePath: string) => {
-    let fd: number | undefined
+  //
+  // ASYNC on purpose. This used to be openSync/readSync, which blocked the whole
+  // main process — and it fires twice on every document switch (once from
+  // useLocalDocument for the save baseline, once from StatusBar for the CRLF/LF
+  // pill). On a healthy local SSD that is sub-millisecond and invisible, but on a
+  // network drive, an antivirus-scanned path, or a sleeping disk the same call
+  // can take tens of milliseconds — during which EVERY other IPC (including the
+  // sidebar list and the document fetch) stalls. That is the "the whole app
+  // freezes for a moment when I switch files" symptom, and it is intermittent
+  // precisely because it depends on the storage path's current latency.
+  ipcMain.handle('documents:eol', async (_event, filePath: string) => {
+    let handle: FileHandle | undefined
     try {
-      fd = openSync(filePath, 'r')
+      handle = await fsPromises.open(filePath, 'r')
       const buf = Buffer.alloc(65536)
-      const n = readSync(fd, buf, 0, buf.length, 0)
-      const sample = buf.subarray(0, n).toString('utf-8')
+      const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
+      const sample = buf.subarray(0, bytesRead).toString('utf-8')
       return sample.includes('\r\n') ? '\r\n' : '\n'
     } catch {
       return '\n'
     } finally {
-      if (fd !== undefined) {
+      if (handle !== undefined) {
         try {
-          closeSync(fd)
+          await handle.close()
         } catch {
           /* ignore */
         }

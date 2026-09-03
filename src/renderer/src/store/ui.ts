@@ -11,6 +11,20 @@ function deleteUnsavedDraft(id: string) {
   })
 }
 
+// Tell the main process to drop its recursive watcher over the opened folders: with no
+// folder open there is nothing to keep in sync, and a stale watcher would keep firing
+// events for a directory the user is no longer browsing (see model/folderWatcher.ts).
+// Best-effort and fire-and-forget — closing the workspace must never be blocked by it,
+// so both a synchronous throw (preload bridge unavailable) and a rejected promise are
+// swallowed rather than escaping into the state transition.
+function clearOpenFolders() {
+  try {
+    void Promise.resolve(window.api.documents.clearOpenFolders()).catch(() => {})
+  } catch {
+    // Nothing to tear down; the watcher is discarded when the app quits anyway.
+  }
+}
+
 interface UIState {
   // Sidebar
   sidebarOpen: boolean
@@ -143,6 +157,7 @@ export const useUIStore = create<UIState>((set, get) => ({
     if (id && get().isNewUnsaved) {
       void deleteUnsavedDraft(id)
     }
+    clearOpenFolders()
     set({ activeDocumentId: null, activeFolder: null, editable: false, isNewUnsaved: false })
   },
 

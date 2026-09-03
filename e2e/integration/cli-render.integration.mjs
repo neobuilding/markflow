@@ -4,7 +4,8 @@
 // because it spawns a real child process and reads the real repository template
 // file — i.e. it performs real filesystem I/O, which unit tests must not do.
 // Run it on demand (e.g. `node --experimental-vm-modules node_modules/vitest/vitest.mjs run e2e/integration`)
-// or via a dedicated integration CI job, not as part of `npm run ci` coverage.
+// or via a dedicated integration CI job. It is intentionally excluded from the regular unit-test
+// (coverage) run — see the glob in vitest.config.ts — so it never runs as part of the normal suite.
 //
 // cli-render.mjs is the "preview locally" entry point: it parses CLI flags,
 // reads the template (defaulting to the same path the Action uses) and the

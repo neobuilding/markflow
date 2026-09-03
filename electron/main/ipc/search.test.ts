@@ -54,6 +54,15 @@ beforeEach(() => {
       content: '这是一个用于测试中文全文检索的文档，包含关键字「检索」与「示例」。',
     }),
   )
+  upsertDocument(
+    doc({
+      id: '4',
+      title: 'Meeting Notes',
+      folderPath: 'work/2026/notes',
+      filePath: 'work/2026/notes/meeting.md',
+      content: 'Weekly sync agenda and action items.',
+    }),
+  )
 })
 
 describe('search:query', () => {
@@ -88,6 +97,14 @@ describe('search:query', () => {
     const res = (await query('editor')) as Array<{ score: number; updatedAt: number }>
     expect(typeof res[0].score).toBe('number')
     expect(typeof res[0].updatedAt).toBe('number')
+  })
+
+  it('matches a folder-path fragment (Ctrl+P-style file/path lookup, Q2)', async () => {
+    // doc4 has folderPath 'work/2026/notes' and title 'Meeting Notes'.
+    // Searching a path fragment must surface it even though neither title nor
+    // content contains the term (no 'notes' in title/content here).
+    const res = (await query('notes')) as Array<{ id: string }>
+    expect(res.map((r) => r.id)).toContain('4')
   })
 
   it('returns [] for a null/undefined query', async () => {

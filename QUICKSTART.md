@@ -51,6 +51,13 @@ npm run e2e             # 端到端：用 Playwright 驱动真实的 Electron �
   xvfb-run --auto-servernum -- npm run e2e
   ```
 
+- **性能门禁**：`npm run e2e` 实际跑两个 Playwright project——`electron-app`（功能）与 `electron-perf-gate`（性能门禁）。后者守护"文件夹监视器只监视 Markdown 文件"这条修复：在一个塞满非 Markdown 构建产物的文件夹里打开并立刻切换文档时，断言主进程事件循环不会被卡住（尖峰数与最大卡顿均有阈值）。旁边另有一份**不带阈值**的诊断 spec，需要具体数字而非通过与失败时按需运行：
+
+  ```bash
+  npm run e2e:perf                                  # 合成 fixture
+  PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf   # 实测真实目录
+  ```
+
 ## Create-PR Action（本地构建与预览）
 
 `actions/create-pr/` 是随仓库内置的 GitHub Action，用于从 head 分支幂等创建/刷新到 `main` 的 PR（完整设计与插件机制见 [`actions/create-pr/README.md`](actions/create-pr/README.md)）。两个根级脚本封装了它：
@@ -66,9 +73,14 @@ npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 to
 
 ### CI 流水线（`.github/workflows/ci.yml`）
 
-`Test, Build & E2E` 任务（ubuntu）依次执行：`npm run quality`（Prettier + ESLint + Stylelint + Markdownlint + Secretlint + 类型检查，作为快速失败门禁）→ 单元测试 + 覆盖率 → 安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e`。e2e 步骤刻意合并进该任务，复用同一 runner、一次 `npm ci` 安装与一次 `npm run build`，避免额外启动一个 runner（省一次完整安装 + 一次构建）。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。
+CI 先跑独立的 `quality` 任务作为快速失败门禁，通过后才并行运行 `ut` 与 `e2e`：
 
-三平台 `build` 任务（`Build (macos|windows|ubuntu)`）在该测试任务之后运行，是全仓库唯一的三平台构建，既用于 PR 校验也用于发布。
+- `quality`（ubuntu）：`npm run quality`（Prettier + ESLint + Stylelint + Markdownlint + Secretlint + 类型检查），整轮仅跑一次，必须先于任一测试任务通过。
+- `ut`（ubuntu，依赖 `quality`）：单元测试 + 覆盖率（Vitest + jsdom，无需 Electron 构建）。
+- `e2e`（ubuntu，依赖 `quality`）：安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e`。
+  两者各自独立 runner（e2e 需自己 `npm ci` + 一次 `npm run build`），换取墙钟时间 ≈ max(ut, e2e) 而非顺序相加；`build`/`release` 任务在两者都通过且版本计算完成后才会运行。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。
+
+三平台 `build` 任务（`Build (macos|windows|ubuntu)`）在 `ut` 与 `e2e` 都通过后运行，是全仓库唯一的三平台构建，既用于 PR 校验也用于发布。
 
 ## 文件说明
 
@@ -78,6 +90,7 @@ npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 to
 | `electron-builder.json5`                 | 打包配置（输出目录、图标、DMG/NSIS 设置）              |
 | `electron/main/`                         | Electron 主进程                                        |
 | `electron/main/model/documentStore.ts`   | 内存文档存储                                           |
+| `electron/main/model/folderWatcher.ts`   | chokidar 递归目录监听（磁盘变更同步进 store）          |
 | `electron/main/ipc/documents.ts`         | 文档 CRUD IPC 处理器                                   |
 | `electron/main/ipc/search.ts`            | minisearch 全文搜索 IPC 处理器                         |
 | `electron/preload/index.ts`              | contextBridge 暴露 API                                 |
