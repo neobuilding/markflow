@@ -1,6 +1,7 @@
 name: Auto Create PR
-# Automatically open (or keep up to date) a Pull Request from any `feature/*`
-# branch into `main` when that branch is pushed.
+# Automatically open (or keep up to date) a Pull Request from any conventional
+# source branch (feature/*, fix/*, ci/*, chore/*, docs/*, refactor/*, build/*,
+# test/*, perf/*) into `main` when that branch is pushed.
 #
 # All PR logic lives in actions/create-pr (the single source of truth, used by
 # the CI workflow via the local composite Action
@@ -13,7 +14,16 @@ name: Auto Create PR
 #     is a no-op, never fails the workflow).
 on:
     push:
-        branches: ['feature/**']
+        branches:
+            - 'feature/**'
+            - 'fix/**'
+            - 'ci/**'
+            - 'chore/**'
+            - 'docs/**'
+            - 'refactor/**'
+            - 'build/**'
+            - 'test/**'
+            - 'perf/**'
     workflow_dispatch:
 
 permissions:
@@ -41,6 +51,8 @@ jobs:
               with:
                   # Full history so `git log main..HEAD` is accurate.
                   fetch-depth: 0
+            - name: Plan
+              run: echo "::notice::Auto-PR triggered for branch '${{ github.ref_name }}' → will create or refresh a PR into 'main' (idempotent; re-runs are no-ops)."
             - name: Create / refresh PR
               # Explicit `head` overrides the action's GITHUB_HEAD_REF /
               # GITHUB_REF_NAME fallback, matching the prior
@@ -50,3 +62,6 @@ jobs:
                   head: ${{ github.ref_name }}
                   base: main
                   token: ${{ secrets.PR_TOKEN }}
+            - name: Done
+              if: success()
+              run: echo "::notice::Auto-PR step completed for '${{ github.ref_name }}' → 'main' (see the action log above for create/refresh details)."

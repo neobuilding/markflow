@@ -59,6 +59,7 @@ jobs:
                   set -e
                   # PR: do not infer a version; emit empty outputs so downstream jobs only validate.
                   if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                    echo "::notice::PR detected — emitting empty tag/version; build validates only, release is skipped."
                     echo "tag=" >> "$GITHUB_OUTPUT"
                     echo "version=" >> "$GITHUB_OUTPUT"
                     exit 0
@@ -66,8 +67,9 @@ jobs:
                   if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
                     TAG="${GITHUB_REF_NAME}"
                     VERSION="${GITHUB_REF_NAME#v}"
-                    echo "::notice::Tag push ${TAG}; reusing existing tag."
+                    echo "::notice::Tag push ${TAG}; reusing existing tag (version=${VERSION})."
                   else
+                    echo "::group::Computing rolling version"
                     # Read the base version directly from the checked-out package.json (no API dependency).
                     # Explicitly validate that version is a non-empty string: missing/non-string/illegal-JSON
                     # exits non-zero; the `|| true` avoids being killed by set -e, so the friendly error below prints
@@ -75,6 +77,7 @@ jobs:
                     BASE=$(node -p "const v=require('./package.json').version; if(typeof v!=='string'||!v){process.exit(1)} v" || true)
                     if [[ -z "$BASE" ]]; then
                       echo "::error::Failed to read the version field from package.json (missing or non-string)" >&2
+                      echo "::endgroup::"
                       exit 1
                     fi
                     # Short SHA (first 7 chars of the full SHA).
@@ -84,6 +87,8 @@ jobs:
                     BUILDTIME="$(date -u -d "$CTIME" +%Y%m%dT%H%M%SZ)"
                     TAG="v${BASE}-${BUILDTIME}.${SHA7}"
                     VERSION="${BASE}-${BUILDTIME}.${SHA7}"
+                    echo "::notice::Computed version: tag=${TAG} version=${VERSION} (base=${BASE}, short-sha=${SHA7}, commit-time=${BUILDTIME})."
+                    echo "::endgroup::"
                   fi
                   echo "tag=$TAG" >> "$GITHUB_OUTPUT"
                   echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -102,7 +107,11 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
-            - run: npm run quality
+            - name: Run quality gate
+              run: |
+                  echo "::group::Quality gate — prettier, eslint, stylelint, markdownlint, secretlint, typecheck"
+                  npm run quality
+                  echo "::endgroup::"
 
     # ── Unit tests + coverage (runs after `quality` passes, in parallel with e2e) ─
     # UT (Vitest + jsdom) does NOT need the Electron build, so this job is otherwise
@@ -134,7 +143,11 @@ jobs:
               working-directory: actions/create-pr
               run: npm ci
             # Unit tests + coverage (Vitest + jsdom; no Electron build needed).
-            - run: npm run test:coverage
+            - name: Run unit tests & coverage
+              run: |
+                  echo "::group::Unit tests + coverage (Vitest)"
+                  npm run test:coverage
+                  echo "::endgroup::"
 
             # Upload the coverage report (text + html + lcov) so it can be inspected from the run.
             - name: Upload coverage report
@@ -211,7 +224,11 @@ jobs:
               run: npx playwright install --with-deps
             # The main process must be built before e2e (global-setup waits for
             # dist-electron/index.js). This build is local to the e2e runner.
-            - run: npm run build
+            - name: Build main process (e2e)
+              run: |
+                  echo "::group::npm run build (e2e runner)"
+                  npm run build
+                  echo "::endgroup::"
             # Reuse the Electron download cache (~/.cache/electron) so the
             # first-time lazy install (electron/index.js's install.js, triggered by
             # the first `import('electron')` in e2e) does not re-download the
@@ -249,7 +266,10 @@ jobs:
               # raw probe stderr — use that to diagnose (e.g. a chrome-sandbox
               # permission error means --no-sandbox is missing from the launch args).
               timeout-minutes: 20
-              run: xvfb-run --auto-servernum -- npm run e2e
+              run: |
+                  echo "::group::E2E (functional + performance gate) via Playwright"
+                  xvfb-run --auto-servernum -- npm run e2e
+                  echo "::endgroup::"
             - name: Upload e2e report
               if: always()
               uses: actions/upload-artifact@v7
@@ -350,10 +370,29 @@ jobs:
               if: needs.version.outputs.version != ''
               shell: bash
               run: |
+                  echo "::notice::Injecting version ${{ needs.version.outputs.version }} into package.json (target=${{ matrix.target }})."
                   npm version --no-git-tag-version --no-commit-hooks "${{ needs.version.outputs.version }}"
 
-            - run: npm run build
-            - run: npm run dist:${{ matrix.target }}
+            # Always runs; documents which mode this build is in so the log is self-explanatory.
+            - name: Version mode
+              shell: bash
+              run: |
+                  if [[ -n "${{ needs.version.outputs.version }}" ]]; then
+                    echo "::notice::Release/stamp path — build is versioned with ${{ needs.version.outputs.version }} and artifacts will be uploaded."
+                  else
+                    echo "::notice::Validation-only path — no version injection; build uses the base package.json version and release is skipped."
+                  fi
+
+            - name: Build app
+              run: |
+                  echo "::group::npm run build (target=${{ matrix.target }})"
+                  npm run build
+                  echo "::endgroup::"
+            - name: Package distribution
+              run: |
+                  echo "::group::npm run dist:${{ matrix.target }}"
+                  npm run dist:${{ matrix.target }}
+                  echo "::endgroup::"
 
             # Upload artifacts only on the release path (version non-empty); PRs only validate and do not upload (saves storage).
             # Only upload final release formats (dmg/zip/AppImage), excluding unpacked dirs and other intermediates
@@ -388,6 +427,8 @@ jobs:
             contents: write # Push tag + create draft release needs write permission.
         runs-on: ubuntu-latest
         steps:
+            - name: Release plan
+              run: echo "::notice::Release path active for tag ${{ needs.version.outputs.tag }} — will push the tag (if absent) and create a draft release (not published)."
             # Only the "computed version" path (non tag push) needs to push a tag; on a tag push the tag already exists.
             - name: Push tag (computed path only)
               if: github.ref_type != 'tag'
@@ -420,11 +461,13 @@ jobs:
             # ⚠️ If electron-builder.json5 adds/removes targets (e.g. deb/exe), update the globs below accordingly.
             - name: Generate SHA256SUMS
               run: |
+                  echo "::group::Generating SHA256SUMS"
                   cd artifacts
                   find markflow-macos markflow-windows markflow-linux -maxdepth 1 -type f \( \
                     -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' \) -print0 \
                     | sort -z | xargs -0 sha256sum > SHA256SUMS
                   cat SHA256SUMS
+                  echo "::endgroup::"
 
             # Publish only files on the allow-list; draft=true leaves the decision to a human, the flow does not auto-publish.
             - name: Create draft Release
