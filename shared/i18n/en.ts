@@ -40,6 +40,7 @@ export const en = {
   'editor.exportShortcut': 'Export as HTML… (⌘⇧E)',
   'editor.closeFile': 'Close file',
   'editor.renameTitle': 'Rename file',
+  'editor.fileDeleted': 'Deleted on disk — save to restore it',
   'editor.toggleSidebarShortcut': 'Toggle Sidebar (⌘\\)',
   'editor.switchReadOnly': 'Switch to read-only mode',
   'editor.switchEdit': 'Switch to edit mode',

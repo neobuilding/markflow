@@ -294,6 +294,25 @@ export default function App(): React.ReactElement {
     }
   }, [])
 
+  // ONE document's identity changed outside the app: its file was deleted (the record is
+  // kept and marked missing, so the document stays open and can be saved back) or renamed
+  // (the record was re-pointed at the new path, keeping its id). Re-read just that
+  // document's record so the title bar follows — strike-through for a deleted file, the
+  // new name for a renamed one.
+  //
+  // Scoped to a single 'detail' entry on purpose, and kept separate from the folder event
+  // above: invalidating every detail costs a refetch of the open document, which competes
+  // with the very switch/edit the renderer may be busy with (measured as intermittent lag,
+  // which is why the folder handler deliberately narrows to the list).
+  useEffect(() => {
+    if (!window.api?.onDocumentRefresh) return
+    return window.api.onDocumentRefresh((data) => {
+      const id = data?.id
+      if (!id) return
+      queryClient.invalidateQueries({ queryKey: [...DOCS_KEY, 'detail', id] })
+    })
+  }, [])
+
   // Open files/folders dragged into the window (cross-platform)
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('Files')) {

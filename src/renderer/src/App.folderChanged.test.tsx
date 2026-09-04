@@ -13,13 +13,18 @@ import { render, waitFor } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import { useUIStore } from './store/ui'
-import { queryClient } from './lib/queryClient'
+import { queryClient, DOCS_KEY } from './lib/queryClient'
 
 // Each callback registered via window.api.onFolderChanged. Tests fire events
 // by invoking the captured callback with a synthetic payload, exactly like a
 // real `app:folder-changed` IPC delivery would.
 type FolderCb = (data: { dirPath: string }) => void
 let folderCbs: FolderCb[] = []
+
+// Each callback registered via window.api.onDocumentRefresh (the narrow, id-scoped
+// refresh used when a document's file is deleted/renamed outside the app).
+type RefreshCb = (data: { id: string }) => void
+let refreshCbs: RefreshCb[] = []
 
 // App.tsx imports the `queryClient` singleton from ./lib/queryClient and calls
 // `queryClient.invalidateQueries` directly (NOT via useQueryClient). So the spy
@@ -32,6 +37,12 @@ function mountApp() {
       folderCbs.push(cb)
       return () => {
         folderCbs = folderCbs.filter((c) => c !== cb)
+      }
+    },
+    onDocumentRefresh: (cb: RefreshCb) => {
+      refreshCbs.push(cb)
+      return () => {
+        refreshCbs = refreshCbs.filter((c) => c !== cb)
       }
     },
     onFileChanged: noop,
@@ -54,6 +65,7 @@ function mountApp() {
 describe('App — app:folder-changed handler (integration)', () => {
   beforeEach(() => {
     folderCbs = []
+    refreshCbs = []
     useUIStore.getState().setActiveFolder(null)
     useUIStore.getState().setActiveDocumentId(null)
   })
@@ -109,5 +121,22 @@ describe('App — app:folder-changed handler (integration)', () => {
     // No active folder set: early events are not filtered out.
     folderCbs[0]({ dirPath: '/anywhere' })
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalled())
+  })
+
+  it('invalidates only the one document detail on app:document-refresh', async () => {
+    mountApp()
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    expect(refreshCbs).toHaveLength(1)
+
+    refreshCbs[0]({ id: 'd1' })
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: [...DOCS_KEY, 'detail', 'd1'] }),
+    )
+
+    // A refresh with no id must not invalidate anything further (covers the `if (!id) return` guard).
+    invalidateSpy.mockClear()
+    refreshCbs[0]({} as { id: string })
+    await Promise.resolve()
+    expect(invalidateSpy).not.toHaveBeenCalled()
   })
 })

@@ -26,6 +26,7 @@ const docs: Record<
     encoding: string
     updatedAt: number
     wordCount: number
+    missing?: boolean
   }
 > = {
   a: {
@@ -56,6 +57,7 @@ interface ApiShape {
   onMenuEvent: ReturnType<typeof vi.fn>
   onFileChanged: ReturnType<typeof vi.fn>
   onFolderChanged: ReturnType<typeof vi.fn>
+  onDocumentRefresh: ReturnType<typeof vi.fn>
   onOpenPaths: ReturnType<typeof vi.fn>
   onAppRequestQuit: ReturnType<typeof vi.fn>
 }
@@ -133,6 +135,7 @@ beforeEach(() => {
     onMenuEvent: vi.fn(() => noopUnsub),
     onFileChanged: vi.fn(() => noopUnsub),
     onFolderChanged: vi.fn(() => noopUnsub),
+    onDocumentRefresh: vi.fn(() => noopUnsub),
     onOpenPaths: vi.fn(() => noopUnsub),
     onAppRequestQuit: vi.fn(() => noopUnsub),
   }
@@ -244,6 +247,11 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     )
     expect(useUIStore.getState().isNewUnsaved).toBe(false)
     expect(api.documents.eol).toHaveBeenCalledWith('/a.md')
+    // makeDirty renamed the draft to `Renamed.md`, and Save As must offer that name in
+    // the document's own folder: accepting the default keeps the rename instead of
+    // writing the old file name back. `dirName('/a.md')` is '' (the fixture sits at the
+    // filesystem root), so the offered path is `/Renamed.md`.
+    expect(api.dialog.saveFile).toHaveBeenCalledWith('/Renamed.md')
   })
 
   it('Save As cancelled (null path) does nothing', async () => {
@@ -574,8 +582,7 @@ describe('EditorPane — close & open', () => {
       })
       await waitFor(() => expect(screen.getByTestId('save-as-btn')).not.toBeDisabled())
       await user.click(screen.getByTestId('save-as-btn'))
-      // No filePath + blank title → defaultPath = `${''.trim() || 'Untitled'}.md` = 'Untitled.md'.
-      // Covers the `localTitle.trim() || 'Untitled'` fallback arm at EditorPane.tsx line 104.
+      // No filePath + blank title → draftName falls back to 'Untitled.md'.
       await waitFor(() => expect(api.dialog.saveFile).toHaveBeenCalledWith('Untitled.md'))
     } finally {
       delete docs.blank
@@ -1085,5 +1092,28 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     // The active-document branch still works after a non-matching event.
     act(() => cb!({ id: 'a', filePath: '/a.md' }))
     expect(useUIStore.getState().externalChange).toEqual({ id: 'a', filePath: '/a.md' })
+  })
+})
+
+describe('EditorPane — external deletion (VS Code-style missing document)', () => {
+  it('strikes through the title and shows a deleted tooltip when the file is gone', async () => {
+    ;(docs.a as { missing?: boolean }).missing = true
+    try {
+      const { container } = mount()
+      await openDoc()
+      const title = container.querySelector('[data-testid="title-btn"]') as HTMLElement
+      expect(title.classList.contains('line-through')).toBe(true)
+      // The tooltip explains the deletion rather than echoing the file name.
+      expect((title.getAttribute('title') ?? '').length).toBeGreaterThan(0)
+    } finally {
+      ;(docs.a as { missing?: boolean }).missing = false
+    }
+  })
+
+  it('shows the plain title with no strikethrough when the file is present', async () => {
+    const { container } = mount()
+    await openDoc()
+    const title = container.querySelector('[data-testid="title-btn"]') as HTMLElement
+    expect(title.classList.contains('line-through')).toBe(false)
   })
 })

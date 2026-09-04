@@ -13,6 +13,7 @@ import {
   onMenuEvent,
   onFileChanged,
   onFolderChanged,
+  onDocumentRefresh,
   onOpenPaths,
   onAppRequestQuit,
 } from './api/events'
@@ -33,6 +34,7 @@ const api = {
   onMenuEvent,
   onFileChanged,
   onFolderChanged,
+  onDocumentRefresh,
   onOpenPaths,
   onAppRequestQuit,
 }

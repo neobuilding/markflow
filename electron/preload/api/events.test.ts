@@ -19,6 +19,7 @@ import {
   onOpenPaths,
   onAppRequestQuit,
   onFolderChanged,
+  onDocumentRefresh,
 } from './events'
 
 beforeEach(() => {
@@ -84,6 +85,17 @@ describe('preload events subscriptions', () => {
     expect(typeof listeners['app:folder-changed']).toBe('function')
     const change = { dirPath: '/docs' }
     listeners['app:folder-changed']({}, change)
+    expect(payload).toEqual(change)
+  })
+
+  it('onDocumentRefresh maps to app:document-refresh and forwards the id', () => {
+    let payload: unknown
+    onDocumentRefresh((data) => {
+      payload = data
+    })
+    expect(typeof listeners['app:document-refresh']).toBe('function')
+    const change = { id: 'd1' }
+    listeners['app:document-refresh']({}, change)
     expect(payload).toEqual(change)
   })
 })

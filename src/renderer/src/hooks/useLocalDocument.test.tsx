@@ -170,6 +170,22 @@ describe('useLocalDocument — handleTitleSave', () => {
     expect(result.current.dirty).toBe(true)
   })
 
+  it('falls back to .md when the current file name carries no Markdown extension', () => {
+    // The open / save dialogs both offer an "All Files" filter, so a document can
+    // legitimately live at `notes.txt`. Its extension is not a Markdown one, so a
+    // rename cannot inherit it and must default to `.md`.
+    const { result } = renderLocalDocument({
+      ...baseDoc,
+      filePath: '/a/notes.txt',
+      title: 'notes.txt',
+    })
+    expect(result.current.localTitle).toBe('notes.txt')
+    act(() => result.current.setLocalTitle('Renamed'))
+    act(() => result.current.handleTitleSave())
+    expect(result.current.localTitle).toBe('Renamed.md')
+    expect(result.current.dirty).toBe(true)
+  })
+
   it('clears dirty when the trimmed title equals the saved title', () => {
     const { result } = renderLocalDocument(baseDoc)
     act(() => result.current.setLocalTitle('  hi.md  '))

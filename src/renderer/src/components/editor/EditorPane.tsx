@@ -23,7 +23,7 @@ import {
   FileOutput,
   Copy,
 } from 'lucide-react'
-import { cn, baseName, displayTitle, stripMarkdownExt, withMarkdownExt } from '../../lib/utils'
+import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
   useDocument,
@@ -102,9 +102,15 @@ export function EditorPane(): React.ReactElement {
     /* v8 ignore next -- defensive: the save-as menu item is disabled in read-only mode, so this is never hit */
     if (!useUIStore.getState().editable) return
     const { localContent, localTitle } = draftRef.current
-    // The draft title already carries the extension (`notes.md`), so it is used as-is
-    // rather than getting a second `.md` appended.
-    const defaultPath = doc?.filePath || withMarkdownExt(localTitle.trim() || 'Untitled')
+    // Save As offers the name the title bar shows, so accepting the default cannot
+    // silently discard a rename the user typed but has not saved yet. The draft name
+    // is the DISPLAY name, so it already carries the file's own extension (`.md` for
+    // an unnamed draft, but equally `.txt` for a document saved as one); only a draft
+    // that was never named needs a default.
+    const draftName = localTitle.trim() || 'Untitled.md'
+    // Rebuilt inside the document's own folder instead of reusing `filePath` verbatim,
+    // so the renamed name REPLACES the current file name rather than appending to it.
+    const defaultPath = doc?.filePath ? `${dirName(doc.filePath)}/${draftName}` : draftName
     // Save As: follow the source document's on-disk line ending (the new file is a copy of this document)
     const eol = doc?.filePath
       ? // v8 mis-attributes the executed `await ….catch()` branch of this ternary to
@@ -606,8 +612,15 @@ export function EditorPane(): React.ReactElement {
               <div className="flex items-center gap-1 min-w-0">
                 <span
                   data-testid="title-btn"
-                  title={title}
-                  className="text-sm font-semibold text-[var(--color-text-primary)] truncate max-w-[280px] block"
+                  title={doc?.missing ? t('editor.fileDeleted') : title}
+                  className={cn(
+                    'text-sm font-semibold truncate max-w-[280px] block',
+                    // VS Code behaviour: a file deleted outside the app stays open and
+                    // struck through, so an accidental deletion can still be saved back.
+                    doc?.missing
+                      ? 'text-[var(--color-text-tertiary)] line-through'
+                      : 'text-[var(--color-text-primary)]',
+                  )}
                 >
                   {title}
                 </span>
