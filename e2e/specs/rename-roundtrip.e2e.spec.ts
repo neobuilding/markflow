@@ -3,7 +3,7 @@
 // workspace. Guards the main-process watcher fixes: the existsSync check in
 // onFileRemoved (stale rename unlink), the missing-flag instead of record deletion,
 // and findRenamedDocument folding an external rename back into the SAME record.
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { mkdtempSync, writeFileSync, renameSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
