@@ -464,3 +464,33 @@ describe('Sidebar — interactions', () => {
     await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs/sub'))
   })
 })
+
+describe('Sidebar — external deletion (VS Code-style missing document)', () => {
+  it('strikes through a document whose file was deleted outside the app', () => {
+    // The list only renders once a folder is active (otherwise the welcome state shows),
+    // matching the existing "lists documents once a folder is active" test.
+    useUIStore.getState().setActiveFolder('/docs')
+    allDocs.push({
+      id: 'gone',
+      title: 'Gone',
+      folderPath: '/docs',
+      content: '# Gone',
+      filePath: '/docs/gone.md',
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      createdAt: 3,
+      updatedAt: 3,
+      wordCount: 1,
+      missing: true,
+    })
+    try {
+      mount()
+      const nameSpan = screen.getByText('gone.md')
+      expect(nameSpan.classList.contains('line-through')).toBe(true)
+      // A still-present document keeps its normal styling.
+      expect(screen.getByText('a.md').classList.contains('line-through')).toBe(false)
+    } finally {
+      allDocs.length = 2 // restore to the {a, draft} fixtures the other tests expect
+    }
+  })
+})

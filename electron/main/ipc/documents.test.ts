@@ -51,9 +51,12 @@ const { docs, fakeStore } = vi.hoisted(() => {
       for (const d of docs.values()) if (d.filePath === filePath) return d
       return null
     },
+    // Keyed by id ONLY, exactly like the real store (which keeps no path index:
+    // getDocumentByFilePath scans the values). An extra `path:` alias would survive a
+    // rename and let the OLD path still resolve to a stale copy of the document, so a
+    // rename round-trip could not be reproduced faithfully.
     upsertDocument: (doc: any) => {
       docs.set(doc.id, { ...doc })
-      if (doc.filePath) docs.set(`path:${doc.filePath}`, doc)
       return docs.get(doc.id)
     },
     updateDocument: (id: string, partial: any) => {
@@ -61,7 +64,6 @@ const { docs, fakeStore } = vi.hoisted(() => {
       if (!d) return null
       const next = { ...d, ...partial, id }
       docs.set(id, next)
-      if (next.filePath) docs.set(`path:${next.filePath}`, next)
       return next
     },
     deleteDocument: (id: string) => docs.delete(id),
@@ -142,10 +144,12 @@ const fakeIpcMain = {
 const stableDocsRoot = mkdtempSync(join(tmpdir(), 'mf-docs-'))
 const fakeApp = { getPath: () => stableDocsRoot } as any
 
-// A fake main window that captures 'app:file-changed' and 'app:folder-changed'
-// notifications, so the folder-watcher paths can be exercised end-to-end.
+// A fake main window that captures 'app:file-changed', 'app:folder-changed' and
+// 'app:document-refresh' notifications, so the folder-watcher paths can be exercised
+// end-to-end.
 const sentFileChanged: Array<{ id: string; filePath: string }> = []
 const sentFolderChanged: Array<{ dirPath: string }> = []
+const sentDocumentRefresh: Array<{ id: string }> = []
 // Mutable so tests can simulate the main window being gone (null) to exercise
 // the "no window -> send nothing" branches.
 let fakeMainWindow: any = {
@@ -153,6 +157,7 @@ let fakeMainWindow: any = {
     send: (channel: string, payload: any) => {
       if (channel === 'app:file-changed') sentFileChanged.push(payload)
       if (channel === 'app:folder-changed') sentFolderChanged.push(payload)
+      if (channel === 'app:document-refresh') sentDocumentRefresh.push(payload)
     },
   },
 }
@@ -281,6 +286,32 @@ describe('documents IPC — update', () => {
     expect(updated.filePath).toBe(join(stableDocsRoot, 'MarkFlow', 'RenTarget-1.md'))
     expect(readFileSync(updated.filePath, 'utf-8')).toBe('a')
   })
+
+  it('strips a Markdown extension from the incoming title so a rename does not double it', async () => {
+    // The title bar shows `name.ext`, so the renderer sends `Renamed.md`. The stored
+    // title is extension-free and the rename re-appends the extension itself — without
+    // stripping, the file would become `Renamed.md.md`.
+    const created = await call('documents:create', {
+      title: 'RenameExt',
+      content: 'x',
+      memoryOnly: false,
+    })
+    const updated = await call('documents:update', created.id, { title: 'ExtStripped.md' })
+    expect(updated.title).toBe('ExtStripped')
+    expect(updated.filePath).toBe(join(dirname(created.filePath), 'ExtStripped.md'))
+  })
+
+  it('does not rename when the requested title differs only by the extension', async () => {
+    // Typing the same base name (with or without the extension) is not a rename.
+    const created = await call('documents:create', {
+      title: 'Keep',
+      content: 'x',
+      memoryOnly: false,
+    })
+    const updated = await call('documents:update', created.id, { title: 'Keep.md' })
+    expect(updated.filePath).toBe(created.filePath)
+    expect(updated.title).toBe('Keep')
+  })
 })
 
 describe('documents IPC — delete', () => {
@@ -333,6 +364,24 @@ describe('documents IPC — saveAs', () => {
     expect(updated.filePath).toBe(newPath)
     expect(readFileSync(newPath, 'utf-8')).toBe('saved')
     expect(readFileSync(created.filePath, 'utf-8')).toBe('orig')
+  })
+
+  it('derives the stored title from the new file path', async () => {
+    // The document is re-pointed at a file the user picked, so that file name IS the
+    // title. Keeping the caller's title would leave title and filePath out of sync
+    // (and would store an extension-bearing title).
+    const created = await call('documents:create', {
+      title: 'Old',
+      content: 'orig',
+      memoryOnly: false,
+    })
+    const newPath = join(fakeApp.getPath(), 'brand new name.md')
+    const updated = await call('documents:save-as', created.id, newPath, {
+      title: 'Old.md',
+      content: 'saved',
+    })
+    expect(updated.title).toBe('brand new name')
+    expect(updated.filePath).toBe(newPath)
   })
 })
 
@@ -424,10 +473,9 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
   function tmpDir(prefix: string): string {
     return mkdtempSync(join(tmpdir(), prefix))
   }
-  // The fake store keeps a `path:` alias next to the id key so lookups mirror the
-  // real store's getDocumentByFilePath; assertions count the id-keyed entries only.
+  // The fake store is keyed by id only (see above), so every value is one document.
   function storedDocs(): any[] {
-    return [...docs.entries()].filter(([k]) => !k.startsWith('path:')).map(([, v]) => v)
+    return [...docs.values()]
   }
   function docFor(filePath: string) {
     return storedDocs().find((d: any) => d.filePath === filePath)
@@ -493,7 +541,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     expect(sentFolderChanged).toEqual([])
   })
 
-  it('drops the store entry when a watched file disappears', async () => {
+  it('keeps the document open and marks it missing when a watched file disappears', async () => {
     const dir = tmpDir('mf-watch-unlink-')
     const created = await call('documents:create', {
       title: 'Gone',
@@ -502,17 +550,202 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     })
     unlinkSync(created.filePath)
     sentFolderChanged.length = 0
+    sentDocumentRefresh.length = 0
 
     __emitFolderEvent('unlink', created.filePath)
     __flushFolderChanged()
 
-    expect(docFor(created.filePath)).toBeUndefined()
+    // VS Code behaviour: the document stays open (not dropped) and is flagged missing so
+    // the title bar can strike it through and the user can still save it back.
+    const doc: any = docFor(created.filePath)
+    expect(doc).toBeTruthy()
+    expect(doc.missing).toBe(true)
     expect(sentFolderChanged).toEqual([{ dirPath: dir }])
+    expect(sentDocumentRefresh).toEqual([{ id: created.id }])
+  })
+
+  it('re-points the SAME document when the file is renamed outside the app', async () => {
+    const dir = tmpDir('mf-watch-rename-')
+    const a = join(dir, 'a.md')
+    writeFileSync(a, '# imported', 'utf-8')
+    const imported = await call('documents:import', a)
+    // External rename: delete a.md, create b.md with the same bytes.
+    unlinkSync(a)
+    const b = join(dir, 'b.md')
+    writeFileSync(b, '# imported', 'utf-8')
+
+    __emitFolderEvent('unlink', a) // marks a.md missing (one refresh — not the one we assert)
+    sentDocumentRefresh.length = 0
+
+    __emitFolderEvent('add', b) // folds the rename back into the same doc (one refresh)
+    __flushFolderChanged()
+
+    const doc: any = docFor(b)
+    expect(doc).toBeTruthy()
+    expect(doc.id).toBe(imported.id) // same document, id preserved
+    expect(doc.filePath).toBe(b)
+    expect(doc.title).toBe('b')
+    expect(doc.missing).toBeFalsy()
+    expect(sentDocumentRefresh).toEqual([{ id: imported.id }])
+  })
+
+  it('clears the missing flag when the deleted file reappears at the same path', async () => {
+    const dir = tmpDir('mf-watch-restore-')
+    const created = await call('documents:create', { title: 'Gone', content: 'x', folderPath: dir })
+    unlinkSync(created.filePath)
+    __emitFolderEvent('unlink', created.filePath)
+    __flushFolderChanged()
+    expect(docFor(created.filePath)?.missing).toBe(true)
+
+    // The file is restored (e.g. pulled back out of the trash) at its original path.
+    writeFileSync(created.filePath, '# restored', 'utf-8')
+    sentDocumentRefresh.length = 0
+    __emitFolderEvent('add', created.filePath)
+    __flushFolderChanged()
+
+    const doc: any = docFor(created.filePath)
+    expect(doc.missing).toBeFalsy()
+    // Content is left as-is: an external CONTENT change is the reload prompt's job, not
+    // the watcher's to apply silently.
+    expect(doc.content).toBe('x')
+    expect(sentDocumentRefresh).toEqual([{ id: created.id }])
+  })
+
+  it('does not fold an add into a missing doc when the content differs', async () => {
+    const dir = tmpDir('mf-watch-rename-content-')
+    const a = join(dir, 'a.md')
+    writeFileSync(a, '# imported', 'utf-8')
+    const imported = await call('documents:import', a)
+    unlinkSync(a)
+    __emitFolderEvent('unlink', a)
+    __flushFolderChanged()
+    expect(docFor(a)?.missing).toBe(true)
+
+    // A brand-new file with a different body appears in the same directory.
+    const b = join(dir, 'b.md')
+    writeFileSync(b, '# totally different', 'utf-8')
+    __emitFolderEvent('add', b)
+    __flushFolderChanged()
+
+    const newDoc = docFor(b)
+    expect(newDoc).toBeTruthy()
+    expect(newDoc.id).not.toBe(imported.id) // a NEW document, not the renamed one
+    expect(docFor(a)?.missing).toBe(true) // original stays missing
+  })
+
+  it('does not fold an add into a missing doc in another directory', async () => {
+    const dirA = tmpDir('mf-watch-rename-dira-')
+    const dirB = tmpDir('mf-watch-rename-dirb-')
+    const a = join(dirA, 'a.md')
+    writeFileSync(a, '# imported', 'utf-8')
+    const imported = await call('documents:import', a)
+    unlinkSync(a)
+    __emitFolderEvent('unlink', a)
+    __flushFolderChanged()
+
+    // Same bytes, but a different folder — must not be treated as the same rename.
+    const b = join(dirB, 'b.md')
+    writeFileSync(b, '# imported', 'utf-8')
+    __emitFolderEvent('add', b)
+    __flushFolderChanged()
+
+    expect(docFor(b).id).not.toBe(imported.id)
+    expect(docFor(a)?.missing).toBe(true)
+  })
+
+  it('recreates the file on save when it was deleted outside the app', async () => {
+    const dir = tmpDir('mf-watch-save-')
+    const created = await call('documents:create', { title: 'Gone', content: 'x', folderPath: dir })
+    unlinkSync(created.filePath)
+    __emitFolderEvent('unlink', created.filePath)
+    __flushFolderChanged()
+    expect(created.filePath && existsSync(created.filePath)).toBe(false)
+
+    await call('documents:update', created.id, { content: 'saved again' })
+    expect(existsSync(created.filePath)).toBe(true)
+    expect(docFor(created.filePath)?.missing).toBeFalsy()
+  })
+
+  it('clears the missing flag after a Save As', async () => {
+    const dir = tmpDir('mf-watch-saveas-')
+    const created = await call('documents:create', { title: 'Gone', content: 'x', folderPath: dir })
+    unlinkSync(created.filePath)
+    __emitFolderEvent('unlink', created.filePath)
+    __flushFolderChanged()
+    expect(docFor(created.filePath)?.missing).toBe(true)
+
+    const newPath = join(dir, 'recovered.md')
+    await call('documents:save-as', created.id, newPath, { content: 'recovered' })
+    const doc: any = docFor(newPath)
+    expect(doc).toBeTruthy()
+    expect(doc.missing).toBeFalsy()
+    expect(existsSync(newPath)).toBe(true)
   })
 
   it('ignores a removal for a file the store does not track', () => {
     sentFolderChanged.length = 0
     __emitFolderEvent('unlink', join(tmpdir(), 'tracked-by-nobody.md'))
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('ignores a removal for a path that is still on disk (stale rename unlink)', async () => {
+    // Regression: renaming a.md -> b.md and back to a.md replays the step-1 `unlink`
+    // for a.md. chokidar reports a rename as an unpaired `unlink` + `add`, so that
+    // event can be delivered AFTER the file exists again — at which point a.md is the
+    // OPEN document. Deleting the record on the stale event closed the file and
+    // emptied the sidebar, which is what made it look like the workspace closed.
+    const dir = tmpDir('mf-watch-rename-')
+    const original = await importDoc(dir, 'a.md')
+    const aPath = original.filePath
+    const bPath = join(dir, 'b.md')
+
+    const renamed = await call('documents:update', original.id, {
+      title: 'b',
+      content: '# imported',
+    })
+    expect(renamed.filePath).toBe(bPath)
+    const back = await call('documents:update', original.id, { title: 'a', content: '# imported' })
+    expect(back.filePath).toBe(aPath)
+
+    sentFolderChanged.length = 0
+    // The step-1 unlink, delivered late: a.md is back on disk and is the open doc.
+    __emitFolderEvent('unlink', aPath)
+    __flushFolderChanged()
+
+    expect(docs.get(original.id)).toBeTruthy()
+    expect(sentFolderChanged).toEqual([])
+  })
+
+  it('keeps the open document through a full rename round-trip (a -> b -> a)', async () => {
+    // The complete TODO-4 repro, this time replaying chokidar's unpaired `unlink` +
+    // `add` after every step instead of only the late event. After each in-app rename
+    // the record already points at the NEW path, so the matching `unlink <old>` finds
+    // no record; the late step-1 `unlink a.md` is the one that used to delete it.
+    const dir = tmpDir('mf-watch-roundtrip-')
+    const original = await importDoc(dir, 'a.md')
+    const aPath = original.filePath
+    const bPath = join(dir, 'b.md')
+
+    const renamed = await call('documents:update', original.id, {
+      title: 'b',
+      content: '# imported',
+    })
+    expect(renamed.filePath).toBe(bPath)
+    __emitFolderEvent('unlink', aPath)
+    __emitFolderEvent('add', bPath)
+
+    const back = await call('documents:update', original.id, { title: 'a', content: '# imported' })
+    expect(back.filePath).toBe(aPath)
+    __emitFolderEvent('unlink', bPath)
+    __emitFolderEvent('add', aPath)
+
+    // The step-1 unlink, delivered late, when a.md is back on disk and is the open doc.
+    sentFolderChanged.length = 0
+    __emitFolderEvent('unlink', aPath)
+    __flushFolderChanged()
+
+    expect(docs.get(original.id)).toBeTruthy()
+    expect(docs.get(original.id).filePath).toBe(aPath)
     expect(sentFolderChanged).toEqual([])
   })
 
@@ -581,6 +814,25 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     }
     expect(sentFileChanged).toEqual([])
     expect(sentFolderChanged).toEqual([])
+  })
+
+  it('does not send app:document-refresh once the window is destroyed', async () => {
+    // Unlike the previous test, here the file is GONE, so onFileRemoved proceeds past the
+    // existsSync guard and actually reaches notifyDocumentRefresh — which must still skip
+    // sending to a destroyed webContents.
+    const dir = tmpDir('mf-watch-refresh-gone-')
+    const created = await call('documents:create', { title: 'Gone', content: 'x', folderPath: dir })
+    unlinkSync(created.filePath)
+    const prev = fakeMainWindow
+    fakeMainWindow = { webContents: prev.webContents, isDestroyed: () => true }
+    sentDocumentRefresh.length = 0
+    try {
+      __emitFolderEvent('unlink', created.filePath)
+      __flushFolderChanged()
+    } finally {
+      fakeMainWindow = prev
+    }
+    expect(sentDocumentRefresh).toEqual([])
   })
 
   it('cancels a pending folder-changed broadcast when the workspace closes', async () => {
@@ -977,7 +1229,7 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     expect(await call('documents:save-as', 'nope', join(dir, 'x.md'), {})).toBeNull()
   })
 
-  it('save-as falls back to the existing content/title when they are omitted', async () => {
+  it('save-as falls back to the existing content when it is omitted', async () => {
     const created = await call('documents:create', {
       title: 'SaveFallback',
       content: 'orig-content',
@@ -986,7 +1238,9 @@ describe('documents IPC — branch coverage (defensive defaults)', () => {
     const dir = fakeApp.getPath()
     const newPath = join(dir, 'saved-fallback.md')
     const updated = await call('documents:save-as', created.id, newPath, {})
-    expect(updated.title).toBe('SaveFallback')
+    // The title is NOT inherited: the document is re-pointed at a file the user
+    // picked, so that file name is the title.
+    expect(updated.title).toBe('saved-fallback')
     expect(updated.content).toBe('orig-content')
     expect(readFileSync(newPath, 'utf-8')).toBe('orig-content')
   })

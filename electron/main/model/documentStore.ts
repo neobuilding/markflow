@@ -19,6 +19,17 @@ export interface Document {
   // Optional for backward-compat with hand-built test fixtures; treated as
   // false when absent (plan §2).
   memoryOnly?: boolean
+  // True when the file this document points at no longer exists on disk, because it
+  // was deleted or moved outside the app.
+  //
+  // The record is deliberately KEPT rather than dropped: like VS Code, which leaves a
+  // struck-through tab open, the document stays editable so an accidental deletion can
+  // still be saved straight back to disk. A rename is repaired by re-pointing this same
+  // record at the new path (see syncAddedFile), which is what lets the open editor — and
+  // its unsaved draft — survive it. The record only disappears when the user closes the
+  // document, or on restart (this store is in-memory and rebuilt from disk).
+  // Optional for the same backward-compat reason; absent means "not missing".
+  missing?: boolean
 }
 
 // Re-export so existing importers of `documentStore.isInFolder` keep working.

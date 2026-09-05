@@ -26,6 +26,7 @@ const docs: Record<
     encoding: string
     updatedAt: number
     wordCount: number
+    missing?: boolean
   }
 > = {
   a: {
@@ -56,6 +57,7 @@ interface ApiShape {
   onMenuEvent: ReturnType<typeof vi.fn>
   onFileChanged: ReturnType<typeof vi.fn>
   onFolderChanged: ReturnType<typeof vi.fn>
+  onDocumentRefresh: ReturnType<typeof vi.fn>
   onOpenPaths: ReturnType<typeof vi.fn>
   onAppRequestQuit: ReturnType<typeof vi.fn>
 }
@@ -133,6 +135,7 @@ beforeEach(() => {
     onMenuEvent: vi.fn(() => noopUnsub),
     onFileChanged: vi.fn(() => noopUnsub),
     onFolderChanged: vi.fn(() => noopUnsub),
+    onDocumentRefresh: vi.fn(() => noopUnsub),
     onOpenPaths: vi.fn(() => noopUnsub),
     onAppRequestQuit: vi.fn(() => noopUnsub),
   }
@@ -178,10 +181,10 @@ async function setEditable(editable: boolean): Promise<void> {
 // the title button to render. Ends with the document dirty so Save/Save-As become
 // clickable.
 async function makeDirty(container: HTMLElement): Promise<void> {
-  // The document loads via React Query, so the title button only appears after
+  // The document loads via React Query, so the rename button only appears after
   // the doc resolves. Wait for it (it is always present for our fixtures, which
-  // have a non-empty title) and exercise the real title-edit path.
-  const titleBtn = await screen.findByTestId('title-btn')
+  // have a non-empty file name) and exercise the real title-edit path.
+  const renameBtn = await screen.findByTestId('rename-title-btn')
   // Use fireEvent (not userEvent) for the whole sequence. userEvent's click
   // restores the previously-focused element at the end of the interaction, which
   // steals focus from the just-mounted autoFocus <input>; its onBlur fires
@@ -190,7 +193,7 @@ async function makeDirty(container: HTMLElement): Promise<void> {
   // user.clear on null). fireEvent dispatches synchronously inside act, and we
   // grab + edit + commit the input in the SAME sync flush, so the async focus
   // restore never gets a window to remove it.
-  fireEvent.click(titleBtn) // title button → inline title edit (synchronous in act)
+  fireEvent.click(renameBtn) // rename button → inline title edit (synchronous in act)
   const input = container.querySelector('input') as HTMLInputElement
   expect(input).not.toBeNull()
   fireEvent.change(input, { target: { value: 'Renamed' } })
@@ -244,6 +247,11 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     )
     expect(useUIStore.getState().isNewUnsaved).toBe(false)
     expect(api.documents.eol).toHaveBeenCalledWith('/a.md')
+    // makeDirty renamed the draft to `Renamed.md`, and Save As must offer that name in
+    // the document's own folder: accepting the default keeps the rename instead of
+    // writing the old file name back. `dirName('/a.md')` is '' (the fixture sits at the
+    // filesystem root), so the offered path is `/Renamed.md`.
+    expect(api.dialog.saveFile).toHaveBeenCalledWith('/Renamed.md')
   })
 
   it('Save As cancelled (null path) does nothing', async () => {
@@ -508,11 +516,13 @@ describe('EditorPane — close & open', () => {
   })
 
   it('Save As falls back to "Untitled" when the document title is blank', async () => {
+    // A memory-only draft (no filePath) is the only document whose title can still be
+    // blank: once a file exists, the title shown is derived from its file name.
     docs.blank = {
       id: 'blank',
       title: '',
       content: 'x',
-      filePath: '/blank.md',
+      filePath: '',
       encoding: 'utf-8',
       updatedAt: 0,
       wordCount: 1,
@@ -572,8 +582,7 @@ describe('EditorPane — close & open', () => {
       })
       await waitFor(() => expect(screen.getByTestId('save-as-btn')).not.toBeDisabled())
       await user.click(screen.getByTestId('save-as-btn'))
-      // No filePath + blank title → defaultPath = `${''.trim() || 'Untitled'}.md` = 'Untitled.md'.
-      // Covers the `localTitle.trim() || 'Untitled'` fallback arm at EditorPane.tsx line 104.
+      // No filePath + blank title → draftName falls back to 'Untitled.md'.
       await waitFor(() => expect(api.dialog.saveFile).toHaveBeenCalledWith('Untitled.md'))
     } finally {
       delete docs.blank
@@ -669,13 +678,14 @@ describe('EditorPane — close & open', () => {
   })
 
   it('Save falls back to "Untitled" when the document title is blank', async () => {
-    // A document whose title is blank → on Save the empty title falls back to
-    // "Untitled" (see handleSave: localTitle.trim() || 'Untitled').
+    // A memory-only draft (no filePath) is the only document whose title can still be
+    // blank: once a file exists, the title shown is derived from its file name.
+    // → on Save the empty title falls back to "Untitled".
     docs.blank = {
       id: 'blank',
       title: '',
       content: 'x',
-      filePath: '/blank.md',
+      filePath: '',
       encoding: 'utf-8',
       updatedAt: 0,
       wordCount: 1,
@@ -755,6 +765,51 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
     expect(useUIStore.getState().viewMode).toBe('edit')
   })
 
+  it('shows the file name with its extension in the title bar', async () => {
+    mount()
+    await openDoc()
+    await flush()
+    // The stored title is the extension-free 'A'; the file is a.md, and that is what
+    // the user sees in their file manager.
+    expect(screen.getByTestId('title-btn').textContent).toBe('a.md')
+  })
+
+  it('does not start an edit when the title text is clicked', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await flush()
+
+    await user.click(screen.getByTestId('title-btn'))
+    await flush()
+    // The name is display-only; the Rename button next to it is the only entry point.
+    expect(container.querySelector('input')).toBeNull()
+    expect(screen.getByTestId('rename-title-btn')).toBeInTheDocument()
+  })
+
+  it('seeds the rename input with the full file name and hides it in read-only mode', async () => {
+    const user = userEvent.setup()
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await flush()
+
+    await user.click(screen.getByTestId('rename-title-btn'))
+    const input = (await waitFor(() => container.querySelector('input'))) as HTMLInputElement
+    // The input starts from the file name WITH its extension, not the stored title.
+    expect(input.value).toBe('a.md')
+  })
+
+  it('hides the rename button in read-only mode', async () => {
+    mount()
+    await openDoc()
+    await flush()
+    // Read-only: the title is display-only and there is nothing to rename.
+    expect(screen.getByTestId('title-btn')).toBeInTheDocument()
+    expect(screen.queryByTestId('rename-title-btn')).toBeNull()
+  })
+
   it('edits the title and saves it on blur (marks dirty)', async () => {
     const user = userEvent.setup()
     const { container } = mount()
@@ -762,7 +817,7 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
     await setEditable(true)
     await flush()
 
-    await user.click(screen.getByText('A'))
+    await user.click(screen.getByTestId('rename-title-btn'))
     await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
     const input = container.querySelector('input') as HTMLInputElement
     expect(input).toBeTruthy()
@@ -845,14 +900,14 @@ describe('EditorPane — split-view drag', () => {
 })
 
 describe('EditorPane — title editing & breadcrumb & external dialog', () => {
-  it('commits the title on Enter and marks dirty', async () => {
+  it('commits the title on Enter: shows the new name at once and marks dirty', async () => {
     const user = userEvent.setup()
     const { container } = mount()
     await openDoc()
     await setEditable(true)
     await flush()
 
-    await user.click(screen.getByText('A'))
+    await user.click(screen.getByTestId('rename-title-btn'))
     await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
     const input = container.querySelector('input') as HTMLInputElement
     await user.clear(input)
@@ -860,6 +915,12 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     await user.keyboard('{Enter}')
     await flush()
     expect(useUIStore.getState().dirty).toBe(true)
+    // The new name is displayed immediately, no Save needed to see it, with the
+    // file's extension re-attached to what was typed.
+    expect(screen.getByTestId('title-btn').textContent).toBe('Renamed.md')
+    // Still unsaved: Save stays enabled and nothing has been written.
+    expect(screen.getByTestId('save-btn')).not.toBeDisabled()
+    expect(api.documents.update).not.toHaveBeenCalled()
   })
 
   it('cancels the title edit on Escape (reverts to the original title)', async () => {
@@ -869,15 +930,15 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     await setEditable(true)
     await flush()
 
-    await user.click(screen.getByText('A'))
+    await user.click(screen.getByTestId('rename-title-btn'))
     await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
     const input = container.querySelector('input') as HTMLInputElement
     await user.clear(input)
     await user.type(input, 'Renamed')
     await user.keyboard('{Escape}')
     await flush()
-    // original title button is shown again, no dirty flag
-    expect(screen.getByText('A')).toBeInTheDocument()
+    // original title is shown again, no dirty flag
+    expect(screen.getByTestId('title-btn').textContent).toBe('a.md')
     expect(useUIStore.getState().dirty).toBe(false)
   })
 
@@ -1031,5 +1092,28 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     // The active-document branch still works after a non-matching event.
     act(() => cb!({ id: 'a', filePath: '/a.md' }))
     expect(useUIStore.getState().externalChange).toEqual({ id: 'a', filePath: '/a.md' })
+  })
+})
+
+describe('EditorPane — external deletion (VS Code-style missing document)', () => {
+  it('strikes through the title and shows a deleted tooltip when the file is gone', async () => {
+    ;(docs.a as { missing?: boolean }).missing = true
+    try {
+      const { container } = mount()
+      await openDoc()
+      const title = container.querySelector('[data-testid="title-btn"]') as HTMLElement
+      expect(title.classList.contains('line-through')).toBe(true)
+      // The tooltip explains the deletion rather than echoing the file name.
+      expect((title.getAttribute('title') ?? '').length).toBeGreaterThan(0)
+    } finally {
+      ;(docs.a as { missing?: boolean }).missing = false
+    }
+  })
+
+  it('shows the plain title with no strikethrough when the file is present', async () => {
+    const { container } = mount()
+    await openDoc()
+    const title = container.querySelector('[data-testid="title-btn"]') as HTMLElement
+    expect(title.classList.contains('line-through')).toBe(false)
   })
 })

@@ -2,7 +2,18 @@ import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { computeDirty, isMac, baseName, isInFolder, isDirInFolder, buildFileTree } from './utils'
+import {
+  computeDirty,
+  isMac,
+  baseName,
+  isInFolder,
+  isDirInFolder,
+  buildFileTree,
+  displayTitle,
+  stripMarkdownExt,
+  withMarkdownExt,
+  markdownExtOf,
+} from './utils'
 import { useCreateDocument } from '../hooks/useDocuments'
 import { useUIStore } from '../store/ui'
 
@@ -24,6 +35,49 @@ describe('computeDirty', () => {
 
   it('treats whitespace-only differences as dirty', () => {
     expect(computeDirty('a\n', 'a')).toBe(true)
+  })
+})
+
+describe('title helpers (display form vs stored form)', () => {
+  it('stripMarkdownExt drops a trailing Markdown extension', () => {
+    expect(stripMarkdownExt('notes.md')).toBe('notes')
+    expect(stripMarkdownExt('notes.MD')).toBe('notes')
+    expect(stripMarkdownExt('notes.markdown')).toBe('notes')
+    expect(stripMarkdownExt('v1.2.release.md')).toBe('v1.2.release')
+  })
+
+  it('stripMarkdownExt leaves non-Markdown names untouched', () => {
+    expect(stripMarkdownExt('Makefile')).toBe('Makefile')
+    expect(stripMarkdownExt('notes.txt')).toBe('notes.txt')
+    expect(stripMarkdownExt('a.md.txt')).toBe('a.md.txt')
+  })
+
+  it('withMarkdownExt appends .md only when missing', () => {
+    expect(withMarkdownExt('notes')).toBe('notes.md')
+    expect(withMarkdownExt('notes.md')).toBe('notes.md')
+    expect(withMarkdownExt('notes.markdown')).toBe('notes.markdown')
+  })
+
+  it('markdownExtOf returns the extension, or an empty string when there is none', () => {
+    expect(markdownExtOf('notes.md')).toBe('.md')
+    expect(markdownExtOf('notes.MARKDOWN')).toBe('.MARKDOWN')
+    expect(markdownExtOf('notes.txt')).toBe('')
+  })
+
+  it('displayTitle takes the file name (with extension) from the path', () => {
+    expect(displayTitle({ title: 'readme', filePath: '/docs/readme.md' })).toBe('readme.md')
+    // Windows separators, and an extension other than .md.
+    expect(displayTitle({ title: 'a', filePath: 'D:\\docs\\a.markdown' })).toBe('a.markdown')
+  })
+
+  it('displayTitle falls back to `<title>.md` while the draft has no file yet', () => {
+    expect(displayTitle({ title: 'Untitled', filePath: '' })).toBe('Untitled.md')
+    expect(displayTitle({ title: '', filePath: '' })).toBe('')
+  })
+
+  it('displayTitle is empty without a document', () => {
+    expect(displayTitle(null)).toBe('')
+    expect(displayTitle(undefined)).toBe('')
   })
 })
 

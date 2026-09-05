@@ -316,12 +316,57 @@ function notifyFileChanged(id: string, filePath: string): void {
   if (win && !win.isDestroyed?.()) win.webContents.send('app:file-changed', { id, filePath })
 }
 
+// Tell the renderer to re-read ONE document's record, because that document's identity
+// changed behind its back: its file was deleted (record marked missing) or renamed
+// outside the app. Deliberately NOT `app:folder-changed`: that one refreshes the whole
+// sidebar list, while this refreshes only this document's detail — which is what the
+// title bar reads. Widening the folder event to invalidate every detail was a measured
+// source of lag while switching documents (see App.tsx), so the two stay separate.
+function notifyDocumentRefresh(id: string): void {
+  const win = _getMainWindow?.()
+  if (win && !win.isDestroyed?.()) win.webContents.send('app:document-refresh', { id })
+}
+
+// A tracked document whose file had vanished and is back at the SAME path: it is no
+// longer missing. The content is deliberately left alone — an external CONTENT change is
+// `app:file-changed`'s job (it asks the user), not the watcher's to apply silently.
+function reviveDocument(existing: Document): void {
+  if (!existing.missing) return
+  storeUpdate(existing.id, { missing: false })
+  notifyDocumentRefresh(existing.id)
+}
+
+// Find the document an external rename should be folded back into.
+//
+// chokidar reports a rename as an UNPAIRED `unlink <old>` + `add <new>` — there is no
+// rename event and nothing correlates the two — so the only way to recognise one is to
+// look for a document we have just marked missing, sitting in the same directory, holding
+// the same bytes. The content is the fingerprint, which makes this exact for a plain
+// rename (what Explorer / Finder / `git mv` do). A rename that also rewrote the file is
+// not matched and simply appears as a new document — predictable, and never destructive.
+function findRenamedDocument(filePath: string, text: string): Document | null {
+  const dir = dirname(filePath)
+  // No need to skip `d.filePath === filePath`: syncAddedFile already returned above for
+  // any document tracked under this exact path (that is the restore case).
+  for (const d of storeList()) {
+    if (!d.missing) continue
+    if (dirname(d.filePath) !== dir) continue
+    if (d.content !== text) continue
+    return d
+  }
+  return null
+}
+
 // Read a Markdown file that just appeared on disk into the store.
 // Files we already know about are left alone: our own saves and Save As already
 // upserted them, and their watcher events must not create a second record for the
 // same path (which would show up as a duplicate entry in the sidebar).
 function syncAddedFile(filePath: string): void {
-  if (storeGetByPath(filePath)) return
+  const tracked = storeGetByPath(filePath)
+  if (tracked) {
+    reviveDocument(tracked)
+    return
+  }
   let text: string
   let encoding: string
   let confidence: number
@@ -330,6 +375,26 @@ function syncAddedFile(filePath: string): void {
   } catch {
     // Unreadable or already gone: leave the store untouched rather than let the
     // watcher callback throw.
+    return
+  }
+  const renamed = findRenamedDocument(filePath, text)
+  if (renamed) {
+    // The file was renamed outside the app. Re-point the SAME record instead of
+    // creating a new one, so the document keeps its id: the open editor stays on it,
+    // its unsaved draft survives, and the title bar just shows the new name.
+    storeUpdate(renamed.id, {
+      title: stripMarkdownExt(basename(filePath)),
+      folderPath: dirname(filePath),
+      filePath,
+      content: text,
+      wordCount: countWords(text),
+      encoding,
+      encodingConfidence: confidence,
+      missing: false,
+      updatedAt: Date.now(),
+    })
+    notifyDocumentRefresh(renamed.id)
+    notifyFolderChanged(dirname(filePath))
     return
   }
   const now = Date.now()
@@ -368,9 +433,23 @@ export function registerDocumentHandlers(
   startFolderWatching({
     onFileAdded: (filePath) => syncAddedFile(filePath),
     onFileRemoved: (filePath) => {
+      // A rename reaches chokidar as `unlink <old>` + `add <new>`, and the two are not
+      // paired: either can be delivered long after the filesystem has moved on. Renaming
+      // a.md -> b.md -> back to a.md therefore replays an `unlink` for a.md at a moment
+      // when that path EXISTS again and is still the open document — deleting the record
+      // then closed the file (and emptied the sidebar). Never trust the removal while
+      // the file is still on disk; a genuinely deleted file is gone by now.
+      if (existsSync(filePath)) return
       const existing = storeGetByPath(filePath)
       if (!existing) return
-      storeDelete(existing.id)
+      // VS Code behaviour: a file deleted (or moved) outside the app stays OPEN, its
+      // title struck through, so an accidental deletion can still be saved straight back
+      // to disk. The record is therefore marked missing instead of dropped — it only
+      // disappears when the user closes the document, or on restart (this store is
+      // in-memory and rebuilt from disk). A rename looks the same at this point and is
+      // repaired by syncAddedFile, which re-points this very record at the new path.
+      storeUpdate(existing.id, { missing: true })
+      notifyDocumentRefresh(existing.id)
       notifyFolderChanged(dirname(filePath))
     },
     onFileChanged: (filePath) => {
@@ -499,7 +578,12 @@ export function registerDocumentHandlers(
       const existing = storeGet(id)
       if (!existing) return null
 
-      const newTitle = updates.title ?? existing.title
+      // Titles are stored WITHOUT the Markdown extension — that is how `import`
+      // derives them and how the rename below re-appends the file's own extension.
+      // The renderer sends the name as the title bar shows it (`notes.md`), so strip
+      // the extension once here; otherwise a rename would build `notes.md.md`.
+      const newTitle =
+        updates.title === undefined ? existing.title : stripMarkdownExt(updates.title)
       const newContent = updates.content ?? existing.content
       const wordCount = countWords(newContent)
 
@@ -517,7 +601,13 @@ export function registerDocumentHandlers(
 
       // Rename file if title changed
       let newFilePath = existing.filePath
-      if (updates.title && updates.title !== existing.title && existing.filePath) {
+      // Compare the NORMALIZED title, not the raw one. The renderer sends the
+      // extension-free name, but a caller that still passes the display form
+      // (`notes.md`) would otherwise differ from `existing.title` (`notes`) on
+      // every save and walk into the rename branch for nothing — the `-N` probe
+      // below only survives that because of its own `target !== existing.filePath`
+      // check. `newTitle &&` keeps an empty title from renaming to a bare extension.
+      if (newTitle && newTitle !== existing.title && existing.filePath) {
         const dir = dirname(existing.filePath)
         const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
         const ext = extname(existing.filePath).toLowerCase() || '.md'
@@ -541,6 +631,9 @@ export function registerDocumentHandlers(
         content: newContent,
         wordCount,
         filePath: newFilePath,
+        // Writing the file back is what undoes an external deletion: the document is
+        // no longer missing, so the strikethrough comes off.
+        missing: false,
         updatedAt: now,
       })
     },
@@ -555,7 +648,10 @@ export function registerDocumentHandlers(
       if (!existing) return null
 
       const content = updates.content ?? existing.content
-      const title = updates.title ?? existing.title
+      // The document is being re-pointed at a brand-new file the user picked, so the
+      // file name is the title — the caller's (possibly stale, possibly
+      // extension-bearing) title would leave the two out of sync.
+      const title = stripMarkdownExt(basename(newFilePath))
       const wordCount = countWords(content)
       const now = Date.now()
 
@@ -573,6 +669,8 @@ export function registerDocumentHandlers(
         filePath: newFilePath,
         content,
         wordCount,
+        // The document now lives at the chosen path, so it is no longer missing.
+        missing: false,
         updatedAt: now,
       })
     },

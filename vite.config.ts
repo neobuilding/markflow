@@ -105,7 +105,21 @@ export default defineConfig({
     // Here we ignore changes to any .html other than index.html — keeping index.html hot-reload
     // while avoiding accidental reloads from export operations.
     watch: {
-      ignored: (path) => /[^/\\]\.html$/i.test(path) && !/index\.html$/i.test(path),
+      ignored: (path) => {
+        if (/[^/\\]\.html$/i.test(path) && !/index\.html$/i.test(path)) return true
+        // Markdown files are the app's DATA, never renderer source (the renderer
+        // imports no .md — only ?raw CSS from node_modules). Editing or renaming a
+        // .md INSIDE the project root while `npm run dev` runs must NOT trigger a
+        // Vite full-reload: that reload resets the renderer and, because workspace
+        // state is not persisted, silently "closes" the open document and the whole
+        // workspace (TODO-4). Dev-only (no Vite watcher in packaged builds), but a
+        // real bug — the app is a markdown editor, so editing a .md that happens to
+        // live in its own repo root is perfectly normal. The app's OWN chokidar
+        // watcher (electron/main/model/folderWatcher.ts) tracks .md independently,
+        // so ignoring them here costs nothing.
+        if (/\.(md|markdown|mdx|mdtxt|mdtext)$/i.test(path)) return true
+        return false
+      },
     },
   },
   build: {

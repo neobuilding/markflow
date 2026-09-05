@@ -74,6 +74,44 @@ export function baseName(filePath: string): string {
   return idx < 0 ? norm : norm.slice(idx + 1)
 }
 
+// ─── Document title (file name) helpers ─────────────────────────────────────
+// The main process stores `Document.title` WITHOUT the Markdown extension (it is
+// derived with stripMarkdownExt when a file is imported), while the title bar shows
+// the file name WITH its extension — the name the user actually sees in their file
+// manager. These helpers convert between the two forms.
+
+// Must stay in sync with MD_EXTS in electron/main/lib/markdown-ext.ts.
+const MD_EXT_RE = /\.(md|markdown|mdx|mdtxt|mdtext)$/i
+
+// Drop a trailing Markdown extension (`notes.md` -> `notes`, `notes.MD` -> `notes`).
+// Non-Markdown names are returned untouched, so callers need no guard.
+export function stripMarkdownExt(fileName: string): string {
+  return fileName.replace(MD_EXT_RE, '')
+}
+
+// Append `.md` when the name carries no Markdown extension yet.
+export function withMarkdownExt(fileName: string): string {
+  return MD_EXT_RE.test(fileName) ? fileName : `${fileName}.md`
+}
+
+// The Markdown extension a file name ends with ('' when it has none).
+export function markdownExtOf(fileName: string): string {
+  return MD_EXT_RE.exec(fileName)?.[0] ?? ''
+}
+
+// The name shown in the title bar (and seeded into the rename input): the file name
+// WITH its extension, e.g. `readme.md`.
+//
+// It comes from the path because `title` is extension-free; a memory-only draft has
+// no path yet, so it falls back to the name the first Save As would create. A draft
+// with a blank title shows nothing rather than a bare `.md`.
+export function displayTitle(doc: Pick<Document, 'title' | 'filePath'> | null | undefined): string {
+  if (!doc) return ''
+  if (doc.filePath) return baseName(doc.filePath)
+  const base = doc.title.trim()
+  return base ? withMarkdownExt(base) : ''
+}
+
 function normalizePathSegments(filePath: string): string {
   return filePath.replace(/\\/g, '/')
 }

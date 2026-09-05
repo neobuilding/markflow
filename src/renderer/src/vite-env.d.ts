@@ -108,6 +108,7 @@ export interface Api {
   onMenuEvent: (event: MenuEvent, callback: (data?: string | string[]) => void) => () => void
   onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => () => void
   onFolderChanged: (callback: (data: { dirPath: string }) => void) => () => void
+  onDocumentRefresh: (callback: (data: { id: string }) => void) => () => void
   onOpenPaths: (callback: (paths: string[]) => void) => () => void
   onAppRequestQuit: (callback: () => void) => () => void
 }

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type { Document } from '../types'
-import { computeDirty } from '../lib/utils'
+import { computeDirty, displayTitle, markdownExtOf, stripMarkdownExt } from '../lib/utils'
 import { useUIStore } from '../store/ui'
 
 export function useLocalDocument(
@@ -8,7 +8,15 @@ export function useLocalDocument(
   _activeDocumentId: string | null,
 ) {
   const [localContent, setLocalContent] = useState('')
+  // The title draft is kept in DISPLAY form (`notes.md`, extension included) so the
+  // title bar can simply render it — see the dirty computation below.
   const [localTitle, setLocalTitle] = useState('')
+  // Latest title draft, for use inside stable callbacks (handleContentChange must
+  // stay identity-stable for the editor, so it cannot close over `localTitle`).
+  const localTitleRef = useRef('')
+  useEffect(() => {
+    localTitleRef.current = localTitle
+  }, [localTitle])
   const [editingTitle, setEditingTitle] = useState(false)
   const [dirty, setDirtyState] = useState(false)
 
@@ -23,6 +31,8 @@ export function useLocalDocument(
   const justSwitchedRef = useRef(false)
   // The encoding currently applied to the document (used to detect a "manual encoding switch" event)
   const appliedEncodingRef = useRef<string | undefined>(undefined)
+  // Draft title as it was when the current rename edit started, so Escape restores it.
+  const titleBeforeEditRef = useRef('')
   // The latest dirty flag, for use inside effects (avoids capturing a stale value in the closure).
   // Updated in an effect (not during render) so react-hooks/refs stays happy.
   const dirtyRef = useRef(false)
@@ -47,11 +57,12 @@ export function useLocalDocument(
     if (doc.id === prevIdRef.current) return
     prevIdRef.current = doc.id
     appliedEncodingRef.current = doc.encoding
+    const title = displayTitle(doc)
     eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
     setLocalContent(doc.content)
-    setLocalTitle(doc.title)
+    setLocalTitle(title)
     savedContentRef.current = doc.content
-    savedTitleRef.current = doc.title
+    savedTitleRef.current = title
     setDirtyState(false)
     useUIStore.getState().setDirty(false)
     justSwitchedRef.current = true
@@ -71,20 +82,21 @@ export function useLocalDocument(
     // baseline for later comparison. But if the refreshed on-disk content matches the saved
     // baseline (e.g. an import-many transaction refreshed updated_at while the bytes are
     // unchanged), there is genuinely nothing dirty — clear the dirty flag.
+    const title = displayTitle(doc)
     if (dirtyRef.current) {
-      if (doc.content === savedContentRef.current && doc.title === savedTitleRef.current) {
+      if (doc.content === savedContentRef.current && title === savedTitleRef.current) {
         setDirtyState(false)
         useUIStore.getState().setDirty(false)
       }
       savedContentRef.current = doc.content
-      savedTitleRef.current = doc.title
+      savedTitleRef.current = title
       return
     }
     eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
     setLocalContent(doc.content)
-    setLocalTitle(doc.title)
+    setLocalTitle(title)
     savedContentRef.current = doc.content
-    savedTitleRef.current = doc.title
+    savedTitleRef.current = title
     setDirtyState(false)
     useUIStore.getState().setDirty(false)
   }, [doc?.id, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -97,11 +109,12 @@ export function useLocalDocument(
     // The main effect (above) always runs first and updates prevIdRef on a document switch,
     // so by the time this effect runs the id already matches — no separate id check is needed.
     if (doc.encoding === appliedEncodingRef.current) return
+    const title = displayTitle(doc)
     appliedEncodingRef.current = doc.encoding
     setLocalContent(doc.content)
-    setLocalTitle(doc.title)
+    setLocalTitle(title)
     savedContentRef.current = doc.content
-    savedTitleRef.current = doc.title
+    savedTitleRef.current = title
     setDirtyState(false)
     useUIStore.getState().setDirty(false)
   }, [doc?.id, doc?.encoding, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -143,28 +156,65 @@ export function useLocalDocument(
   // Return the currently inferred original line ending (fallback if the save-time IPC fails)
   const getEol = useCallback((): '\r\n' | '\n' => eolRef.current, [])
 
+  // Whether the draft differs from the last saved baseline in EITHER the content or
+  // the title. The two are compared independently: a rename that has not been written
+  // to disk yet must survive an unrelated content edit (and vice versa), otherwise the
+  // second edit would silently drop the first one's unsaved state.
+  const computeDraftDirty = useCallback(
+    (content: string, title: string) =>
+      computeDirty(content, savedContentRef.current) ||
+      stripMarkdownExt(title.trim()) !== stripMarkdownExt(savedTitleRef.current.trim()),
+    [],
+  )
+
   // Content change: only update the local draft and mark dirty; no longer auto-write to disk
   const handleContentChange = useCallback(
     (newContent: string) => {
       setLocalContent(newContent)
-      setDirty(computeDirty(newContent, savedContentRef.current))
+      setDirty(computeDraftDirty(newContent, localTitleRef.current))
     },
-    [setDirty],
+    [setDirty, computeDraftDirty],
   )
 
-  // Title editing finished: only mark dirty (the actual rename/write is done by Save / Save As)
+  // Re-attach the extension the file currently has when the user typed only the base
+  // name: typing `notes` for `notes.markdown` is not a rename. Keeps the draft in
+  // display form so the title bar never loses (or invents) an extension.
+  const normalizeTitle = useCallback((value: string, currentName: string): string => {
+    const base = stripMarkdownExt(value.trim())
+    return base ? base + (markdownExtOf(currentName) || '.md') : ''
+  }, [])
+
+  // Enter the rename edit, remembering the draft so Escape can restore it exactly —
+  // including a rename that was already committed to the draft but not yet saved.
+  const startTitleEdit = useCallback(() => {
+    titleBeforeEditRef.current = localTitleRef.current
+    setEditingTitle(true)
+  }, [])
+
+  const cancelTitleEdit = useCallback(() => {
+    setLocalTitle(titleBeforeEditRef.current)
+    setEditingTitle(false)
+  }, [])
+
+  // Title editing finished: adopt the new name into the draft so the title bar shows
+  // it immediately (no Save needed to see it), and mark the document dirty. The actual
+  // rename is still only written to disk by Save / Save As.
   const handleTitleSave = useCallback(() => {
     setEditingTitle(false)
-    const trimmed = localTitle.trim()
-    if (!trimmed) {
+    const normalized = normalizeTitle(localTitle, savedTitleRef.current)
+    if (!normalized) {
+      // Blank name: fall back to the saved one. Only the title is reverted — content
+      // dirtiness is recomputed so an abandoned rename cannot hide unsaved edits.
       setLocalTitle(savedTitleRef.current)
-      setDirty(false)
+      setDirty(computeDraftDirty(localContent, savedTitleRef.current))
       return
     }
-    setDirty(trimmed !== savedTitleRef.current)
-  }, [localTitle, setDirty])
+    setLocalTitle(normalized)
+    setDirty(computeDraftDirty(localContent, normalized))
+  }, [localTitle, localContent, setDirty, computeDraftDirty, normalizeTitle])
 
-  // Called after Save / Save As / Reload succeeds: update the "saved" baseline to the latest content/title
+  // Called after Save / Save As / Reload succeeds: update the "saved" baseline to the latest content/title.
+  // `title` must be in DISPLAY form (see displayTitle) — the same form the draft uses.
   const markSaved = useCallback((content: string, title: string) => {
     savedContentRef.current = content
     savedTitleRef.current = title
@@ -181,6 +231,8 @@ export function useLocalDocument(
     setLocalTitle,
     editingTitle,
     setEditingTitle,
+    startTitleEdit,
+    cancelTitleEdit,
     handleContentChange,
     handleTitleSave,
     dirty,

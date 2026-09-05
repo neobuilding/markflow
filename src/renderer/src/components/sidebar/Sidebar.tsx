@@ -482,7 +482,16 @@ function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: Do
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1">
-          <span className="text-xs font-medium truncate text-[var(--color-text-primary)]">
+          <span
+            className={cn(
+              'text-xs font-medium truncate',
+              // A missing document (its file was deleted outside the app) is kept open on
+              // purpose, so it stays listed here — struck through, like the title bar.
+              doc.missing
+                ? 'text-[var(--color-text-tertiary)] line-through'
+                : 'text-[var(--color-text-primary)]',
+            )}
+          >
             {/* A memory-only new document has no file on disk yet; it is listed in the dedicated
                 "Unsaved drafts" group (PLAN §6.3), falling back to its title here. */}
             {doc.filePath ? baseName(doc.filePath) : doc.title}
