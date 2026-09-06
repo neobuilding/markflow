@@ -19,6 +19,9 @@ export interface SearchResult {
   id: string
   title: string
   folderPath: string
+  // Absolute on-disk path of the matching document (PLAN §12-10). Empty for
+  // memory-only drafts that have no file yet.
+  filePath: string
   snippet: string
   score: number
   updatedAt: number

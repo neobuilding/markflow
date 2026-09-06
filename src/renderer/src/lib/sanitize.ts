@@ -30,7 +30,7 @@ export function sanitizeHtml(html: string): string {
   return DOMPurify.sanitize(html, {
     // mermaid placeholder attribute; other data-* are allowed by DOMPurify's
     // default ALLOW_DATA_ATTR.
-    ADD_ATTR: ['data-mermaid-slot'],
+    ADD_ATTR: ['data-mermaid-slot', 'data-mermaid-source'],
     // Allow the SVG <use> references KaTeX / mermaid need, plus KaTeX's MathML
     // accessibility layer (annotation carries the TeX source for screen readers;
     // jsdom drops it but Chromium keeps it, so we allow it explicitly to lock the

@@ -35,6 +35,19 @@ export function hashCode(s: string): string {
   return (h >>> 0).toString(36)
 }
 
+// Render the fence language as a `data-lang` attribute so the preview context menu can
+// offer "Copy language" (PLAN §12 能力 4). The value comes from the fence info string
+// (user-authored), so it is attribute-escaped before being interpolated into the tag.
+// DOMPurify lets it through because `data-*` is allowed by default (ALLOW_DATA_ATTR).
+export function codeLangAttr(lang: string): string {
+  const escaped = lang
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  return ` data-lang="${escaped}"`
+}
+
 const md: MarkdownItInstance = new MarkdownIt({
   html: true,
   linkify: true,
@@ -43,7 +56,9 @@ const md: MarkdownItInstance = new MarkdownIt({
     if (lang && hljs.getLanguage(lang)) {
       try {
         return (
-          '<pre class="hljs"><code>' +
+          '<pre class="hljs"><code' +
+          codeLangAttr(lang) +
+          '>' +
           hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
           '</code></pre>'
         )

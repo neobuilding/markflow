@@ -40,6 +40,18 @@ export function isMac(): boolean {
   return /mac|iphone|ipad/i.test(navigator.userAgent)
 }
 
+// Render a keyboard shortcut for display, platform-aware.
+// Input is the macOS form: '⌘' = primary modifier (Command), '⇧' = Shift. On macOS
+// it is returned unchanged; on Windows/Linux '⌘' becomes 'Ctrl+' and '⇧' 'Shift+'.
+// e.g. formatShortcut('⌘S')  -> '⌘S'   (macOS) | 'Ctrl+S'       (Windows/Linux)
+//      formatShortcut('⌘⇧S') -> '⌘⇧S' (macOS) | 'Ctrl+Shift+S' (Windows/Linux)
+// The primary modifier is switched (not the keybindings) — handlers already resolve
+// ⌘ to Ctrl off macOS (see App.tsx), so this keeps the *label* in sync with reality.
+export function formatShortcut(macKeys: string): string {
+  if (isMac()) return macKeys
+  return macKeys.replace('⌘', 'Ctrl+').replace('⇧', 'Shift+')
+}
+
 // Whether the local draft differs from the saved baseline (i.e. has unsaved changes).
 // Pure helper so the dirty-computation can be unit-tested independently of React.
 export function computeDirty(localContent: string, savedContent: string): boolean {

@@ -8,10 +8,14 @@ import {
   FolderOpen,
   Folder,
   ChevronRight,
+  ChevronDown,
+  ChevronsDownUp,
   ArrowUp,
   ArrowRight,
   X,
   GripVertical,
+  PenLine,
+  Copy,
 } from 'lucide-react'
 import {
   cn,
@@ -19,6 +23,7 @@ import {
   isInFolder,
   buildFileTree,
   isMac,
+  formatShortcut,
   baseName,
   type FileTreeNode,
 } from '../../lib/utils'
@@ -41,6 +46,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '../ui/context-menu'
 import type { Document } from '../../types'
 
 export function Sidebar(): React.ReactElement | null {
@@ -56,6 +68,39 @@ export function Sidebar(): React.ReactElement | null {
   const { t } = useT()
   const [sidebarWidth, setSidebarWidth] = useState(240)
   const isResizing = useRef(false)
+  // Exporting (or with the export dialog open) hard-locks every "close" action, so the
+  // current-folder bar's "Close Workspace" item must grey out too (PLAN §5.5).
+  const workspaceLocked = useUIStore((s) => s.exporting || s.exportOpen)
+
+  // ── Folder expand state (PLAN §6.1) ──
+  // Lifted out of `TreeRow` (which used to own one `useState` per node) so an ancestor can
+  // expand a whole subtree — "Expand All" has no implementation path otherwise.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const toggleExpand = useCallback((path: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) {
+        next.delete(path)
+      } else {
+        next.add(path)
+      }
+      return next
+    })
+  }, [])
+  // Recursively open every folder below `node` (including it). Only folders are added;
+  // files are leaves with nothing to open.
+  const expandAll = useCallback((node: FileTreeNode) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      const walk = (n: FileTreeNode) => {
+        if (!n.isFolder) return
+        next.add(n.path)
+        n.children.forEach(walk)
+      }
+      walk(node)
+      return next
+    })
+  }, [])
 
   const { data: allDocs = [], isLoading: loading } = useDocuments(activeFolder ?? undefined)
 
@@ -107,36 +152,88 @@ export function Sidebar(): React.ReactElement | null {
     useUIStore.getState().setIsNewUnsaved(true) // first Save will prompt for a path
   }, [createMut, setActiveDocumentId])
 
-  // Document select / delete / star / details: reused by the doc tree (including subfolders)
+  // Document select / delete / star / details: reused by the doc tree (including subfolders).
+  // Returns whether the switch actually happened (false if the user cancelled the dirty
+  // confirm) so callers like the "Rename…" menu item can abort (PLAN §5.1).
   const handleSelectDoc = useCallback(
-    async (doc: Document) => {
+    async (doc: Document): Promise<boolean> => {
       if (useUIStore.getState().dirty) {
         const ok = await window.api.dialog.confirm({
           message: t('app.unsavedSwitch'),
           okText: t('app.confirmDiscard'),
           cancelText: t('app.confirmKeep'),
         })
-        if (!ok) return
+        if (!ok) return false
       }
       setActiveDocumentId(doc.id)
+      return true
     },
     [setActiveDocumentId, t],
   )
 
+  // PLAN §5-4: deletion is a destructive action and must be gated behind the in-app
+  // confirm dialog before it runs. A memory-only draft has no file on disk, so it is a
+  // "discard" (never touches the disk) and uses a different confirm message/button.
   const handleDeleteDoc = useCallback(
-    (doc: Document) => {
+    async (doc: Document) => {
+      const isDraft = !doc.filePath
+      const ok = await window.api.dialog.confirm({
+        message: t(isDraft ? 'app.discardDraftConfirm' : 'app.deleteConfirm'),
+        okText: t(isDraft ? 'app.confirmDiscard' : 'app.deleteConfirmOk'),
+        cancelText: t('app.cancel'),
+      })
+      if (!ok) return
       deleteMut.mutate(doc.id)
       if (activeDocumentId === doc.id) {
         const next = allListedDocs.find((d) => d.id !== doc.id)
         setActiveDocumentId(next?.id ?? null)
       }
     },
-    [deleteMut, activeDocumentId, allListedDocs, setActiveDocumentId],
+    [deleteMut, activeDocumentId, allListedDocs, setActiveDocumentId, t],
   )
 
   const handleDetailsDoc = useCallback((doc: Document) => {
     useUIStore.getState().setFileDetailsId(doc.id)
   }, [])
+
+  // Close the workspace, asking first when there are unsaved changes. Shared by the
+  // toolbar X button and the current-folder bar's context menu (PLAN §5.5).
+  const confirmCloseWorkspace = useCallback(async () => {
+    if (useUIStore.getState().dirty) {
+      const ok = await window.api.dialog.confirm({
+        message: t('app.unsavedCloseWorkspace'),
+        okText: t('app.confirmDiscard'),
+        cancelText: t('app.confirmKeep'),
+      })
+      if (!ok) return
+    }
+    closeWorkspace()
+  }, [closeWorkspace, t])
+
+  const copyText = useCallback((text: string) => {
+    void window.api.clipboard.writeText(text)
+  }, [])
+  const revealInFolder = useCallback((target: string) => {
+    // Failures (e.g. a file deleted outside the app) are swallowed so nothing surfaces
+    // as an unhandled rejection — same contract as the doc-item menu.
+    void Promise.resolve(window.api.app.showInFolder(target)).catch(() => {})
+  }, [])
+  // "New Document in This Folder": a real file is written straight into the folder so the
+  // new document actually appears in that subtree (memory-only drafts have no filePath and
+  // would land in the "Unsaved drafts" group instead).
+  const createDocInFolder = useCallback(
+    async (folder: string) => {
+      const doc = await createMut.mutateAsync({
+        title: 'Untitled',
+        folderPath: folder,
+        memoryOnly: false,
+      })
+      setActiveDocumentId(doc.id)
+      useUIStore.getState().setEditable(true)
+      useUIStore.getState().setIsNewUnsaved(false)
+    },
+    [createMut, setActiveDocumentId],
+  )
 
   // Enter a subfolder: make it the active (current) folder.
   const handleEnterFolder = useCallback(
@@ -216,7 +313,9 @@ export function Sidebar(): React.ReactElement | null {
                   <Search size={13} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{t('sidebar.search')} (⌘K)</TooltipContent>
+              <TooltipContent>
+                {t('sidebar.search')} ({formatShortcut('⌘K')})
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -230,7 +329,9 @@ export function Sidebar(): React.ReactElement | null {
                   <FolderOpen size={13} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{t('sidebar.openFile')} (⌘O)</TooltipContent>
+              <TooltipContent>
+                {t('sidebar.openFile')} ({formatShortcut('⌘O')})
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -245,7 +346,9 @@ export function Sidebar(): React.ReactElement | null {
                   <Folder size={13} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{t('sidebar.openFolder')} (⌘⇧O)</TooltipContent>
+              <TooltipContent>
+                {t('sidebar.openFolder')} ({formatShortcut('⌘⇧O')})
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -260,63 +363,95 @@ export function Sidebar(): React.ReactElement | null {
                   <Plus size={13} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{t('sidebar.newDocument')} (⌘N)</TooltipContent>
+              <TooltipContent>
+                {t('sidebar.newDocument')} ({formatShortcut('⌘N')})
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>
       </div>
 
-      {/* Current folder bar */}
+      {/* Current folder bar — right-click menu (PLAN §5.5). The sidebar top bar and the
+          empty list area deliberately stay silent (G2). */}
       {activeFolder && (
-        <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--color-border)] shrink-0">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                aria-label={t('sidebar.up')}
-                data-testid="up-folder-btn"
-                disabled={!parentFolder}
-                onClick={() => parentFolder && setActiveFolder(parentFolder)}
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--color-border)] shrink-0"
+              data-testid="current-folder-bar"
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    aria-label={t('sidebar.up')}
+                    data-testid="up-folder-btn"
+                    disabled={!parentFolder}
+                    onClick={() => parentFolder && setActiveFolder(parentFolder)}
+                  >
+                    <ArrowUp size={12} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('sidebar.up')}</TooltipContent>
+              </Tooltip>
+              <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
+              <span
+                className="text-2xs text-[var(--color-text-tertiary)] truncate flex-1"
+                title={activeFolder}
               >
-                <ArrowUp size={12} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('sidebar.up')}</TooltipContent>
-          </Tooltip>
-          <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
-          <span
-            className="text-2xs text-[var(--color-text-tertiary)] truncate flex-1"
-            title={activeFolder}
-          >
-            {folderName}
-          </span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                data-testid="close-workspace-btn"
-                onClick={async () => {
-                  if (useUIStore.getState().dirty) {
-                    const ok = await window.api.dialog.confirm({
-                      message: t('app.unsavedCloseWorkspace'),
-                      okText: t('app.confirmDiscard'),
-                      cancelText: t('app.confirmKeep'),
-                    })
-                    if (!ok) return
-                  }
-                  closeWorkspace()
-                }}
-              >
-                <X size={12} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('sidebar.close')} (⌘⇧W)</TooltipContent>
-          </Tooltip>
-        </div>
+                {folderName}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    data-testid="close-workspace-btn"
+                    onClick={() => void confirmCloseWorkspace()}
+                  >
+                    <X size={12} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t('sidebar.close')} ({formatShortcut('⌘⇧W')})
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem
+              data-testid="ctx-copy-folder-path"
+              onClick={() => copyText(activeFolder)}
+            >
+              <Copy size={13} /> {t('ctx.copyFolderPath')}
+            </ContextMenuItem>
+            <ContextMenuItem
+              data-testid="ctx-show-in-folder"
+              onClick={() => revealInFolder(activeFolder)}
+            >
+              <FolderOpen size={13} /> {t('editor.showInFolder')}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              data-testid="ctx-go-up"
+              disabled={!parentFolder}
+              onClick={() => parentFolder && setActiveFolder(parentFolder)}
+            >
+              <ArrowUp size={13} /> {t('ctx.goUp')}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              data-testid="ctx-close-workspace"
+              disabled={workspaceLocked}
+              onClick={() => void confirmCloseWorkspace()}
+            >
+              <X size={13} /> {t('menu.closeWorkspace')}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       )}
 
       {/* Document list / welcome */}
@@ -351,6 +486,11 @@ export function Sidebar(): React.ReactElement | null {
                       onSelectDoc={handleSelectDoc}
                       onDeleteDoc={handleDeleteDoc}
                       onDetailsDoc={handleDetailsDoc}
+                      expanded={expanded}
+                      onToggleExpand={toggleExpand}
+                      onExpandAll={expandAll}
+                      onCopyFolderPath={copyText}
+                      onShowInFolder={revealInFolder}
                     />
                   ))}
                 </ul>
@@ -368,6 +508,12 @@ export function Sidebar(): React.ReactElement | null {
                     onDeleteDoc={handleDeleteDoc}
                     onDetailsDoc={handleDetailsDoc}
                     onEnterFolder={handleEnterFolder}
+                    expanded={expanded}
+                    onToggleExpand={toggleExpand}
+                    onExpandAll={expandAll}
+                    onCopyFolderPath={copyText}
+                    onShowInFolder={revealInFolder}
+                    onNewDocHere={(folder: string) => void createDocInFolder(folder)}
                   />
                 ))}
               </ul>
@@ -451,104 +597,267 @@ interface DocItemProps {
   depth?: number
 }
 
-function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: DocItemProps) {
-  // Controlled bottom-right menu: openable both via the three-dot button and by right-clicking the row
-  const [menuOpen, setMenuOpen] = useState(false)
-  const { t } = useT()
-  return (
-    <li
-      data-testid="doc-item"
-      className={cn(
-        'group relative flex items-start gap-2 px-3 py-2 mx-1 rounded cursor-pointer transition-colors',
-        isActive
-          ? 'bg-[var(--color-accent-muted)] text-[var(--color-text-primary)]'
-          : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-secondary)]',
-      )}
-      style={{ paddingLeft: depth * 12 + 12 }}
-      onClick={onSelect}
-      onContextMenu={(e) => {
-        // Right-click opens the same context menu as the three-dot button, and suppresses the
-        // browser's native menu
-        e.preventDefault()
-        setMenuOpen(true)
-      }}
-    >
-      <FileText
-        size={13}
-        className={cn(
-          'mt-0.5 shrink-0',
-          isActive ? 'text-accent' : 'text-[var(--color-text-tertiary)]',
-        )}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1">
-          <span
-            className={cn(
-              'text-xs font-medium truncate',
-              // A missing document (its file was deleted outside the app) is kept open on
-              // purpose, so it stays listed here — struck through, like the title bar.
-              doc.missing
-                ? 'text-[var(--color-text-tertiary)] line-through'
-                : 'text-[var(--color-text-primary)]',
-            )}
-          >
-            {/* A memory-only new document has no file on disk yet; it is listed in the dedicated
-                "Unsaved drafts" group (PLAN §6.3), falling back to its title here. */}
-            {doc.filePath ? baseName(doc.filePath) : doc.title}
-          </span>
-          {!doc.filePath && (
-            <span className="text-2xs font-medium text-accent border border-accent/40 rounded px-1 py-px shrink-0">
-              {t('sidebar.newBadge')}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-2xs text-[var(--color-text-tertiary)]">
-            {formatDate(doc.updatedAt)}
-          </span>
-          {doc.wordCount > 0 && (
-            <>
-              <span className="text-2xs text-[var(--color-border-strong)]">·</span>
-              <span className="text-2xs text-[var(--color-text-tertiary)]">{doc.wordCount}w</span>
-            </>
-          )}
-        </div>
-      </div>
+// Shared right-click / ⋯-button menu items for a document entry (PLAN §1.3 / §5). Both the
+// ContextMenu (right-click) and the DropdownMenu (⋯ button) feed this same subcomponent so the
+// two triggers never diverge. "Rename…" bridges to the editor via the store's pendingFileAction
+// (PLAN §5.1): if the doc isn't active we switch to it first (the dirty-confirm lives in onOpen)
+// before requesting the rename.
+// Shared document menu item list (PLAN §1.3 / §5). The right-click ContextMenu uses
+// ContextMenuItem while the ⋯ DropdownMenu uses DropdownMenuItem — the two Radix primitives
+// are incompatible (a ContextMenuItem must live inside a ContextMenuContent), so the caller
+// passes the right Item/Separator component. The data and logic are identical, so the two
+// triggers can never diverge.
+interface DocItemMenuContentProps {
+  Item: React.ElementType
+  Separator: React.ElementType
+  doc: Document
+  editable: boolean
+  activeId: string | null
+  onOpen: () => void | Promise<boolean>
+  onCopyPath: () => void
+  onCopyFileName: () => void
+  onShowInFolder: () => void
+  onCopyContent: () => void
+  onDetails: () => void
+  onDelete: () => void
+}
 
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <button
+function DocItemMenuContent({
+  Item,
+  Separator,
+  doc,
+  editable,
+  activeId,
+  onOpen,
+  onCopyPath,
+  onCopyFileName,
+  onShowInFolder,
+  onCopyContent,
+  onDetails,
+  onDelete,
+}: DocItemMenuContentProps) {
+  const { t } = useT()
+  const requestFileAction = useUIStore((s) => s.requestFileAction)
+  const isDraft = !doc.filePath
+
+  const handleRename = () => {
+    const run = async () => {
+      if (doc.id !== activeId) {
+        const switched = await onOpen()
+        if (switched === false) return
+      }
+      requestFileAction({ type: 'rename', id: doc.id })
+    }
+    void run()
+  }
+
+  return (
+    <>
+      <Item
+        data-testid="ctx-open-document"
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          onOpen()
+        }}
+      >
+        <FileText size={13} /> {t('ctx.openDocument')}
+      </Item>
+      <Item
+        data-testid="ctx-copy-path"
+        disabled={isDraft}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          onCopyPath()
+        }}
+      >
+        <FileText size={13} /> {t('editor.copyFullPath')}
+      </Item>
+      <Item
+        data-testid="ctx-copy-filename"
+        disabled={isDraft}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          onCopyFileName()
+        }}
+      >
+        <FileText size={13} /> {t('ctx.copyFileName')}
+      </Item>
+      <Item
+        data-testid="ctx-show-in-folder"
+        disabled={isDraft}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          onShowInFolder()
+        }}
+      >
+        <FolderOpen size={13} /> {t('editor.showInFolder')}
+      </Item>
+      <Item
+        data-testid="ctx-rename"
+        disabled={!editable}
+        title={!editable ? t('editor.needsEditMode') : undefined}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          handleRename()
+        }}
+      >
+        <PenLine size={13} /> {t('editor.renameTitle')}
+      </Item>
+      <Item
+        data-testid="ctx-copy-content"
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          onCopyContent()
+        }}
+      >
+        <Copy size={13} /> {t('ctx.copyContent')}
+      </Item>
+      <Separator />
+      <Item
+        data-testid="ctx-details"
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          onDetails()
+        }}
+      >
+        <FileText size={13} /> {t('sidebar.details')}
+      </Item>
+      <Separator />
+      <Item
+        data-testid={isDraft ? 'ctx-discard-draft' : 'ctx-delete'}
+        destructive
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          onDelete()
+        }}
+      >
+        <Trash2 size={13} /> {isDraft ? t('ctx.discardDraft') : t('sidebar.delete')}
+      </Item>
+    </>
+  )
+}
+
+function DocItem({ doc, isActive, onSelect, onDelete, onDetails, depth = 0 }: DocItemProps) {
+  const { t } = useT()
+  const editable = useUIStore((s) => s.editable)
+  const activeDocumentId = useUIStore((s) => s.activeDocumentId)
+  const copyPath = () => void window.api.clipboard.writeText(doc.filePath as string)
+  const copyFileName = () => void window.api.clipboard.writeText(baseName(doc.filePath as string))
+  const showInFolder = () => {
+    void Promise.resolve(window.api.app.showInFolder(doc.filePath as string)).catch(() => {})
+  }
+  const copyContent = () => void window.api.clipboard.writeText(doc.content)
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <li
+          data-testid="doc-item"
+          className={cn(
+            'group relative flex items-start gap-2 px-3 py-2 mx-1 rounded cursor-pointer transition-colors',
+            isActive
+              ? 'bg-[var(--color-accent-muted)] text-[var(--color-text-primary)]'
+              : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-secondary)]',
+          )}
+          style={{ paddingLeft: depth * 12 + 12 }}
+          onClick={onSelect}
+        >
+          <FileText
+            size={13}
             className={cn(
-              'shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-overlay)] transition-opacity',
-              isActive && 'opacity-60',
+              'mt-0.5 shrink-0',
+              isActive ? 'text-accent' : 'text-[var(--color-text-tertiary)]',
             )}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <MoreHorizontal size={13} className="text-[var(--color-text-tertiary)]" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem
-            onClick={(e) => {
-              e.stopPropagation()
-              onDetails()
-            }}
-          >
-            <FileText size={13} /> {t('sidebar.details')}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            destructive
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete()
-            }}
-          >
-            <Trash2 size={13} /> {t('sidebar.delete')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </li>
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1">
+              <span
+                className={cn(
+                  'text-xs font-medium truncate',
+                  // A missing document (its file was deleted outside the app) is kept open on
+                  // purpose, so it stays listed here — struck through, like the title bar.
+                  doc.missing
+                    ? 'text-[var(--color-text-tertiary)] line-through'
+                    : 'text-[var(--color-text-primary)]',
+                )}
+              >
+                {/* A memory-only new document has no file on disk yet; it is listed in the dedicated
+                    "Unsaved drafts" group (PLAN §6.3), falling back to its title here. */}
+                {doc.filePath ? baseName(doc.filePath) : doc.title}
+              </span>
+              {!doc.filePath && (
+                <span className="text-2xs font-medium text-accent border border-accent/40 rounded px-1 py-px shrink-0">
+                  {t('sidebar.newBadge')}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-2xs text-[var(--color-text-tertiary)]">
+                {formatDate(doc.updatedAt)}
+              </span>
+              {doc.wordCount > 0 && (
+                <>
+                  <span className="text-2xs text-[var(--color-border-strong)]">·</span>
+                  <span className="text-2xs text-[var(--color-text-tertiary)]">
+                    {doc.wordCount}w
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Three-dot button menu (left-click, anchored to the button). The ⋯ button keeps
+              using DropdownMenu (PLAN §1.1: button-triggered menus stay on dropdown-menu.tsx). */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={cn(
+                  'shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-overlay)] transition-opacity',
+                  isActive && 'opacity-60',
+                )}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <MoreHorizontal size={13} className="text-[var(--color-text-tertiary)]" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DocItemMenuContent
+                Item={DropdownMenuItem}
+                Separator={DropdownMenuSeparator}
+                doc={doc}
+                editable={editable}
+                activeId={activeDocumentId}
+                onOpen={onSelect}
+                onCopyPath={copyPath}
+                onCopyFileName={copyFileName}
+                onShowInFolder={showInFolder}
+                onCopyContent={copyContent}
+                onDetails={onDetails}
+                onDelete={onDelete}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </li>
+      </ContextMenuTrigger>
+      {/* Right-click menu: opens at the mouse position (native contextmenu semantics), fixing the
+          "menu anchors to the ⋯ button" defect (PLAN §1.5 / §5). Shares DocItemMenuItems with the
+          ⋯ button so the two triggers never diverge (PLAN §1.3). */}
+      <ContextMenuContent>
+        <DocItemMenuContent
+          Item={ContextMenuItem}
+          Separator={ContextMenuSeparator}
+          doc={doc}
+          editable={editable}
+          activeId={activeDocumentId}
+          onOpen={onSelect}
+          onCopyPath={copyPath}
+          onCopyFileName={copyFileName}
+          onShowInFolder={showInFolder}
+          onCopyContent={copyContent}
+          onDetails={onDetails}
+          onDelete={onDelete}
+        />
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
@@ -560,6 +869,14 @@ interface TreeRowProps {
   onDeleteDoc: (doc: Document) => void
   onDetailsDoc: (doc: Document) => void
   onEnterFolder?: (folder: string) => void
+  // Expand state is owned by `Sidebar` (PLAN §6.1) so "Expand All" can open a whole subtree.
+  expanded: ReadonlySet<string>
+  onToggleExpand: (path: string) => void
+  onExpandAll: (node: FileTreeNode) => void
+  onCopyFolderPath: (path: string) => void
+  onShowInFolder: (path: string) => void
+  // Folders only live in the on-disk tree, so the (memory-only) drafts group never passes it.
+  onNewDocHere?: (folder: string) => void
 }
 
 // Recursively render the document tree: folders are collapsible, files reuse DocItem.
@@ -571,50 +888,109 @@ function TreeRow({
   onDeleteDoc,
   onDetailsDoc,
   onEnterFolder,
+  expanded,
+  onToggleExpand,
+  onExpandAll,
+  onCopyFolderPath,
+  onShowInFolder,
+  onNewDocHere,
 }: TreeRowProps) {
   const { t } = useT()
-  const [open, setOpen] = useState(false)
+  const open = expanded.has(node.path)
   if (node.isFolder) {
     return (
       <li className="group">
-        <button
-          onClick={() => setOpen((o) => !o)}
-          onDoubleClick={() => onEnterFolder?.(node.path)}
-          className="flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-overlay)] transition-colors truncate"
-          style={{ paddingLeft: depth * 12 + 12 }}
-        >
-          <ChevronRight
-            size={13}
-            className={cn(
-              'shrink-0 text-[var(--color-text-tertiary)] transition-transform',
-              open && 'rotate-90',
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <button
+              onClick={() => onToggleExpand(node.path)}
+              onDoubleClick={() => onEnterFolder?.(node.path)}
+              data-testid="folder-row"
+              className="flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-overlay)] transition-colors truncate"
+              style={{ paddingLeft: depth * 12 + 12 }}
+            >
+              <ChevronRight
+                size={13}
+                className={cn(
+                  'shrink-0 text-[var(--color-text-tertiary)] transition-transform',
+                  open && 'rotate-90',
+                )}
+              />
+              {open ? (
+                <FolderOpen size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
+              ) : (
+                <Folder size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
+              )}
+              <span className="truncate">{node.name}</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    role="button"
+                    tabIndex={-1}
+                    aria-label={t('sidebar.enter')}
+                    data-testid="enter-folder-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onEnterFolder?.(node.path)
+                    }}
+                    className="shrink-0 ml-auto p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-overlay)] transition-opacity"
+                  >
+                    <ArrowRight size={13} className="text-[var(--color-text-tertiary)]" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{t('sidebar.enter')}</TooltipContent>
+              </Tooltip>
+            </button>
+          </ContextMenuTrigger>
+          {/* Folder row menu (PLAN §5.4). The three write operations (new subfolder /
+              rename / delete) depend on 能力 7 and are NOT rendered until it exists — a menu
+              item that does nothing when clicked is never allowed. */}
+          <ContextMenuContent>
+            <ContextMenuItem
+              data-testid="ctx-open-folder"
+              onClick={() => onEnterFolder?.(node.path)}
+            >
+              <ArrowRight size={13} /> {t('ctx.openFolder')}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            {open ? (
+              <ContextMenuItem data-testid="ctx-collapse" onClick={() => onToggleExpand(node.path)}>
+                <ChevronDown size={13} /> {t('ctx.collapse')}
+              </ContextMenuItem>
+            ) : (
+              <ContextMenuItem data-testid="ctx-expand" onClick={() => onToggleExpand(node.path)}>
+                <ChevronRight size={13} /> {t('ctx.expand')}
+              </ContextMenuItem>
             )}
-          />
-          {open ? (
-            <FolderOpen size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
-          ) : (
-            <Folder size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
-          )}
-          <span className="truncate">{node.name}</span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                role="button"
-                tabIndex={-1}
-                aria-label={t('sidebar.enter')}
-                data-testid="enter-folder-btn"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onEnterFolder?.(node.path)
-                }}
-                className="shrink-0 ml-auto p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-surface-overlay)] transition-opacity"
-              >
-                <ArrowRight size={13} className="text-[var(--color-text-tertiary)]" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{t('sidebar.enter')}</TooltipContent>
-          </Tooltip>
-        </button>
+            <ContextMenuItem
+              data-testid="ctx-expand-all"
+              disabled={!node.children.some((c) => c.isFolder)}
+              onClick={() => onExpandAll(node)}
+            >
+              <ChevronsDownUp size={13} /> {t('ctx.expandAll')}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              data-testid="ctx-copy-folder-path"
+              onClick={() => onCopyFolderPath(node.path)}
+            >
+              <Copy size={13} /> {t('ctx.copyFolderPath')}
+            </ContextMenuItem>
+            <ContextMenuItem
+              data-testid="ctx-show-in-folder"
+              onClick={() => onShowInFolder(node.path)}
+            >
+              <FolderOpen size={13} /> {t('editor.showInFolder')}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              data-testid="ctx-new-doc-here"
+              onClick={() => onNewDocHere?.(node.path)}
+            >
+              <Plus size={13} /> {t('ctx.newDocHere')}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
         {open && (
           <ul>
             {node.children.map((child) => (
@@ -627,6 +1003,12 @@ function TreeRow({
                 onDeleteDoc={onDeleteDoc}
                 onDetailsDoc={onDetailsDoc}
                 onEnterFolder={onEnterFolder}
+                expanded={expanded}
+                onToggleExpand={onToggleExpand}
+                onExpandAll={onExpandAll}
+                onCopyFolderPath={onCopyFolderPath}
+                onShowInFolder={onShowInFolder}
+                onNewDocHere={onNewDocHere}
               />
             ))}
           </ul>
@@ -646,7 +1028,7 @@ function TreeRow({
       isActive={doc.id === activeId}
       depth={depth}
       onSelect={() => onSelectDoc(doc)}
-      onDelete={() => onDeleteDoc(doc)}
+      onDelete={() => void onDeleteDoc(doc)}
       onDetails={() => onDetailsDoc(doc)}
     />
   )

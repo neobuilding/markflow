@@ -51,6 +51,18 @@ export interface Api {
     setEncoding: (id: string, encoding: string) => Promise<Document | null>
     stat: (filePath: string) => Promise<FileStat | null>
     eol: (filePath: string) => Promise<'\r\n' | '\n'>
+    // Resolve an appdoc:// URL to its on-disk absolute path (PLAN §12-3). Returns
+    // null when the URL is malformed, escapes the document directory, or the file
+    // does not exist.
+    resolveAppdoc: (src: string) => Promise<string | null>
+    // Set the line endings of a file on disk (PLAN §12-6, destructive write).
+    setEol: (filePath: string, eol: '\r\n' | '\n') => Promise<void>
+    // Detect the encoding of a file on disk (PLAN §12-11).
+    detectEncoding: (filePath: string) => Promise<{ enc: string; confidence: number }>
+    // Folder operations (PLAN §12-7).
+    createFolder: (folderPath: string) => Promise<void>
+    renameFolder: (oldPath: string, newPath: string) => Promise<void>
+    deleteFolder: (folderPath: string) => Promise<void>
     // Folder watching is owned by the main process (chokidar); the renderer only
     // reports which folder was opened / that the workspace was closed.
     setOpenFolder: (folderPath: string) => Promise<void>
@@ -70,6 +82,8 @@ export interface Api {
     getVersion: () => Promise<string>
     getInitialPaths: () => Promise<string[]>
     showInFolder: (filePath: string) => Promise<void>
+    openExternal: (url: string) => Promise<void>
+    copyFile: (src: string, dest: string) => Promise<void>
     setLanguage: (locale: 'en' | 'zh-CN') => void
     allowQuit: () => void
     notifyQuitPending: () => void
@@ -104,6 +118,7 @@ export interface Api {
   }
   clipboard: {
     writeText: (text: string) => Promise<void>
+    writeImage: (src: string) => Promise<void>
   }
   onMenuEvent: (event: MenuEvent, callback: (data?: string | string[]) => void) => () => void
   onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => () => void

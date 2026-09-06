@@ -3,6 +3,13 @@ import type { ViewMode, ThemeMode } from '../types'
 import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/storage'
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
 
+// Cross-component bridge for file actions requested from a different component than the
+// one that performs them (PLAN §5.1). Today only `rename` is used: the sidebar's
+// "Rename…" menu item (which lives in `Sidebar`) asks the editor (`EditorPane`) to enter
+// its title-edit state. M2/M3 will extend this union with `save` / `saveAs` / `reload`
+// (PLAN §8) — the consumer effect already narrows on `type: 'rename'`.
+export type FileAction = { type: 'rename'; id: string } | { type: 'save' | 'saveAs' | 'reload' }
+
 // Remove a memory-only draft (never saved to disk) and refresh the document list so the
 // sidebar no longer shows the orphan draft (PLAN §6.4).
 function deleteUnsavedDraft(id: string) {
@@ -116,6 +123,11 @@ interface UIState {
   // shortcut (Cmd/Ctrl+W) won't lose the workspace).
   exporting: boolean
   setExporting: (v: boolean) => void
+
+  // Cross-component file-action bridge (PLAN §5.1). Set by the sidebar's "Rename…" menu to
+  // ask the editor to enter title-edit; consumed (and cleared) by EditorPane's effect.
+  pendingFileAction: FileAction | null
+  requestFileAction: (a: FileAction | null) => void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -208,6 +220,9 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   exporting: false,
   setExporting: (v) => set({ exporting: v }),
+
+  pendingFileAction: null,
+  requestFileAction: (a) => set({ pendingFileAction: a }),
 
   isNewUnsaved: false,
   setIsNewUnsaved: (v) => set({ isNewUnsaved: v }),

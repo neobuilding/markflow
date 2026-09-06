@@ -1,14 +1,12 @@
-import type { IpcMain } from 'electron'
-import type { App } from 'electron'
-
-let _app: App | null = null
+import type { App, IpcMain } from 'electron'
+import { shell } from 'electron'
 import { join, dirname, basename, extname, isAbsolute } from 'node:path'
 import {
   readFileSync,
   writeFileSync,
-  unlinkSync,
   mkdirSync,
   renameSync,
+  rmSync,
   existsSync,
   statSync,
   openSync,
@@ -36,6 +34,9 @@ import {
   deleteDocument as storeDelete,
   getDocumentByFilePath as storeGetByPath,
 } from '../model/documentStore'
+import { resolveAppdocPath } from './appdoc'
+
+let _app: App | null = null
 
 export type { Document } from '../model/documentStore'
 
@@ -721,25 +722,94 @@ export function registerDocumentHandlers(
     cancelPendingFolderChanged()
   })
 
-  // Delete document
-  ipcMain.handle('documents:delete', (_event, id: string) => {
+  // Delete document — move the file to the OS trash rather than permanently deleting it
+  // (PLAN §12-13, matching VS Code behaviour). A memory-only draft has no file on disk
+  // (file_path === ''); it is discarded from the store without touching the filesystem.
+  // trashItem is asynchronous and rejects on failure; per Electron's guidance we must NOT
+  // silently fall back to a permanent delete — if the move fails we keep the original file
+  // and still drop the store record so the UI stays consistent.
+  ipcMain.handle('documents:delete', async (_event, id: string) => {
     const existing = storeGet(id)
     if (!existing) return false
 
-    try {
-      // A memory-only draft has no file on disk (file_path === ''); skip the unlink so we
-      // neither error nor leave a stray log line. Deleting such a draft just removes the store entry.
-      if (existing.filePath) {
-        unlinkSync(existing.filePath)
-      }
-    } catch (e) {
-      // A missing file is not a failure here (already removed externally); only log real errors.
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error('Failed to delete file:', e)
+    if (existing.filePath) {
+      try {
+        await shell.trashItem(existing.filePath)
+      } catch (e) {
+        // A file already removed externally is not a failure. Any other rejection
+        // (no permission, trash unavailable) keeps the original file on disk; we
+        // only log it — never fall back to a permanent unlink.
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.error('Failed to move file to trash:', e)
+        }
       }
     }
 
     return storeDelete(id)
+  })
+
+  // Resolve an appdoc:// URL to its on-disk absolute path (PLAN §12-3). Reuses the
+  // security layer in appdoc.ts (doc lookup → containment → exists). Returns null for
+  // malformed URLs, escapes, or missing files; callers must handle the null (the
+  // renderer greys out / skips the menu item).
+  ipcMain.handle('documents:resolve-appdoc', (_event, src: string) => {
+    try {
+      return resolveAppdocPath(src)
+    } catch {
+      return null
+    }
+  })
+
+  // Re-detect a file's encoding without modifying its bytes (PLAN §12-11). Reads the raw
+  // buffer and runs the same detector used on import. Returns utf-8 / confidence 0 on any
+  // read error so the caller (the encoding re-detect menu item) can fall back gracefully.
+  ipcMain.handle('documents:detect-encoding', (_event, filePath: string) => {
+    try {
+      const buf = readFileSync(filePath)
+      return detectEncoding(buf)
+    } catch {
+      return { enc: 'utf-8', confidence: 0 }
+    }
+  })
+
+  // Set the line endings of a file on disk (PLAN §12-6). Destructive write: it rewrites the
+  // file with the chosen EOL, so the renderer must confirm first and reload afterwards.
+  // The document's stored encoding is preserved byte-for-byte (R5). Fails silently when the
+  // file is gone or unreadable.
+  ipcMain.handle('documents:set-eol', (_event, filePath: string, eol: '\r\n' | '\n') => {
+    try {
+      const buf = readFileSync(filePath)
+      const enc = storeGetByPath(filePath)?.encoding ?? 'utf-8'
+      const text = iconv.decode(buf, enc)
+      const normalized =
+        eol === '\r\n'
+          ? text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+          : text.replace(/\r\n/g, '\n')
+      writeFileSync(filePath, iconv.encode(normalized, enc))
+      markOwnWrite(filePath)
+    } catch {
+      // Unreadable / missing file: the renderer's confirm+reload is best-effort.
+    }
+  })
+
+  // Create a folder on disk and start watching it so files dropped into it show up
+  // (PLAN §12-7). recursive: true so nested paths are created too.
+  ipcMain.handle('documents:create-folder', (_event, folderPath: string) => {
+    mkdirSync(folderPath, { recursive: true })
+    addWatchedFolder(folderPath)
+  })
+
+  // Rename a folder on disk (PLAN §12-7). The watcher is told about the new path; chokidar
+  // tolerates the old one ceasing to exist.
+  ipcMain.handle('documents:rename-folder', (_event, oldPath: string, newPath: string) => {
+    renameSync(oldPath, newPath)
+    addWatchedFolder(newPath)
+  })
+
+  // Delete a folder and everything beneath it (PLAN §12-7). recursive + force keeps this
+  // from throwing if the folder is already partially gone.
+  ipcMain.handle('documents:delete-folder', (_event, folderPath: string) => {
+    rmSync(folderPath, { recursive: true, force: true })
   })
 
   // Import markdown file from disk

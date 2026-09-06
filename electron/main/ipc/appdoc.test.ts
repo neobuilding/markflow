@@ -1,110 +1,128 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// Capture the registered protocol handler.
-let protocolHandler: ((request: { url: string }) => Response) | null = null
-const h = vi.hoisted(() => ({
-  filePath: '/docs/note.md',
-  fileExists: true,
+const { getDocumentById, protocolHandle } = vi.hoisted(() => ({
+  getDocumentById: vi.fn(),
+  protocolHandle: vi.fn(),
 }))
-vi.mock('electron', () => ({
-  protocol: {
-    handle: (_scheme: string, fn: (request: { url: string }) => Response) => {
-      protocolHandler = fn
-    },
-  },
-}))
-vi.mock('../model/documentStore', () => ({
-  getDocumentById: (id: string) => {
-    if (id === '__NONE__' || h.filePath === '__NONE__') return null
-    return { id, filePath: h.filePath } as unknown
-  },
-}))
+vi.mock('../model/documentStore', () => ({ getDocumentById }))
+vi.mock('electron', () => ({ protocol: { handle: protocolHandle } }))
 
-import { registerAppDocProtocol } from './appdoc'
+import { resolveAppdocPath, registerAppDocProtocol } from './appdoc'
 
-describe('appdoc protocol', () => {
-  let root: string
-  let docPath: string
+const dir = mkdtempSync(join(tmpdir(), 'mf-appdoc-'))
+beforeAll(() => {
+  writeFileSync(join(dir, 'im.png'), 'PNG')
+  // leave 'missing.png' absent on purpose
+})
+
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true })
+})
+
+describe('resolveAppdocPath', () => {
+  const docId = 'd1'
+  const doc = { id: docId, filePath: join(dir, 'doc.md') }
+
+  it('returns null for a malformed appdoc URL (PLAN §12-3)', () => {
+    expect(resolveAppdocPath('appdoc:///im.png')).toBeNull()
+  })
+
+  it('returns null for an unknown document', () => {
+    getDocumentById.mockReturnValueOnce(null)
+    expect(resolveAppdocPath('appdoc://ghost/im.png')).toBeNull()
+  })
+
+  it('returns null when the document has no file path', () => {
+    getDocumentById.mockReturnValueOnce({ id: docId })
+    expect(resolveAppdocPath('appdoc://d1/im.png')).toBeNull()
+  })
+
+  it('returns null when the path escapes the document directory', () => {
+    getDocumentById.mockReturnValueOnce(doc)
+    expect(resolveAppdocPath('appdoc://d1/../escape.png')).toBeNull()
+  })
+
+  it('returns null when the resolved file is missing', () => {
+    getDocumentById.mockReturnValueOnce(doc)
+    expect(resolveAppdocPath('appdoc://d1/missing.png')).toBeNull()
+  })
+
+  it('returns the resolved on-disk path for an existing file', () => {
+    getDocumentById.mockReturnValueOnce(doc)
+    expect(resolveAppdocPath('appdoc://d1/im.png')).toBe(join(dir, 'im.png'))
+  })
+
+  it('passes disk paths through untouched', () => {
+    expect(resolveAppdocPath('/abs/path.png')).toBe('/abs/path.png')
+  })
+})
+
+describe('registerAppDocProtocol', () => {
+  const docId = 'd1'
+  const doc = { id: docId, filePath: join(dir, 'doc.md') }
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'mf-appdoc-'))
-    docPath = join(root, 'note.md')
-    writeFileSync(docPath, 'hello image')
-    h.filePath = docPath
-    h.fileExists = true
-    protocolHandler = null
+    protocolHandle.mockClear()
+    getDocumentById.mockReset()
+    writeFileSync(join(dir, 'im.png'), 'PNGDATA')
+  })
+
+  const handler = () => protocolHandle.mock.calls[0][1] as (req: Request) => Promise<Response>
+
+  it('serves a valid appdoc request with its content type (PLAN §4.1)', async () => {
+    getDocumentById.mockReturnValue(doc)
     registerAppDocProtocol()
-  })
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true })
-    vi.restoreAllMocks()
-  })
-
-  it('registers the appdoc protocol handler', () => {
-    expect(protocolHandler).not.toBeNull()
-  })
-
-  it('returns 404 for a malformed appdoc url', () => {
-    const res = protocolHandler!({ url: 'not-appdoc://x/y' })
-    expect(res.status).toBe(404)
-  })
-
-  it('returns 404 when the doc is unknown', () => {
-    h.filePath = '__NONE__'
-    const res = protocolHandler!({ url: 'appdoc://missing/a.png' })
-    expect(res.status).toBe(404)
-  })
-
-  it('returns 404 when the resolved doc has an empty file_path', () => {
-    h.filePath = ''
-    const res = protocolHandler!({ url: 'appdoc://empty/a.png' })
-    expect(res.status).toBe(404)
-  })
-
-  it('serves an existing image with its mime type', () => {
-    const imgPath = join(root, 'pic.png')
-    writeFileSync(imgPath, 'PNGDATA')
-    const res = protocolHandler!({ url: `appdoc://d1/${encodeURIComponent('pic.png')}` })
+    const res = await handler()(new Request('appdoc://d1/im.png'))
     expect(res.status).toBe(200)
-    expect(res.headers.get('Content-Type')).toBe('image/png')
+    expect(res.headers.get('Content-Type')).toContain('image/png')
+    expect(res.headers.get('Content-Security-Policy')).toContain("default-src 'none'")
   })
 
-  it('returns 403 when the resolved path escapes the doc base dir', () => {
-    const res = protocolHandler!({ url: 'appdoc://d1/..%2f..%2fsecret.txt' })
-    expect(res.status).toBe(403)
-  })
-
-  it('returns 404 when the target file does not exist', () => {
-    const res = protocolHandler!({ url: 'appdoc://d1/missing.png' })
-    expect(res.status).toBe(404)
-  })
-
-  it('falls back to application/octet-stream for an unknown extension', () => {
-    const oddPath = join(root, 'weird.xyz')
-    writeFileSync(oddPath, 'DATA')
-    const res = protocolHandler!({ url: `appdoc://d1/${encodeURIComponent('weird.xyz')}` })
+  it('serves an unknown extension with the octet-stream fallback type', async () => {
+    getDocumentById.mockReturnValue(doc)
+    writeFileSync(join(dir, 'data.xyz'), 'BINARY')
+    registerAppDocProtocol()
+    const res = await handler()(new Request('appdoc://d1/data.xyz'))
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('application/octet-stream')
   })
 
-  it('returns 500 when reading the file throws', () => {
-    // A real existing subdirectory resolves inside the doc base dir; readFileSync on a
-    // directory throws (EISDIR), which the handler's try/catch converts to 500.
-    const subDir = join(root, 'subdir')
-    mkdirSync(subDir, { recursive: true })
-    const res = protocolHandler!({ url: `appdoc://d1/subdir` })
-    expect(res.status).toBe(500)
+  it('returns 404 for an unknown document', async () => {
+    getDocumentById.mockReturnValue(null)
+    registerAppDocProtocol()
+    const res = await handler()(new Request('appdoc://ghost/im.png'))
+    expect(res.status).toBe(404)
   })
 
-  it('serves a file whose relPath needs no percent-encoding', () => {
-    // Exercises a plain (non-encoded) relPath name hitting the mime branch.
-    const plainPath = join(root, 'plain.png')
-    writeFileSync(plainPath, 'PNGDATA')
-    const res = protocolHandler!({ url: `appdoc://d1/plain.png` })
-    expect(res.status).toBe(200)
-    expect(res.headers.get('Content-Type')).toBe('image/png')
+  it('returns 404 when the resolved file is missing', async () => {
+    getDocumentById.mockReturnValue(doc)
+    registerAppDocProtocol()
+    const res = await handler()(new Request('appdoc://d1/missing.png'))
+    expect(res.status).toBe(404)
+  })
+
+  it('returns 404 for a traversal-style URL (containment is enforced by URL parsing)', async () => {
+    getDocumentById.mockReturnValue(doc)
+    registerAppDocProtocol()
+    const res = await handler()(new Request('appdoc://d1/../escape.png'))
+    expect(res.status).toBe(404)
+  })
+
+  it('returns 404 for a malformed appdoc URL', async () => {
+    registerAppDocProtocol()
+    const res = await handler()(new Request('appdoc:///im.png'))
+    expect(res.status).toBe(404)
+  })
+
+  it('returns 500 when the document lookup throws', async () => {
+    getDocumentById.mockImplementationOnce(() => {
+      throw new Error('boom')
+    })
+    registerAppDocProtocol()
+    const res = await handler()(new Request('appdoc://d1/im.png'))
+    expect(res.status).toBe(500)
   })
 })

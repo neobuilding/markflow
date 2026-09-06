@@ -212,3 +212,58 @@ export function useOpenFolder() {
     mutationFn: async (folderPath: string) => openPaths.mutateAsync([folderPath]),
   })
 }
+
+// Switch line endings of a file on disk (PLAN §12-6, destructive write). The renderer
+// must confirm first and reload afterwards; invalidation refreshes the EOL pill.
+export function useSetEol() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ filePath, eol }: { filePath: string; eol: '\r\n' | '\n' }) =>
+      window.api.documents.setEol(filePath, eol),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: [...DOCS_KEY, 'eol', vars.filePath] })
+    },
+  })
+}
+
+// Re-detect a file's encoding from disk (PLAN §12-11). Returns the detected encoding
+// so the caller can offer to apply it via useSetEncoding.
+export function useDetectEncoding() {
+  return useMutation({
+    mutationFn: (filePath: string) => window.api.documents.detectEncoding(filePath),
+  })
+}
+
+// Create a folder on disk (PLAN §12-7).
+export function useCreateFolder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (folderPath: string) => window.api.documents.createFolder(folderPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: DOCS_KEY })
+    },
+  })
+}
+
+// Rename a folder on disk (PLAN §12-7).
+export function useRenameFolder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ oldPath, newPath }: { oldPath: string; newPath: string }) =>
+      window.api.documents.renameFolder(oldPath, newPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: DOCS_KEY })
+    },
+  })
+}
+
+// Delete a folder on disk (PLAN §12-7).
+export function useDeleteFolder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (folderPath: string) => window.api.documents.deleteFolder(folderPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: DOCS_KEY })
+    },
+  })
+}

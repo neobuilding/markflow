@@ -41,6 +41,16 @@ describe('preload appApi', () => {
     expect(invokes[0]).toEqual({ channel: 'app:show-in-folder', args: ['/a.md'] })
   })
 
+  it('openExternal invokes app:open-external with the url', () => {
+    appApi.openExternal('https://example.com')
+    expect(invokes[0]).toEqual({ channel: 'app:open-external', args: ['https://example.com'] })
+  })
+
+  it('copyFile invokes app:copy-file with src and dest', () => {
+    appApi.copyFile('/a.png', '/b.png')
+    expect(invokes[0]).toEqual({ channel: 'app:copy-file', args: ['/a.png', '/b.png'] })
+  })
+
   it('setLanguage sends app:set-language (fire-and-forget, use send)', () => {
     appApi.setLanguage('zh-CN')
     expect(sends[0]).toEqual({ channel: 'app:set-language', args: ['zh-CN'] })

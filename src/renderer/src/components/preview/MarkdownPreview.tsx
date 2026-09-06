@@ -8,6 +8,8 @@ import { debounce } from '../../lib/utils'
 import { sanitizeHtml } from '../../lib/sanitize'
 import { setExportHtml, setExportContent } from '../../lib/exportStore'
 import { useT } from '../../i18n'
+import { PreviewContextMenu } from './PreviewContextMenu'
+import type { Document } from '../../types'
 import mermaid from 'mermaid'
 
 let mermaidInitialized = false
@@ -16,6 +18,18 @@ function ensureMermaid(): void {
     mermaid.initialize({ securityLevel: 'strict', startOnLoad: false, htmlLabels: false })
     mermaidInitialized = true
   }
+}
+
+// Escape a mermaid source string so it is safe to embed in a double-quoted HTML attribute
+// (PLAN §4.1, 能力 5). Mermaid source frequently contains < > " ' that would otherwise break
+// the `data-mermaid-source` attribute the preview writes for the "Copy diagram source" menu.
+function escapeAttr(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 // Module-level serial queue: mermaid has internal global state (shared id / temp DOM),
@@ -30,9 +44,10 @@ function renderMermaidSvg(id: string, code: string): Promise<{ svg: string }> {
 
 interface MarkdownPreviewProps {
   content: string
+  doc?: Document | null
 }
 
-export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactElement {
+export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.ReactElement {
   const previewRef = useRef<HTMLDivElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const renderToken = useRef(0)
@@ -93,21 +108,37 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
           if (res.mermaid.length > 0) {
             ensureMermaid()
             const svgs: string[] = []
+            // Slot → raw mermaid source, so the rendered wrapper can carry it as
+            // `data-mermaid-source` for the "Copy diagram source" menu (PLAN §4.1, 能力 5).
+            // A slot whose render fails is removed here so the failure placeholder is NOT
+            // given a source attribute (需求 §5.2.8: failed diagrams fall back to the
+            // generic menu, which has no copy-source item).
+            const sources = new Map(res.mermaid.map((m) => [m.slot, m.code]))
             for (const m of res.mermaid) {
               const id = `mermaid-${m.hash}-${Math.random().toString(36).slice(2)}`
               try {
                 const out = await renderMermaidSvg(id, m.code)
                 svgs[m.slot] = out.svg
               } catch {
+                sources.delete(m.slot)
                 svgs[m.slot] =
                   `<div class="mermaid-skeleton">⚠ ${tRef.current('preview.mermaidFailed')}</div>`
               }
             }
-            html = html.replace(
-              /<div data-mermaid-slot="(\d+)"><\/div>/g,
-              /* v8 ignore next -- defensive: a slot referencing a missing SVG is malformed input; the fallback keeps the layout intact */
-              (_m, i) => svgs[Number(i)] ?? '',
-            )
+            // Replace each placeholder with a wrapper that KEEPS the container (the SVG is
+            // injected inside it), so the `data-mermaid-source` attribute survives. The
+            // original plan wrote the source on the placeholder div, but the old replace
+            // discarded the whole div — keeping the wrapper fixes that (PLAN §4.1).
+            html = html.replace(/<div data-mermaid-slot="(\d+)"><\/div>/g, (_m, i) => {
+              const slot = Number(i)
+              // `svgs[slot]` is always populated by the render loop above (every mermaid
+              // slot is rendered into `svgs`), so the fallback is purely defensive.
+              /* v8 ignore next */
+              const svg = svgs[slot] ?? ''
+              const src = sources.get(slot)
+              const attr = src ? ` data-mermaid-source="${escapeAttr(src)}"` : ''
+              return `<div data-mermaid-slot="${slot}"${attr}>${svg}</div>`
+            })
           }
           /* v8 ignore next -- defensive: guards a stale/aborted render; the cancelled/token-mismatch returns aren't exercised under jsdom's synchronous render */
           if (cancelled || token !== renderToken.current) return
@@ -196,16 +227,19 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps): React.ReactE
       className="relative h-full overflow-auto w-full"
       style={{ background: 'var(--color-surface)' }}
     >
-      <article
-        ref={previewRef}
-        className="markdown-preview prose dark:prose-invert max-w-none px-6 py-6 w-full"
-      >
-        {loading && renderedHtml === '' ? (
-          <div className="text-[var(--color-text-tertiary)] text-sm">{t('editor.loading')}</div>
-        ) : (
-          <SafeHtml html={renderedHtml} />
-        )}
-      </article>
+      <PreviewContextMenu doc={doc} previewRef={previewRef}>
+        <article
+          ref={previewRef}
+          tabIndex={0}
+          className="markdown-preview prose dark:prose-invert max-w-none px-6 py-6 w-full"
+        >
+          {loading && renderedHtml === '' ? (
+            <div className="text-[var(--color-text-tertiary)] text-sm">{t('editor.loading')}</div>
+          ) : (
+            <SafeHtml html={renderedHtml} />
+          )}
+        </article>
+      </PreviewContextMenu>
     </div>
   )
 }

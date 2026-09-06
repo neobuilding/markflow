@@ -162,12 +162,17 @@ describe('Sidebar', () => {
     useUIStore.getState().setActiveFolder('/docs')
     mount()
     const items = await screen.findAllByTestId('doc-item')
-    // open the three-dot menu of the first item and choose delete
-    const menuButton = within(items[0]).getByRole('button')
+    // open the three-dot menu of the saved file (a.md) and choose delete
+    const savedItem = items.find((li) => li.textContent?.includes('a.md'))
+    const menuButton = within(savedItem as HTMLElement).getByRole('button')
     await userEvent.click(menuButton)
     const deleteItem = await screen.findByText('Delete')
     fireEvent.click(deleteItem)
-    expect(deleteMock).toHaveBeenCalled()
+    // PLAN §5-4: deletion is gated behind a confirmation dialog (confirmed by default in beforeEach).
+    await waitFor(() =>
+      expect(window.api.dialog.confirm as ReturnType<typeof vi.fn>).toHaveBeenCalled(),
+    )
+    await waitFor(() => expect(deleteMock).toHaveBeenCalled())
   })
 
   it('opens a file via the open-file button', async () => {
@@ -492,5 +497,464 @@ describe('Sidebar — external deletion (VS Code-style missing document)', () =>
     } finally {
       allDocs.length = 2 // restore to the {a, draft} fixtures the other tests expect
     }
+  })
+})
+
+describe('Sidebar document item context menu (PLAN §5)', () => {
+  beforeEach(() => {
+    // The shared `allDocs` fixture is mutated across describes (a subfolder describe adds
+    // extra docs and an external-deletion test truncates it), so reset it here to a known
+    // [saved file, draft] state. PLAN §5 exercises both a saved file and a memory-only draft.
+    allDocs.length = 0
+    allDocs.push(
+      {
+        id: 'a',
+        title: 'Note A',
+        folderPath: '/docs',
+        content: '# A',
+        filePath: '/docs/a.md',
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        wordCount: 3,
+      },
+      {
+        id: 'draft',
+        title: 'Untitled',
+        folderPath: '',
+        content: '',
+        filePath: '',
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 2,
+        updatedAt: 2,
+        wordCount: 0,
+      },
+    )
+    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setDirty(false)
+    useUIStore.getState().setEditable(true)
+    useUIStore.getState().requestFileAction(null)
+    ;(window as unknown as { api: unknown }).api = {
+      dialog: {
+        openFiles: vi.fn(async () => ['/x.md']),
+        openFolderPath: vi.fn(async () => null),
+        confirm: vi.fn(async () => true),
+      },
+      clipboard: { writeText: vi.fn(async () => {}) },
+      app: { showInFolder: vi.fn(async () => {}) },
+    }
+  })
+
+  function docItem(text: string) {
+    return screen
+      .findAllByTestId('doc-item')
+      .then((all) => all.find((li) => li.textContent?.includes(text))) as Promise<HTMLElement>
+  }
+
+  // The draft has no on-disk path, so its list item shows the title (never a ".md" file name).
+  function draftItem() {
+    return screen
+      .findAllByTestId('doc-item')
+      .then((all) => all.find((li) => !li.textContent?.includes('.md'))) as Promise<HTMLElement>
+  }
+
+  it('shows the full 8-item menu on right-click of a saved file', async () => {
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    for (const id of [
+      'ctx-open-document',
+      'ctx-copy-path',
+      'ctx-copy-filename',
+      'ctx-show-in-folder',
+      'ctx-rename',
+      'ctx-copy-content',
+      'ctx-details',
+      'ctx-delete',
+    ]) {
+      expect(await screen.findByTestId(id)).toBeInTheDocument()
+    }
+  })
+
+  it('the ⋯ button shows the same items', async () => {
+    mount()
+    await userEvent.click(within(await docItem('a.md')).getByRole('button'))
+    expect(await screen.findByTestId('ctx-rename')).toBeInTheDocument()
+  })
+
+  it('greys path/filename/show-in-folder for a draft and labels delete as discard', async () => {
+    mount()
+    fireEvent.contextMenu(await draftItem())
+    expect(screen.getByTestId('ctx-copy-path')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('ctx-copy-filename')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('ctx-show-in-folder')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('ctx-discard-draft')).toBeInTheDocument()
+  })
+
+  it('enables path/filename/show-in-folder for a saved file and labels delete as delete', async () => {
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    expect(screen.getByTestId('ctx-copy-path')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('ctx-copy-filename')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('ctx-show-in-folder')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('ctx-delete')).toBeInTheDocument()
+  })
+
+  it('disables rename in read-only mode and shows a tooltip', async () => {
+    useUIStore.getState().setEditable(false)
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    const rename = screen.getByTestId('ctx-rename')
+    expect(rename).toHaveAttribute('aria-disabled', 'true')
+    expect(rename).toHaveAttribute('title', 'Switch to edit mode first')
+  })
+
+  it('rename of the active doc sets pendingFileAction', async () => {
+    useUIStore.getState().setActiveDocumentId('a')
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    fireEvent.click(await screen.findByTestId('ctx-rename'))
+    expect(useUIStore.getState().pendingFileAction).toEqual({ type: 'rename', id: 'a' })
+  })
+
+  it('rename of a non-active doc switches then sets pendingFileAction', async () => {
+    useUIStore.getState().setActiveDocumentId('a')
+    mount()
+    fireEvent.contextMenu(await draftItem())
+    fireEvent.click(await screen.findByTestId('ctx-rename'))
+    await waitFor(() =>
+      expect(useUIStore.getState().pendingFileAction).toEqual({ type: 'rename', id: 'draft' }),
+    )
+  })
+
+  it('rename aborts if switching is cancelled', async () => {
+    useUIStore.getState().setActiveDocumentId('a')
+    useUIStore.getState().setDirty(true)
+    ;(window.api.dialog.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+    mount()
+    fireEvent.contextMenu(await draftItem())
+    fireEvent.click(await screen.findByTestId('ctx-rename'))
+    await waitFor(() => expect(useUIStore.getState().pendingFileAction).toBeNull())
+  })
+
+  it('prompts for confirmation and removes the document on confirm (PLAN §5-4)', async () => {
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    fireEvent.click(await screen.findByTestId('ctx-delete'))
+    // The destructive action is gated behind the in-app confirm dialog before it runs.
+    await waitFor(() =>
+      expect(window.api.dialog.confirm as ReturnType<typeof vi.fn>).toHaveBeenCalled(),
+    )
+    await waitFor(() => expect(deleteMock).toHaveBeenCalled())
+  })
+
+  it('keeps the document when the delete confirmation is cancelled (PLAN §5-4)', async () => {
+    ;(window.api.dialog.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    fireEvent.click(await screen.findByTestId('ctx-delete'))
+    await waitFor(() =>
+      expect(window.api.dialog.confirm as ReturnType<typeof vi.fn>).toHaveBeenCalled(),
+    )
+    expect(deleteMock).not.toHaveBeenCalled()
+  })
+
+  it('discards a draft after confirmation (PLAN §5-4)', async () => {
+    ;(window.api.dialog.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(true)
+    mount()
+    fireEvent.contextMenu(await draftItem())
+    fireEvent.click(await screen.findByTestId('ctx-discard-draft'))
+    await waitFor(() =>
+      expect(window.api.dialog.confirm as ReturnType<typeof vi.fn>).toHaveBeenCalled(),
+    )
+    await waitFor(() => expect(deleteMock).toHaveBeenCalled())
+  })
+
+  it('context menu items invoke their file actions (PLAN §5)', async () => {
+    mount()
+    const api = window.api as unknown as {
+      clipboard: { writeText: ReturnType<typeof vi.fn> }
+      app: { showInFolder: ReturnType<typeof vi.fn> }
+    }
+
+    // open-document selects the document
+    fireEvent.contextMenu(await docItem('a.md'))
+    await fireEvent.click(await screen.findByTestId('ctx-open-document'))
+    expect(useUIStore.getState().activeDocumentId).toBe('a')
+
+    // copy path writes the full file path to the clipboard
+    fireEvent.contextMenu(await docItem('a.md'))
+    await fireEvent.click(await screen.findByTestId('ctx-copy-path'))
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith('/docs/a.md'))
+
+    // copy file name writes the base name to the clipboard
+    fireEvent.contextMenu(await docItem('a.md'))
+    await fireEvent.click(await screen.findByTestId('ctx-copy-filename'))
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith('a.md'))
+
+    // show in folder opens the file's folder in the system file manager
+    fireEvent.contextMenu(await docItem('a.md'))
+    // reject once so the defensive .catch in showInFolder is exercised (PLAN §5.3)
+    ;(api.app.showInFolder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('no folder'),
+    )
+    await fireEvent.click(await screen.findByTestId('ctx-show-in-folder'))
+    await waitFor(() => expect(api.app.showInFolder).toHaveBeenCalledWith('/docs/a.md'))
+
+    // copy content writes the document body to the clipboard
+    fireEvent.contextMenu(await docItem('a.md'))
+    await fireEvent.click(await screen.findByTestId('ctx-copy-content'))
+    await waitFor(() => expect(api.clipboard.writeText).toHaveBeenCalledWith('# A'))
+  })
+})
+
+describe('Sidebar — current folder bar context menu (PLAN §5.5)', () => {
+  function seed(docs: Document[]) {
+    allDocs.length = 0
+    allDocs.push(...docs)
+  }
+  const d = (over: Partial<Document>): Document => ({
+    id: 'x',
+    title: 'Untitled',
+    folderPath: '',
+    content: '',
+    filePath: '',
+    encoding: 'utf-8',
+    encodingConfidence: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    wordCount: 0,
+    ...over,
+  })
+
+  beforeEach(() => {
+    seed([
+      d({ id: 'a', title: 'Note A', folderPath: '/docs', filePath: '/docs/a.md', wordCount: 3 }),
+    ])
+    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setDirty(false)
+    useUIStore.getState().setExportOpen(false)
+    ;(window as unknown as { api: unknown }).api = {
+      dialog: {
+        openFiles: vi.fn(async () => ['/x.md']),
+        openFolderPath: vi.fn(async () => null),
+        confirm: vi.fn(async () => true),
+      },
+      clipboard: { writeText: vi.fn(async () => {}) },
+      app: { showInFolder: vi.fn(async () => {}) },
+    }
+    createMock.mockReset()
+    openFolderMock.mockReset()
+  })
+
+  it('shows copy path / reveal / go up / close workspace', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    expect(await screen.findByTestId('ctx-copy-folder-path')).toBeInTheDocument()
+    expect(screen.getByTestId('ctx-show-in-folder')).toBeInTheDocument()
+    expect(screen.getByTestId('ctx-go-up')).toBeInTheDocument()
+    expect(screen.getByTestId('ctx-close-workspace')).toBeInTheDocument()
+  })
+
+  it('copies the current folder path', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    fireEvent.click(await screen.findByTestId('ctx-copy-folder-path'))
+    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/docs')
+  })
+
+  it('reveals the current folder in the system file manager', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    fireEvent.click(await screen.findByTestId('ctx-show-in-folder'))
+    expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs')
+  })
+
+  it('disables go-up at a root-level folder (no parent)', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    expect(await screen.findByTestId('ctx-go-up')).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('enables go-up for a nested folder and navigates to the parent', async () => {
+    useUIStore.getState().setActiveFolder('/docs/sub')
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    const up = await screen.findByTestId('ctx-go-up')
+    expect(up).not.toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(up)
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+  })
+
+  it('disables close-workspace while exporting (PLAN §5.5 lock)', async () => {
+    useUIStore.getState().setExportOpen(true)
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    expect(await screen.findByTestId('ctx-close-workspace')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+  })
+
+  it('closes the workspace from the context menu (confirming discard)', async () => {
+    useUIStore.getState().setDirty(true)
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    fireEvent.click(await screen.findByTestId('ctx-close-workspace'))
+    await waitFor(() => expect(window.api.dialog.confirm).toHaveBeenCalled())
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBeNull())
+  })
+})
+
+describe('Sidebar — folder row context menu (PLAN §5.4)', () => {
+  function seed(docs: Document[]) {
+    allDocs.length = 0
+    allDocs.push(...docs)
+  }
+  const d = (over: Partial<Document>): Document => ({
+    id: 'x',
+    title: 'Untitled',
+    folderPath: '',
+    content: '',
+    filePath: '',
+    encoding: 'utf-8',
+    encodingConfidence: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    wordCount: 0,
+    ...over,
+  })
+
+  beforeEach(() => {
+    seed([
+      d({ id: 'a', title: 'Note A', folderPath: '/docs', filePath: '/docs/a.md', wordCount: 3 }),
+      d({
+        id: 'b',
+        title: 'Note B',
+        folderPath: '/docs/sub',
+        filePath: '/docs/sub/b.md',
+        wordCount: 5,
+      }),
+      d({ id: 'draft', title: 'Untitled', folderPath: '', filePath: '' }),
+    ])
+    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setDirty(false)
+    ;(window as unknown as { api: unknown }).api = {
+      dialog: {
+        openFiles: vi.fn(async () => ['/x.md']),
+        openFolderPath: vi.fn(async () => null),
+        confirm: vi.fn(async () => true),
+      },
+      clipboard: { writeText: vi.fn(async () => {}) },
+      app: { showInFolder: vi.fn(async () => {}) },
+    }
+    createMock.mockReset()
+    openFolderMock.mockReset()
+  })
+
+  it('shows the folder menu items', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    for (const id of [
+      'ctx-open-folder',
+      'ctx-expand',
+      'ctx-expand-all',
+      'ctx-copy-folder-path',
+      'ctx-show-in-folder',
+      'ctx-new-doc-here',
+    ]) {
+      expect(await screen.findByTestId(id)).toBeInTheDocument()
+    }
+  })
+
+  it('opens the folder in the sidebar', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('ctx-open-folder'))
+    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs/sub'))
+  })
+
+  it('collapses via the menu after expanding', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('ctx-expand'))
+    expect(await screen.findByText('b.md')).toBeInTheDocument()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    expect(await screen.findByTestId('ctx-collapse')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('ctx-collapse'))
+    await waitFor(() => expect(screen.queryByText('b.md')).toBeNull())
+  })
+
+  it('disables expand-all when the folder has no subfolders', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    expect(await screen.findByTestId('ctx-expand-all')).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('copies the folder path', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('ctx-copy-folder-path'))
+    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/docs/sub')
+  })
+
+  it('reveals the folder in the system file manager', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('ctx-show-in-folder'))
+    expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs/sub')
+  })
+
+  it('swallows a rejected reveal without surfacing an unhandled rejection', async () => {
+    ;(window.api.app.showInFolder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('no folder'),
+    )
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('ctx-show-in-folder'))
+    await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs/sub'))
+  })
+
+  it('creates a new document inside the folder', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('ctx-new-doc-here'))
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({ folderPath: '/docs/sub', memoryOnly: false }),
+      ),
+    )
+  })
+
+  it('expand-all opens the whole subtree', async () => {
+    // Give 'sub' a subfolder so expand-all is enabled.
+    seed([
+      d({ id: 'a', title: 'Note A', folderPath: '/docs', filePath: '/docs/a.md', wordCount: 3 }),
+      d({
+        id: 'b',
+        title: 'Note B',
+        folderPath: '/docs/sub',
+        filePath: '/docs/sub/b.md',
+        wordCount: 5,
+      }),
+      d({
+        id: 'c',
+        title: 'Note C',
+        folderPath: '/docs/sub/deep',
+        filePath: '/docs/sub/deep/c.md',
+        wordCount: 1,
+      }),
+      d({ id: 'draft', title: 'Untitled', folderPath: '', filePath: '' }),
+    ])
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    expect(await screen.findByTestId('ctx-expand-all')).not.toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(screen.getByTestId('ctx-expand-all'))
+    // Both the folder and its nested folder open, revealing the deep document row.
+    await waitFor(() => expect(screen.getByText('c.md')).toBeInTheDocument())
   })
 })

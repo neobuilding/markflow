@@ -132,6 +132,12 @@ vi.mock('chokidar', () => ({
   },
 }))
 
+// documents.ts imports `shell` from electron (trashItem on delete); provide a no-op
+// stub so the node test env doesn't need a real Electron runtime.
+vi.mock('electron', () => ({
+  shell: { trashItem: vi.fn().mockResolvedValue(undefined) },
+}))
+
 // app:getInitialPaths etc. not used by documents handlers; also need app for getPath.
 const handlers: Record<string, (...a: any[]) => any> = {}
 const fakeIpcMain = {
@@ -345,6 +351,39 @@ describe('documents IPC — delete', () => {
     const ok = await call('documents:delete', created.id)
     expect(ok).toBe(true)
     expect(docs.has(created.id)).toBe(false)
+  })
+
+  it('logs but still deletes when trashItem fails for a non-ENOENT reason', async () => {
+    const created = await call('documents:create', {
+      title: 'DelTrash',
+      content: 'x',
+      memoryOnly: false,
+    })
+    const { shell } = await import('electron')
+    const err = Object.assign(new Error('boom'), { code: 'EPERM' })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
+    const ok = await call('documents:delete', created.id)
+    expect(ok).toBe(true)
+    expect(docs.has(created.id)).toBe(false)
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('does not log when trashItem fails with ENOENT (file already gone)', async () => {
+    const created = await call('documents:create', {
+      title: 'DelTrash2',
+      content: 'x',
+      memoryOnly: false,
+    })
+    const { shell } = await import('electron')
+    const err = Object.assign(new Error('gone'), { code: 'ENOENT' })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
+    const ok = await call('documents:delete', created.id)
+    expect(ok).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
   })
 })
 
@@ -1651,5 +1690,131 @@ describe('isInFolder (folderMatch, shared with documentStore)', () => {
   it('returns false for an empty folder', () => {
     expect(isInFolder('/a/b/note.md', '')).toBe(false)
     expect(isInFolder('/a/b/note.md', undefined as unknown as string)).toBe(false)
+  })
+})
+
+// ─── M3 new handlers (PLAN §12-2/3/6/7/11/13) ─────────────────────────────────────
+describe('documents IPC — resolve-appdoc (能力 3)', () => {
+  const dir = join(stableDocsRoot, 'ra')
+  const filePath = join(dir, 'note.md')
+  beforeAll(() => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(filePath, '# note')
+    docs.set('ra1', {
+      id: 'ra1',
+      filePath,
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      title: 't',
+      content: '',
+      memoryOnly: false,
+      folderPath: dir,
+      updatedAt: 1,
+    })
+    writeFileSync(join(dir, 'img.png'), 'PNG')
+  })
+  it('resolves an appdoc:// URL to its on-disk absolute path', async () => {
+    const r = await call('documents:resolve-appdoc', 'appdoc://ra1/img.png')
+    expect(r).toBe(join(dir, 'img.png'))
+  })
+  it('returns null for a missing file', async () => {
+    expect(await call('documents:resolve-appdoc', 'appdoc://ra1/missing.png')).toBeNull()
+  })
+  it('returns null when the path escapes the document directory', async () => {
+    expect(await call('documents:resolve-appdoc', 'appdoc://ra1/../escape.png')).toBeNull()
+  })
+  it('returns null for an unknown document', async () => {
+    expect(await call('documents:resolve-appdoc', 'appdoc://ghost/img.png')).toBeNull()
+  })
+  it('returns null when getDocumentById throws (defensive catch)', async () => {
+    const orig = fakeStore.getDocumentById
+    fakeStore.getDocumentById = () => {
+      throw new Error('boom')
+    }
+    try {
+      expect(await call('documents:resolve-appdoc', 'appdoc://ra1/im.png')).toBeNull()
+    } finally {
+      fakeStore.getDocumentById = orig
+    }
+  })
+})
+
+describe('documents IPC — set-eol (能力 6)', () => {
+  const dir = join(stableDocsRoot, 'eol')
+  const filePath = join(dir, 'file.md')
+  beforeAll(() => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(filePath, 'a\nb\nc')
+    docs.set('eol1', {
+      id: 'eol1',
+      filePath,
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      title: 't',
+      content: '',
+      memoryOnly: false,
+      folderPath: dir,
+      updatedAt: 1,
+    })
+  })
+  it('rewrites LF to CRLF preserving bytes', async () => {
+    await call('documents:set-eol', filePath, '\r\n')
+    expect(readFileSync(filePath, 'utf-8')).toBe('a\r\nb\r\nc')
+  })
+  it('rewrites CRLF to LF', async () => {
+    writeFileSync(filePath, 'a\r\nb')
+    await call('documents:set-eol', filePath, '\n')
+    expect(readFileSync(filePath, 'utf-8')).toBe('a\nb')
+  })
+  it('falls back to utf-8 when the file is not in the document store', async () => {
+    const orphan = join(dir, 'orphan.md')
+    writeFileSync(orphan, 'a\nb')
+    await call('documents:set-eol', orphan, '\r\n')
+    expect(readFileSync(orphan, 'utf-8')).toBe('a\r\nb')
+  })
+})
+
+describe('documents IPC — detect-encoding (能力 11)', () => {
+  const dir = join(stableDocsRoot, 'det')
+  const filePath = join(dir, 'file.md')
+  beforeAll(() => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(filePath, Buffer.from([0xef, 0xbb, 0xbf, 0x68, 0x69])) // UTF-8 BOM
+  })
+  it('detects the encoding from disk', async () => {
+    expect(await call('documents:detect-encoding', filePath)).toEqual({
+      enc: 'utf-8',
+      confidence: 1,
+    })
+  })
+  it('falls back to utf-8/0 for a missing file', async () => {
+    expect(await call('documents:detect-encoding', join(dir, 'nope.md'))).toEqual({
+      enc: 'utf-8',
+      confidence: 0,
+    })
+  })
+})
+
+describe('documents IPC — folder ops (能力 7)', () => {
+  it('create-folder makes the directory', async () => {
+    const p = join(stableDocsRoot, `mk-${Date.now()}`)
+    await call('documents:create-folder', p)
+    expect(existsSync(p)).toBe(true)
+  })
+  it('rename-folder moves the directory', async () => {
+    const a = join(stableDocsRoot, `mv-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-b-${Date.now()}`)
+    mkdirSync(a, { recursive: true })
+    writeFileSync(join(a, 'x.md'), 'x')
+    await call('documents:rename-folder', a, b)
+    expect(existsSync(b)).toBe(true)
+    expect(existsSync(a)).toBe(false)
+  })
+  it('delete-folder removes the directory tree', async () => {
+    const p = join(stableDocsRoot, `rm-${Date.now()}`)
+    mkdirSync(p, { recursive: true })
+    writeFileSync(join(p, 'y.md'), 'y')
+    await call('documents:delete-folder', p)
+    expect(existsSync(p)).toBe(false)
   })
 })

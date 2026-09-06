@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useCallback } from 'react'
+import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import {
@@ -7,13 +7,41 @@ import {
   historyKeymap,
   indentWithTab,
   isolateHistory,
+  undo,
+  redo,
+  selectAll,
+  undoDepth,
+  redoDepth,
 } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { searchKeymap } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
-import { debounce } from '../../lib/utils'
+import {
+  Undo2,
+  Redo2,
+  Scissors,
+  Copy,
+  ClipboardPaste,
+  List,
+  Bold,
+  Italic,
+  Code,
+  Link2,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+} from 'lucide-react'
+import { debounce, formatShortcut } from '../../lib/utils'
 import { scrollSync } from '../../lib/scrollSync'
+import { useT } from '../../i18n'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '../ui/context-menu'
 
 interface MarkdownEditorProps {
   content: string
@@ -21,6 +49,7 @@ interface MarkdownEditorProps {
   autoFocus?: boolean
   editable?: boolean
   docId?: string | null
+  filePath?: string | null
 }
 
 export function MarkdownEditor({
@@ -29,6 +58,7 @@ export function MarkdownEditor({
   autoFocus,
   editable = true,
   docId,
+  filePath = null,
 }: MarkdownEditorProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -104,6 +134,158 @@ export function MarkdownEditor({
     EditorState.readOnly.of(!isEditable),
     EditorView.editable.of(isEditable),
   ]
+
+  // ── Right-click (context) menu: state, command snapshot & commands (PLAN §3) ──
+  // The menu is rendered inside this component so it holds the viewRef directly — no
+  // forwardRef command exposure is needed (PLAN §3-2).
+  const { t } = useT()
+
+  type CmdState = {
+    canUndo: boolean
+    canRedo: boolean
+    hasSelection: boolean
+    docEmpty: boolean
+    linkUrl: string | null
+  }
+  const initialCmd: CmdState = {
+    canUndo: false,
+    canRedo: false,
+    hasSelection: false,
+    docEmpty: false,
+    linkUrl: null,
+  }
+  const [cmd, setCmd] = useState<CmdState>(initialCmd)
+  // CM selection cached on pointerdown (capture phase), used to restore the selection if
+  // the contextmenu event clears it (G4, PLAN §3-3 / §16.1-4).
+  const cachedSelRef = useRef<{ from: number; to: number } | null>(null)
+
+  const cacheSelection = useCallback(() => {
+    const view = viewRef.current
+    /* v8 ignore next -- defensive: a pointerdown reaches this handler only via the mounted editor DOM, so the view is never null */
+    if (!view) return
+    const s = view.state.selection.main
+    cachedSelRef.current = { from: s.from, to: s.to }
+  }, [])
+
+  // Effective selection: if the live selection was cleared by the contextmenu but we
+  // cached a real one on pointerdown, restore the cached range so cut/copy/format act on it.
+  const getSelectionRange = (): { from: number; to: number } => {
+    const view = viewRef.current
+    /* v8 ignore next -- defensive: only called from menu item handlers, which require a mounted editor */
+    if (!view) return { from: 0, to: 0 }
+    const live = view.state.selection.main
+    const cached = cachedSelRef.current
+    if (live.empty && cached && cached.from !== cached.to) return cached
+    return { from: live.from, to: live.to }
+  }
+
+  // Detect a markdown link under the cursor so "Open Link in Browser" can enable (PLAN §3-4).
+  // Regex over the cursor's line is the pragmatic fallback (PLAN §3-4: "退化為行含 ]( 或裸 URL 正则").
+  const linkUrlAt = (state: EditorState, pos: number): string | null => {
+    const line = state.doc.lineAt(pos)
+    const re = /\[[^\]]*\]\(([^)\s]+)\)/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(line.text))) {
+      const start = line.from + m.index
+      const end = start + m[0].length
+      if (pos >= start && pos <= end) return m[1]
+    }
+    return null
+  }
+
+  // Snapshot command availability when the menu opens (PLAN §3-4).
+  const snapshotCommands = (open: boolean) => {
+    if (!open) return
+    const view = viewRef.current
+    /* v8 ignore next -- defensive: the menu only opens over the mounted editor */
+    if (!view) return
+    const state = view.state
+    const sel = getSelectionRange()
+    setCmd({
+      canUndo: undoDepth(state) > 0,
+      canRedo: redoDepth(state) > 0,
+      hasSelection: sel.from !== sel.to,
+      docEmpty: state.doc.length === 0,
+      linkUrl: linkUrlAt(state, state.selection.main.head),
+    })
+  }
+
+  const doUndo = () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    undo(v)
+    v.focus()
+  }
+  const doRedo = () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    redo(v)
+    v.focus()
+  }
+  const doSelectAll = () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    selectAll(v)
+    v.focus()
+  }
+  const doCut = async () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    const { from, to } = getSelectionRange()
+    const text = v.state.sliceDoc(from, to)
+    await window.api.clipboard.writeText(text)
+    // A zero-length range is a no-op replace, so this is safe for cut-with-no-selection too.
+    v.dispatch({ changes: { from, to, insert: '' } })
+    v.focus()
+  }
+  const doCopy = async () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    const { from, to } = getSelectionRange()
+    await window.api.clipboard.writeText(v.state.sliceDoc(from, to))
+    v.focus()
+  }
+  const doPaste = async () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    const text = await navigator.clipboard.readText()
+    const { from, to } = getSelectionRange()
+    v.dispatch({ changes: { from, to, insert: text } })
+    v.focus()
+  }
+  // Toggle a marker pair around the selection; with no selection, insert the markers with
+  // the cursor parked between them (PLAN §1.5: never insert the literal 'text' placeholder).
+  const wrap = (before: string, after: string) => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    const { from, to } = getSelectionRange()
+    const sel = v.state.sliceDoc(from, to)
+    v.dispatch({
+      changes: { from, to, insert: before + sel + after },
+      selection: { anchor: from + before.length, head: from + before.length + sel.length },
+    })
+    v.focus()
+  }
+  const openLinkInBrowser = () => {
+    // Safe: this item is disabled when cmd.linkUrl is null (PLAN §3-4).
+    void window.api.app.openExternal(cmd.linkUrl!)
+  }
+  const copyFilePath = () => {
+    // Safe: this item is disabled when filePath is null.
+    void window.api.clipboard.writeText(filePath as string)
+  }
+  const showInFolder = () => {
+    // Safe: this item is disabled when filePath is null. .catch swallows a failure
+    // (e.g. an externally-deleted file, PLAN §5.3) so it fails gracefully.
+    void Promise.resolve(window.api.app.showInFolder(filePath as string)).catch(() => {})
+  }
 
   useEffect(() => {
     // The container div is rendered unconditionally, so the ref is always attached once
@@ -331,11 +513,119 @@ export function MarkdownEditor({
   }, [])
 
   return (
-    <div
-      ref={containerRef}
-      onPointerDown={handlePointerDown}
-      className="h-full overflow-auto editor-content"
-      style={{ background: 'var(--color-surface)' }}
-    />
+    <ContextMenu onOpenChange={snapshotCommands}>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={containerRef}
+          onPointerDown={handlePointerDown}
+          onPointerDownCapture={cacheSelection}
+          className="h-full overflow-auto editor-content"
+          style={{ background: 'var(--color-surface)' }}
+        >
+          {/* The CodeMirror view is appended here by the mount effect. */}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          data-testid="ctx-undo"
+          shortcut={formatShortcut('⌘Z')}
+          disabled={!editable || !cmd.canUndo}
+          onClick={doUndo}
+        >
+          <Undo2 size={13} /> {t('ctx.undo')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-redo"
+          shortcut={formatShortcut('⌘⇧Z')}
+          disabled={!editable || !cmd.canRedo}
+          onClick={doRedo}
+        >
+          <Redo2 size={13} /> {t('ctx.redo')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-cut"
+          shortcut={formatShortcut('⌘X')}
+          disabled={!editable || !cmd.hasSelection}
+          onClick={() => void doCut()}
+        >
+          <Scissors size={13} /> {t('ctx.cut')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-copy"
+          shortcut={formatShortcut('⌘C')}
+          disabled={!cmd.hasSelection}
+          onClick={() => void doCopy()}
+        >
+          <Copy size={13} /> {t('ctx.copy')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-paste"
+          shortcut={formatShortcut('⌘V')}
+          disabled={!editable}
+          onClick={() => void doPaste()}
+        >
+          <ClipboardPaste size={13} /> {t('ctx.paste')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-select-all"
+          shortcut={formatShortcut('⌘A')}
+          disabled={cmd.docEmpty}
+          onClick={doSelectAll}
+        >
+          <List size={13} /> {t('ctx.selectAll')}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          data-testid="ctx-bold"
+          shortcut={formatShortcut('⌘B')}
+          disabled={!editable}
+          onClick={() => wrap('**', '**')}
+        >
+          <Bold size={13} /> {t('editor.fmt.bold')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-italic"
+          shortcut={formatShortcut('⌘I')}
+          disabled={!editable}
+          onClick={() => wrap('_', '_')}
+        >
+          <Italic size={13} /> {t('editor.fmt.italic')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-inline-code"
+          shortcut={formatShortcut('⌘E')}
+          disabled={!editable}
+          onClick={() => wrap('`', '`')}
+        >
+          <Code size={13} /> {t('editor.fmt.code')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-link"
+          shortcut={formatShortcut('⌘K')}
+          disabled={!editable}
+          onClick={() => wrap('[', '](url)')}
+        >
+          <Link2 size={13} /> {t('editor.fmt.link')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-open-link-in-browser"
+          disabled={!cmd.linkUrl}
+          onClick={openLinkInBrowser}
+        >
+          <ExternalLink size={13} /> {t('ctx.openLinkInBrowser')}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem data-testid="ctx-copy-path" disabled={!filePath} onClick={copyFilePath}>
+          <FileText size={13} /> {t('editor.copyFullPath')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="ctx-show-in-folder"
+          disabled={!filePath}
+          onClick={showInFolder}
+        >
+          <FolderOpen size={13} /> {t('editor.showInFolder')}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }

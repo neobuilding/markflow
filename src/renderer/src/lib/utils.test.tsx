@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   computeDirty,
   isMac,
+  formatShortcut,
   baseName,
   isInFolder,
   isDirInFolder,
@@ -112,6 +113,32 @@ describe('isMac', () => {
     } finally {
       globalThis.navigator = original
     }
+  })
+})
+
+describe('formatShortcut', () => {
+  const original = navigator.userAgent
+  afterEach(() => {
+    Object.defineProperty(navigator, 'userAgent', { value: original, configurable: true })
+  })
+
+  it('keeps the macOS form unchanged on macOS', () => {
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Macintosh)',
+      configurable: true,
+    })
+    expect(formatShortcut('⌘S')).toBe('⌘S')
+    expect(formatShortcut('⌘⇧S')).toBe('⌘⇧S')
+  })
+
+  it('renders Ctrl/Shift with plus separators off macOS', () => {
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Windows NT 10.0)',
+      configurable: true,
+    })
+    expect(formatShortcut('⌘S')).toBe('Ctrl+S')
+    expect(formatShortcut('⌘⇧S')).toBe('Ctrl+Shift+S')
+    expect(formatShortcut('⌘\\')).toBe('Ctrl+\\')
   })
 })
 

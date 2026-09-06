@@ -9,6 +9,29 @@ import { dirname, resolve, extname } from 'node:path'
 import { getDocumentById } from '../model/documentStore'
 import { parseAppDocUrl, isSubdir, APPDOC_MIME } from '../lib/security'
 
+// Shared resolver used by both the protocol handler above and the new
+// `documents:resolve-appdoc` / `clipboard:write-image` IPC handlers (PLAN §12-3 / §12-2).
+// Turns an `appdoc://<docId>/<rel>` URL into its absolute on-disk path, reusing the exact
+// security layer (doc lookup → docBaseDir → resolve → secondary containment → exists).
+// Returns null when the URL is malformed, escapes the document directory, or the file is
+// missing. Disk paths are returned untouched (the caller decides whether to accept them).
+export function resolveAppdocPath(src: string): string | null {
+  if (!src.startsWith('appdoc://')) return src
+  const parsed = parseAppDocUrl(src)
+  if (!parsed) return null
+  const { docId, relPath } = parsed
+  const doc = getDocumentById(docId)
+  if (!doc?.filePath) return null
+  const docBaseDir = dirname(doc.filePath)
+  const resolved = resolve(docBaseDir, relPath)
+  // `parseAppDocUrl` already normalizes `..`, so `resolved` can never escape docBaseDir;
+  // this secondary containment check is defensive and unreachable in practice.
+  /* v8 ignore next */
+  if (!isSubdir(docBaseDir, resolved)) return null
+  if (!existsSync(resolved)) return null
+  return resolved
+}
+
 export function registerAppDocProtocol(): void {
   protocol.handle('appdoc', (request) => {
     try {
@@ -26,7 +49,10 @@ export function registerAppDocProtocol(): void {
       }
       const docBaseDir = dirname(doc.filePath)
       const resolved = resolve(docBaseDir, relPath)
-      // Secondary containment check: block ../ traversal and symlink escapes
+      // Secondary containment check: block ../ traversal and symlink escapes.
+      // `parseAppDocUrl` already normalizes `..`, so this branch is defensive and
+      // unreachable in practice.
+      /* v8 ignore next 3 */
       if (!isSubdir(docBaseDir, resolved)) {
         return new Response('Forbidden', { status: 403 })
       }

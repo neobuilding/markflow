@@ -82,6 +82,39 @@ describe('preload documentsApi', () => {
     expect(invokes[0]).toEqual({ channel: 'documents:eol', args: ['/a.md'] })
   })
 
+  it('resolveAppdoc invokes documents:resolve-appdoc with the url', () => {
+    documentsApi.resolveAppdoc('appdoc://d1/im.png')
+    expect(invokes[0]).toEqual({
+      channel: 'documents:resolve-appdoc',
+      args: ['appdoc://d1/im.png'],
+    })
+  })
+
+  it('setEol invokes documents:set-eol with the path and eol', () => {
+    documentsApi.setEol('/a.md', '\r\n')
+    expect(invokes[0]).toEqual({ channel: 'documents:set-eol', args: ['/a.md', '\r\n'] })
+  })
+
+  it('detectEncoding invokes documents:detect-encoding with the path', () => {
+    documentsApi.detectEncoding('/a.md')
+    expect(invokes[0]).toEqual({ channel: 'documents:detect-encoding', args: ['/a.md'] })
+  })
+
+  it('createFolder invokes documents:create-folder with the path', () => {
+    documentsApi.createFolder('/notes/new')
+    expect(invokes[0]).toEqual({ channel: 'documents:create-folder', args: ['/notes/new'] })
+  })
+
+  it('renameFolder invokes documents:rename-folder with old and new paths', () => {
+    documentsApi.renameFolder('/a', '/b')
+    expect(invokes[0]).toEqual({ channel: 'documents:rename-folder', args: ['/a', '/b'] })
+  })
+
+  it('deleteFolder invokes documents:delete-folder with the path', () => {
+    documentsApi.deleteFolder('/notes/old')
+    expect(invokes[0]).toEqual({ channel: 'documents:delete-folder', args: ['/notes/old'] })
+  })
+
   it('setOpenFolder invokes documents:set-open-folder with the folder path', () => {
     documentsApi.setOpenFolder('/notes')
     expect(invokes[0]).toEqual({ channel: 'documents:set-open-folder', args: ['/notes'] })

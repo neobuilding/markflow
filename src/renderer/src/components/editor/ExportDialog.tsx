@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useUIStore } from '../../store/ui'
 import { useDocument } from '../../hooks/useDocuments'
 import { exportDocument, resolveTheme } from '../../lib/export'
 import { getExportHtml } from '../../lib/exportStore'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
+import { InputContextMenu } from '../ui/input-context-menu'
 import { useT } from '../../i18n'
 
 type ThemeChoice = 'current' | 'light' | 'dark'
@@ -27,6 +28,8 @@ export function ExportDialog(): React.ReactElement {
   const [targetPath, setTargetPath] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Ref for the right-click edit menu on the target-path box (PLAN §11).
+  const targetPathRef = useRef<HTMLInputElement>(null)
   // When the target file already exists, confirm inline within the dialog (instead of the native
   // window.confirm): the native confirm is a blocking modal that conflicts with the app menu
   // shortcut (Close Workspace = Cmd/Ctrl+W) and the current modal export dialog, which could
@@ -164,12 +167,17 @@ export function ExportDialog(): React.ReactElement {
               {t('export.saveLocation')}
             </label>
             <div className="flex items-center gap-2">
-              <input
-                value={targetPath ?? ''}
-                readOnly
-                placeholder={t('export.notSelected')}
-                className="flex-1 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 outline-none text-[var(--color-text-secondary)] truncate"
-              />
+              {/* Right-click edit menu: the box is read-only, so cut / paste / undo / redo
+                  are greyed out and only copy / select-all work (PLAN §10, §11). */}
+              <InputContextMenu targetRef={targetPathRef} readOnly>
+                <input
+                  ref={targetPathRef}
+                  value={targetPath ?? ''}
+                  readOnly
+                  placeholder={t('export.notSelected')}
+                  className="flex-1 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 outline-none text-[var(--color-text-secondary)] truncate"
+                />
+              </InputContextMenu>
               <Button variant="outline" size="sm" onClick={handlePickPath}>
                 {t('export.choose')}
               </Button>

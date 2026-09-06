@@ -34,6 +34,7 @@ const DropdownMenuItem = React.forwardRef<
       destructive
         ? 'text-[var(--color-danger)] hover:bg-red-50 focus:bg-red-50'
         : 'text-[var(--color-text-primary)] hover:bg-[var(--color-surface-overlay)] focus:bg-[var(--color-surface-overlay)]',
+      'data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[disabled]:cursor-default',
       className,
     )}
     {...props}

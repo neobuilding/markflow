@@ -23,7 +23,14 @@ import {
   FileOutput,
   Copy,
 } from 'lucide-react'
-import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
+import {
+  cn,
+  baseName,
+  dirName,
+  displayTitle,
+  stripMarkdownExt,
+  formatShortcut,
+} from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
   useDocument,
@@ -47,6 +54,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu'
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent } from '../ui/context-menu'
+import { FileMenuItems, type DocMenuActions } from './FileMenuItems'
+import { InputContextMenu } from '../ui/input-context-menu'
+
+// Reveal a path in the system file manager. Failures (a file deleted outside the app) are
+// swallowed so they never surface as an unhandled rejection (PLAN §5.6 / §5.7).
+function revealInFolder(target: string): void {
+  void Promise.resolve(window.api.app.showInFolder(target)).catch(() => {})
+}
 
 export function EditorPane(): React.ReactElement {
   const {
@@ -260,6 +276,58 @@ export function EditorPane(): React.ReactElement {
     return rm
   }, [])
 
+  // Consume a pending file action requested by another component (the sidebar's "Rename…"
+  // menu, PLAN §5.1; the status bar's save/save-as/reload items, PLAN §8). Each action is
+  // dispatched to its handler once the active document is fully loaded; the request is cleared
+  // after dispatch (or immediately when the document is not editable / not yet ready).
+  const pendingFileAction = useUIStore((s) => s.pendingFileAction)
+  const requestFileAction = useUIStore((s) => s.requestFileAction)
+  useEffect(() => {
+    if (!pendingFileAction) return
+    if (pendingFileAction.type === 'rename') {
+      if (pendingFileAction.id !== activeDocumentId) return
+      if (!doc || isLoading) return
+      if (!editable) {
+        requestFileAction(null)
+        return
+      }
+      startTitleEdit()
+      requestFileAction(null)
+      return
+    }
+    // save / saveAs / reload: act on the currently active document.
+    if (!doc || isLoading) return
+    if (!editable) {
+      requestFileAction(null)
+      return
+    }
+    // After the rename branch above and the !editable early-return, the only remaining
+    // pendingFileAction types are save/saveAs/reload (rename is handled and returns).
+    switch (pendingFileAction.type) {
+      case 'save':
+        void handleSave()
+        break
+      case 'saveAs':
+        void handleSaveAs()
+        break
+      case 'reload':
+        void handleReload()
+        break
+    }
+    requestFileAction(null)
+  }, [
+    pendingFileAction,
+    activeDocumentId,
+    doc,
+    isLoading,
+    editable,
+    startTitleEdit,
+    requestFileAction,
+    handleSave,
+    handleSaveAs,
+    handleReload,
+  ])
+
   const handleOpenFile = useCallback(async () => {
     const filePaths = await window.api.dialog.openFiles()
     if (filePaths.length) openPathsMut.mutate(filePaths)
@@ -279,12 +347,13 @@ export function EditorPane(): React.ReactElement {
   // treated as POSIX absolute paths here (and by the store's `isInFolder`), so the leading
   // `//` is dropped and navigation would be wrong. This mirrors the rest of the codebase,
   // which also does not handle UNC paths.
-  const handleNavigateToSegment = useCallback(
+  // Absolute directory path represented by breadcrumb segment `index` — shared by the
+  // click handler and the segment's context menu (PLAN §5.7).
+  // `doc` is guaranteed non-null here: the breadcrumb only renders when `doc.filePath`
+  // exists, and the render body already accesses `doc.filePath` unguarded. A defensive
+  // `if (!doc?.filePath) return` would be an unreachable branch.
+  const segmentDir = useCallback(
     (segments: string[], index: number) => {
-      // `doc` is guaranteed non-null here: the breadcrumb (and this handler's
-      // click target at line ~687) only render when `doc.filePath` exists, and
-      // the render body already accesses `doc.filePath` unguarded. A defensive
-      // `if (!doc?.filePath) return` would be an unreachable branch.
       const norm = doc!.filePath.replace(/\\/g, '/')
       const isPosixAbs = norm.startsWith('/')
       const isWinAbs = /^[a-zA-Z]:\//.test(norm)
@@ -293,9 +362,16 @@ export function EditorPane(): React.ReactElement {
       if (isWinAbs && index === 0) {
         dirPath += '/'
       }
-      useUIStore.getState().setActiveFolder(dirPath)
+      return dirPath
     },
     [doc],
+  )
+
+  const handleNavigateToSegment = useCallback(
+    (segments: string[], index: number) => {
+      useUIStore.getState().setActiveFolder(segmentDir(segments, index))
+    },
+    [segmentDir],
   )
 
   // Copy the full path or just the file name from the breadcrumb.
@@ -312,10 +388,29 @@ export function EditorPane(): React.ReactElement {
     [doc],
   )
 
+  // Shared file-menu action set for the title-bar file name and the path breadcrumb
+  // (PLAN §7 / 需求 §5.6, §5.7). Both surfaces feed the SAME FileMenuItems definition so the
+  // two menus can never drift apart. Path items are greyed out by the caller when the doc is
+  // a memory-only draft (no filePath), so the disabled guards make `doc?.filePath as string`
+  // safe to pass here.
+  const docFileActions: DocMenuActions = {
+    rename: startTitleEdit,
+    copyFileName: () => void handleCopyPath('name'),
+    copyFullPath: () => void handleCopyPath('full'),
+    showInFolder: () => revealInFolder(doc?.filePath as string),
+    save: () => void handleSave(),
+    saveAs: () => void handleSaveAs(),
+    reload: () => void handleReload(),
+    details: () => useUIStore.getState().setFileDetailsId(doc!.id),
+    exportHtml: () => useUIStore.getState().setExportOpen(true),
+  }
+
   // Split view: draggable divider. splitRatio is the editor's width fraction (0–1).
   const splitContainerRef = useRef<HTMLDivElement>(null)
   const [splitRatio, setSplitRatio] = useState(0.5)
   const isSplitDragging = useRef(false)
+  // Ref for the right-click edit menu while the title is being renamed (PLAN §11 / §5.14).
+  const titleInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -364,7 +459,9 @@ export function EditorPane(): React.ReactElement {
             <PanelLeft size={14} />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{t('editor.toggleSidebarShortcut')}</TooltipContent>
+        <TooltipContent>
+          {t('editor.toggleSidebarShortcut', { shortcut: formatShortcut('⌘\\') })}
+        </TooltipContent>
       </Tooltip>
       {/* Save / Save As / Reload — grouped with Open/Close as file operations, kept on the left */}
       {activeDocumentId && (
@@ -385,7 +482,7 @@ export function EditorPane(): React.ReactElement {
             <TooltipContent>
               {editable
                 ? dirty
-                  ? t('editor.saveShortcut')
+                  ? t('editor.saveShortcut', { shortcut: formatShortcut('⌘S') })
                   : t('editor.noChanges')
                 : t('editor.saveSwitchEdit')}
             </TooltipContent>
@@ -403,7 +500,9 @@ export function EditorPane(): React.ReactElement {
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {editable ? t('editor.saveAsShortcut') : t('editor.saveAsSwitchEdit')}
+              {editable
+                ? t('editor.saveAsShortcut', { shortcut: formatShortcut('⌘⇧S') })
+                : t('editor.saveAsSwitchEdit')}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -418,7 +517,9 @@ export function EditorPane(): React.ReactElement {
                 <RotateCcw size={13} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t('editor.reloadShortcut')}</TooltipContent>
+            <TooltipContent>
+              {t('editor.reloadShortcut', { shortcut: formatShortcut('⌘⇧R') })}
+            </TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -432,7 +533,9 @@ export function EditorPane(): React.ReactElement {
                 <Info size={13} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t('editor.fileDetailsShortcut')}</TooltipContent>
+            <TooltipContent>
+              {t('editor.fileDetailsShortcut', { shortcut: formatShortcut('⌘I') })}
+            </TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -446,7 +549,9 @@ export function EditorPane(): React.ReactElement {
                 <FileOutput size={13} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t('editor.exportShortcut')}</TooltipContent>
+            <TooltipContent>
+              {t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧E') })}
+            </TooltipContent>
           </Tooltip>
 
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
@@ -597,33 +702,52 @@ export function EditorPane(): React.ReactElement {
               invisible — so the pencil next to it is the single entry point. */}
           <div className="flex-1 min-w-0 mr-2">
             {editable && editingTitle ? (
-              <input
-                value={localTitle}
-                onChange={(e) => setLocalTitle(e.target.value)}
-                onBlur={handleTitleSave}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleTitleSave()
-                  if (e.key === 'Escape') cancelTitleEdit()
-                }}
-                className="w-full text-sm font-semibold bg-transparent border-none outline-none text-[var(--color-text-primary)] focus:ring-0"
-                autoFocus
-              />
+              // Right-click edit menu (PLAN §11 / 需求 §5.14).
+              <InputContextMenu targetRef={titleInputRef}>
+                <input
+                  ref={titleInputRef}
+                  value={localTitle}
+                  onChange={(e) => setLocalTitle(e.target.value)}
+                  onBlur={handleTitleSave}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleTitleSave()
+                    if (e.key === 'Escape') cancelTitleEdit()
+                  }}
+                  className="w-full text-sm font-semibold bg-transparent border-none outline-none text-[var(--color-text-primary)] focus:ring-0"
+                  autoFocus
+                />
+              </InputContextMenu>
             ) : (
               <div className="flex items-center gap-1 min-w-0">
-                <span
-                  data-testid="title-btn"
-                  title={doc?.missing ? t('editor.fileDeleted') : title}
-                  className={cn(
-                    'text-sm font-semibold truncate max-w-[280px] block',
-                    // VS Code behaviour: a file deleted outside the app stays open and
-                    // struck through, so an accidental deletion can still be saved back.
-                    doc?.missing
-                      ? 'text-[var(--color-text-tertiary)] line-through'
-                      : 'text-[var(--color-text-primary)]',
-                  )}
-                >
-                  {title}
-                </span>
+                {/* Title-file-name menu (PLAN §5.6): right-click the title to reach the
+                    shared file menu — one definition for the title bar and the path bar. */}
+                <ContextMenu>
+                  <ContextMenuTrigger asChild>
+                    <span
+                      data-testid="title-btn"
+                      title={doc?.missing ? t('editor.fileDeleted') : title}
+                      className={cn(
+                        'text-sm font-semibold truncate max-w-[280px] block',
+                        // VS Code behaviour: a file deleted outside the app stays open and
+                        // struck through, so an accidental deletion can still be saved back.
+                        doc?.missing
+                          ? 'text-[var(--color-text-tertiary)] line-through'
+                          : 'text-[var(--color-text-primary)]',
+                      )}
+                    >
+                      {title}
+                    </span>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <FileMenuItems
+                      variant="title"
+                      hasPath={!!doc?.filePath}
+                      editable={editable}
+                      dirty={dirty}
+                      actions={docFileActions}
+                    />
+                  </ContextMenuContent>
+                </ContextMenu>
                 {editable && (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -744,13 +868,28 @@ export function EditorPane(): React.ReactElement {
           dereferences doc.filePath, and `doc` is still undefined then. */}
       {doc && (
         <div className="flex items-center gap-1 px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 text-xs overflow-hidden">
-          <button
-            onClick={() => doc.filePath && window.api.app.showInFolder(doc.filePath)}
-            className="shrink-0 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
-            title={t('editor.showInFolder')}
-          >
-            <FolderOpen size={12} />
-          </button>
+          {/* Folder-icon / blank area menu (PLAN §5.7): reveal / copy full path / copy name. */}
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <button
+                onClick={() => doc.filePath && revealInFolder(doc.filePath)}
+                className="shrink-0 text-[var(--color-text-tertiary)] hover:text-accent transition-colors"
+                title={t('editor.showInFolder')}
+                data-testid="path-folder-icon"
+              >
+                <FolderOpen size={12} />
+              </button>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <FileMenuItems
+                variant="icon"
+                hasPath={!!doc.filePath}
+                editable={editable}
+                dirty={dirty}
+                actions={docFileActions}
+              />
+            </ContextMenuContent>
+          </ContextMenu>
           <div
             className="flex items-center gap-0.5 min-w-0 overflow-hidden text-[var(--color-text-tertiary)]"
             title={doc.filePath}
@@ -759,21 +898,55 @@ export function EditorPane(): React.ReactElement {
               const segments = doc.filePath.replace(/\\/g, '/').split('/').filter(Boolean)
               return segments.map((seg: string, i: number, arr: string[]) => {
                 const isLast = i === arr.length - 1
+                const dir = segmentDir(segments, i)
                 return (
                   <span key={i} className="flex items-center gap-0.5 min-w-0">
                     {isLast ? (
-                      <span className="truncate text-[var(--color-text-primary)] font-medium">
-                        {seg}
-                      </span>
+                      // Last segment = the file itself → the file-name submenu (§5.7).
+                      <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                          <span
+                            className="truncate text-[var(--color-text-primary)] font-medium"
+                            data-testid="path-last-segment"
+                          >
+                            {seg}
+                          </span>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <FileMenuItems
+                            variant="file"
+                            hasPath={!!doc.filePath}
+                            editable={editable}
+                            dirty={dirty}
+                            actions={docFileActions}
+                          />
+                        </ContextMenuContent>
+                      </ContextMenu>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleNavigateToSegment(segments, i)}
-                        className="truncate hover:text-accent transition-colors"
-                        title={t('editor.openSegmentFolder')}
-                      >
-                        {seg}
-                      </button>
+                      // Middle segment = a folder → open in sidebar / reveal / copy path (§5.7).
+                      <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => handleNavigateToSegment(segments, i)}
+                            className="truncate hover:text-accent transition-colors"
+                            title={t('editor.openSegmentFolder')}
+                            data-testid="path-folder-segment"
+                          >
+                            {seg}
+                          </button>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <FileMenuItems
+                            variant="folder"
+                            folder={{
+                              openInSidebar: () => useUIStore.getState().setActiveFolder(dir),
+                              showInFolder: () => revealInFolder(dir),
+                              copyPath: () => void window.api.clipboard.writeText(dir),
+                            }}
+                          />
+                        </ContextMenuContent>
+                      </ContextMenu>
                     )}
                     {!isLast && (
                       <span className="text-[var(--color-border-strong)] shrink-0">/</span>
@@ -820,6 +993,7 @@ export function EditorPane(): React.ReactElement {
               onChange={handleContentChange}
               editable={editable}
               docId={activeDocumentId}
+              filePath={doc?.filePath ?? null}
             />
           </div>
         )}
@@ -841,7 +1015,7 @@ export function EditorPane(): React.ReactElement {
         {/* Preview: shown in preview / split; hidden in edit mode but still mounted so the single
             export-HTML data source stays ready (R7) */}
         <div className={viewMode === 'edit' ? 'hidden' : 'flex-1 min-w-0 overflow-hidden'}>
-          <MarkdownPreview content={editorContent} />
+          <MarkdownPreview content={editorContent} doc={doc} />
         </div>
 
         {/* Switch overlay: an OPAQUE cover over both panes while the document is

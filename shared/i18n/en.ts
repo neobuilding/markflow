@@ -26,22 +26,22 @@ export const en = {
 
   // ── Editor pane ────────────────────────────────────────────────────────
   'editor.save': 'Save',
-  'editor.saveShortcut': 'Save (⌘S)',
+  'editor.saveShortcut': 'Save ({shortcut})',
   'editor.noChanges': 'No changes to save',
   'editor.saveSwitchEdit': 'Save — switch to Edit mode first',
   'editor.saveAs': 'Save As…',
-  'editor.saveAsShortcut': 'Save As… (⌘⇧S)',
+  'editor.saveAsShortcut': 'Save As… ({shortcut})',
   'editor.saveAsSwitchEdit': 'Save As… — switch to Edit mode first',
   'editor.reload': 'Reload from Disk',
-  'editor.reloadShortcut': 'Reload from Disk (⌘⇧R)',
+  'editor.reloadShortcut': 'Reload from Disk ({shortcut})',
   'editor.fileDetails': 'File details',
-  'editor.fileDetailsShortcut': 'File details (⌘I)',
+  'editor.fileDetailsShortcut': 'File details ({shortcut})',
   'editor.export': 'Export as HTML…',
-  'editor.exportShortcut': 'Export as HTML… (⌘⇧E)',
+  'editor.exportShortcut': 'Export as HTML… ({shortcut})',
   'editor.closeFile': 'Close file',
   'editor.renameTitle': 'Rename file',
   'editor.fileDeleted': 'Deleted on disk — save to restore it',
-  'editor.toggleSidebarShortcut': 'Toggle Sidebar (⌘\\)',
+  'editor.toggleSidebarShortcut': 'Toggle Sidebar ({shortcut})',
   'editor.switchReadOnly': 'Switch to read-only mode',
   'editor.switchEdit': 'Switch to edit mode',
   'editor.readOnly': 'Read-only',
@@ -82,6 +82,12 @@ export const en = {
   'status.encodingInaccurate': 'Encoding may be inaccurate, click to switch',
   'status.encoding': 'Encoding: {{encoding}}',
   'status.lineEnding': 'Line ending',
+  'status.lineEndingSwitch': 'Click to switch line ending (CRLF/LF)',
+  'status.switchToCrlf': 'Switch to CRLF',
+  'status.switchToLf': 'Switch to LF',
+  'status.redetectEncoding': 'Re-detect encoding',
+  'status.redetecting': 'Detecting…',
+  'status.redetectDisabled': 'Drafts have no file to detect encoding from',
 
   // ── Command palette ────────────────────────────────────────────────────
   'palette.placeholder': 'Search documents…',
@@ -152,6 +158,10 @@ export const en = {
   'app.confirmKeep': 'Keep editing',
   'app.saveFailed': 'Failed to save the file.',
   'app.fileGone': 'The file no longer exists on disk.',
+  'app.deleteConfirm': 'Delete this file?',
+  'app.discardDraftConfirm': 'Discard this draft? This cannot be undone.',
+  'app.deleteConfirmOk': 'Delete',
+  'app.cancel': 'Cancel',
   'app.printNotReady':
     'Preview is not ready yet. Please switch to the preview or split view first.',
   'app.printFailed': 'Print failed: {{message}}',
@@ -197,6 +207,87 @@ export const en = {
   'menu.filterMarkdown': 'Markdown',
   'menu.filterAllFiles': 'All Files',
   'menu.filterHtml': 'HTML',
+
+  // ── Context menus (ctx.*) ─────────────────────────────────────────────
+  // Right-click menu items across all areas. 57 keys, en/zh-CN parity required.
+  // Editor
+  'ctx.undo': 'Undo',
+  'ctx.redo': 'Redo',
+  'ctx.cut': 'Cut',
+  'ctx.copy': 'Copy',
+  'ctx.paste': 'Paste',
+  'ctx.selectAll': 'Select All',
+  'ctx.openLinkInBrowser': 'Open Link in Browser',
+  // Preview — link
+  'ctx.openLink': 'Open Link',
+  'ctx.copyLink': 'Copy Link Address',
+  // Preview — code block
+  'ctx.copyCode': 'Copy Code',
+  'ctx.copyCodeBlock': 'Copy as Fenced Block',
+  'ctx.copyLang': 'Copy Language',
+  // Preview — image
+  'ctx.copyImage': 'Copy Image',
+  'ctx.saveImageAs': 'Save Image As…',
+  'ctx.copyImageSrc': 'Copy Image Address',
+  'ctx.copyImageAlt': 'Copy Alt Text',
+  // Preview — table
+  'ctx.copyTable': 'Copy Table',
+  'ctx.copyTableTsv': 'Copy Table for Spreadsheet',
+  // Preview — task
+  'ctx.copyTaskText': 'Copy Task Text',
+  // Preview — formula
+  'ctx.copyFormula': 'Copy Formula',
+  'ctx.copyFormulaSource': 'Copy TeX Source',
+  // Preview — diagram (mermaid)
+  'ctx.copyDiagramSource': 'Copy Diagram Source',
+  'ctx.copySvg': 'Copy as SVG',
+  'ctx.saveSvgAs': 'Save Diagram As SVG…',
+  // Preview — heading
+  'ctx.copyHeading': 'Copy Heading Text',
+  'ctx.copyAnchorId': 'Copy Anchor ID',
+  // Sidebar document item
+  'ctx.openDocument': 'Open',
+  'ctx.copyFileName': 'Copy File Name',
+  'ctx.copyContent': 'Copy Document Content',
+  'ctx.discardDraft': 'Discard Draft',
+  // Sidebar folder row
+  'ctx.openFolder': 'Open This Folder',
+  'ctx.expand': 'Expand',
+  'ctx.collapse': 'Collapse',
+  'ctx.expandAll': 'Expand All',
+  'ctx.copyFolderPath': 'Copy Folder Path',
+  'ctx.newDocHere': 'New Document in This Folder',
+  'ctx.newSubfolder': 'New Subfolder…',
+  'ctx.renameFolder': 'Rename Folder…',
+  'ctx.deleteFolder': 'Delete Folder',
+  'ctx.refresh': 'Refresh',
+  // Current folder bar / breadcrumb
+  'ctx.goUp': 'Go to Parent Folder',
+  'ctx.openFolderInSidebar': 'Open Folder in Sidebar',
+  // Status bar
+  'ctx.copyWordCount': 'Copy Word Count',
+  'ctx.redetectEncoding': 'Re-detect Encoding',
+  'ctx.switchToLf': 'Switch to LF',
+  'ctx.switchToCrlf': 'Switch to CRLF',
+  'ctx.copyLineEnding': 'Copy Line Ending',
+  'ctx.copyEncoding': 'Copy Encoding Name',
+  // Search panel
+  'ctx.copyTitle': 'Copy Title',
+  'ctx.copyResultPath': 'Copy File Path',
+  // About dialog
+  'ctx.copyVersion': 'Copy Version',
+  'ctx.copyVersionFull': 'Copy Name and Version',
+  // Export dialog
+  'ctx.chooseSaveLocation': 'Choose Save Location…',
+  'ctx.copyToClipboard': 'Copy to Clipboard',
+  // Drag bars
+  'ctx.resetSplit': 'Reset Split to 50%',
+  'ctx.resetSidebarWidth': 'Reset Sidebar Width',
+  'ctx.collapseSidebar': 'Collapse Sidebar',
+
+  // ── Editor extra ───────────────────────────────────────────────────────
+  // Tooltip shown on disabled (read-only) rename/save menu items (PLAN §2.2).
+  'editor.needsEditMode': 'Switch to edit mode first',
 } as const
 
 export type TranslationKey = keyof typeof en

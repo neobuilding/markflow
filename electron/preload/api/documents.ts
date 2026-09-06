@@ -23,6 +23,17 @@ export const documentsApi = {
     ipcRenderer.invoke('documents:set-encoding', id, encoding),
   stat: (filePath: string) => ipcRenderer.invoke('documents:stat', filePath),
   eol: (filePath: string) => ipcRenderer.invoke('documents:eol', filePath),
+  resolveAppdoc: (src: string) => ipcRenderer.invoke('documents:resolve-appdoc', src),
+  // Set the line endings of a file on disk (destructive write; PLAN §12-6).
+  setEol: (filePath: string, eol: '\r\n' | '\n') =>
+    ipcRenderer.invoke('documents:set-eol', filePath, eol),
+  // Re-detect a file's encoding without changing its bytes (PLAN §12-11).
+  detectEncoding: (filePath: string) => ipcRenderer.invoke('documents:detect-encoding', filePath),
+  // Folder operations (PLAN §12-7).
+  createFolder: (folderPath: string) => ipcRenderer.invoke('documents:create-folder', folderPath),
+  renameFolder: (oldPath: string, newPath: string) =>
+    ipcRenderer.invoke('documents:rename-folder', oldPath, newPath),
+  deleteFolder: (folderPath: string) => ipcRenderer.invoke('documents:delete-folder', folderPath),
   // Folder watching is owned entirely by the main process (chokidar): the renderer
   // only tells it which folder was opened, and when the workspace is closed.
   setOpenFolder: (folderPath: string) =>

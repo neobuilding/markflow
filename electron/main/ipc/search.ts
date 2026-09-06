@@ -125,6 +125,7 @@ export function registerSearchHandlers(ipcMainInstance: IpcMain): void {
         id: r.id as string,
         title: (r.title as string) ?? '',
         folderPath: (r.folderPath as string) ?? '',
+        filePath: doc?.filePath ?? '',
         snippet: makeSnippet(content, terms),
         score: r.score,
         updatedAt: doc?.updatedAt ?? 0,

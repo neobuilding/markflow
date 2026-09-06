@@ -4,6 +4,7 @@ import { cn, formatDate } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import { useSearch } from '../../hooks/useSearch'
 import { useT } from '../../i18n'
+import { InputContextMenu } from '../ui/input-context-menu'
 
 export function CommandPalette(): React.ReactElement | null {
   const { searchOpen, setSearchOpen, setSearchQuery, searchQuery, setActiveDocumentId } =
@@ -75,14 +76,17 @@ export function CommandPalette(): React.ReactElement | null {
         {/* Search input */}
         <div className="flex items-center px-4 py-3 border-b border-[var(--color-border)]">
           <Search size={16} className="text-[var(--color-text-tertiary)] shrink-0 mr-2" />
-          <input
-            ref={inputRef}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t('palette.placeholder')}
-            className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
-          />
+          {/* Right-click edit menu (PLAN §11 / 需求 §5.14): the framework ships none. */}
+          <InputContextMenu targetRef={inputRef}>
+            <input
+              ref={inputRef}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={t('palette.placeholder')}
+              className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
+            />
+          </InputContextMenu>
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
@@ -135,6 +139,13 @@ export function CommandPalette(): React.ReactElement | null {
                     <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
                       {r.title}
                     </div>
+                    {/* Absolute on-disk path (PLAN §12-10): helps tell apart documents with
+                        the same title living in different folders. Hidden for memory-only drafts. */}
+                    {r.filePath && (
+                      <div className="text-2xs text-[var(--color-text-tertiary)] truncate mt-0.5">
+                        {r.filePath}
+                      </div>
+                    )}
                     {r.snippet && (
                       <div
                         className="text-xs text-[var(--color-text-tertiary)] truncate mt-0.5"

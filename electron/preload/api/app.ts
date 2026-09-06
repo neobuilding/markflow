@@ -7,6 +7,9 @@ export const appApi = {
   getVersion: () => ipcRenderer.invoke('app:get-version'),
   getInitialPaths: () => ipcRenderer.invoke('app:get-initial-paths'),
   showInFolder: (filePath: string) => ipcRenderer.invoke('app:show-in-folder', filePath),
+  openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
+  // Copy a file (disk path or appdoc:// URL) to a chosen destination (preview "Save as").
+  copyFile: (src: string, dest: string) => ipcRenderer.invoke('app:copy-file', src, dest),
   setLanguage: (locale: 'en' | 'zh-CN') => ipcRenderer.send('app:set-language', locale),
   // Main asks the renderer to close the workspace (running the unified unsaved-changes
   // prompt) before quitting; renderer calls allowQuit() once it's safe to exit.

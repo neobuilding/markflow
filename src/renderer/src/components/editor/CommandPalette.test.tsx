@@ -7,8 +7,16 @@ import type { SearchResult } from '../../types'
 import '../../i18n'
 
 const results: SearchResult[] = [
-  { id: 'a', title: 'Apple', folderPath: '', snippet: 'a', score: 0, updatedAt: 1 },
-  { id: 'b', title: 'Banana', folderPath: '', snippet: 'b', score: 0, updatedAt: 2 },
+  {
+    id: 'a',
+    title: 'Apple',
+    folderPath: '',
+    filePath: '/docs/apple.md',
+    snippet: 'a',
+    score: 0,
+    updatedAt: 1,
+  },
+  { id: 'b', title: 'Banana', folderPath: '', filePath: '', snippet: 'b', score: 0, updatedAt: 2 },
 ]
 
 vi.mock('../../hooks/useSearch', () => ({
@@ -127,6 +135,23 @@ describe('CommandPalette', () => {
     useUIStore.getState().setSearchQuery('a')
     render(<CommandPalette />)
     expect(await screen.findByText(/Searching/i)).toBeInTheDocument()
+  })
+
+  it('shows the on-disk file path for results that have one (能力 10)', async () => {
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('a')
+    render(<CommandPalette />)
+    expect(await screen.findByText('/docs/apple.md')).toBeInTheDocument()
+  })
+
+  it('hides the file path for memory-only drafts', async () => {
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('a')
+    render(<CommandPalette />)
+    expect(await screen.findByText('Banana')).toBeInTheDocument()
+    // Apple carries /docs/apple.md; Banana is a draft with no on-disk path.
+    expect(screen.getAllByText(/\.md$/)).toHaveLength(1)
+    expect(screen.queryByText('/docs/banana.md')).toBeNull()
   })
 
   it('shows no results when the query matches nothing', async () => {
