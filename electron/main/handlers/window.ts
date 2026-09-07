@@ -1,9 +1,9 @@
 // Window control IPC handlers: maximize / unmaximize / is-maximized.
 // Extracted from index.ts.
 //
-// 注意：不要新增 window:focus / webContents.focus() 的 IPC。
-// 该路线已被证伪（见 docs.local/troubleshooting-editor-focus.md §6/§10.6）；
-// 编辑器焦点问题的根因已由 dialog:confirm（app-modal）修复。
+// NOTE: do not add window:focus / webContents.focus() IPC handlers.
+// That approach was disproven (see docs.local/troubleshooting-editor-focus.md);
+// the editor-focus root cause was fixed by dialog:confirm (app-modal).
 import { ipcMain } from 'electron'
 import { getMainWindow } from '../state'
 

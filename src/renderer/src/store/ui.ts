@@ -4,14 +4,14 @@ import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
 
 // Cross-component bridge for file actions requested from a different component than the
-// one that performs them (PLAN §5.1). Today only `rename` is used: the sidebar's
-// "Rename…" menu item (which lives in `Sidebar`) asks the editor (`EditorPane`) to enter
+// one that performs them . Today only `rename` is used: the sidebar's
+// "Rename" menu item (which lives in `Sidebar`) asks the editor (`EditorPane`) to enter
 // its title-edit state. M2/M3 will extend this union with `save` / `saveAs` / `reload`
-// (PLAN §8) — the consumer effect already narrows on `type: 'rename'`.
+// the consumer effect already narrows on `type: 'rename'`
 export type FileAction = { type: 'rename'; id: string } | { type: 'save' | 'saveAs' | 'reload' }
 
 // Remove a memory-only draft (never saved to disk) and refresh the document list so the
-// sidebar no longer shows the orphan draft (PLAN §6.4).
+// sidebar no longer shows the orphan draft
 function deleteUnsavedDraft(id: string) {
   return window.api.documents.delete(id).finally(() => {
     queryClient.invalidateQueries({ queryKey: DOCS_KEY })
@@ -21,7 +21,7 @@ function deleteUnsavedDraft(id: string) {
 // Tell the main process to drop its recursive watcher over the opened folders: with no
 // folder open there is nothing to keep in sync, and a stale watcher would keep firing
 // events for a directory the user is no longer browsing (see model/folderWatcher.ts).
-// Best-effort and fire-and-forget — closing the workspace must never be blocked by it,
+// Best-effort and fire-and-forget closing the workspace must never be blocked by it,
 // so both a synchronous throw (preload bridge unavailable) and a rejected promise are
 // swallowed rather than escaping into the state transition.
 function clearOpenFolders() {
@@ -93,11 +93,11 @@ interface UIState {
   dirty: boolean
   setDirty: (dirty: boolean) => void
 
-  // Whether a save is in progress (status bar shows "Saving…")
+  // Whether a save is in progress (status bar shows "Saving")
   saving: boolean
   setSaving: (saving: boolean) => void
 
-  // Whether printing is being prepared (status bar shows "Printing…")
+  // Whether printing is being prepared (status bar shows "Printing")
   printing: boolean
   setPrinting: (printing: boolean) => void
 
@@ -124,7 +124,7 @@ interface UIState {
   exporting: boolean
   setExporting: (v: boolean) => void
 
-  // Cross-component file-action bridge (PLAN §5.1). Set by the sidebar's "Rename…" menu to
+  // Cross-component file-action bridge . Set by the sidebar's "Rename" menu to
   // ask the editor to enter title-edit; consumed (and cleared) by EditorPane's effect.
   pendingFileAction: FileAction | null
   requestFileAction: (a: FileAction | null) => void
@@ -155,7 +155,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   closeDocument: () => {
     if (get().exporting || get().exportOpen) return
     // A memory-only draft that was never saved to disk has no file and only a store entry.
-    // Remove that orphan store entry on close so we don't leave a zombie draft (PLAN §6.4).
+    // Remove that orphan store entry on close so we don't leave a zombie draft
     const id = get().activeDocumentId
     if (id && get().isNewUnsaved) {
       void deleteUnsavedDraft(id)

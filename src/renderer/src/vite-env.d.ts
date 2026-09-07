@@ -51,18 +51,20 @@ export interface Api {
     setEncoding: (id: string, encoding: string) => Promise<Document | null>
     stat: (filePath: string) => Promise<FileStat | null>
     eol: (filePath: string) => Promise<'\r\n' | '\n'>
-    // Resolve an appdoc:// URL to its on-disk absolute path (PLAN §12-3). Returns
+    // Resolve an appdoc:// URL to its on-disk absolute path . Returns
     // null when the URL is malformed, escapes the document directory, or the file
     // does not exist.
     resolveAppdoc: (src: string) => Promise<string | null>
-    // Set the line endings of a file on disk (PLAN §12-6, destructive write).
+    // Set the line endings of a file on disk (, destructive write)
     setEol: (filePath: string, eol: '\r\n' | '\n') => Promise<void>
-    // Detect the encoding of a file on disk (PLAN §12-11).
+    // Detect the encoding of a file on disk
     detectEncoding: (filePath: string) => Promise<{ enc: string; confidence: number }>
-    // Folder operations (PLAN §12-7).
+    // Folder operations
     createFolder: (folderPath: string) => Promise<void>
     renameFolder: (oldPath: string, newPath: string) => Promise<void>
     deleteFolder: (folderPath: string) => Promise<void>
+    // Directory listing : folders below the path, empty ones included
+    listFolders: (folderPath: string) => Promise<string[]>
     // Folder watching is owned by the main process (chokidar); the renderer only
     // reports which folder was opened / that the workspace was closed.
     setOpenFolder: (folderPath: string) => Promise<void>

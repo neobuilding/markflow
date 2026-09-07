@@ -244,7 +244,7 @@ describe('folderWatcher — the ignored matcher handed to chokidar', () => {
     // Directories must be traversed or chokidar cannot recurse into them.
     expect(ignored('/w/sub', dir)).toBe(false)
     expect(ignored('/w/deep/nested', dir)).toBe(false)
-    // …but never the ones that are pure noise.
+    // but never the ones that are pure noise
     expect(ignored('/w/.git', dir)).toBe(true)
     expect(ignored('/w/node_modules', dir)).toBe(true)
     expect(ignored('/w/a/node_modules/b', dir)).toBe(true)

@@ -189,7 +189,7 @@ describe('deriveTitle', () => {
 })
 
 // --- buildCommitsSection (inject a fake git-log) -------------------------
-// render.mjs buildCommitsSection NEVER calls git on its own — it returns '' when
+// render.mjs buildCommitsSection NEVER calls git on its own it returns '' when
 // no gitLogFn is given. The caller (orchestration.mjs) injects git.logRange.
 describe('buildCommitsSection', () => {
   it('returns the commit list without a "## Commits" heading when a gitLogFn is provided', () => {
@@ -599,15 +599,15 @@ describe('buildBody', () => {
   })
 })
 
-// --- 完整 PR 模板的本地渲染（端到端） -----------------------------------
+// PR -----------------------------------
 //
-// 这些用例演示如何在本地试验"对完整 PR 模板"的渲染效果，而不需要 GitHub/
-// `gh`/真实 git 历史。核心思路：render.mjs 的纯函数 `fillAutoBlocks` 只依赖
-//   1. PR 模板字符串
-//   2. 块插件注册表 (registry)
-//   3. 我们手动构造的 ctx（title/fixes/typeFlags/commits）
-// 只要把 ctx 完全注入，渲染结果就是确定的、可复现的，与本地是否有 git 历史
-// 无关。等价于 cli-render.mjs 做的事，只是用内联断言而非 console.log。
+// " PR " GitHub/
+// `gh`/ git render.mjs `fillAutoBlocks`
+// 1. PR
+// 2. (registry)
+// 3. ctxtitle/fixes/typeFlags/commits
+// ctx git
+// cli-render.mjs console.log
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadBlocks } from './loader.mjs'
@@ -615,14 +615,14 @@ import { loadBlocks } from './loader.mjs'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // Load the user block plugin from a fixture directory (a test asset), not the
 // real repo `.github/create-pr/blocks`. `loadBlocks` still performs a real
-// dynamic `import()` of the fixture plugin — preserving the end-to-end
-// "template placeholder ⇄ plugin" alignment check — but it never reads the
+// dynamic `import` of the fixture plugin preserving the end-to-end
+// "template placeholder ⇄ plugin" alignment check but it never reads the
 // real repository filesystem (no node:fs access).
 const TYPES_DIR = join(__dirname, '__fixtures__', 'blocks')
 
-// 用 loader 加载 fixture 里的 `types.mjs` 插件（与 action 运行时同构），
-// 而不是依赖测试内联的副本 —— 这样端到端地验证"模板 {{types}} 占位符"和
-// "插件"真的对得上，避免两者悄悄漂移。加载走真实 import()，但不碰真实 fs。
+// loader fixture `types.mjs` action
+// " {{types}} "
+// "" import fs
 async function realMarkflowRegistry() {
   const user = await loadBlocks(TYPES_DIR)
   return { ...builtinRegistry(), ...user }
@@ -632,9 +632,9 @@ async function realMarkflowRegistry() {
 // the mock returns PR_TEMPLATE regardless of the argument (no real fs access).
 const TEMPLATE_PATH = '<mocked-template-path>'
 
-// 渲染完整 PR body：完全本地、确定性。遵循插件自治原则——commits 由 commits
-// 插件从 ctx.services.git 自取，这里只注入一个 fake git service 提供确定性的
-// commit 列表，因此结果不依赖真实 git 历史。
+// PR bodycommits commits
+// ctx.services.git fake git service
+// commit git
 async function renderFullPr({
   head,
   base = 'origin/main',

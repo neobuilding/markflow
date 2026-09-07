@@ -112,7 +112,7 @@ test.describe('file round-trip (open / edit / save / reopen)', () => {
     await expect(dialog.locator('select')).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Export' })).toBeVisible()
 
-    // Close it again (cancel) — does not trigger the native save picker.
+    // Close it again (cancel) does not trigger the native save picker
     await dialog.getByText('Cancel').click()
     await expect(dialog).toBeHidden()
   })

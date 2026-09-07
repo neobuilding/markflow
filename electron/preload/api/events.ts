@@ -30,7 +30,7 @@ export const onFileChanged = (callback: (data: { id: string; filePath: string })
 export const onFolderChanged = (callback: (data: { dirPath: string }) => void) =>
   onIpc('app:folder-changed', callback)
 
-// ONE document's identity changed outside the app — its file was deleted (marked
+// ONE document's identity changed outside the app its file was deleted (marked
 // missing) or renamed. The renderer should re-read just that document's record so the
 // title bar follows. Narrower than onFolderChanged, which refreshes the whole list.
 export const onDocumentRefresh = (callback: (data: { id: string }) => void) =>

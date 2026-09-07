@@ -1,11 +1,11 @@
-// Quit flow reuses the "close workspace" prompt (PLAN §6.5).
+// Quit flow reuses the "close workspace" prompt
 //
 // Quitting the whole app must behave EXACTLY like closing a file / workspace: the
 // renderer runs the same unified unsaved-changes prompt. So on `before-quit` we ask
 // the renderer to close the workspace; only once it replies (app:quit-allowed) do we
 // proceed. If the user cancels the prompt, the renderer simply doesn't reply and the
 // quit stays aborted. New (memory-only) documents and edits to existing files are
-// treated identically — no special quit prompt. Memory-only drafts (empty file_path)
+// treated identically no special quit prompt. Memory-only drafts (empty file_path)
 // are purged as a safety net so they never survive a restart, but only after the
 // renderer has already run its prompt (never silently discarded).
 //
@@ -47,7 +47,7 @@ export function setupLifecycle(): void {
     // The renderer is actively showing the unsaved-changes confirm box (dirty workspace).
     // Disarm the 5s "renderer is dead" safety net so the user has unlimited time to
     // decide; without this, the safety net would force-quit 5s after the prompt opened,
-    // silently discarding the user's edits — see the dirty-confirm regression.
+    // silently discarding the user's edits see the dirty-confirm regression
     setQuitPending(true)
   })
 
@@ -75,7 +75,7 @@ export function setupLifecycle(): void {
       // Safety net: if the renderer never replies (crashed / detached), force quit
       // after a grace period so the app can never get stuck un-exitable. Disarmed
       // when the renderer reports it's showing the unsaved-changes confirm box
-      // (app:quit-pending) — otherwise the 5s timeout would discard the user's
+      // (app:quit-pending) otherwise the 5s timeout would discard the user's
       // edits while they're still deciding.
       setTimeout(() => {
         if (!getReadyToQuit() && !getQuitPending()) app.quit()
@@ -109,6 +109,6 @@ export function setupLifecycle(): void {
 // Register the quit-flow handlers from the entry (electron/main/index.ts) via an
 // explicit setupLifecycle() call BEFORE app.whenReady, preserving the original
 // top-level timing. (Invoked explicitly rather than self-executing on import so the
-// module is not tree-shaken away by Rollup — a self-invoking module with no used
+// module is not tree-shaken away by Rollup a self-invoking module with no used
 // export would be dropped, silently removing the quit handlers.)
 export {}

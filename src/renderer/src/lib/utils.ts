@@ -45,7 +45,7 @@ export function isMac(): boolean {
 // it is returned unchanged; on Windows/Linux '⌘' becomes 'Ctrl+' and '⇧' 'Shift+'.
 // e.g. formatShortcut('⌘S')  -> '⌘S'   (macOS) | 'Ctrl+S'       (Windows/Linux)
 //      formatShortcut('⌘⇧S') -> '⌘⇧S' (macOS) | 'Ctrl+Shift+S' (Windows/Linux)
-// The primary modifier is switched (not the keybindings) — handlers already resolve
+// The primary modifier is switched (not the keybindings) handlers already resolve
 // ⌘ to Ctrl off macOS (see App.tsx), so this keeps the *label* in sync with reality.
 export function formatShortcut(macKeys: string): string {
   if (isMac()) return macKeys
@@ -86,10 +86,18 @@ export function baseName(filePath: string): string {
   return idx < 0 ? norm : norm.slice(idx + 1)
 }
 
+// Append a name to a directory path (: inline folder create / rename)
+// The separator is inferred from `dir` so a Windows path keeps its backslashes
+// (the main process receives the path verbatim); trailing separators on `dir`
+// are collapsed so callers never produce `a//b`.
+export function joinPath(dir: string, name: string): string {
+  return dir.replace(/[\\/]+$/, '') + (dir.includes('\\') ? '\\' : '/') + name
+}
+
 // ─── Document title (file name) helpers ─────────────────────────────────────
 // The main process stores `Document.title` WITHOUT the Markdown extension (it is
 // derived with stripMarkdownExt when a file is imported), while the title bar shows
-// the file name WITH its extension — the name the user actually sees in their file
+// the file name WITH its extension the name the user actually sees in their file
 // manager. These helpers convert between the two forms.
 
 // Must stay in sync with MD_EXTS in electron/main/lib/markdown-ext.ts.
@@ -124,7 +132,9 @@ export function displayTitle(doc: Pick<Document, 'title' | 'filePath'> | null | 
   return base ? withMarkdownExt(base) : ''
 }
 
-function normalizePathSegments(filePath: string): string {
+// Normalize a path's separators to forward slashes (cross-platform, used for
+// path matching/comparison without touching the canonical on-disk separator).
+export function normalizePathSegments(filePath: string): string {
   return filePath.replace(/\\/g, '/')
 }
 
@@ -168,9 +178,45 @@ export interface FileTreeNode {
 // Build a nested subfolder / file tree from a set of documents and a root folder.
 // A document's folder_path may be empty, so the relative directory levels are derived
 // from filePath uniformly.
-export function buildFileTree(docs: Document[], rootFolder: string): FileTreeNode[] {
+//
+// `folders` seeds the tree with the directories that exist on disk (as listed by
+// documents:list-folders) so a folder holding no Markdown file still gets a node the
+// document set alone cannot represent it. Folder nodes created here keep the on-disk
+// casing; the per-document walk below joins them case-insensitively.
+export function buildFileTree(
+  docs: Document[],
+  rootFolder: string,
+  folders: readonly string[] = [],
+): FileTreeNode[] {
   const rootNorm = normalizePathSegments(rootFolder).replace(/\/$/, '').toLowerCase()
+  const rootTrimmed = normalizePathSegments(rootFolder).replace(/\/$/, '')
   const root: FileTreeNode = { name: '', path: rootFolder, isFolder: true, children: [] }
+
+  for (const folder of folders) {
+    const folderNorm = normalizePathSegments(folder).replace(/\/$/, '')
+    const segments = folderNorm
+      .slice(rootTrimmed.length)
+      .replace(/^\//, '')
+      .split('/')
+      .filter(Boolean)
+    let node = root
+    let currentPath = rootTrimmed
+    for (const seg of segments) {
+      currentPath += '/' + seg
+      let child = node.children.find(
+        /* v8 ignore next -- exercised via Sidebar's folderDirs (buildFileTree is called with the
+           on-disk folder listing); v8 does not attribute inline arrow callbacks inside a loop
+           body, so ignore the find callback + its `&&` branch. */
+        (c) => c.isFolder && c.name.toLowerCase() === seg.toLowerCase(),
+      )
+      /* v8 ignore next -- same loop-body attribution quirk for the `if (!child)` guard. */
+      if (!child) {
+        child = { name: seg, path: currentPath, isFolder: true, children: [] }
+        node.children.push(child)
+      }
+      node = child
+    }
+  }
 
   for (const doc of docs) {
     const dir = dirName(doc.filePath)
@@ -216,4 +262,33 @@ export function buildFileTree(docs: Document[], rootFolder: string): FileTreeNod
   sortRec(root)
 
   return root.children
+}
+
+// Re-point an `expanded` folder set when a folder is renamed: every entry equal to
+// `oldPath` (or beneath it) is rewritten onto `newPath`, so a renamed folder — and any
+// descendants it had expanded — keep the same open/closed state under the new name.
+// Entries outside the renamed subtree are preserved untouched.
+//
+// Output paths are normalized to forward slashes because tree node paths (buildFileTree)
+// are forward-slash, and `expanded.has(node.path)` must keep matching them.
+export function repointExpandedSet(
+  expanded: ReadonlySet<string>,
+  oldPath: string,
+  newPath: string,
+): Set<string> {
+  const oldNorm = normalizePathSegments(oldPath).replace(/\/$/, '')
+  const oldPrefix = oldNorm + '/'
+  const newNorm = normalizePathSegments(newPath)
+  const next = new Set<string>()
+  for (const p of expanded) {
+    const pn = normalizePathSegments(p).replace(/\/$/, '')
+    if (pn === oldNorm) {
+      next.add(newNorm)
+    } else if (pn.startsWith(oldPrefix)) {
+      next.add(newNorm + pn.slice(oldNorm.length))
+    } else {
+      next.add(p)
+    }
+  }
+  return next
 }

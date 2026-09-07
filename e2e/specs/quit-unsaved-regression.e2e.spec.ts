@@ -8,7 +8,7 @@ import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/laun
 // it sent `app:request-quit`. When the workspace was dirty, the renderer opened the
 // unsaved-changes confirm box (an async dialog) and did NOT immediately reply with
 // `app:quit-allowed`. The safety net had no way to tell "user is deciding" from
-// "renderer is dead", so 5s after the prompt opened it force-quit the app — silently
+// "renderer is dead", so 5s after the prompt opened it force-quit the app silently
 // discarding the user's edits.
 //
 // The fix introduces `app:quit-pending`: the renderer sends it synchronously before
@@ -27,7 +27,7 @@ test.describe('quit flow — unsaved-changes regression', () => {
   // listener that counts it. It deliberately does NOT replace the production
   // listener: `ipcMain.on` appends, so the real handlers in window.ts /
   // lifecycle.ts keep running and still disarm the safety net. Replacing them
-  // (removeAllListeners) used to make this spec pass no matter what — the safety
+  // (removeAllListeners) used to make this spec pass no matter what the safety
   // net it claims to test was never armed, so deleting the fix entirely would
   // still have shown green.
   async function stubConfirmAndTrackPending(handle: AppHandle): Promise<void> {
@@ -60,7 +60,7 @@ test.describe('quit flow — unsaved-changes regression', () => {
   //
   // The previous version sent 'app:request-quit' directly to the renderer instead.
   // That skipped the close handler entirely, so no safety net was ever armed and
-  // the "app survives past the 5s net" assertion could not fail — a false green.
+  // the "app survives past the 5s net" assertion could not fail a false green
   // (The close handler re-arms its net on every attempt, which is fine: it only
   // fires when the renderer neither replies nor reports a pending prompt.)
   async function requestCloseWindow(handle: AppHandle): Promise<void> {
@@ -95,7 +95,7 @@ test.describe('quit flow — unsaved-changes regression', () => {
       await page.waitForTimeout(300)
 
       // The app:quit-pending IPC must have reached the main process (this is the
-      // fix's core contract — without it, the safety net would stay armed).
+      // fix's core contract without it, the safety net would stay armed)
       const pending = await readPendingCount(handle)
       expect(pending).toBeGreaterThanOrEqual(1)
 

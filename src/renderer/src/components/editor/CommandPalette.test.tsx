@@ -188,3 +188,93 @@ describe('CommandPalette', () => {
     expect(useUIStore.getState().searchOpen).toBe(true)
   })
 })
+
+// ── : right-click menu on a search result row ───────────────────────
+describe('CommandPalette — result row context menu (PLAN §9)', () => {
+  const writeText = vi.fn()
+
+  beforeEach(() => {
+    ;(globalThis as any).__searchState = { data: results, isFetching: false }
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('a')
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setFileDetailsId(null)
+    writeText.mockReset()
+    ;(window as unknown as { api: unknown }).api = { clipboard: { writeText } }
+  })
+
+  it('shows the full menu on right-click of a result row', async () => {
+    render(<CommandPalette />)
+    const rows = await screen.findAllByTestId('search-result')
+    fireEvent.contextMenu(rows[0])
+    for (const id of [
+      'palette-open-document',
+      'palette-copy-title',
+      'palette-copy-result-path',
+      'palette-copy-folder-path',
+      'palette-details',
+    ]) {
+      expect(await screen.findByTestId(id)).toBeInTheDocument()
+    }
+  })
+
+  it('opens the document from the menu', async () => {
+    render(<CommandPalette />)
+    const rows = await screen.findAllByTestId('search-result')
+    fireEvent.contextMenu(rows[1])
+    fireEvent.click(await screen.findByTestId('palette-open-document'))
+    await waitFor(() => expect(useUIStore.getState().activeDocumentId).toBe('b'))
+    expect(useUIStore.getState().searchOpen).toBe(false)
+  })
+
+  it('copies the title without closing the palette (PLAN §1.7 bubble guard)', async () => {
+    render(<CommandPalette />)
+    const rows = await screen.findAllByTestId('search-result')
+    fireEvent.contextMenu(rows[0])
+    fireEvent.click(await screen.findByTestId('palette-copy-title'))
+    expect(writeText).toHaveBeenCalledWith('Apple')
+    // The overlay behind the palette closes it on click the menu must swallow the
+    // bubble so a menu action never doubles as "dismiss the palette".
+    expect(useUIStore.getState().searchOpen).toBe(true)
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+  })
+
+  it('copies the on-disk file path (能力 10)', async () => {
+    render(<CommandPalette />)
+    const rows = await screen.findAllByTestId('search-result')
+    fireEvent.contextMenu(rows[0])
+    fireEvent.click(await screen.findByTestId('palette-copy-result-path'))
+    expect(writeText).toHaveBeenCalledWith('/docs/apple.md')
+  })
+
+  it('greys copy-path for a draft with no file or folder', async () => {
+    render(<CommandPalette />)
+    const rows = await screen.findAllByTestId('search-result')
+    fireEvent.contextMenu(rows[1])
+    expect(await screen.findByTestId('palette-copy-result-path')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(screen.getByTestId('palette-copy-folder-path')).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('copies the folder path when the result has one', async () => {
+    ;(globalThis as any).__searchState = {
+      data: [{ ...results[0], folderPath: '/docs' }],
+      isFetching: false,
+    }
+    render(<CommandPalette />)
+    const rows = await screen.findAllByTestId('search-result')
+    fireEvent.contextMenu(rows[0])
+    fireEvent.click(await screen.findByTestId('palette-copy-folder-path'))
+    expect(writeText).toHaveBeenCalledWith('/docs')
+  })
+
+  it('opens file details from the menu', async () => {
+    render(<CommandPalette />)
+    const rows = await screen.findAllByTestId('search-result')
+    fireEvent.contextMenu(rows[0])
+    fireEvent.click(await screen.findByTestId('palette-details'))
+    expect(useUIStore.getState().fileDetailsId).toBe('a')
+  })
+})

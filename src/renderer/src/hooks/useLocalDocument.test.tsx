@@ -16,7 +16,7 @@ beforeEach(() => {
   }
 })
 
-// `strict` renders inside <StrictMode>, which remounts effects once — the only
+// `strict` renders inside <StrictMode>, which remounts effects once the only
 // way the switch effect re-runs for an UNCHANGED document id, exercising its
 // early-return branch (production runs under StrictMode, see main.tsx).
 function renderLocalDocument(
@@ -117,7 +117,7 @@ const baseDisplayTitle = 'hi.md'
 
 describe('useLocalDocument — title draft is in display form', () => {
   it('seeds the draft from the file name (with extension), not the extension-free title', () => {
-    // `title` is 'Hi' but the file is hi.md — the title bar must show `hi.md`.
+    // `title` is 'Hi' but the file is hi.md the title bar must show `hi.md`
     const { result, unmount } = renderLocalDocument(baseDoc)
     expect(result.current.localTitle).toBe(baseDisplayTitle)
     unmount()

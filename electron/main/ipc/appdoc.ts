@@ -1,4 +1,4 @@
-// appdoc: protocol handling (privilege / symlink allow-list, C2 / §4.1 / §4.5).
+// appdoc: protocol handling (privilege / symlink allow-list, C2 / / )
 // URL shape: appdoc://<docId>/<relativePath>. The handler looks up file_path by docId
 // in the document store, computes docBaseDir, resolves the relative path to an absolute one, then
 // runs the secondary containment check; any privilege escape returns 403.
@@ -10,7 +10,7 @@ import { getDocumentById } from '../model/documentStore'
 import { parseAppDocUrl, isSubdir, APPDOC_MIME } from '../lib/security'
 
 // Shared resolver used by both the protocol handler above and the new
-// `documents:resolve-appdoc` / `clipboard:write-image` IPC handlers (PLAN §12-3 / §12-2).
+// `documents:resolve-appdoc` / `clipboard:write-image` IPC handlers
 // Turns an `appdoc://<docId>/<rel>` URL into its absolute on-disk path, reusing the exact
 // security layer (doc lookup → docBaseDir → resolve → secondary containment → exists).
 // Returns null when the URL is malformed, escapes the document directory, or the file is

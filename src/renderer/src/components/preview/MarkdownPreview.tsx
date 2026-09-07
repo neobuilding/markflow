@@ -21,7 +21,7 @@ function ensureMermaid(): void {
 }
 
 // Escape a mermaid source string so it is safe to embed in a double-quoted HTML attribute
-// (PLAN §4.1, 能力 5). Mermaid source frequently contains < > " ' that would otherwise break
+// (). Mermaid source frequently contains < > " ' that would otherwise break
 // the `data-mermaid-source` attribute the preview writes for the "Copy diagram source" menu.
 function escapeAttr(s: string): string {
   return s
@@ -62,7 +62,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
   // path instead of checking `renderedHtml === ''` reactively.
   const hasContentRef = useRef(false)
   // The content seen on the previous render. Used to detect "recovering from an
-  // empty pane" — see `isRecovering` below.
+  // empty pane" see `isRecovering` below
   const prevContentRef = useRef('')
   const { t } = useT()
   // Mirror `t` in a ref so effects can read the latest translator without making it a
@@ -109,9 +109,9 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
             ensureMermaid()
             const svgs: string[] = []
             // Slot → raw mermaid source, so the rendered wrapper can carry it as
-            // `data-mermaid-source` for the "Copy diagram source" menu (PLAN §4.1, 能力 5).
+            // `data-mermaid-source` for the "Copy diagram source" menu ()
             // A slot whose render fails is removed here so the failure placeholder is NOT
-            // given a source attribute (需求 §5.2.8: failed diagrams fall back to the
+            // given a source attribute (: failed diagrams fall back to the
             // generic menu, which has no copy-source item).
             const sources = new Map(res.mermaid.map((m) => [m.slot, m.code]))
             for (const m of res.mermaid) {
@@ -128,7 +128,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
             // Replace each placeholder with a wrapper that KEEPS the container (the SVG is
             // injected inside it), so the `data-mermaid-source` attribute survives. The
             // original plan wrote the source on the placeholder div, but the old replace
-            // discarded the whole div — keeping the wrapper fixes that (PLAN §4.1).
+            // discarded the whole div keeping the wrapper fixes that
             html = html.replace(/<div data-mermaid-slot="(\d+)"><\/div>/g, (_m, i) => {
               const slot = Number(i)
               // `svgs[slot]` is always populated by the render loop above (every mermaid
@@ -151,7 +151,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           hasContentRef.current = true
           setLoading(false)
           // Fallback: after parsing completes (large images may be ready now or soon), realign once
-          // to fix the half-screen offset caused by image height jumps (Final Design §3.1).
+          // to fix the half-screen offset caused by image height jumps (Final Design )
           requestAnimationFrame(() => scrollSync.realign())
         })
         .catch((err) => {

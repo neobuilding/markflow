@@ -115,6 +115,11 @@ describe('preload documentsApi', () => {
     expect(invokes[0]).toEqual({ channel: 'documents:delete-folder', args: ['/notes/old'] })
   })
 
+  it('listFolders invokes documents:list-folders with the path', () => {
+    documentsApi.listFolders('/notes')
+    expect(invokes[0]).toEqual({ channel: 'documents:list-folders', args: ['/notes'] })
+  })
+
   it('setOpenFolder invokes documents:set-open-folder with the folder path', () => {
     documentsApi.setOpenFolder('/notes')
     expect(invokes[0]).toEqual({ channel: 'documents:set-open-folder', args: ['/notes'] })

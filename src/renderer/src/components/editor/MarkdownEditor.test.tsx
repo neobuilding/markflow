@@ -33,7 +33,7 @@ describe('MarkdownEditor', () => {
 
     const callsAfterType = onChange.mock.calls.length
 
-    // The parent echoes the new content back (same document, same id) — the
+    // The parent echoes the new content back (same document, same id) the
     // effect must NOT re-apply it (isInternalChange && !isDocSwitch), so the
     // editor keeps the user's text and no extra onChange fires.
     rerender(<MarkdownEditor content="ba" docId="d1" onChange={onChange} />)
@@ -105,20 +105,20 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
   it('renders all 13 items when opened', async () => {
     const c = setup()
     fireEvent.contextMenu(c)
-    expect(await screen.findByTestId('ctx-undo')).toBeInTheDocument()
+    expect(await screen.findByTestId('me-undo')).toBeInTheDocument()
     for (const id of [
-      'ctx-redo',
-      'ctx-cut',
-      'ctx-copy',
-      'ctx-paste',
-      'ctx-select-all',
-      'ctx-bold',
-      'ctx-italic',
-      'ctx-inline-code',
-      'ctx-link',
-      'ctx-open-link-in-browser',
-      'ctx-copy-path',
-      'ctx-show-in-folder',
+      'me-redo',
+      'me-cut',
+      'me-copy',
+      'me-paste',
+      'me-select-all',
+      'me-bold',
+      'me-italic',
+      'me-inline-code',
+      'me-link',
+      'me-open-link-in-browser',
+      'me-copy-path',
+      'me-show-in-folder',
     ]) {
       expect(screen.getByTestId(id)).toBeInTheDocument()
     }
@@ -127,55 +127,55 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
   it('closes the menu on a second contextmenu (snapshot clears)', async () => {
     const c = setup()
     fireEvent.contextMenu(c)
-    await screen.findByTestId('ctx-undo')
+    await screen.findByTestId('me-undo')
     fireEvent.contextMenu(c)
   })
 
   it('disables history/edit commands in read-only mode', async () => {
     const c = setup({ editable: false })
     fireEvent.contextMenu(c)
-    expect(await screen.findByTestId('ctx-undo')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-redo')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-cut')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-paste')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-bold')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-italic')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-inline-code')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-link')).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('me-undo')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-redo')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-cut')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-paste')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-bold')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-italic')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-inline-code')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-link')).toHaveAttribute('aria-disabled', 'true')
     // copy / select-all remain available on a non-empty read-only doc
-    expect(screen.getByTestId('ctx-select-all')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-select-all')).not.toHaveAttribute('aria-disabled', 'true')
   })
 
   it('enables cut/copy when there is a selection', async () => {
     const c = setup()
     getView().dispatch({ selection: { anchor: 0, head: 7 } })
     fireEvent.contextMenu(c)
-    expect(await screen.findByTestId('ctx-cut')).not.toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-copy')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('me-cut')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-copy')).not.toHaveAttribute('aria-disabled', 'true')
   })
 
   it('disables select-all on an empty document', async () => {
     const c = setup({ content: '' })
     fireEvent.contextMenu(c)
-    expect(await screen.findByTestId('ctx-select-all')).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('me-select-all')).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('enables undo after an edit and redo after undo', async () => {
     const c = setup()
     getView().dispatch({ changes: { from: 0, insert: 'x' } })
     fireEvent.contextMenu(c)
-    expect(await screen.findByTestId('ctx-undo')).not.toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-redo')).toHaveAttribute('aria-disabled', 'true')
-    await fireEvent.click(screen.getByTestId('ctx-undo'))
+    expect(await screen.findByTestId('me-undo')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-redo')).toHaveAttribute('aria-disabled', 'true')
+    await fireEvent.click(screen.getByTestId('me-undo'))
     fireEvent.contextMenu(c)
-    expect(await screen.findByTestId('ctx-redo')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('me-redo')).not.toHaveAttribute('aria-disabled', 'true')
   })
 
   it('copy writes the selected text to the clipboard', async () => {
     const c = setup()
     getView().dispatch({ selection: { anchor: 0, head: 7 } })
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-copy'))
+    await fireEvent.click(await screen.findByTestId('me-copy'))
     await waitFor(() => expect(window.api.clipboard.writeText).toHaveBeenCalledWith('# Hello'))
   })
 
@@ -183,7 +183,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const c = setup()
     getView().dispatch({ selection: { anchor: 0, head: 7 } })
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-cut'))
+    await fireEvent.click(await screen.findByTestId('me-cut'))
     await waitFor(() => expect(window.api.clipboard.writeText).toHaveBeenCalledWith('# Hello'))
     await waitFor(() => expect(getView().state.doc.toString()).toBe(''))
   })
@@ -195,7 +195,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     fireEvent.pointerDown(c) // cache (0,7) on the right-click gesture
     view.dispatch({ selection: { anchor: 0, head: 0 } }) // contextmenu cleared it
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-cut'))
+    await fireEvent.click(await screen.findByTestId('me-cut'))
     await waitFor(() => expect(window.api.clipboard.writeText).toHaveBeenCalledWith('# Hello'))
     await waitFor(() => expect(view.state.doc.toString()).toBe(''))
   })
@@ -206,7 +206,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     }
     const c = setup()
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-paste'))
+    await fireEvent.click(await screen.findByTestId('me-paste'))
     await waitFor(() => expect(getView().state.doc.toString()).toContain('PASTE'))
   })
 
@@ -214,14 +214,14 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const c = setup()
     getView().dispatch({ selection: { anchor: 0, head: 7 } })
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-bold'))
+    await fireEvent.click(await screen.findByTestId('me-bold'))
     expect(getView().state.doc.toString()).toContain('**# Hello**')
   })
 
   it('link inserts a link with the cursor parked between the brackets', async () => {
     const c = setup()
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-link'))
+    await fireEvent.click(await screen.findByTestId('me-link'))
     expect(getView().state.doc.toString()).toContain('[](url)')
   })
 
@@ -229,7 +229,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const c = setup({ content: '[text](http://example.com)' })
     getView().dispatch({ selection: { anchor: 3, head: 3 } })
     fireEvent.contextMenu(c)
-    const item = await screen.findByTestId('ctx-open-link-in-browser')
+    const item = await screen.findByTestId('me-open-link-in-browser')
     expect(item).not.toHaveAttribute('aria-disabled', 'true')
     await fireEvent.click(item)
     expect(window.api.app.openExternal).toHaveBeenCalledWith('http://example.com')
@@ -238,13 +238,13 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
   it('copy path and show in folder use the file path', async () => {
     const c = setup({ filePath: '/docs/a.md' })
     fireEvent.contextMenu(c)
-    expect(await screen.findByTestId('ctx-copy-path')).not.toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-show-in-folder')).not.toHaveAttribute('aria-disabled', 'true')
-    await fireEvent.click(screen.getByTestId('ctx-copy-path'))
+    expect(await screen.findByTestId('me-copy-path')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('me-show-in-folder')).not.toHaveAttribute('aria-disabled', 'true')
+    await fireEvent.click(screen.getByTestId('me-copy-path'))
     await waitFor(() => expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/docs/a.md'))
     // selecting an item closes the menu, so re-open before the next action
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-show-in-folder'))
+    await fireEvent.click(await screen.findByTestId('me-show-in-folder'))
     await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs/a.md'))
   })
 
@@ -256,14 +256,14 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
       throw new Error('folder not found')
     })
     fireEvent.contextMenu(c)
-    await screen.findByTestId('ctx-show-in-folder')
-    expect(() => fireEvent.click(screen.getByTestId('ctx-show-in-folder'))).not.toThrow()
+    await screen.findByTestId('me-show-in-folder')
+    expect(() => fireEvent.click(screen.getByTestId('me-show-in-folder'))).not.toThrow()
   })
 
   it('select all selects the whole document', async () => {
     const c = setup()
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-select-all'))
+    await fireEvent.click(await screen.findByTestId('me-select-all'))
     const sel = getView().state.selection.main
     expect(sel.from).toBe(0)
     expect(sel.to).toBe(getView().state.doc.length)
@@ -273,7 +273,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const c = setup()
     getView().dispatch({ selection: { anchor: 0, head: 7 } })
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-italic'))
+    await fireEvent.click(await screen.findByTestId('me-italic'))
     expect(getView().state.doc.toString()).toContain('_# Hello_')
   })
 
@@ -281,7 +281,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const c = setup()
     getView().dispatch({ selection: { anchor: 0, head: 7 } })
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-inline-code'))
+    await fireEvent.click(await screen.findByTestId('me-inline-code'))
     expect(getView().state.doc.toString()).toContain('`# Hello`')
   })
 
@@ -289,7 +289,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const c = setup()
     getView().dispatch({ changes: { from: 0, insert: 'x' } })
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-undo'))
+    await fireEvent.click(await screen.findByTestId('me-undo'))
     await waitFor(() => expect(getView().state.doc.toString()).toBe('# Hello'))
   })
 
@@ -297,9 +297,9 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const c = setup()
     getView().dispatch({ changes: { from: 0, insert: 'x' } })
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-undo'))
+    await fireEvent.click(await screen.findByTestId('me-undo'))
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-redo'))
+    await fireEvent.click(await screen.findByTestId('me-redo'))
     await waitFor(() => expect(getView().state.doc.toString()).toBe('x# Hello'))
   })
 
@@ -307,7 +307,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const c = setup({ content: '[a](http://one.com) [b](http://two.com)' })
     getView().dispatch({ selection: { anchor: 28, head: 28 } })
     fireEvent.contextMenu(c)
-    const item = await screen.findByTestId('ctx-open-link-in-browser')
+    const item = await screen.findByTestId('me-open-link-in-browser')
     expect(item).not.toHaveAttribute('aria-disabled', 'true')
     await fireEvent.click(item)
     expect(window.api.app.openExternal).toHaveBeenCalledWith('http://two.com')
@@ -318,7 +318,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     getView().dispatch({ selection: { anchor: 0, head: 0 } })
     fireEvent.pointerDown(c) // cache a collapsed selection (0,0)
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-cut'))
+    await fireEvent.click(await screen.findByTestId('me-cut'))
     await waitFor(() => expect(window.api.clipboard.writeText).toHaveBeenCalledWith(''))
     expect(getView().state.doc.toString()).toBe('# Hello')
   })
@@ -329,7 +329,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     // Collapse the selection at the end of the document (no selected text).
     getView().dispatch({ selection: { anchor: before } })
     fireEvent.contextMenu(c)
-    await fireEvent.click(await screen.findByTestId('ctx-bold'))
+    await fireEvent.click(await screen.findByTestId('me-bold'))
     const view = getView()
     // No selection → inserts **** with the caret between the markers,
     // distinct from the toolbar's '**text**' placeholder behaviour.

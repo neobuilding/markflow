@@ -1,8 +1,8 @@
 // The single rendering entry point for the templating engine.
 //
 // This module renders a "block template" into a final string. The template
-// language is generic — AUTO blocks delimited by `<!-- AUTO:key --> … {{key}}
-// … <!-- /AUTO:key -->` with `{{placeholder}}` tokens — and is NOT specific to
+// language is generic AUTO blocks delimited by `<!-- AUTO:key --> {{key}}
+// <!-- /AUTO:key -->` with `{{placeholder}}` tokens and is NOT specific to
 // pull requests. It can drive PR bodies, changelogs, release notes, issue
 // templates, etc. The only PR-specific knowledge here is the default base
 // branch name; everything else is domain-agnostic.
@@ -14,12 +14,12 @@
 // running the pure renderer (fillAutoBlocks in render.mjs).
 //
 // The caller only says "render this template for this head/base" and gets back
-// a string. No GitHub token, no `gh` CLI required — the `commits` block pulls
+// a string. No GitHub token, no `gh` CLI required the `commits` block pulls
 // commits itself from the injected git service (plugin-autonomy rule).
 //
 // Refresh: if `existingBody` is supplied, the freshly rendered body is merged
 // into it via buildBody (refreshing each AUTO block in place, preserving human
-// text outside the blocks). This is a pure, local operation — no `gh` needed —
+// text outside the blocks). This is a pure, local operation no `gh` needed
 // so a refresh preview can be produced entirely offline.
 //
 // Usage (local preview / test):
@@ -49,7 +49,7 @@ function resolveBaseRef(git, base) {
 // Render a template into a final body string.
 //
 // Options:
-//   head          branch/subject name (required) — drives the title & commits
+// head branch/subject name (required) drives the title & commits
 //   base          base branch to compare against (default 'main')
 //   template      the ALREADY-READ template string (required); empty → commits-only
 //   existingBody  optional existing body to refresh into (string); enables merge
@@ -93,7 +93,7 @@ export async function renderTemplate({
   const ctx = buildCtx(head, baseRef, deriveTitle(head), services)
 
   // The actual rendering is a single pure call. Both the Action and local
-  // previews go through this exact line — rendering lives in one place.
+  // previews go through this exact line rendering lives in one place
   const fresh = fillAutoBlocks(tpl, ctx, registry)
 
   // Refresh: merge the fresh render into the existing body. When there is no

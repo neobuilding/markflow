@@ -44,7 +44,7 @@ let printingState = false
 function applyMenuStates(): void {
   // appMenu is always assigned by setupMenu() before this runs (it is only
   // invoked from setupMenu's tail or from IPC handlers fired after the menu
-  // exists), so this guard is never taken in practice — defensive only.
+  // exists), so this guard is never taken in practice defensive only
   /* v8 ignore next */
   if (!appMenu) return
   const saveItem = appMenu.getMenuItemById('save')
@@ -111,7 +111,7 @@ export function setupMenu(): void {
               if (mdFiles.length > 0) {
                 // Send the *folder*, not the expanded file list: the renderer expands
                 // folders itself (files:resolve-paths), and only the folder path lets it
-                // pin `activeFolder` — and therefore the watched root — to the directory
+                // pin `activeFolder` and therefore the watched root to the directory
                 // the user actually chose. Sending the file list made the renderer fall
                 // back to the parent directory of whichever file happened to be listed
                 // first, which is a subdirectory whenever the picked folder has no .md

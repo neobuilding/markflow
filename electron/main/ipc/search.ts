@@ -10,7 +10,7 @@ import { getAllDocuments } from '../model/documentStore'
 // CJK note: minisearch's default tokenizer splits on whitespace/punctuation, which
 // returns 0 matches for Chinese text. We supply a custom tokenizer that uses
 // Intl.Segmenter (granularity 'word') for CJK and lower-cases ASCII, so both
-// "hello world" and "中文搜索" are indexed correctly.
+// "hello world" and "" are indexed correctly
 
 // Minimal structural type for Intl.Segmenter (the TS lib may not ship the type on
 // every target; we only rely on `segment()` returning word-like segments).

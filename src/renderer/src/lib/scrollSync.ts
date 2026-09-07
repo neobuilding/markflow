@@ -102,7 +102,7 @@ class ScrollSyncController {
 
   // After async image loads change the preview/editor height, recompute the other
   // side's ratio from the last scroll source to fix half-screen misalignment caused
-  // by height jumps (Final Design §3.1 addendum).
+  // by height jumps (Final Design addendum)
   public realign(): void {
     if (!this.lastSource) return
     const dest: PaneId = this.lastSource === 'editor' ? 'preview' : 'editor'

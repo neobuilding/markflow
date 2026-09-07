@@ -16,7 +16,7 @@ const TooltipContent = React.forwardRef<
       sideOffset={sideOffset}
       className={cn(
         // Linear-style tooltip: dark charcoal bg, crisp white text,
-        // subtle shadow, smooth animation — no more "black blob".
+        // subtle shadow, smooth animation no more "black blob"
         // Uses dark: variant so dark theme gets a slightly lighter bg.
         'z-50 overflow-hidden rounded-md border px-2.5 py-1.5 text-xs font-medium leading-none shadow-lg animate-fade-in',
         'bg-[#1a1a1a] border-black/40 text-white',

@@ -2,8 +2,8 @@
 // supporting image inlining and file writing.
 // The renderer is responsible for assembling the full HTML (inlining github-markdown-css / katex.css / theme),
 // and this file does only the two main-process-specific things:
-//  1) export:embed-images —— inline <img> sources (appdoc:// or https:) as base64 data URLs;
-//  2) export:write —— write the final HTML to the user-selected path.
+// 1) export:embed-images inline <img> sources (appdoc:// or https:) as base64 data URLs;
+// 2) export:write write the final HTML to the user-selected path
 // Image reading / network fetching must happen in the main process (the renderer sandbox has no Node API).
 import type { IpcMain } from 'electron'
 import { BrowserWindow } from 'electron'
@@ -165,11 +165,11 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
       // Note: earlier versions were plagued by a "stray top-of-page horizontal rule" and wrongly blamed the
       // system print dialog's "Headers and footers" separator line, trying to disable it via the headerFooterEnabled
       // option (removed in Electron 43). Testing proved the line is not system-generated (no such setting in the
-      // dialog, disabling did nothing): it is a CSS bug in the renderer's `<hr>` — old rules `height:0; overflow:visible`
+      // dialog, disabling did nothing): it is a CSS bug in the renderer's `<hr>` old rules `height:0; overflow:visible`
       // plus GitHub's `.markdown-body`/`hr` `::before`/`::after` clearfix pseudo-elements render a residual line at the
       // top of the page in some print engines. The issue is fixed in the renderer's print CSS
       // (src/renderer/src/lib/export.ts's @media print) by "hiding clearfix pseudo-elements + solid background color +
-      // print-color-adjust:exact to restore hr", and is unrelated to the system print dialog — no manual checkbox
+      // print-color-adjust:exact to restore hr", and is unrelated to the system print dialog no manual checkbox
       // unchecking needed by the user. We keep real printing here, not a downgrade to PDF.
       // Electron 43 has a regression on Windows: passing deviceName/pageSize/margins etc. makes some systems
       // uniformly report Invalid printer settings; so the first attempt passes only the safest empty object,

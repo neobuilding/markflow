@@ -2,7 +2,7 @@
 // Shared launch logic for the MarkFlow Electron app under Playwright.
 //
 // The Vite dev server is started ONCE by the Playwright global setup
-// (e2e/global-setup.ts) and shared by every test — this avoids the
+// (e2e/global-setup.ts) and shared by every test this avoids the
 // "port 5174 already in use" failures we hit when each test spawned its own
 // server. launchApp() just launches a fresh Electron instance pointed at that
 // shared dev server via VITE_DEV_SERVER_URL.
@@ -106,14 +106,14 @@ export async function closeApp(handle: AppHandle): Promise<void> {
   const CLOSE_TIMEOUT_MS = 15_000
   let timedOut = false
   // process() can throw (TypeError: reading '_object') if the ElectronApplication
-  // has already been torn down — e.g. when a test drove the app to exit on its own
+  // has already been torn down e.g. when a test drove the app to exit on its own
   // (clean quit path) and then afterEach calls closeApp. Resolve the pid defensively
   // so closeApp is a no-op for an already-exited app instead of crashing the test.
   let pid: number | undefined
   try {
     pid = handle.electronApp.process()?.pid
   } catch {
-    /* app already exited — nothing to clean up */
+    /* app already exited nothing to clean up */
     return
   }
   // Similarly, electronApp.close() may throw synchronously on an already-closed
@@ -131,14 +131,14 @@ export async function closeApp(handle: AppHandle): Promise<void> {
     ])
   } catch (err) {
     // If the app already exited (process gone), close() threw but there's nothing
-    // to clean up — don't report this as a timeout.
+    // to clean up don't report this as a timeout
     const msg = (err as Error)?.message ?? String(err)
     if (/Cannot read properties of undefined|_object|Target page.*closed/i.test(msg)) {
       alreadyClosed = true
     }
     if (!alreadyClosed) {
       // The close failed or timed out. Force-kill the process TREE so no zombie
-      // Electron child (GPU/renderer/utility) lingers — killing only the main PID
+      // Electron child (GPU/renderer/utility) lingers killing only the main PID
       // orphan-reparents the children to explorer/init on Windows and they keep
       // running, which previously left 4+ residual electron.exe processes after a
       // run and stalled the Playwright worker teardown.
@@ -177,6 +177,6 @@ function killProcessTree(pid?: number): void {
       }
     }
   } catch {
-    // ignore — nothing more we can do
+    // ignore nothing more we can do
   }
 }

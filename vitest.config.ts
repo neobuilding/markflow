@@ -19,7 +19,7 @@ export default defineConfig({
     // Emit a JUnit XML report so CI can render test results in the Checks/PR UI
     // (dorny/test-reporter) and in GitHub's native test summary.
     // NOTE: vitest v4 (rolldown/oxc) cannot resolve reporter entries written as
-    // `[name, options]` arrays — it throws `StringExpected` when loading the custom
+    // `[name, options]` arrays it throws `StringExpected` when loading the custom
     // reporter module. Use the plural `reporters` field with plain string names and
     // configure per-reporter output via the `outputFile` map instead.
     reporters: ['default', 'junit'],
@@ -28,7 +28,7 @@ export default defineConfig({
     },
     // NOTE: vitest v4 removed `test.deps.inline` (and `test.deps.external`). In v3 these regex
     // patterns forced local main-process modules to be inlined through Vite's SSR transform instead
-    // of being externalized as CommonJS — on Windows externalizing made vitest mis-resolve absolute
+    // of being externalized as CommonJS on Windows externalizing made vitest mis-resolve absolute
     // paths and try to load them as untransformed CJS ("package D:" SyntaxError). v4's rolldown-based
     // module runner transforms project sources by default, so this workaround is no longer needed.
     // If a module must be excluded from dependency pre-bundling, use `deps.optimizer` instead.
@@ -95,7 +95,7 @@ export default defineConfig({
         // Single global gate: every file matched by `coverage.include` (and not
         // dropped by `coverage.exclude`) must reach 100%. The DOM / native
         // integration surface is held out via `exclude`, so the gated set is the
-        // unit-testable logic surface — all held to 100%. `perFile` keeps the
+        // unit-testable logic surface all held to 100%. `perFile` keeps the
         // original per-file intent (each file 100%, not just the project aggregate)
         // and also closes the "new included file matches no glob and escapes the
         // gate" gap that the old per-tier config had.
@@ -111,7 +111,7 @@ export default defineConfig({
   // vite.config.ts), ensuring markdownPipeline also uses DOM-free variants in tests
   // (even though tests don't run in the Worker, this keeps parity with the build and
   // avoids potential resolution differences).
-  // NOTE: in Vitest v4 `resolve` is no longer a valid field under `test` — it must live
+  // NOTE: in Vitest v4 `resolve` is no longer a valid field under `test` it must live
   // at the top level (it is a Vite resolve option, merged into the Vite/Rolldown config),
   // otherwise TS reports TS2769 ("resolve does not exist in type ...") in the IDE.
   resolve: {

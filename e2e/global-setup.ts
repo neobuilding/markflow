@@ -53,20 +53,7 @@ async function waitForMainEntry(timeoutMs: number): Promise<void> {
 
 let devServer: ChildProcess | null = null
 
-/**
- * Fail FAST if the Electron binary cannot be executed. Without this guard the
- * error surfaces later inside every spec's `electron.launch()` (via
- * test.beforeEach), so all N cases fail (and CI retries them) before the run
- * exits — wasting minutes on an environmental problem, not a test regression.
- * Verifying here aborts the whole run immediately at globalSetup.
- *
- * The probe runs `--version --no-sandbox`: the `--no-sandbox` flag is the same
- * one the real e2e launch uses (see e2e/helpers/launch.ts). It MUST be present
- * here too, otherwise a correct binary would still abort under the non-root CI
- * runner's chrome-sandbox permission check, masking the real "can we spawn
- * Electron at all" question with a sandbox error. `--version` only prints the
- * version string, so the flag is safe (no renderer / no webpage is loaded).
- */
+/* * * Fail FAST if the Electron binary cannot be executed. Without this guard the * error surfaces later inside every spec's `electron.launch` (via * test.beforeEach), so all N cases fail (and CI retries them) before the run * exits wasting minutes on an environmental problem, not a test regression. * Verifying here aborts the whole run immediately at globalSetup. * * The probe runs `--version --no-sandbox`: the `--no-sandbox` flag is the same * one the real e2e launch uses (see e2e/helpers/launch.ts). It MUST be present * here too, otherwise a correct binary would still abort under the non-root CI * runner's chrome-sandbox permission check, masking the real "can we spawn * Electron at all" question with a sandbox error. `--version` only prints the * version string, so the flag is safe (no renderer / no webpage is loaded) */
 async function verifyElectronBinary(): Promise<void> {
   // The `electron` package's main export is the absolute path to the Electron
   // executable. Importing it (dynamic import works under the ESM loader Playwright
@@ -96,7 +83,7 @@ async function verifyElectronBinary(): Promise<void> {
     const detail = res.error
       ? `${res.error.name}: ${res.error.message}`
       : `exit code ${res.status}, stderr: ${(res.stderr ?? Buffer.alloc(0)).toString().trim()}`
-    // Surface the REAL error verbatim (do not hard-code an ETXTBSY assumption —
+    // Surface the REAL error verbatim (do not hard-code an ETXTBSY assumption
     // the historical failure was actually a chrome-sandbox SUID permission error
     // under the non-root CI runner, fixed by passing --no-sandbox in launch.ts).
     throw new Error(
@@ -121,8 +108,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       ...process.env,
       // Prevent vite-plugin-electron from auto-starting an Electron instance.
       //
-      // vite-plugin-electron (simple) builds main+preload in dev, then — via its
-      // `:startup` plugin's closeBundle hook — calls triggerStartup() →
+      // vite-plugin-electron (simple) builds main+preload in dev, then via its
+      // `:startup` plugin's closeBundle hook calls triggerStartup →
       // startup() → startupWithRoot(), which resolves the `electron` package and
       // spawns it. Resolving the `electron` package is what triggers
       // electron/index.js's LAZY install: if node_modules/electron/dist/electron
@@ -136,7 +123,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // loses nothing the tests rely on, and removes the race entirely.
       //
       // ELECTRON_STARTUP_PREVENT is the official escape hatch (read at the top of
-      // startup() in vite-plugin-electron/dist/base-*.mjs — when set, triggerStartup
+      // startup in vite-plugin-electron/dist/base-*.mjs when set, triggerStartup
       // skips startupWithRoot entirely). Verified present in the installed version.
       ELECTRON_STARTUP_PREVENT: '1',
     },

@@ -74,7 +74,7 @@ describe('markdown-ext — stripMarkdownExt', () => {
 
   it('leaves a dotted name with no real extension alone', () => {
     // Unlike a trailing regex match, a name that is *only* an extension keeps its
-    // text — collapsing it to '' would produce a blank document title.
+    // text collapsing it to '' would produce a blank document title
     expect(stripMarkdownExt('.md')).toBe('.md')
   })
 })

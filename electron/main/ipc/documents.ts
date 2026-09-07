@@ -1,19 +1,20 @@
 import type { App, IpcMain } from 'electron'
 import { shell } from 'electron'
-import { join, dirname, basename, extname, isAbsolute } from 'node:path'
+import { join, dirname, basename, extname, isAbsolute, resolve, sep } from 'node:path'
 import {
   readFileSync,
   writeFileSync,
   mkdirSync,
   renameSync,
-  rmSync,
   existsSync,
   statSync,
   openSync,
   writeSync,
   closeSync,
+  readdirSync,
   promises as fsPromises,
 } from 'node:fs'
+import type { Dirent } from 'node:fs'
 import type { FileHandle } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
@@ -110,7 +111,7 @@ export function countReplacements(sample: Buffer, encName: string): number {
 
 // CJK second pass: compare how cleanly UTF-8 vs common CJK encodings decode, correcting GBK/Big5 misdetected as UTF-8.
 // Only called when primary is in the "UTF-8 / CJK candidate / low confidence" range (see the inCjkScope gate in detectEncoding);
-// this avoids wrongly overriding high-confidence non-CJK encodings (e.g. Cyrillic windows-1251, ISO-8859-5) with GBK —
+// this avoids wrongly overriding high-confidence non-CJK encodings (e.g. Cyrillic windows-1251, ISO-8859-5) with GBK
 // GBK decoding arbitrary bytes usually yields 0 replacements, making it appear "cleaner" than the real encoding and seizing best.
 const CJK_CANDIDATES = ['utf-8', 'gbk', 'big5', 'shift_jis', 'euc-kr']
 export function cjkSecondPass(
@@ -140,12 +141,12 @@ export function cjkSecondPass(
 
 // True when the buffer is plain ASCII text: every byte <= 0x7f AND no NUL bytes.
 // Such a buffer decodes identically under every encoding, so it is unambiguously
-// UTF-8 and needs no detection at all. This is a plain byte scan — orders of
+// UTF-8 and needs no detection at all. This is a plain byte scan orders of
 // magnitude cheaper than iconv.decode, which has to build a full JS string
 // before it can be inspected.
 //
 // The NUL check is not optional. UTF-16/32 encode ASCII text as NUL-interleaved
-// bytes (0x41 0x00 …), so EVERY byte passes a naive <= 0x7f test; letting those
+// bytes (0x41 0x00 ), so EVERY byte passes a naive <= 0x7f test; letting those
 // through classifies a BOM-less UTF-16 note as UTF-8 and hands the caller
 // NUL-interleaved garbage. jschardet detects them correctly (UTF-16 / UTF-32),
 // but only if it is given the chance.
@@ -164,7 +165,7 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   if (buf[0] === 0xff && buf[1] === 0xfe) return { enc: 'utf-16le', confidence: 1 }
   if (buf[0] === 0xfe && buf[1] === 0xff) return { enc: 'utf-16be', confidence: 1 }
   const sample = buf.subarray(0, Math.min(buf.length, SAMPLE_LIMIT))
-  // Fast path: ASCII-only input is UTF-8 by definition — skip the detector and
+  // Fast path: ASCII-only input is UTF-8 by definition skip the detector and
   // every decode below. (BOMs were handled above.) Large English notes hit this
   // and go from hundreds of milliseconds to a fraction of one.
   //
@@ -187,7 +188,7 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
     return { enc: primary, confidence: primaryConf }
   }
 
-  // Fast path — the single biggest cost in this function used to be right here.
+  // Fast path the single biggest cost in this function used to be right here
   //
   // cjkSecondPass decodes the WHOLE sample once per candidate encoding (utf-8 +
   // gbk + big5 + shift_jis + euc-kr = 5 full decodes) and scans every character
@@ -196,7 +197,7 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   // the whole app: everything is on the same single thread.
   //
   // But the loop only ever replaces `best` when a candidate yields FEWER
-  // replacement chars. Zero is already the floor — no candidate can beat it. So
+  // replacement chars. Zero is already the floor no candidate can beat it. So
   // when the primary encoding decodes cleanly, the other four decodes are pure
   // waste and can be skipped with identical results.
   const primaryRep = countReplacements(sample, primary)
@@ -206,12 +207,12 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   // Deliberately NOT truncated to a small window. Encoding is a property of the
   // whole file, and a note whose first kilobytes are English (byte-identical in
   // ASCII, UTF-8 and GBK) with Chinese only appearing further in looks perfectly
-  // clean as UTF-8 inside a short window — which silently garbles the file.
+  // clean as UTF-8 inside a short window which silently garbles the file
   // Decoding the full sample here is affordable precisely because reaching this
   // line already requires the primary decode to have produced replacement chars;
   // the common, clean case exits via the fast path above instead.
   // The CJK second pass already floors the returned confidence (utf-8: 0.1, CJK candidates: 0.7),
-  // so its result is always a safe, decisive pick — return it directly.
+  // so its result is always a safe, decisive pick return it directly
   return cjkSecondPass(sample, primary)
 }
 // Raw Buffer read -> detect encoding -> decode to string (with encoding metadata).
@@ -416,6 +417,39 @@ function syncAddedFile(filePath: string): void {
   notifyFolderChanged(dirname(filePath))
 }
 
+// A FOLDER rename moves every file under it to a different directory, so chokidar
+// reports each as an unpaired `unlink <old>` + `add <new>` whose directories differ —
+// findRenamedDocument (which only folds same-directory renames) can never match them.
+// Left to the watcher alone, every tracked file under the folder would end up as a
+// stale "missing" record beside a fresh duplicate of itself in the sidebar. Re-point
+// every record under the old prefix onto the new one right after the directory move,
+// so the watcher events that follow find nothing left to do: `add <new>` hits
+// storeGetByPath and revives (a no-op), and `unlink <old>` no longer has a record to
+// mark missing. Titles stay untouched — a folder rename never changes a file's name.
+function rePointFolderRecords(oldPath: string, newPath: string): void {
+  // Trailing separators are normalised away, and the separator-terminated prefix keeps
+  // a rename of `/examples` from matching a sibling `/examples2`.
+  // The prefix match must be separator-insensitive: the renderer builds tree paths with
+  // forward slashes (buildFileTree joins with '/'), so it calls rename-folder with
+  // forward-slash paths even on Windows, where stored document paths use backslashes.
+  // A mismatch here makes the prefix check fail, the old records stay behind, and the
+  // sidebar shows the old folder beside a duplicate of the new one.
+  const toPlatform = (p: string) => p.replace(/[\\/]+$/, '').replace(/\//g, sep)
+  const oldNorm = toPlatform(oldPath)
+  const newNorm = toPlatform(newPath)
+  const prefix = oldNorm + sep
+  for (const d of storeList()) {
+    if (!d.filePath.replace(/\//g, sep).startsWith(prefix)) continue
+    // Preserve the document's own separator style when rebuilding the new path: a doc
+    // imported under a path with a different separator than `newNorm` keeps that style.
+    const docSep = d.filePath.includes('\\') ? '\\' : '/'
+    const filePath = newNorm.replace(/\//g, docSep) + d.filePath.slice(oldNorm.length)
+    storeUpdate(d.id, { folderPath: dirname(filePath), filePath, missing: false })
+    notifyDocumentRefresh(d.id)
+  }
+  notifyFolderChanged(newNorm)
+}
+
 export function registerDocumentHandlers(
   ipcMain: IpcMain,
   app: App,
@@ -513,7 +547,7 @@ export function registerDocumentHandlers(
         return storeUpsert(doc)
       }
 
-      // Plan §6.#13/#19: when an absolute folder path is supplied (e.g. the
+      // When an absolute folder path is supplied (e.g. the
       // renderer's activeFolder), write directly there (VS Code "save into the
       // opened folder" semantics). A relative sub-folder name is still joined onto
       // the default docs dir to preserve the legacy behavior.
@@ -723,7 +757,7 @@ export function registerDocumentHandlers(
   })
 
   // Delete document — move the file to the OS trash rather than permanently deleting it
-  // (PLAN §12-13, matching VS Code behaviour). A memory-only draft has no file on disk
+  // A memory-only draft has no file on disk
   // (file_path === ''); it is discarded from the store without touching the filesystem.
   // trashItem is asynchronous and rejects on failure; per Electron's guidance we must NOT
   // silently fall back to a permanent delete — if the move fails we keep the original file
@@ -748,7 +782,7 @@ export function registerDocumentHandlers(
     return storeDelete(id)
   })
 
-  // Resolve an appdoc:// URL to its on-disk absolute path (PLAN §12-3). Reuses the
+  // Resolve an appdoc:// URL to its on-disk absolute path. Reuses the
   // security layer in appdoc.ts (doc lookup → containment → exists). Returns null for
   // malformed URLs, escapes, or missing files; callers must handle the null (the
   // renderer greys out / skips the menu item).
@@ -760,7 +794,7 @@ export function registerDocumentHandlers(
     }
   })
 
-  // Re-detect a file's encoding without modifying its bytes (PLAN §12-11). Reads the raw
+  // Re-detect a file's encoding without modifying its bytes. Reads the raw
   // buffer and runs the same detector used on import. Returns utf-8 / confidence 0 on any
   // read error so the caller (the encoding re-detect menu item) can fall back gracefully.
   ipcMain.handle('documents:detect-encoding', (_event, filePath: string) => {
@@ -772,7 +806,7 @@ export function registerDocumentHandlers(
     }
   })
 
-  // Set the line endings of a file on disk (PLAN §12-6). Destructive write: it rewrites the
+  // Set the line endings of a file on disk. Destructive write: it rewrites the
   // file with the chosen EOL, so the renderer must confirm first and reload afterwards.
   // The document's stored encoding is preserved byte-for-byte (R5). Fails silently when the
   // file is gone or unreadable.
@@ -793,23 +827,65 @@ export function registerDocumentHandlers(
   })
 
   // Create a folder on disk and start watching it so files dropped into it show up
-  // (PLAN §12-7). recursive: true so nested paths are created too.
+  // recursive: true so nested paths are created too.
   ipcMain.handle('documents:create-folder', (_event, folderPath: string) => {
     mkdirSync(folderPath, { recursive: true })
     addWatchedFolder(folderPath)
   })
 
-  // Rename a folder on disk (PLAN §12-7). The watcher is told about the new path; chokidar
-  // tolerates the old one ceasing to exist.
+  // Rename a folder on disk. The watcher is told about the new path; chokidar
+  // tolerates the old one ceasing to exist. Tracked documents are re-pointed proactively,
+  // otherwise the rename reaches the store as unrelated unlink/add pairs and the sidebar
+  // shows the old folder (struck-through "missing") beside a duplicate of the new one.
   ipcMain.handle('documents:rename-folder', (_event, oldPath: string, newPath: string) => {
     renameSync(oldPath, newPath)
     addWatchedFolder(newPath)
+    rePointFolderRecords(oldPath, newPath)
   })
 
-  // Delete a folder and everything beneath it (PLAN §12-7). recursive + force keeps this
-  // from throwing if the folder is already partially gone.
-  ipcMain.handle('documents:delete-folder', (_event, folderPath: string) => {
-    rmSync(folderPath, { recursive: true, force: true })
+  // List every directory beneath `folderPath` (recursive, depth-capped) so the sidebar
+  // tree can show folders that hold no Markdown file. The tree is otherwise derived from
+  // documents alone, which has no node to represent an empty folder — and a folder the
+  // user just created is always empty. Hidden directories are skipped: .git/.cache are
+  // noise in a document workspace and can be enormous.
+  ipcMain.handle('documents:list-folders', (_event, folderPath: string) => {
+    const MAX_DEPTH = 8
+    const out: string[] = []
+    const walk = (dir: string, depth: number): void => {
+      if (depth > MAX_DEPTH) return
+      let entries: Dirent[]
+      try {
+        entries = readdirSync(dir, { withFileTypes: true })
+      } catch {
+        // Unreadable or already gone: report what we have instead of throwing into IPC.
+        return
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        if (entry.name.startsWith('.')) continue
+        const full = join(dir, entry.name)
+        out.push(full)
+        walk(full, depth + 1)
+      }
+    }
+    walk(folderPath, 0)
+    return out
+  })
+
+  // Delete a folder and everything beneath it. Move it to the OS
+  // trash rather than permanently deleting — matching the document delete and VS
+  // Code behaviour. trashItem rejects on failure; per Electron's guidance we must NOT silently
+  // fall back to a permanent delete, so a non-ENOENT rejection is re-thrown (the caller logs it
+  // and keeps the folder in the tree). A folder already gone (ENOENT) is treated as success.
+  ipcMain.handle('documents:delete-folder', async (_event, folderPath: string) => {
+    try {
+      await shell.trashItem(resolve(folderPath))
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error('Failed to move folder to trash:', e)
+        throw e
+      }
+    }
   })
 
   // Import markdown file from disk

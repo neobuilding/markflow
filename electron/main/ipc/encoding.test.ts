@@ -38,7 +38,7 @@ describe('countReplacements', () => {
   })
 
   it('counts U+FFFD replacement chars when a CJK buffer is decoded as utf-8', () => {
-    // GBK "中" bytes decoded as utf-8 yield replacement chars.
+    // GBK "" bytes decoded as utf-8 yield replacement chars
     const n = countReplacements(gbk('中文'), 'utf-8')
     expect(n).toBeGreaterThan(0)
   })
@@ -83,7 +83,7 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
   it('short-circuits pure-ASCII input to utf-8/confidence 1 without decoding', () => {
     // The single biggest cost in detectEncoding used to be the CJK second pass,
     // which decodes up to 1MB of sample five times. Pure-ASCII bytes decode
-    // identically under every encoding, so there is nothing to detect — the fast
+    // identically under every encoding, so there is nothing to detect the fast
     // path must return immediately. Assert the RESULT, and assert it is FAST on a
     // 1MB+ buffer (proves the decodes are skipped, not just that the answer is right).
     const oneMbAscii = Buffer.alloc(1_200_000, 0x41) // 1.2MB of 'A'
@@ -91,7 +91,7 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
     // noise under load: this case historically failed at 47.8ms against a 20ms
     // limit (full-suite load) while measuring ~1ms alone, and later brushed the
     // 50ms boundary at 51ms even on a LOCAL run. The minimum is what the code can
-    // actually do, so that is what gets asserted — it absorbs scheduling jitter /
+    // actually do, so that is what gets asserted it absorbs scheduling jitter /
     // GC / other processes competing for the CPU.
     let elapsed = Infinity
     let r = { enc: '', confidence: 0 }
@@ -102,7 +102,7 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
     }
     expect(r.enc).toBe('utf-8')
     expect(r.confidence).toBe(1)
-    // The fast path is a plain byte scan — low single-digit ms for 1.2MB. Going
+    // The fast path is a plain byte scan low single-digit ms for 1.2MB. Going
     // the long way round (detector + five iconv decodes of the same buffer) costs
     // HUNDREDS of ms. 100ms is far above any realistic scheduling jitter (this
     // case measures ~1ms in isolation) yet still an order of magnitude below the
@@ -145,7 +145,7 @@ describe('detectEncoding — no detection / non-CJK / CJK', () => {
   })
 
   it('corrects a GBK byte sequence via the CJK second pass', () => {
-    // GBK "中" bytes decode cleanly as gbk (0 replacements) and are corrected away from any utf-8 misread.
+    // GBK "" bytes decode cleanly as gbk (0 replacements) and are corrected away from any utf-8 misread
     const r = detectEncoding(gbk('中'))
     expect(r.enc).toBe('gbk')
     expect(r.confidence).toBeGreaterThanOrEqual(0.99)

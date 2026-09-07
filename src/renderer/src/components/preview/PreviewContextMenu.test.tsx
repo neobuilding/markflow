@@ -58,14 +58,14 @@ describe('PreviewContextMenu', () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
     window.getSelection()!.selectAllChildren(article())
-    fireEvent.click(await screen.findByTestId('ctx-copy'))
+    fireEvent.click(await screen.findByTestId('preview-copy'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith(article().textContent)
   })
 
   it('generic: copy falls back to article text when nothing is selected', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-copy'))
+    fireEvent.click(await screen.findByTestId('preview-copy'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith(article().textContent)
   })
 
@@ -77,59 +77,59 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-copy'))
+    fireEvent.click(await screen.findByTestId('preview-copy'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('')
   })
 
   it('generic: select all selects the article content', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-select-all'))
+    fireEvent.click(await screen.findByTestId('preview-select-all'))
     expect(window.getSelection()!.toString()).toContain('hello world')
   })
 
   it('generic: view checkboxes toggle viewMode', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-view-editor'))
+    fireEvent.click(await screen.findByTestId('preview-view-editor'))
     expect(useUIStore.getState().viewMode).toBe('edit')
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-view-split'))
+    fireEvent.click(await screen.findByTestId('preview-view-split'))
     expect(useUIStore.getState().viewMode).toBe('split')
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-view-preview'))
+    fireEvent.click(await screen.findByTestId('preview-view-preview'))
     expect(useUIStore.getState().viewMode).toBe('preview')
   })
 
   it('generic: print calls export.print with the stashed html', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-print'))
+    fireEvent.click(await screen.findByTestId('preview-print'))
     expect(window.api.export.print).toHaveBeenCalled()
   })
 
   it('generic: export opens the export dialog', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-export-html'))
+    fireEvent.click(await screen.findByTestId('preview-export-html'))
     expect(useUIStore.getState().exportOpen).toBe(true)
   })
 
   it('generic: copy path and show in folder use doc.filePath', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-copy-path'))
+    fireEvent.click(await screen.findByTestId('preview-copy-path'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/docs/a.md')
     fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('ctx-show-in-folder'))
+    fireEvent.click(await screen.findByTestId('preview-show-in-folder'))
     expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs/a.md')
   })
 
   it('generic: copy path and show in folder are disabled without a filePath (draft)', () => {
     mount(null)
     fireEvent.contextMenu(article())
-    const copyPath = screen.getByTestId('ctx-copy-path')
-    const showInFolder = screen.getByTestId('ctx-show-in-folder')
+    const copyPath = screen.getByTestId('preview-copy-path')
+    const showInFolder = screen.getByTestId('preview-show-in-folder')
     expect(copyPath).toHaveAttribute('aria-disabled', 'true')
     expect(showInFolder).toHaveAttribute('aria-disabled', 'true')
   })
@@ -140,17 +140,17 @@ describe('PreviewContextMenu', () => {
     )
     mount(docWithPath)
     fireEvent.contextMenu(article())
-    await fireEvent.click(await screen.findByTestId('ctx-show-in-folder'))
+    await fireEvent.click(await screen.findByTestId('preview-show-in-folder'))
     expect(window.api.app.showInFolder).toHaveBeenCalled()
   })
 
   it('link: opens and copies the link address', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(screen.getByText('link'))
-    fireEvent.click(await screen.findByTestId('ctx-open-link'))
+    fireEvent.click(await screen.findByTestId('preview-open-link'))
     expect(window.api.app.openExternal).toHaveBeenCalledWith('https://example.com/page')
     fireEvent.contextMenu(screen.getByText('link'))
-    fireEvent.click(await screen.findByTestId('ctx-copy-link'))
+    fireEvent.click(await screen.findByTestId('preview-copy-link'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('https://example.com/page')
   })
 
@@ -158,8 +158,8 @@ describe('PreviewContextMenu', () => {
     mount(docWithPath)
     fireEvent.contextMenu(screen.getByText('link'))
     // The link variant must carry the same copy / select-all as the generic one.
-    expect(await screen.findByTestId('ctx-copy')).toBeInTheDocument()
-    const selectAll = await screen.findByTestId('ctx-select-all')
+    expect(await screen.findByTestId('preview-copy')).toBeInTheDocument()
+    const selectAll = await screen.findByTestId('preview-select-all')
     fireEvent.click(selectAll)
     expect(window.getSelection()!.toString()).toContain('hello world')
   })
@@ -167,7 +167,7 @@ describe('PreviewContextMenu', () => {
   it('code: copies the code block text', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(screen.getByText('const a = 1;'))
-    fireEvent.click(await screen.findByTestId('ctx-copy-code'))
+    fireEvent.click(await screen.findByTestId('preview-copy-code'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('const a = 1;')
   })
 
@@ -182,7 +182,7 @@ describe('PreviewContextMenu', () => {
     )
     const pre = document.querySelector('.markdown-preview pre') as HTMLElement
     fireEvent.contextMenu(pre)
-    await fireEvent.click(await screen.findByTestId('ctx-copy-code'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-code'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('')
   })
 
@@ -198,7 +198,7 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('const a = 1;'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-code-block'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-code-block'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('```js\nconst a = 1;\n```')
   })
 
@@ -214,7 +214,7 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('const a = 1;'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-code-block'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-code-block'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('```\nconst a = 1;\n```')
   })
 
@@ -230,7 +230,7 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('let a = 1;'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-lang'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-lang'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('ts')
   })
 
@@ -246,8 +246,8 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('plain'))
-    expect(await screen.findByTestId('ctx-copy-code')).toBeInTheDocument()
-    expect(screen.queryByTestId('ctx-copy-lang')).toBeNull()
+    expect(await screen.findByTestId('preview-copy-code')).toBeInTheDocument()
+    expect(screen.queryByTestId('preview-copy-lang')).toBeNull()
   })
 
   it('table: copies as a Markdown pipe table', async () => {
@@ -273,7 +273,7 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('a'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-table'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-table'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith(
       '| a | b |\n| --- | --- |\n| 1 | 2 |',
     )
@@ -294,7 +294,7 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('a'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-table-tsv'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-table-tsv'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('a\tb')
   })
 
@@ -308,7 +308,7 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByTestId('empty-table'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-table'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-table'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('')
   })
 
@@ -322,10 +322,10 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('Section One'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-heading'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-heading'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('Section One')
     fireEvent.contextMenu(screen.getByText('Section One'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-anchor-id'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-anchor-id'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('section-one')
   })
 
@@ -339,7 +339,10 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('No Id Here'))
-    expect(await screen.findByTestId('ctx-copy-anchor-id')).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('preview-copy-anchor-id')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
   })
 
   it('task: copies the task text without the checkbox', async () => {
@@ -356,7 +359,7 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText(/buy milk/))
-    await fireEvent.click(await screen.findByTestId('ctx-copy-task-text'))
+    await fireEvent.click(await screen.findByTestId('preview-copy-task-text'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('buy milk')
   })
 
@@ -372,8 +375,8 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('plain bullet'))
-    expect(await screen.findByTestId('ctx-copy-path')).toBeInTheDocument()
-    expect(screen.queryByTestId('ctx-copy-task-text')).toBeNull()
+    expect(await screen.findByTestId('preview-copy-path')).toBeInTheDocument()
+    expect(screen.queryByTestId('preview-copy-task-text')).toBeNull()
   })
 
   it('copies an empty string when there is no preview ref (PLAN §4 defensive)', async () => {
@@ -387,7 +390,7 @@ describe('PreviewContextMenu', () => {
       </PreviewContextMenu>,
     )
     fireEvent.contextMenu(screen.getByText('hello world'))
-    await fireEvent.click(await screen.findByTestId('ctx-copy'))
+    await fireEvent.click(await screen.findByTestId('preview-copy'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('')
   })
 
@@ -407,14 +410,14 @@ describe('PreviewContextMenu', () => {
   it('image: copies the image to the clipboard (能力 2)', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-copy-image'))
+    fireEvent.click(await screen.findByTestId('preview-copy-image'))
     expect(window.api.clipboard.writeImage).toHaveBeenCalledWith('/img.png')
   })
 
   it('image: copies the on-disk address for a plain path (能力 3)', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-copy-image-address'))
+    fireEvent.click(await screen.findByTestId('preview-copy-image-address'))
     await waitFor(() => expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/img.png'))
     // A plain (non-appdoc) path is copied as-is; resolveAppdoc is only used for appdoc:// refs.
     expect(window.api.documents.resolveAppdoc).not.toHaveBeenCalled()
@@ -423,14 +426,14 @@ describe('PreviewContextMenu', () => {
   it('image: shows the file in its folder (能力 3)', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-show-image-in-folder'))
+    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
     await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/img.png'))
   })
 
   it('image: resolves an appdoc:// address before copying (能力 3)', async () => {
     mountCustom('<img src="appdoc://d1/im.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-copy-image-address'))
+    fireEvent.click(await screen.findByTestId('preview-copy-image-address'))
     await waitFor(() => {
       expect(window.api.documents.resolveAppdoc).toHaveBeenCalledWith('appdoc://d1/im.png')
       expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/resolved/appdoc://d1/im.png')
@@ -440,7 +443,7 @@ describe('PreviewContextMenu', () => {
   it('image: resolves an appdoc:// address before showing in folder (能力 3)', async () => {
     mountCustom('<img src="appdoc://d1/im.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-show-image-in-folder'))
+    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
     await waitFor(() =>
       expect(window.api.app.showInFolder).toHaveBeenCalledWith('/resolved/appdoc://d1/im.png'),
     )
@@ -449,35 +452,83 @@ describe('PreviewContextMenu', () => {
   it('image: saves the image as a chosen file (能力 2 另存为)', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-save-image-as'))
+    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
     await waitFor(() =>
       expect(window.api.app.copyFile).toHaveBeenCalledWith('/img.png', '/out.svg'),
     )
   })
 
-  it('formula: copies the TeX source (能力 5 公式)', async () => {
-    mountCustom(
-      '<span class="katex"><annotation encoding="application/x-tex">x^2</annotation></span>',
+  it('image: copies the alt text', async () => {
+    mountCustom('<img src="/img.png" alt="a chart" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    fireEvent.click(await screen.findByTestId('preview-copy-image-alt'))
+    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('a chart')
+  })
+
+  it('image: greys out the alt-text item when the image has no alt', async () => {
+    mountCustom('<img src="/img.png" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    expect(await screen.findByTestId('preview-copy-image-alt')).toHaveAttribute(
+      'aria-disabled',
+      'true',
     )
+  })
+
+  it('image: greys out "show in folder" for a remote image', async () => {
+    mountCustom('<img src="https://example.com/img.png" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    expect(await screen.findByTestId('preview-show-image-in-folder')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+  })
+
+  // Realistic KaTeX output (`output: 'htmlAndMathml'`): the visible glyphs live in
+  // `.katex-html`, while the TeX source sits in a hidden <annotation> inside
+  // `.katex-mathml` so "copy formula" must drop the MathML subtree to get the text
+  const katexHtml =
+    '<span class="katex">' +
+    '<span class="katex-mathml"><math><semantics>' +
+    '<annotation encoding="application/x-tex">x^2</annotation>' +
+    '</semantics></math></span>' +
+    '<span class="katex-html" aria-hidden="true">x<sup>2</sup></span>' +
+    '</span>'
+
+  it('formula: copies the TeX source (能力 5 公式)', async () => {
+    mountCustom(katexHtml)
     fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('ctx-copy-formula'))
+    fireEvent.click(await screen.findByTestId('preview-copy-formula-latex'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('x^2')
   })
 
-  it('formula: copies the TeX source via the source item (能力 5 公式)', async () => {
+  it('formula: copies the RENDERED text, not the TeX source', async () => {
+    mountCustom(katexHtml)
+    fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-copy-formula'))
+    // The MathML subtree carrying the source is stripped first, so only the glyphs remain.
+    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('x2')
+  })
+
+  it('formula: falls back to the whole katex text when KaTeX emitted no MathML', async () => {
     mountCustom(
       '<span class="katex"><annotation encoding="application/x-tex">x^2</annotation></span>',
     )
     fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('ctx-copy-formula-latex'))
+    fireEvent.click(await screen.findByTestId('preview-copy-formula'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('x^2')
   })
 
   it('formula: greys out the copy items when there is no source', async () => {
     mountCustom('<span class="katex"></span>')
     fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
-    expect(await screen.findByTestId('ctx-copy-formula')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-copy-formula-latex')).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('preview-copy-formula')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(screen.getByTestId('preview-copy-formula-latex')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
   })
 
   it('mermaid: copies the diagram source (能力 5 图表)', async () => {
@@ -485,7 +536,7 @@ describe('PreviewContextMenu', () => {
       '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
     )
     fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('ctx-copy-diagram-source'))
+    fireEvent.click(await screen.findByTestId('preview-copy-diagram-source'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('graph TD;A-->B')
   })
 
@@ -494,7 +545,7 @@ describe('PreviewContextMenu', () => {
       '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
     )
     fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('ctx-copy-svg'))
+    fireEvent.click(await screen.findByTestId('preview-copy-svg'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('<svg>chart</svg>')
   })
 
@@ -503,7 +554,7 @@ describe('PreviewContextMenu', () => {
       '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
     )
     fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('ctx-save-svg-as'))
+    fireEvent.click(await screen.findByTestId('preview-save-svg-as'))
     await waitFor(() =>
       expect(window.api.export.write).toHaveBeenCalledWith('/out.svg', '<svg>chart</svg>'),
     )
@@ -512,18 +563,18 @@ describe('PreviewContextMenu', () => {
   it('mermaid: greys out items when there is no source / svg', async () => {
     mountCustom('<div data-mermaid-slot="0"></div>')
     fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    expect(await screen.findByTestId('ctx-copy-diagram-source')).toHaveAttribute(
+    expect(await screen.findByTestId('preview-copy-diagram-source')).toHaveAttribute(
       'aria-disabled',
       'true',
     )
-    expect(screen.getByTestId('ctx-copy-svg')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-save-svg-as')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('preview-copy-svg')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('preview-save-svg-as')).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('image without a src copies an empty string to the clipboard', async () => {
     mountCustom('<img />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-copy-image'))
+    fireEvent.click(await screen.findByTestId('preview-copy-image'))
     expect(window.api.clipboard.writeImage).toHaveBeenCalledWith('')
   })
 
@@ -531,7 +582,7 @@ describe('PreviewContextMenu', () => {
     vi.mocked(window.api.documents.resolveAppdoc).mockResolvedValueOnce(null)
     mountCustom('<img src="appdoc://d1/im.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-copy-image-address'))
+    fireEvent.click(await screen.findByTestId('preview-copy-image-address'))
     await waitFor(() =>
       expect(window.api.clipboard.writeText).toHaveBeenCalledWith('appdoc://d1/im.png'),
     )
@@ -541,7 +592,7 @@ describe('PreviewContextMenu', () => {
     vi.mocked(window.api.documents.resolveAppdoc).mockResolvedValueOnce(null)
     mountCustom('<img src="appdoc://d1/im.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-show-image-in-folder'))
+    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
     await waitFor(() => expect(window.api.app.showInFolder).not.toHaveBeenCalled())
   })
 
@@ -549,7 +600,7 @@ describe('PreviewContextMenu', () => {
     vi.mocked(window.api.dialog.saveFile).mockResolvedValueOnce('/out.png')
     mountCustom('<img />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-save-image-as'))
+    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
     await waitFor(() => expect(window.api.app.copyFile).toHaveBeenCalledWith('', '/out.png'))
   })
 
@@ -557,7 +608,7 @@ describe('PreviewContextMenu', () => {
     vi.mocked(window.api.dialog.saveFile).mockResolvedValueOnce(null)
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-save-image-as'))
+    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
     await waitFor(() => expect(window.api.app.copyFile).not.toHaveBeenCalled())
   })
 
@@ -567,7 +618,7 @@ describe('PreviewContextMenu', () => {
       '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
     )
     fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('ctx-save-svg-as'))
+    fireEvent.click(await screen.findByTestId('preview-save-svg-as'))
     await waitFor(() => expect(window.api.export.write).not.toHaveBeenCalled())
   })
 
@@ -575,7 +626,7 @@ describe('PreviewContextMenu', () => {
     vi.mocked(window.api.app.showInFolder).mockRejectedValueOnce(new Error('nope'))
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-show-image-in-folder'))
+    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
     await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/img.png'))
   })
 
@@ -583,7 +634,7 @@ describe('PreviewContextMenu', () => {
     vi.mocked(window.api.app.showInFolder).mockRejectedValueOnce(new Error('nope'))
     mountCustom('<img src="appdoc://d1/im.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('ctx-show-image-in-folder'))
+    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
     await waitFor(() =>
       expect(window.api.app.showInFolder).toHaveBeenCalledWith('/resolved/appdoc://d1/im.png'),
     )

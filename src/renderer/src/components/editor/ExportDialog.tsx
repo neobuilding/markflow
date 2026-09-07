@@ -5,7 +5,13 @@ import { exportDocument, resolveTheme } from '../../lib/export'
 import { getExportHtml } from '../../lib/exportStore'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
-import { InputContextMenu } from '../ui/input-context-menu'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+} from '../ui/context-menu'
+import { Copy } from 'lucide-react'
 import { useT } from '../../i18n'
 
 type ThemeChoice = 'current' | 'light' | 'dark'
@@ -28,7 +34,7 @@ export function ExportDialog(): React.ReactElement {
   const [targetPath, setTargetPath] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Ref for the right-click edit menu on the target-path box (PLAN §11).
+  // Ref for the right-click edit menu on the target-path box
   const targetPathRef = useRef<HTMLInputElement>(null)
   // When the target file already exists, confirm inline within the dialog (instead of the native
   // window.confirm): the native confirm is a blocking modal that conflicts with the app menu
@@ -120,7 +126,7 @@ export function ExportDialog(): React.ReactElement {
 
   // Path shown in the inline "file already exists" prompt. `showOverwrite` is only turned
   // on inside handleConfirm(), and that function has already returned early when
-  // targetPath is null — so targetPath is non-null on any render that reaches the prompt.
+  // targetPath is null so targetPath is non-null on any render that reaches the prompt
   // The `?? ''` only narrows its nullable type for TypeScript and is not reachable in
   // tests. (Kept outside the JSX because `v8 ignore` comments are only honoured on plain
   // statements, not inside JSX children.)
@@ -167,17 +173,26 @@ export function ExportDialog(): React.ReactElement {
               {t('export.saveLocation')}
             </label>
             <div className="flex items-center gap-2">
-              {/* Right-click edit menu: the box is read-only, so cut / paste / undo / redo
-                  are greyed out and only copy / select-all work (PLAN §10, §11). */}
-              <InputContextMenu targetRef={targetPathRef} readOnly>
-                <input
-                  ref={targetPathRef}
-                  value={targetPath ?? ''}
-                  readOnly
-                  placeholder={t('export.notSelected')}
-                  className="flex-1 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 outline-none text-[var(--color-text-secondary)] truncate"
-                />
-              </InputContextMenu>
+              {/* Right-click menu: one-click "Copy full path" ( / #4b). A read-only export target can't be edited, so the generic edit menu (undo / cut / paste) would only offer copy / select-all but copy alone copies the selection, not the full path. This dedicated item copies the whole target path regardless of selection */}
+              <ContextMenu>
+                <ContextMenuTrigger asChild>
+                  <input
+                    ref={targetPathRef}
+                    value={targetPath ?? ''}
+                    readOnly
+                    placeholder={t('export.notSelected')}
+                    className="flex-1 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 outline-none text-[var(--color-text-secondary)] truncate"
+                  />
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem
+                    data-testid="exp-copy-full-path"
+                    onClick={() => void window.api.clipboard.writeText(targetPath ?? '')}
+                  >
+                    <Copy size={13} /> {t('editor.copyFullPath')}
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
               <Button variant="outline" size="sm" onClick={handlePickPath}>
                 {t('export.choose')}
               </Button>

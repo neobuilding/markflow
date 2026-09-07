@@ -7,7 +7,7 @@ import DOMPurify from 'dompurify'
 // prevent BUG-5 recurrence): DOMPurify keeps style by default, and if allowed
 // everywhere a malicious embedded HTML could use style for CSS exfiltration
 // (attribute selectors + background:url probes). style on all other elements
-// (div/p/a/pre…) is stripped.
+// (div/p/a/pre) is stripped
 const STYLE_ALLOWED_TAGS = new Set(['code', 'span', 'math'])
 const SVG_NS = 'http://www.w3.org/2000/svg'
 

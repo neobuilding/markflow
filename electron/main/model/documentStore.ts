@@ -1,4 +1,4 @@
-// documentStore.ts — in-memory single source of truth for documents.
+// documentStore.ts in-memory single source of truth for documents
 // Documents live in a Map keyed by id; disk I/O and encoding detection stay in the
 // IPC handlers (documents.ts) which call into this store after reading/writing files.
 import { randomUUID } from 'node:crypto'
@@ -17,7 +17,7 @@ export interface Document {
   updatedAt: number
   // True for pure in-app drafts that have no on-disk file (filePath === '').
   // Optional for backward-compat with hand-built test fixtures; treated as
-  // false when absent (plan §2).
+  // false when absent (plan )
   memoryOnly?: boolean
   // True when the file this document points at no longer exists on disk, because it
   // was deleted or moved outside the app.
@@ -25,8 +25,8 @@ export interface Document {
   // The record is deliberately KEPT rather than dropped: like VS Code, which leaves a
   // struck-through tab open, the document stays editable so an accidental deletion can
   // still be saved straight back to disk. A rename is repaired by re-pointing this same
-  // record at the new path (see syncAddedFile), which is what lets the open editor — and
-  // its unsaved draft — survive it. The record only disappears when the user closes the
+  // record at the new path (see syncAddedFile), which is what lets the open editor and
+  // its unsaved draft survive it. The record only disappears when the user closes the
   // document, or on restart (this store is in-memory and rebuilt from disk).
   // Optional for the same backward-compat reason; absent means "not missing".
   missing?: boolean
@@ -49,7 +49,7 @@ export function createDocumentStore(): void {
 // List documents, optionally filtered to those inside `folderPath` (the renderer's
 // activeFolder, an absolute path). Memory-only drafts (no filePath) are always
 // included regardless of folder, matching the old "return all + renderer filters"
-// behavior. Filtering uses isInFolder so sub-folders are included (plan §4).
+// behavior. Filtering uses isInFolder so sub-folders are included (plan )
 export function listDocuments(folderPath?: string): Document[] {
   const all = [...docs.values()]
   const target = folderPath && folderPath !== '' ? folderPath : undefined
@@ -101,7 +101,7 @@ export function setEncoding(id: string, encoding: string, confidence: number): v
   docs.set(id, { ...existing, encoding, encodingConfidence: confidence })
 }
 
-// Remove unsaved (memory-only) drafts — those with an empty filePath — and return
+// Remove unsaved (memory-only) drafts those with an empty filePath and return
 // how many were purged. Mirrors the old `DELETE FROM documents WHERE file_path = ''`.
 export function purgeUnsavedDrafts(): number {
   let removed = 0

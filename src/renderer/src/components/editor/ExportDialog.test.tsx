@@ -385,4 +385,39 @@ describe('ExportDialog', () => {
     fireEvent.click(exportBtn)
     await waitFor(() => expect(screen.getByText('Exporting…')).toBeInTheDocument())
   })
+
+  it('copies the full target path via the right-click menu', async () => {
+    const writeText = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      ...(window as unknown as { api: { dialog: unknown; documents: unknown } }).api,
+      clipboard: { writeText },
+      dialog: { saveHtmlFile: vi.fn(async () => '/out.html') },
+      documents: { stat: vi.fn(async () => ({ exists: false })), watch: vi.fn(), unwatch: vi.fn() },
+    }
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    fireEvent.contextMenu(screen.getByDisplayValue('/docs/a.html'))
+    fireEvent.click(await screen.findByTestId('exp-copy-full-path'))
+    expect(writeText).toHaveBeenCalledWith('/docs/a.html')
+  })
+
+  it('copies an empty string when there is no target path', async () => {
+    const writeText = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      clipboard: { writeText },
+      dialog: { saveHtmlFile: vi.fn(async () => '/out.html') },
+      documents: { stat: vi.fn(async () => ({ exists: false })), watch: vi.fn(), unwatch: vi.fn() },
+    }
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    const input = screen.getByPlaceholderText('Not selected')
+    fireEvent.contextMenu(input)
+    fireEvent.click(await screen.findByTestId('exp-copy-full-path'))
+    expect(writeText).toHaveBeenCalledWith('')
+  })
 })

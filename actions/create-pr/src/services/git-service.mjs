@@ -5,13 +5,13 @@
 // inject a fake GitService and assert on the call sequence without a repo.
 //
 // Interface contract (all methods return strings or null, never throw on
-// non-zero exit — callers decide what to do with null):
-//   hasOrigin(): boolean                     — does `git remote` list `origin`?
-//   fetchBase(base): string|null            — `git fetch origin <base>` (null on failure)
-//   revParse(ref): string|null              — `git rev-parse --verify <ref>` (null if ref missing)
-//   logRange(head, base): string             — `git log <base>..HEAD` subjects+hashes
-//   logSubjects(head, base): string         — `git log <base>..HEAD` subjects only
-//   lsRemote(branch): string|null           — `git ls-remote --heads origin <branch>`
+// non-zero exit callers decide what to do with null)
+// hasOrigin: boolean does `git remote` list `origin`?
+// fetchBase(base): string|null `git fetch origin <base>` (null on failure)
+// revParse(ref): string|null `git rev-parse --verify <ref>` (null if ref missing)
+// logRange(head, base): string `git log <base>..HEAD` subjects+hashes
+// logSubjects(head, base): string `git log <base>..HEAD` subjects only
+// lsRemote(branch): string|null `git ls-remote --heads origin <branch>`
 import { execFileSync } from './exec-glue.mjs'
 
 function run(cmd, cmdArgs, opts = {}) {

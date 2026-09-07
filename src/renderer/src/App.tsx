@@ -27,7 +27,7 @@ export default function App(): React.ReactElement {
   // Try to close the workspace, running the SAME unsaved-changes prompt used by the
   // "close workspace" menu item. Returns true if the workspace was actually closed
   // (or didn't need to be). Used both by the menu and by the app-quit flow below so
-  // quitting the app is identical to closing the workspace — no separate logic / prompt.
+  // quitting the app is identical to closing the workspace no separate logic / prompt
   const tryCloseWorkspace = useCallback((): boolean => {
     const st = useUIStore.getState()
     if (st.exportOpen) {
@@ -236,7 +236,7 @@ export default function App(): React.ReactElement {
   // (with its unified unsaved-changes prompt). If the user confirms (or there's nothing
   // to save), tell the main process it's safe to quit; otherwise we simply don't reply
   // and the quit is aborted. New (memory-only) docs and edits to existing files are
-  // treated identically — no special quit prompt.
+  // treated identically no special quit prompt
   useEffect(() => {
     if (!window.api?.onAppRequestQuit) return
     const remove = window.api.onAppRequestQuit(() => {
@@ -246,7 +246,7 @@ export default function App(): React.ReactElement {
   }, [tryCloseWorkspace])
 
   // When files are added/removed in the directory of an open document, refresh the sidebar
-  // list. This does not prompt to reload the active document (that is onFileChanged's job) —
+  // list. This does not prompt to reload the active document (that is onFileChanged's job)
   // it only re-fetches the document list so new/deleted sibling files show up.
   //
   // The main process already coalesces a burst of folder events into one broadcast, but we
@@ -271,7 +271,7 @@ export default function App(): React.ReactElement {
         // Scope the refresh to the LIST only. A folder event says "the set of
         // files under this directory changed"; it says nothing about the content
         // of the document currently open, so invalidating DOCS_KEY wholesale also
-        // refetches every 'detail' entry — including the active document, whose
+        // refetches every 'detail' entry including the active document, whose
         // refetch competes with the very switch/edit the renderer may be busy
         // with. Narrowing to the active folder's list keeps the sidebar current
         // without touching the open document.
@@ -297,7 +297,7 @@ export default function App(): React.ReactElement {
   // ONE document's identity changed outside the app: its file was deleted (the record is
   // kept and marked missing, so the document stays open and can be saved back) or renamed
   // (the record was re-pointed at the new path, keeping its id). Re-read just that
-  // document's record so the title bar follows — strike-through for a deleted file, the
+  // document's record so the title bar follows strike-through for a deleted file, the
   // new name for a renamed one.
   //
   // Scoped to a single 'detail' entry on purpose, and kept separate from the folder event

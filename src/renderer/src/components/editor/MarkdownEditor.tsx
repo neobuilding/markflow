@@ -73,7 +73,7 @@ export function MarkdownEditor({
   // panes are first emptied (still the new id) and only filled once the query
   // data lands. `isDocSwitch` is true on the first of those and FALSE on the
   // second, so keying the undo-history isolation off it alone would leave the
-  // fill un-isolated — Ctrl+Z would then undo across the document boundary back
+  // fill un-isolated Ctrl+Z would then undo across the document boundary back
   // into the previous file.
   const pendingSwitchRef = useRef(false)
   // A programmatic write (document switch / external sync) is in progress: suppress the
@@ -125,7 +125,7 @@ export function MarkdownEditor({
   //   - EditorView.editable:  controls the DOM contenteditable attribute (user input only)
   // CRITICAL: both must ALWAYS be set to the SAME value in the SAME place. The original bug was that
   // they lived in separate effects, so toggling edit flipped EditorView.editable but left
-  // EditorState.readOnly locked — contenteditable='true' yet typing was hard-blocked (the exact
+  // EditorState.readOnly locked contenteditable='true' yet typing was hard-blocked (the exact
   // "toolbar says edit mode but you cannot type" symptom after switching files). Reconfiguring them
   // together makes a split state impossible.
   const readOnlyFacets = (
@@ -135,9 +135,9 @@ export function MarkdownEditor({
     EditorView.editable.of(isEditable),
   ]
 
-  // ── Right-click (context) menu: state, command snapshot & commands (PLAN §3) ──
-  // The menu is rendered inside this component so it holds the viewRef directly — no
-  // forwardRef command exposure is needed (PLAN §3-2).
+  // ── Right-click (context) menu: state, command snapshot & commands ──
+  // The menu is rendered inside this component so it holds the viewRef directly no
+  // forwardRef command exposure is needed
   const { t } = useT()
 
   type CmdState = {
@@ -156,7 +156,7 @@ export function MarkdownEditor({
   }
   const [cmd, setCmd] = useState<CmdState>(initialCmd)
   // CM selection cached on pointerdown (capture phase), used to restore the selection if
-  // the contextmenu event clears it (G4, PLAN §3-3 / §16.1-4).
+  // the contextmenu event clears it (G4, / )
   const cachedSelRef = useRef<{ from: number; to: number } | null>(null)
 
   const cacheSelection = useCallback(() => {
@@ -179,8 +179,8 @@ export function MarkdownEditor({
     return { from: live.from, to: live.to }
   }
 
-  // Detect a markdown link under the cursor so "Open Link in Browser" can enable (PLAN §3-4).
-  // Regex over the cursor's line is the pragmatic fallback (PLAN §3-4: "退化為行含 ]( 或裸 URL 正则").
+  // Detect a markdown link under the cursor so "Open Link in Browser" can enable
+  // Regex over the cursor's line is the pragmatic fallback (: " ]( URL ")
   const linkUrlAt = (state: EditorState, pos: number): string | null => {
     const line = state.doc.lineAt(pos)
     const re = /\[[^\]]*\]\(([^)\s]+)\)/g
@@ -193,7 +193,7 @@ export function MarkdownEditor({
     return null
   }
 
-  // Snapshot command availability when the menu opens (PLAN §3-4).
+  // Snapshot command availability when the menu opens
   const snapshotCommands = (open: boolean) => {
     if (!open) return
     const view = viewRef.current
@@ -260,7 +260,7 @@ export function MarkdownEditor({
     v.focus()
   }
   // Toggle a marker pair around the selection; with no selection, insert the markers with
-  // the cursor parked between them (PLAN §1.5: never insert the literal 'text' placeholder).
+  // the cursor parked between them (: never insert the literal 'text' placeholder)
   const wrap = (before: string, after: string) => {
     const v = viewRef.current
     /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
@@ -274,7 +274,7 @@ export function MarkdownEditor({
     v.focus()
   }
   const openLinkInBrowser = () => {
-    // Safe: this item is disabled when cmd.linkUrl is null (PLAN §3-4).
+    // Safe: this item is disabled when cmd.linkUrl is null
     void window.api.app.openExternal(cmd.linkUrl!)
   }
   const copyFilePath = () => {
@@ -283,7 +283,7 @@ export function MarkdownEditor({
   }
   const showInFolder = () => {
     // Safe: this item is disabled when filePath is null. .catch swallows a failure
-    // (e.g. an externally-deleted file, PLAN §5.3) so it fails gracefully.
+    // (e.g. an externally-deleted file) so it fails gracefully
     void Promise.resolve(window.api.app.showInFolder(filePath as string)).catch(() => {})
   }
 
@@ -350,8 +350,8 @@ export function MarkdownEditor({
     scrollSync.register('editor', view.scrollDOM)
 
     // Focus on mount when already editable (e.g. a freshly opened editable doc, or a document
-    // switch that lands in edit mode). Without this, a key-remounted editor has no focus and —
-    // especially under Electron — clicking into it may fail to focus, so typing appears dead until
+    // switch that lands in edit mode). Without this, a key-remounted editor has no focus and
+    // especially under Electron clicking into it may fail to focus, so typing appears dead until
     // the window loses and regains focus. autoFocus covers the explicit "open and focus" case.
     // window.focus() first helps Electron give the renderer process OS focus (a bare view.focus()
     // fired during a programmatic remount, with no user gesture, is silently dropped otherwise).
@@ -401,17 +401,17 @@ export function MarkdownEditor({
     const view = viewRef.current
     // The view is always created by the mount effect above before this effect
     // can run (it only re-runs on `editable` changes, which require a mounted
-    // editor), so `view` is never null here — defensive guard only.
+    // editor), so `view` is never null here defensive guard only
     /* v8 ignore next -- defensive: the mount effect always creates the view before this effect runs, so view is never null */
     if (!view) return
     view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(editable)) })
     // Entering edit mode: take focus so the user can type immediately without first clicking into
-    // the editor. This is the real fix for "switched to edit mode but couldn't type" — the editor
+    // the editor. This is the real fix for "switched to edit mode but couldn't type" the editor
     // was editable (facet=true) but simply had no focus, and under Electron a click didn't always
     // re-focus it. Leaving edit mode must NOT steal focus, so only focus when becoming editable.
     if (editable) {
       // Under Electron a programmatic view.focus() (fired from a store change, e.g. clicking the
-      // edit-mode button) is dropped unless the renderer already has OS focus — that's why typing
+      // edit-mode button) is dropped unless the renderer already has OS focus that's why typing
       // only worked after Alt-Tab away and back. requestFocus() focuses the content DOM directly
       // (with a few animation-frame retries) so typing works immediately when entering edit mode.
       requestFocus()
@@ -440,12 +440,12 @@ export function MarkdownEditor({
     // A document switch must always re-apply the current editable state, otherwise the editor
     // can stay stuck in the previous document's read-only/edit mode after switching files
     // (editable is a global flag that the switch itself doesn't change, so its dedicated effect
-    // may not re-run — leaving the editor out of sync with the toolbar). Reconfigure BOTH facets
+    // may not re-run leaving the editor out of sync with the toolbar). Reconfigure BOTH facets
     // together so read-only and editable can never diverge.
     if (isDocSwitch) {
       // NOTE on EditorState.readOnly: it is an advisory facet. CodeMirror's own
       // code only reads it to disable its built-in commands / input handling and
-      // to set aria-readonly — it does NOT block a programmatic view.dispatch()
+      // to set aria-readonly it does NOT block a programmatic view.dispatch
       // (verified against @codemirror/view: the only read of state.readOutside of
       // input & command paths is contentAttrs["aria-readonly"]). The content write
       // below would therefore succeed with the lock ON.
@@ -496,7 +496,7 @@ export function MarkdownEditor({
 
   // Focus the editor on a REAL user gesture (pointerdown into the editor area). This runs
   // synchronously inside the browser's user-activation context, so the browser WILL grant the
-  // webContents OS focus and dispatch a focus event — making CodeMirror's hasFocus=true and
+  // webContents OS focus and dispatch a focus event making CodeMirror's hasFocus=true and
   // keystrokes reach the editor. A programmatic focus() (e.g. from a store change / setTimeout) is
   // dropped by Windows' foreground-lock, which is exactly why typing only worked after Alt-Tab.
   const handlePointerDown = useCallback(() => {
@@ -527,7 +527,7 @@ export function MarkdownEditor({
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem
-          data-testid="ctx-undo"
+          data-testid="me-undo"
           shortcut={formatShortcut('⌘Z')}
           disabled={!editable || !cmd.canUndo}
           onClick={doUndo}
@@ -535,7 +535,7 @@ export function MarkdownEditor({
           <Undo2 size={13} /> {t('ctx.undo')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-redo"
+          data-testid="me-redo"
           shortcut={formatShortcut('⌘⇧Z')}
           disabled={!editable || !cmd.canRedo}
           onClick={doRedo}
@@ -543,7 +543,7 @@ export function MarkdownEditor({
           <Redo2 size={13} /> {t('ctx.redo')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-cut"
+          data-testid="me-cut"
           shortcut={formatShortcut('⌘X')}
           disabled={!editable || !cmd.hasSelection}
           onClick={() => void doCut()}
@@ -551,7 +551,7 @@ export function MarkdownEditor({
           <Scissors size={13} /> {t('ctx.cut')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-copy"
+          data-testid="me-copy"
           shortcut={formatShortcut('⌘C')}
           disabled={!cmd.hasSelection}
           onClick={() => void doCopy()}
@@ -559,7 +559,7 @@ export function MarkdownEditor({
           <Copy size={13} /> {t('ctx.copy')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-paste"
+          data-testid="me-paste"
           shortcut={formatShortcut('⌘V')}
           disabled={!editable}
           onClick={() => void doPaste()}
@@ -567,7 +567,7 @@ export function MarkdownEditor({
           <ClipboardPaste size={13} /> {t('ctx.paste')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-select-all"
+          data-testid="me-select-all"
           shortcut={formatShortcut('⌘A')}
           disabled={cmd.docEmpty}
           onClick={doSelectAll}
@@ -576,7 +576,7 @@ export function MarkdownEditor({
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem
-          data-testid="ctx-bold"
+          data-testid="me-bold"
           shortcut={formatShortcut('⌘B')}
           disabled={!editable}
           onClick={() => wrap('**', '**')}
@@ -584,7 +584,7 @@ export function MarkdownEditor({
           <Bold size={13} /> {t('editor.fmt.bold')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-italic"
+          data-testid="me-italic"
           shortcut={formatShortcut('⌘I')}
           disabled={!editable}
           onClick={() => wrap('_', '_')}
@@ -592,7 +592,7 @@ export function MarkdownEditor({
           <Italic size={13} /> {t('editor.fmt.italic')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-inline-code"
+          data-testid="me-inline-code"
           shortcut={formatShortcut('⌘E')}
           disabled={!editable}
           onClick={() => wrap('`', '`')}
@@ -600,7 +600,7 @@ export function MarkdownEditor({
           <Code size={13} /> {t('editor.fmt.code')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-link"
+          data-testid="me-link"
           shortcut={formatShortcut('⌘K')}
           disabled={!editable}
           onClick={() => wrap('[', '](url)')}
@@ -608,18 +608,18 @@ export function MarkdownEditor({
           <Link2 size={13} /> {t('editor.fmt.link')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-open-link-in-browser"
+          data-testid="me-open-link-in-browser"
           disabled={!cmd.linkUrl}
           onClick={openLinkInBrowser}
         >
           <ExternalLink size={13} /> {t('ctx.openLinkInBrowser')}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem data-testid="ctx-copy-path" disabled={!filePath} onClick={copyFilePath}>
+        <ContextMenuItem data-testid="me-copy-path" disabled={!filePath} onClick={copyFilePath}>
           <FileText size={13} /> {t('editor.copyFullPath')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-show-in-folder"
+          data-testid="me-show-in-folder"
           disabled={!filePath}
           onClick={showInFolder}
         >

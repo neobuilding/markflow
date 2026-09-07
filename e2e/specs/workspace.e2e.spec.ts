@@ -51,7 +51,7 @@ test.describe('workspace lifecycle (close / delete)', () => {
     })
 
     expect(id).toBeTruthy()
-    // The draft is gone — no document item remains in the sidebar.
+    // The draft is gone no document item remains in the sidebar
     await expect(page.getByTestId('doc-item')).toHaveCount(0)
     await expect(page.getByText(/no document selected|no folder open/i)).toBeVisible()
   })
@@ -60,7 +60,7 @@ test.describe('workspace lifecycle (close / delete)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // Open, then close the document, then create again — the editor comes back.
+    // Open, then close the document, then create again the editor comes back
     await createViaButton(page)
     await page.evaluate(() => (window as any).__uiStore.getState().closeDocument())
     await expect(page.locator('.cm-content')).toHaveCount(0)

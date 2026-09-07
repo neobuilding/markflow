@@ -1,4 +1,4 @@
-// files:resolve-paths handler — expand dropped/passed paths into all their .md
+// files:resolve-paths handler expand dropped/passed paths into all their .md
 // files, filter files by extension, and return de-duplicated directory and
 // Markdown file lists. Extracted from index.ts.
 import { ipcMain } from 'electron'

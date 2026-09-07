@@ -1,7 +1,7 @@
 import type { Document } from '../types'
 import type { FileTreeNode } from './utils'
 
-// PLAN §6.3 (G2): memory-only (unsaved) documents (filePath === '') must be listed in the sidebar
+// (G2): memory-only (unsaved) documents (filePath === '') must be listed in the sidebar
 // under a dedicated "Unsaved drafts" group, even when a folder is open. isInFolder() always returns
 // false for empty paths, so they are split out explicitly here instead of via folder matching.
 

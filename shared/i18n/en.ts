@@ -1,4 +1,4 @@
-// English (en) UI translation dictionary — the source of truth and fallback language.
+// English (en) UI translation dictionary the source of truth and fallback language
 // Keys are dot-namespaced by feature/component. Any key missing from another locale
 // falls back to the English string (handled by i18next's fallbackLng: 'en').
 // Interpolation uses i18next double-brace placeholders, e.g. {{name}}.
@@ -23,25 +23,27 @@ export const en = {
   'sidebar.delete': 'Delete',
   'sidebar.up': 'Up to parent folder',
   'sidebar.enter': 'Open this folder',
+  // Placeholder of the inline <input> used to name a new/renamed folder
+  'sidebar.folderNamePlaceholder': 'Folder name…',
 
   // ── Editor pane ────────────────────────────────────────────────────────
   'editor.save': 'Save',
-  'editor.saveShortcut': 'Save ({shortcut})',
+  'editor.saveShortcut': 'Save ({{shortcut}})',
   'editor.noChanges': 'No changes to save',
   'editor.saveSwitchEdit': 'Save — switch to Edit mode first',
   'editor.saveAs': 'Save As…',
-  'editor.saveAsShortcut': 'Save As… ({shortcut})',
+  'editor.saveAsShortcut': 'Save As… ({{shortcut}})',
   'editor.saveAsSwitchEdit': 'Save As… — switch to Edit mode first',
   'editor.reload': 'Reload from Disk',
-  'editor.reloadShortcut': 'Reload from Disk ({shortcut})',
+  'editor.reloadShortcut': 'Reload from Disk ({{shortcut}})',
   'editor.fileDetails': 'File details',
-  'editor.fileDetailsShortcut': 'File details ({shortcut})',
+  'editor.fileDetailsShortcut': 'File details ({{shortcut}})',
   'editor.export': 'Export as HTML…',
-  'editor.exportShortcut': 'Export as HTML… ({shortcut})',
+  'editor.exportShortcut': 'Export as HTML… ({{shortcut}})',
   'editor.closeFile': 'Close file',
   'editor.renameTitle': 'Rename file',
   'editor.fileDeleted': 'Deleted on disk — save to restore it',
-  'editor.toggleSidebarShortcut': 'Toggle Sidebar ({shortcut})',
+  'editor.toggleSidebarShortcut': 'Toggle Sidebar ({{shortcut}})',
   'editor.switchReadOnly': 'Switch to read-only mode',
   'editor.switchEdit': 'Switch to edit mode',
   'editor.readOnly': 'Read-only',
@@ -161,6 +163,13 @@ export const en = {
   'app.deleteConfirm': 'Delete this file?',
   'app.discardDraftConfirm': 'Discard this draft? This cannot be undone.',
   'app.deleteConfirmOk': 'Delete',
+  // Folder deletion : the folder is moved to the OS trash, not erased
+  'app.deleteFolderConfirm': 'Move "{{name}}" and everything inside it to the Trash?',
+  // Line-ending switch : a destructive rewrite of the file on disk
+  'app.switchEolConfirm': 'Switch line endings to {{eol}}?',
+  'app.switchEolDetail':
+    'The file is rewritten and reloaded from disk, discarding unsaved changes.',
+  'app.switchEolOk': 'Switch',
   'app.cancel': 'Cancel',
   'app.printNotReady':
     'Preview is not ready yet. Please switch to the preview or split view first.',
@@ -209,7 +218,7 @@ export const en = {
   'menu.filterHtml': 'HTML',
 
   // ── Context menus (ctx.*) ─────────────────────────────────────────────
-  // Right-click menu items across all areas. 57 keys, en/zh-CN parity required.
+  // Right-click menu items across all areas. 56 keys, en/zh-CN parity required.
   // Editor
   'ctx.undo': 'Undo',
   'ctx.redo': 'Redo',
@@ -218,31 +227,31 @@ export const en = {
   'ctx.paste': 'Paste',
   'ctx.selectAll': 'Select All',
   'ctx.openLinkInBrowser': 'Open Link in Browser',
-  // Preview — link
+  // Preview link
   'ctx.openLink': 'Open Link',
   'ctx.copyLink': 'Copy Link Address',
-  // Preview — code block
+  // Preview code block
   'ctx.copyCode': 'Copy Code',
   'ctx.copyCodeBlock': 'Copy as Fenced Block',
   'ctx.copyLang': 'Copy Language',
-  // Preview — image
+  // Preview image
   'ctx.copyImage': 'Copy Image',
   'ctx.saveImageAs': 'Save Image As…',
   'ctx.copyImageSrc': 'Copy Image Address',
   'ctx.copyImageAlt': 'Copy Alt Text',
-  // Preview — table
+  // Preview table
   'ctx.copyTable': 'Copy Table',
   'ctx.copyTableTsv': 'Copy Table for Spreadsheet',
-  // Preview — task
+  // Preview task
   'ctx.copyTaskText': 'Copy Task Text',
-  // Preview — formula
+  // Preview formula
   'ctx.copyFormula': 'Copy Formula',
   'ctx.copyFormulaSource': 'Copy TeX Source',
-  // Preview — diagram (mermaid)
+  // Preview diagram (mermaid)
   'ctx.copyDiagramSource': 'Copy Diagram Source',
   'ctx.copySvg': 'Copy as SVG',
   'ctx.saveSvgAs': 'Save Diagram As SVG…',
-  // Preview — heading
+  // Preview heading
   'ctx.copyHeading': 'Copy Heading Text',
   'ctx.copyAnchorId': 'Copy Anchor ID',
   // Sidebar document item
@@ -258,6 +267,8 @@ export const en = {
   'ctx.copyFolderPath': 'Copy Folder Path',
   'ctx.newDocHere': 'New Document in This Folder',
   'ctx.newSubfolder': 'New Subfolder…',
+  // Current folder bar: create a folder directly under the opened folder.
+  'ctx.newFolderHere': 'New Folder Here…',
   'ctx.renameFolder': 'Rename Folder…',
   'ctx.deleteFolder': 'Delete Folder',
   'ctx.refresh': 'Refresh',
@@ -277,16 +288,13 @@ export const en = {
   // About dialog
   'ctx.copyVersion': 'Copy Version',
   'ctx.copyVersionFull': 'Copy Name and Version',
-  // Export dialog
-  'ctx.chooseSaveLocation': 'Choose Save Location…',
-  'ctx.copyToClipboard': 'Copy to Clipboard',
   // Drag bars
   'ctx.resetSplit': 'Reset Split to 50%',
   'ctx.resetSidebarWidth': 'Reset Sidebar Width',
   'ctx.collapseSidebar': 'Collapse Sidebar',
 
   // ── Editor extra ───────────────────────────────────────────────────────
-  // Tooltip shown on disabled (read-only) rename/save menu items (PLAN §2.2).
+  // Tooltip shown on disabled (read-only) rename/save menu items
   'editor.needsEditMode': 'Switch to edit mode first',
 } as const
 

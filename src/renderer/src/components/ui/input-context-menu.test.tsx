@@ -5,7 +5,7 @@ import { InputContextMenu } from './input-context-menu'
 import '../../i18n'
 
 // jsdom implements neither `document.execCommand` nor `navigator.clipboard`, so both are
-// injected per test (PLAN §13.1.1-3).
+// injected per test
 const execCommand = vi.fn()
 let readText = vi.fn(async () => 'pasted')
 
@@ -45,24 +45,24 @@ describe('InputContextMenu', () => {
   it('runs undo / redo through execCommand (keeps the native undo stack)', async () => {
     const input = mount()
     await open(input)
-    fireEvent.click(await screen.findByTestId('ctx-undo'))
+    fireEvent.click(await screen.findByTestId('input-undo'))
     expect(execCommand).toHaveBeenCalledWith('undo')
     await open(input)
-    fireEvent.click(await screen.findByTestId('ctx-redo'))
+    fireEvent.click(await screen.findByTestId('input-redo'))
     expect(execCommand).toHaveBeenCalledWith('redo')
   })
 
   it('copies the selected slice through the app clipboard channel', async () => {
     const input = mount('hello world', { select: [0, 5] })
     await open(input)
-    fireEvent.click(await screen.findByTestId('ctx-copy'))
+    fireEvent.click(await screen.findByTestId('input-copy'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('hello')
   })
 
   it('cuts by copying and then deleting the selection via insertText', async () => {
     const input = mount('hello world', { select: [0, 5] })
     await open(input)
-    fireEvent.click(await screen.findByTestId('ctx-cut'))
+    fireEvent.click(await screen.findByTestId('input-cut'))
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('hello')
     expect(execCommand).toHaveBeenCalledWith('insertText', false, '')
   })
@@ -71,7 +71,7 @@ describe('InputContextMenu', () => {
     const input = mount()
     await open(input)
     await act(async () => {
-      fireEvent.click(await screen.findByTestId('ctx-paste'))
+      fireEvent.click(await screen.findByTestId('input-paste'))
     })
     expect(readText).toHaveBeenCalled()
     expect(execCommand).toHaveBeenCalledWith('insertText', false, 'pasted')
@@ -80,7 +80,7 @@ describe('InputContextMenu', () => {
   it('selects the whole value', async () => {
     const input = mount('hello world', { select: [0, 3] })
     await open(input)
-    fireEvent.click(await screen.findByTestId('ctx-select-all'))
+    fireEvent.click(await screen.findByTestId('input-select-all'))
     expect(input.selectionStart).toBe(0)
     expect(input.selectionEnd).toBe('hello world'.length)
   })
@@ -88,35 +88,35 @@ describe('InputContextMenu', () => {
   it('greys cut / copy without a selection but keeps select-all', async () => {
     const input = mount('hello', { select: [2, 2] })
     await open(input)
-    expect(await screen.findByTestId('ctx-cut')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-copy')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-select-all')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('input-cut')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-copy')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-select-all')).not.toHaveAttribute('aria-disabled', 'true')
   })
 
   it('greys cut / copy / select-all for an empty input', async () => {
     const input = mount('')
     await open(input)
-    expect(await screen.findByTestId('ctx-cut')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-copy')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-select-all')).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('input-cut')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-copy')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-select-all')).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('greys cut / paste / undo / redo on a read-only input', async () => {
     const input = mount('/out/a.html', { readOnly: true })
     await open(input)
-    expect(await screen.findByTestId('ctx-cut')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-paste')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-undo')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-redo')).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('input-cut')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-paste')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-undo')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-redo')).toHaveAttribute('aria-disabled', 'true')
     // Copy and select-all remain useful on a read-only field.
-    expect(screen.getByTestId('ctx-copy')).not.toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('ctx-select-all')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-copy')).not.toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('input-select-all')).not.toHaveAttribute('aria-disabled', 'true')
   })
 
   it('exposes a platform-aware shortcut hint on every item', async () => {
     const input = mount()
     await open(input)
-    const undo = await screen.findByTestId('ctx-undo')
+    const undo = await screen.findByTestId('input-undo')
     // The hint is the `aria-hidden` <span> (not the lucide <svg>, which is also aria-hidden).
     const hint = undo.querySelector('span[aria-hidden="true"]')
     expect(hint).not.toBeNull()
@@ -127,6 +127,6 @@ describe('InputContextMenu', () => {
     const input = mount('')
     await open(input)
     // Closing (onOpenChange(false)) must be a no-op for the snapshot path.
-    expect(await screen.findByTestId('ctx-select-all')).toHaveAttribute('aria-disabled', 'true')
+    expect(await screen.findByTestId('input-select-all')).toHaveAttribute('aria-disabled', 'true')
   })
 })

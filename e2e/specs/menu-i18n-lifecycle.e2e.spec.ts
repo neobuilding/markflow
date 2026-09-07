@@ -4,16 +4,16 @@ import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/laun
 
 // Covers two Plan areas the existing e2e specs never reached:
 //
-//  1. §1.2.3 + §3  — native menu language sync. `app:set-language` (moved into
+// 1. + native menu language sync. `app:set-language` (moved into
 //     registerMenuHandlers() in menu.ts) must keep the native application menu
-//     labels in sync with the renderer language. The plan warns (§1.2.3 timing
+// labels in sync with the renderer language. The plan warns ( timing
 //     note) that this handler was originally registered inside whenReady and is
-//     now registered before it — verify the menu actually re-localizes.
+// now registered before it verify the menu actually re-localizes
 //
-//  2. §1.2.1 + §1.2.3 (lifecycle.ts) — the unsaved-changes quit guard. The
+// 2. + (lifecycle.ts) the unsaved-changes quit guard. The
 //     window close / before-quit handler (now in lifecycle.ts, reading
 //     isQuiting via state.ts) sends `app:request-quit` to the renderer, which
-//     opens the app-modal `dialog:confirm` (the focus-bug fix from §0 R1). We
+// opens the app-modal `dialog:confirm` (the focus-bug fix from R1). We
 //     assert the guard path still fires end-to-end after the split.
 test.describe('native menu i18n + quit lifecycle', () => {
   let handle: AppHandle
@@ -67,7 +67,7 @@ test.describe('native menu i18n + quit lifecycle', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // menu.ts (§1.2, moved with its handlers into registerMenuHandlers) exposes
+    // menu.ts (, moved with its handlers into registerMenuHandlers) exposes
     // setEditable / setHasDocument / setPrinting to the renderer. After the split
     // these must still deliver to the menu without throwing.
     await page.evaluate(() => {

@@ -26,7 +26,7 @@
 //
 // By default a GitService is provided so the `commits` block renders the real
 // `git log <base>..HEAD`. Pass `--no-git` to run without any git service (the
-// `commits` plugin then renders empty) — handy on machines without git or to
+// `commits` plugin then renders empty) handy on machines without git or to
 // inspect just the template structure.
 //
 // Exit codes: 0 on success, 1 on error (missing --head, or unreadable file).

@@ -36,7 +36,7 @@ export function hashCode(s: string): string {
 }
 
 // Render the fence language as a `data-lang` attribute so the preview context menu can
-// offer "Copy language" (PLAN §12 能力 4). The value comes from the fence info string
+// offer "Copy language" . The value comes from the fence info string
 // (user-authored), so it is attribute-escaped before being interpolated into the tag.
 // DOMPurify lets it through because `data-*` is allowed by default (ALLOW_DATA_ATTR).
 export function codeLangAttr(lang: string): string {
@@ -100,7 +100,7 @@ for (const name of ['warning', 'note', 'tip', 'caution', 'important', 'info']) {
 // Only enable the dollars delimiter style (not the brackets \(…\) / \[…\] style).
 // [Pure dependency, zero patching] We do not modify texmath internals: keep texmath's default <eq>/<eqn>/<section>
 // wrappers, which are non-standard tags dropped by DOMPurify during sanitization while the inner KaTeX is kept;
-// <section> is a standard HTML tag and is kept, serving only as a harmless block-level semantic wrapper (see Plan §7 risk 4).
+// <section> is a standard HTML tag and is kept, serving only as a harmless block-level semantic wrapper (see the Plan doc's sanitization risk discussion).
 // Formula boundary detection (delimiter recognition, inline/block split, currency $ guard via $_pre/$_post) is 100%
 // from the regex rules injected by texmath; this project writes no $ / $$ boundary-detection code of its own.
 md.use(texmath, {

@@ -1,9 +1,9 @@
-// folderMatch.ts — shared path-matching helper for the document store.
+// folderMatch.ts shared path-matching helper for the document store
 //
 // Kept in its own module (no module-level singleton state) so it can be imported
 // both by `documentStore` and by tests without pulling in the store's Map
 // singleton. The renderer has its own equivalent in src/renderer/src/lib/utils.ts;
-// the two must stay semantically identical (plan §4 / §6.#9) — changes here should
+// the two must stay semantically identical (plan / #9) changes here should
 // be mirrored there.
 
 // Whether a file's directory is inside `folder` (including folder itself);

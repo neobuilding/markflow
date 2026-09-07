@@ -13,7 +13,7 @@ export function NewDocumentDialog(): React.ReactElement {
   const { newDocOpen, setNewDocOpen, setActiveDocumentId, setEditable, setIsNewUnsaved } =
     useUIStore()
   const [title, setTitle] = useState('')
-  // Ref for the right-click edit menu (PLAN §11 / 需求 §5.14).
+  // Ref for the right-click edit menu
   const titleRef = useRef<HTMLInputElement>(null)
   const [ext, setExt] = useState('.md')
   const createMut = useCreateDocument()
@@ -42,7 +42,7 @@ export function NewDocumentDialog(): React.ReactElement {
             <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
               {t('new.documentTitle')}
             </label>
-            {/* Right-click edit menu (PLAN §11 / 需求 §5.14). */}
+            {/* Right-click edit menu */}
             <InputContextMenu targetRef={titleRef}>
               <Input
                 ref={titleRef}

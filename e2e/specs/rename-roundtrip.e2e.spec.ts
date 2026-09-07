@@ -1,5 +1,5 @@
-// TODO-4 regression (docs.local/todo_title-edit.md): renaming a file — via the title
-// bar or externally — and renaming it back must NEVER close the open document or the
+// TODO-4 regression (docs.local/todo_title-edit.md): renaming a file via the title
+// bar or externally and renaming it back must NEVER close the open document or the
 // workspace. Guards the main-process watcher fixes: the existsSync check in
 // onFileRemoved (stale rename unlink), the missing-flag instead of record deletion,
 // and findRenamedDocument folding an external rename back into the SAME record.
@@ -107,7 +107,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
 
     await renameViaUI('b.md')
     await expect(page.getByTestId('title-btn')).toHaveText('b.md')
-    // The rename must have actually been WRITTEN TO DISK by that Save click — the
+    // The rename must have actually been WRITTEN TO DISK by that Save click the
     // title bar alone shows the draft (TODO 3), so prove the save landed: b.md
     // exists, a.md is gone, and the store record points at b.md.
     expect(existsSync(join(scratch, 'b.md'))).toBe(true)
@@ -144,7 +144,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
     expect(state.activeDocumentId).toBe(id)
     expect(state.activeFolder).not.toBeNull()
 
-    // Harness sanity: the folder watcher must be LIVE — an external file creation
+    // Harness sanity: the folder watcher must be LIVE an external file creation
     // must reach the renderer as a folder-changed event. Without this check the
     // assertions above could pass vacuously with a dead watcher.
     writeFileSync(join(scratch, 'zz-probe.md'), '# zz', 'utf-8')
@@ -192,7 +192,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
     await expect(page.getByTestId('title-btn')).toHaveText('c.md')
     await page.waitForTimeout(2500)
 
-    // And back: c.md -> a.md — the exact shape of a stale unlink for a.md.
+    // And back: c.md -> a.md the exact shape of a stale unlink for a.md
     renameSync(fileC, fileA)
     await expect(page.getByTestId('title-btn')).toHaveText('a.md')
     await page.waitForTimeout(3000)
@@ -201,7 +201,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
     const trace = (await page.evaluate(() => (window as any).__trace)) as string[]
     console.log('--- external trace ---\n' + trace.join('\n'))
 
-    // The SAME record (id) must have followed both renames — never dropped, never
+    // The SAME record (id) must have followed both renames never dropped, never
     // replaced by a new record that would leave the editor in the notFound state.
     expect(state.activeDocumentId).toBe(id)
     expect(state.activeFolder).not.toBeNull()

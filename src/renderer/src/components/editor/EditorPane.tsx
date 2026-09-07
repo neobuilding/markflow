@@ -16,6 +16,8 @@ import {
   PanelLeft,
   X,
   FolderOpen,
+  Search,
+  Plus,
   Save,
   SaveAll,
   RotateCcw,
@@ -54,12 +56,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu'
-import { ContextMenu, ContextMenuTrigger, ContextMenuContent } from '../ui/context-menu'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '../ui/context-menu'
 import { FileMenuItems, type DocMenuActions } from './FileMenuItems'
 import { InputContextMenu } from '../ui/input-context-menu'
 
 // Reveal a path in the system file manager. Failures (a file deleted outside the app) are
-// swallowed so they never surface as an unhandled rejection (PLAN §5.6 / §5.7).
+// swallowed so they never surface as an unhandled rejection
 function revealInFolder(target: string): void {
   void Promise.resolve(window.api.app.showInFolder(target)).catch(() => {})
 }
@@ -110,11 +118,11 @@ export function EditorPane(): React.ReactElement {
   const handleSaveAs = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
     // The Save As menu item is only registered/enabled when a document is active,
-    // so `id` is never null here — defensive guard only.
+    // so `id` is never null here defensive guard only
     /* v8 ignore next -- defensive: the save-as menu item is only registered/enabled when a document is active, so id is never null */
     if (!id) return
     // In read-only mode, block Save As and prompt the user to switch to edit mode
-    // (the menu item is disabled in read-only mode, so this is never hit) — defensive.
+    // (the menu item is disabled in read-only mode, so this is never hit) defensive
     /* v8 ignore next -- defensive: the save-as menu item is disabled in read-only mode, so this is never hit */
     if (!useUIStore.getState().editable) return
     const { localContent, localTitle } = draftRef.current
@@ -129,11 +137,11 @@ export function EditorPane(): React.ReactElement {
     const defaultPath = doc?.filePath ? `${dirName(doc.filePath)}/${draftName}` : draftName
     // Save As: follow the source document's on-disk line ending (the new file is a copy of this document)
     const eol = doc?.filePath
-      ? // v8 mis-attributes the executed `await ….catch()` branch of this ternary to
+      ? // v8 mis-attributes the executed `await .catch` branch of this ternary to
         // the `:` line below, so it reports the `?` line as uncovered even though the
         // Save As test asserts the eol call runs. Mirror of the identical handleSave
-        // expression (line 165) which v8 records correctly — a known v8 quirk.
-        /* v8 ignore next -- v8 mis-attributes the executed `await ….catch()` of this ternary branch to the `:` line, so it reports this branch as uncovered even though the Save As test asserts eol() runs */
+        // expression (line 165) which v8 records correctly a known v8 quirk
+        /* v8 ignore next -- v8 mis-attributes the executed `await .catch` of this ternary branch to the `:` line, so it reports this branch as uncovered even though the Save As test asserts eol runs */
         await window.api.documents.eol(doc.filePath).catch(() => getEol())
       : getEol()
     let newFilePath: string | null
@@ -149,8 +157,8 @@ export function EditorPane(): React.ReactElement {
         id,
         filePath: newFilePath,
         updates: {
-          // The stored title is extension-free — the main process re-appends the file's
-          // own extension when it renames — so strip the one the title bar shows.
+          // The stored title is extension-free the main process re-appends the file's
+          // own extension when it renames so strip the one the title bar shows
           title: stripMarkdownExt(localTitle.trim()) || 'Untitled',
           content: toDiskFormat(localContent, eol),
         },
@@ -172,11 +180,11 @@ export function EditorPane(): React.ReactElement {
   const handleSave = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
     // The Save menu item is only registered/enabled when a document is active,
-    // so `id` is never null here — defensive guard only.
+    // so `id` is never null here defensive guard only
     /* v8 ignore next -- defensive: the save menu item is only registered/enabled when a document is active, so id is never null */
     if (!id) return
     // In read-only mode, block saving and prompt the user to switch to edit mode
-    // (the menu item is disabled in read-only mode, so this is never hit) — defensive.
+    // (the menu item is disabled in read-only mode, so this is never hit) defensive
     /* v8 ignore next -- defensive: the save menu item is disabled in read-only mode, so this is never hit */
     if (!useUIStore.getState().editable) return
     // A brand-new in-app document hasn't been placed at a user-chosen path yet: the first Save
@@ -216,7 +224,7 @@ export function EditorPane(): React.ReactElement {
   const handleReload = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
     // The Reload menu item is only registered/enabled when a document is active,
-    // so `id` is never null here — defensive guard only.
+    // so `id` is never null here defensive guard only
     /* v8 ignore next -- defensive: the reload menu item is only registered/enabled when a document is active, so id is never null */
     if (!id) return
     useUIStore.getState().setSaving(true)
@@ -276,8 +284,8 @@ export function EditorPane(): React.ReactElement {
     return rm
   }, [])
 
-  // Consume a pending file action requested by another component (the sidebar's "Rename…"
-  // menu, PLAN §5.1; the status bar's save/save-as/reload items, PLAN §8). Each action is
+  // Consume a pending file action requested by another component (the sidebar's "Rename"
+  // menu; the status bar's save/save-as/reload items). Each action is
   // dispatched to its handler once the active document is fully loaded; the request is cleared
   // after dispatch (or immediately when the document is not editable / not yet ready).
   const pendingFileAction = useUIStore((s) => s.pendingFileAction)
@@ -343,12 +351,12 @@ export function EditorPane(): React.ReactElement {
   // leading root `/` is also removed and must be prepended back. For Windows drive paths,
   // the drive letter (e.g. `D:`) is kept as the first segment; clicking it should resolve
   // to `D:/`, so we restore the trailing slash in that case.
-  // NOTE: UNC paths (//server/share/...) are NOT supported — they start with `/` and are
+  // NOTE: UNC paths (//server/share/...) are NOT supported they start with `/` and are
   // treated as POSIX absolute paths here (and by the store's `isInFolder`), so the leading
   // `//` is dropped and navigation would be wrong. This mirrors the rest of the codebase,
   // which also does not handle UNC paths.
-  // Absolute directory path represented by breadcrumb segment `index` — shared by the
-  // click handler and the segment's context menu (PLAN §5.7).
+  // Absolute directory path represented by breadcrumb segment `index` shared by the
+  // click handler and the segment's context menu
   // `doc` is guaranteed non-null here: the breadcrumb only renders when `doc.filePath`
   // exists, and the render body already accesses `doc.filePath` unguarded. A defensive
   // `if (!doc?.filePath) return` would be an unreachable branch.
@@ -389,7 +397,7 @@ export function EditorPane(): React.ReactElement {
   )
 
   // Shared file-menu action set for the title-bar file name and the path breadcrumb
-  // (PLAN §7 / 需求 §5.6, §5.7). Both surfaces feed the SAME FileMenuItems definition so the
+  // Both surfaces feed the SAME FileMenuItems definition so the
   // two menus can never drift apart. Path items are greyed out by the caller when the doc is
   // a memory-only draft (no filePath), so the disabled guards make `doc?.filePath as string`
   // safe to pass here.
@@ -401,7 +409,8 @@ export function EditorPane(): React.ReactElement {
     save: () => void handleSave(),
     saveAs: () => void handleSaveAs(),
     reload: () => void handleReload(),
-    details: () => useUIStore.getState().setFileDetailsId(doc!.id),
+    details: () =>
+      useUIStore.getState().setFileDetailsId(useUIStore.getState().activeDocumentId as string),
     exportHtml: () => useUIStore.getState().setExportOpen(true),
   }
 
@@ -409,7 +418,7 @@ export function EditorPane(): React.ReactElement {
   const splitContainerRef = useRef<HTMLDivElement>(null)
   const [splitRatio, setSplitRatio] = useState(0.5)
   const isSplitDragging = useRef(false)
-  // Ref for the right-click edit menu while the title is being renamed (PLAN §11 / §5.14).
+  // Ref for the right-click edit menu while the title is being renamed
   const titleInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -463,7 +472,7 @@ export function EditorPane(): React.ReactElement {
           {t('editor.toggleSidebarShortcut', { shortcut: formatShortcut('⌘\\') })}
         </TooltipContent>
       </Tooltip>
-      {/* Save / Save As / Reload — grouped with Open/Close as file operations, kept on the left */}
+      {/* Save / Save As / Reload grouped with Open/Close as file operations, kept on the left */}
       {activeDocumentId && (
         <>
           <Tooltip>
@@ -614,43 +623,93 @@ export function EditorPane(): React.ReactElement {
           {CommonToolbar}
           <div className="flex-1" />
         </div>
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center animate-fade-in">
-            <div className="w-16 h-16 rounded-2xl bg-[var(--color-accent-muted)] flex items-center justify-center mx-auto mb-4">
-              <Edit3 size={28} className="text-accent" />
+        {/* Empty state right-click menu . The pane has no document yet, so the only useful actions are the ones that create or find one */}
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              className="flex-1 flex items-center justify-center"
+              data-testid="editor-empty-state"
+            >
+              <div className="text-center animate-fade-in">
+                <div className="w-16 h-16 rounded-2xl bg-[var(--color-accent-muted)] flex items-center justify-center mx-auto mb-4">
+                  <Edit3 size={28} className="text-accent" />
+                </div>
+                <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">
+                  {t('editor.noDocument')}
+                </h2>
+                <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
+                  {t('editor.openToGetStarted')}
+                </p>
+                <div className="flex items-center justify-center gap-2">
+                  <Button variant="accent" size="sm" onClick={handleOpenFile}>
+                    {t('sidebar.openFileAction')}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleOpenFolder}
+                    data-testid="open-folder-btn"
+                  >
+                    {t('sidebar.openFolderAction')}
+                  </Button>
+                </div>
+              </div>
             </div>
-            <h2 className="text-lg font-semibold text-[var(--color-text-primary)] mb-1">
-              {t('editor.noDocument')}
-            </h2>
-            <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
-              {t('editor.openToGetStarted')}
-            </p>
-            <div className="flex items-center justify-center gap-2">
-              <Button variant="accent" size="sm" onClick={handleOpenFile}>
-                {t('sidebar.openFileAction')}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleOpenFolder}
-                data-testid="open-folder-btn"
-              >
-                {t('sidebar.openFolderAction')}
-              </Button>
-            </div>
-          </div>
-        </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem
+              data-testid="ed-new-document"
+              onClick={() => useUIStore.getState().setNewDocOpen(true)}
+            >
+              <Plus size={13} /> {t('sidebar.newDocumentAction')}
+            </ContextMenuItem>
+            <ContextMenuItem
+              data-testid="ed-search-documents"
+              onClick={() => useUIStore.getState().setSearchOpen(true)}
+            >
+              <Search size={13} /> {t('sidebar.search')}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem data-testid="ed-open-file" onClick={() => void handleOpenFile()}>
+              <FolderOpen size={13} /> {t('sidebar.openFileAction')}
+            </ContextMenuItem>
+            <ContextMenuItem data-testid="ed-open-folder" onClick={() => void handleOpenFolder()}>
+              <FolderOpen size={13} /> {t('sidebar.openFolderAction')}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       </div>
     )
   }
 
   // Document record missing (deleted, or never existed): a TERMINAL state, so
-  // the editor subtree is torn down here — there is nothing left to keep mounted.
+  // the editor subtree is torn down here there is nothing left to keep mounted
+  // Right-click menu: the record is gone, so the only useful actions are closing the
+  // tab and opening something else.
   if (!isLoading && !doc) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-[var(--color-surface)]">
-        <div className="text-sm text-[var(--color-text-tertiary)]">{t('editor.notFound')}</div>
-      </div>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            className="flex-1 flex items-center justify-center bg-[var(--color-surface)]"
+            data-testid="editor-missing-state"
+          >
+            <div className="text-sm text-[var(--color-text-tertiary)]">{t('editor.notFound')}</div>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem data-testid="ed-close-file" onClick={closeDocument}>
+            <X size={13} /> {t('editor.closeFile')}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem data-testid="ed-open-file" onClick={() => void handleOpenFile()}>
+            <FolderOpen size={13} /> {t('sidebar.openFileAction')}
+          </ContextMenuItem>
+          <ContextMenuItem data-testid="ed-open-folder" onClick={() => void handleOpenFolder()}>
+            <FolderOpen size={13} /> {t('sidebar.openFolderAction')}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     )
   }
 
@@ -658,7 +717,7 @@ export function EditorPane(): React.ReactElement {
   // and cover them with an opaque overlay.
   //
   // Unmounting (the previous `if (isLoading)` early return) destroyed the
-  // CodeMirror view — MarkdownEditor's cleanup calls view.destroy() — so
+  // CodeMirror view MarkdownEditor's cleanup calls view.destroy so
   // switching to a document with no cached entry rebuilt the whole editor from
   // scratch: new EditorState + new EditorView + a re-parse of the markdown
   // language data. That rebuild is the visible stutter when switching files, and
@@ -673,13 +732,13 @@ export function EditorPane(): React.ReactElement {
   // (`notes.md`) by useLocalDocument. Showing the draft rather than `doc.title` is
   // what makes a rename appear immediately on Enter: the new name is adopted into
   // the draft without waiting for the Save that writes it to disk.
-  // Empty while the document is still in flight — the draft still holds the previous
+  // Empty while the document is still in flight the draft still holds the previous
   // document's title until the switch effect runs, and the loading overlay covers the
   // panes but not the toolbar.
   const title = doc ? localTitle : ''
   // The external-change dialog is controlled by the `externalChange` store flag,
   // not by onOpenChange, so `onOpenChange(true)` (opening) never occurs in
-  // practice — only `false` (closing) fires and clears the change.
+  // practice only `false` (closing) fires and clears the change
   const handleExternalDialogChange = (o: boolean) => {
     /* v8 ignore next -- the external-change dialog is controlled by the store; Radix only fires onOpenChange(false) on dismiss, so the o=true branch is unreachable */
     if (!o) clearExternalChange()
@@ -697,12 +756,10 @@ export function EditorPane(): React.ReactElement {
 
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
 
-          {/* Title: display-only, with its own Rename button.
-              Clicking the name itself no longer starts an edit — that affordance was
-              invisible — so the pencil next to it is the single entry point. */}
+          {/* Title: display-only, with its own Rename button. Clicking the name itself no longer starts an edit that affordance was invisible so the pencil next to it is the single entry point */}
           <div className="flex-1 min-w-0 mr-2">
             {editable && editingTitle ? (
-              // Right-click edit menu (PLAN §11 / 需求 §5.14).
+              // Right-click edit menu
               <InputContextMenu targetRef={titleInputRef}>
                 <input
                   ref={titleInputRef}
@@ -719,8 +776,7 @@ export function EditorPane(): React.ReactElement {
               </InputContextMenu>
             ) : (
               <div className="flex items-center gap-1 min-w-0">
-                {/* Title-file-name menu (PLAN §5.6): right-click the title to reach the
-                    shared file menu — one definition for the title bar and the path bar. */}
+                {/* Title-file-name menu : right-click the title to reach the shared file menu one definition for the title bar and the path bar */}
                 <ContextMenu>
                   <ContextMenuTrigger asChild>
                     <span
@@ -863,12 +919,10 @@ export function EditorPane(): React.ReactElement {
         </div>
       </div>
 
-      {/* File-path breadcrumb: shows the current path as "folder / file name".
-          Hidden entirely while the document is in flight — every branch below
-          dereferences doc.filePath, and `doc` is still undefined then. */}
+      {/* File-path breadcrumb: shows the current path as "folder / file name". Hidden entirely while the document is in flight every branch below dereferences doc.filePath, and `doc` is still undefined then */}
       {doc && (
         <div className="flex items-center gap-1 px-3 py-1 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 text-xs overflow-hidden">
-          {/* Folder-icon / blank area menu (PLAN §5.7): reveal / copy full path / copy name. */}
+          {/* Folder-icon / blank area menu : reveal / copy full path / copy name */}
           <ContextMenu>
             <ContextMenuTrigger asChild>
               <button
@@ -902,7 +956,7 @@ export function EditorPane(): React.ReactElement {
                 return (
                   <span key={i} className="flex items-center gap-0.5 min-w-0">
                     {isLast ? (
-                      // Last segment = the file itself → the file-name submenu (§5.7).
+                      // Last segment = the file itself → the file-name submenu
                       <ContextMenu>
                         <ContextMenuTrigger asChild>
                           <span
@@ -923,7 +977,7 @@ export function EditorPane(): React.ReactElement {
                         </ContextMenuContent>
                       </ContextMenu>
                     ) : (
-                      // Middle segment = a folder → open in sidebar / reveal / copy path (§5.7).
+                      // Middle segment = a folder → open in sidebar / reveal / copy path
                       <ContextMenu>
                         <ContextMenuTrigger asChild>
                           <button
@@ -998,18 +1052,35 @@ export function EditorPane(): React.ReactElement {
           </div>
         )}
 
-        {/* Draggable divider (split mode only) */}
+        {/* Draggable divider (split mode only) right-click menu, / The divider still owns the drag; the menu only offers preset layouts */}
         {viewMode === 'split' && (
-          <div
-            onMouseDown={startSplitDrag}
-            className="relative w-px shrink-0 bg-[var(--color-border)] cursor-col-resize group/divider z-10"
-          >
-            <div className="absolute inset-y-0 -left-1 -right-1 hover:bg-accent/20 transition-colors" />
-            <GripVertical
-              size={12}
-              className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 group-hover/divider:opacity-100 transition-opacity pointer-events-none"
-            />
-          </div>
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <div
+                onMouseDown={startSplitDrag}
+                data-testid="split-divider"
+                className="relative w-px shrink-0 bg-[var(--color-border)] cursor-col-resize group/divider z-10"
+              >
+                <div className="absolute inset-y-0 -left-1 -right-1 hover:bg-accent/20 transition-colors" />
+                <GripVertical
+                  size={12}
+                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 group-hover/divider:opacity-100 transition-opacity pointer-events-none"
+                />
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem data-testid="ed-reset-split" onClick={() => setSplitRatio(0.5)}>
+                <Columns size={13} /> {t('ctx.resetSplit')}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem data-testid="ed-view-editor" onClick={() => setViewMode('edit')}>
+                <Edit3 size={13} /> {t('editor.view.editor')}
+              </ContextMenuItem>
+              <ContextMenuItem data-testid="ed-view-preview" onClick={() => setViewMode('preview')}>
+                <Eye size={13} /> {t('editor.view.preview')}
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         )}
 
         {/* Preview: shown in preview / split; hidden in edit mode but still mounted so the single
@@ -1018,11 +1089,7 @@ export function EditorPane(): React.ReactElement {
           <MarkdownPreview content={editorContent} doc={doc} />
         </div>
 
-        {/* Switch overlay: an OPAQUE cover over both panes while the document is
-            in flight. This replaces the old `if (isLoading)` early return, which
-            unmounted this whole subtree and destroyed the CodeMirror view. The
-            panes stay mounted (their content is '' — see editorContent), so when
-            the document lands only a content swap happens, not a rebuild. */}
+        {/* Switch overlay: an OPAQUE cover over both panes while the document is in flight. This replaces the old `if (isLoading)` early return, which unmounted this whole subtree and destroyed the CodeMirror view. The panes stay mounted (their content is '' see editorContent), so when the document lands only a content swap happens, not a rebuild */}
         {showLoading && (
           <div
             data-testid="doc-loading-overlay"

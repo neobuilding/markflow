@@ -5,7 +5,7 @@
 // Why this exists: the reported stutter happens in the FIRST FEW SECONDS after
 // launch ("open a file right after startup, then immediately switch files"). A
 // human cannot open DevTools, switch to the Performance panel and hit record
-// inside that window — we measured this: a hand-made trace of a 2.9h session
+// inside that window we measured this: a hand-made trace of a 2.9h session
 // contained events only in its final 20s, i.e. entirely after the fact.
 //
 // So the recording has to be armed by code, BEFORE the app bundle runs.
@@ -40,13 +40,7 @@ export interface RendererPerf {
   ipc: IpcSample[]
 }
 
-/**
- * Arm an event-loop lag probe inside the Electron MAIN process.
- *
- * A 20ms interval should fire every ~20ms. If the loop is blocked (sync fs,
- * heavy IPC handler, chokidar bookkeeping), the real gap balloons — that gap IS
- * the main-process stall, measured directly rather than inferred.
- */
+/* * * Arm an event-loop lag probe inside the Electron MAIN process. * * A 20ms interval should fire every ~20ms. If the loop is blocked (sync fs, * heavy IPC handler, chokidar bookkeeping), the real gap balloons that gap IS * the main-process stall, measured directly rather than inferred */
 export async function installMainProbe(electronApp: ElectronApplication): Promise<void> {
   await electronApp.evaluate(() => {
     const g = globalThis as unknown as Record<string, unknown>
@@ -74,10 +68,7 @@ export async function collectMainProbe(electronApp: ElectronApplication): Promis
   })
 }
 
-/**
- * Renderer probe body. Passed to `addInitScript`, so it runs before the app
- * bundle — after that the probe must be followed by a reload() to take effect.
- */
+/* * * Renderer probe body. Passed to `addInitScript`, so it runs before the app * bundle after that the probe must be followed by a reload to take effect */
 export const rendererProbe = () => {
   const w = window as unknown as {
     __perf: RendererPerf
@@ -94,7 +85,7 @@ export const rendererProbe = () => {
       }
     }).observe({ entryTypes: ['longtask'] })
   } catch {
-    /* longtask not supported — the other probes still work */
+    /* longtask not supported the other probes still work */
   }
 
   // Interaction latency for sidebar document switches: click -> next painted

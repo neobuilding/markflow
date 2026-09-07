@@ -10,10 +10,10 @@ import {
 } from './context-menu'
 import { Undo2, Redo2, Scissors, Copy, ClipboardPaste, List } from 'lucide-react'
 
-// Right-click edit menu for <input> elements (PLAN §11 / 需求 §5.14).
+// Right-click edit menu for <input> elements
 //
-// The framework ships no built-in edit menu, and `document.execCommand` — although
-// deprecated — is the ONLY way to keep the browser's native undo stack intact, so undo /
+// The framework ships no built-in edit menu, and `document.execCommand` although
+// deprecated is the ONLY way to keep the browser's native undo stack intact, so undo /
 // redo route through it. Copy uses the app's own clipboard channel (more reliable than
 // navigator.clipboard when the window focus is restricted), and paste inserts through
 // `insertText` so React's controlled `onChange` still fires.
@@ -26,7 +26,7 @@ export interface InputContextMenuProps {
 }
 
 // The selection offsets are typed `number | null` but are always numeric for a text input,
-// so they are asserted non-null — that keeps the snapshot branch-free.
+// so they are asserted non-null that keeps the snapshot branch-free
 function selectedText(el: HTMLInputElement): string {
   return el.value.slice(el.selectionStart!, el.selectionEnd!)
 }
@@ -48,7 +48,7 @@ export function InputContextMenu({
 
   // Snapshot the input state (and grab its element) at the moment the menu opens. This is
   // the same "snapshot on open" discipline the editor menu uses. Reading `targetRef.current`
-  // here is fine — `onOpenChange` fires on a Radix event, never during render — which keeps
+  // here is fine `onOpenChange` fires on a Radix event, never during render which keeps
   // us clear of the react-hooks/refs rule.
   const refresh = (open: boolean) => {
     if (!open) {
@@ -104,7 +104,7 @@ export function InputContextMenu({
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem
-          data-testid="ctx-undo"
+          data-testid="input-undo"
           shortcut={formatShortcut('⌘Z')}
           disabled={readOnly}
           onClick={undo}
@@ -112,7 +112,7 @@ export function InputContextMenu({
           <Undo2 size={13} /> {t('ctx.undo')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-redo"
+          data-testid="input-redo"
           shortcut={formatShortcut('⌘⇧Z')}
           disabled={readOnly}
           onClick={redo}
@@ -121,7 +121,7 @@ export function InputContextMenu({
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem
-          data-testid="ctx-cut"
+          data-testid="input-cut"
           shortcut={formatShortcut('⌘X')}
           disabled={readOnly || !state.hasSelection}
           onClick={cut}
@@ -129,7 +129,7 @@ export function InputContextMenu({
           <Scissors size={13} /> {t('ctx.cut')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-copy"
+          data-testid="input-copy"
           shortcut={formatShortcut('⌘C')}
           disabled={!state.hasSelection}
           onClick={copy}
@@ -137,7 +137,7 @@ export function InputContextMenu({
           <Copy size={13} /> {t('ctx.copy')}
         </ContextMenuItem>
         <ContextMenuItem
-          data-testid="ctx-paste"
+          data-testid="input-paste"
           shortcut={formatShortcut('⌘V')}
           disabled={readOnly}
           onClick={paste}
@@ -146,7 +146,7 @@ export function InputContextMenu({
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem
-          data-testid="ctx-select-all"
+          data-testid="input-select-all"
           shortcut={formatShortcut('⌘A')}
           disabled={!state.hasValue}
           onClick={selectAll}

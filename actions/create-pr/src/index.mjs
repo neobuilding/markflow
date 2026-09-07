@@ -24,7 +24,7 @@ async function main() {
   const base = core.getInput('base') || 'main'
 
   // `core.getInput` always returns a string; the default is 'false'. Compare
-  // explicitly — bare truthiness on 'false' would be wrong.
+  // explicitly bare truthiness on 'false' would be wrong
   const dryRun = core.getInput('dry-run') === 'true'
 
   const templatePath = core.getInput('template') || '.github/pull-request-template.md'

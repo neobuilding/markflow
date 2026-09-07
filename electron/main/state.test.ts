@@ -40,7 +40,7 @@ describe('main-process state', () => {
   it('tracks the quit-pending flag', () => {
     // Added for coverage of the real setter/getter: every other suite mocks
     // ./state to observe the flag, so only this file exercises it for real.
-    // The flag must also be resettable — both safety nets re-arm it at the start
+    // The flag must also be resettable both safety nets re-arm it at the start
     // of every quit attempt, so a stale `true` would disarm them permanently.
     expect(state.getQuitPending()).toBe(false)
     state.setQuitPending(true)

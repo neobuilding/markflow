@@ -8,7 +8,7 @@ import { cn } from '../../lib/utils'
 //   - Opens at the mouse position (native contextmenu semantics), not anchored to a trigger.
 //   - Portal content intercepts click/contextmenu bubbling so item interactions never reach
 //     ancestor onClick handlers (Radix renders content via Portal to document.body, but React
-//     synthetic events still bubble through the React tree — see PLAN §1.7).
+// synthetic events still bubble through the React tree see )
 
 const ContextMenu = ContextMenuPrimitive.Root
 const ContextMenuTrigger = ContextMenuPrimitive.Trigger
@@ -22,7 +22,7 @@ const ContextMenuContent = React.forwardRef<
       ref={ref}
       // Intercept click/contextmenu bubbling ONCE at the content level so every item is covered
       // without each item needing its own stopPropagation. Placed before {...props} so a caller
-      // can still override if needed (PLAN §1.7 recommended approach).
+      // can still override if needed ( recommended approach)
       onClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
       className={cn(
@@ -48,7 +48,7 @@ const ContextMenuItem = React.forwardRef<
     className={cn(
       'flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer select-none outline-none transition-colors',
       // Radix sets data-disabled on the item when `disabled` is true, but does NOT grey it out
-      // visually — these data-[disabled] selectors provide the "置灰" appearance (PLAN §1.2/B4).
+      // visually these data-[disabled] selectors provide the "" appearance (/B4)
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[disabled]:cursor-default',
       destructive
         ? 'text-[var(--color-danger)] hover:bg-red-50 focus:bg-red-50'

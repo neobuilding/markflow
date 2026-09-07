@@ -21,7 +21,7 @@ export default defineConfig({
   // hast-util-from-html-isomorphic's lib/browser.js uses DOMParser). A Web Worker has
   // neither document nor DOMParser, which would make the Worker throw
   // `document is not defined` / `DOMParser is not defined` on load, hang the comlink
-  // call forever, and leave the preview stuck at "Loading preview…".
+  // call forever, and leave the preview stuck at "Loading preview"
   //
   // These packages all provide a `worker` (and default) export condition pointing to
   // DOM-free variants. We force those versions via aliases (also usable in the renderer,
@@ -76,7 +76,7 @@ export default defineConfig({
                 // Force CommonJS output. Under "type": "module" in package.json,
                 // Node treats bare `.js` files as ESM and `require` is undefined,
                 // so the preload would fail to load ("require is not defined") and
-                // window.api would be undefined — crashing the renderer. Emitting
+                // window.api would be undefined crashing the renderer. Emitting
                 // a `.cjs` entry keeps it CommonJS regardless of the package type.
                 entryFileNames: 'preload.cjs',
                 format: 'cjs',
@@ -90,7 +90,7 @@ export default defineConfig({
       // auto-loads vite-plugin-electron-renderer, which polyfills Node.js
       // `require()` into the renderer process. But our renderer runs with
       // contextIsolation:true + nodeIntegration:false, so `require` does
-      // not exist there — causing "require is not defined" and breaking all
+      // not exist there causing "require is not defined" and breaking all
       // module loading (blank window). We access Electron only via the
       // preload bridge (window.api), so the renderer plugin is unnecessary.
     }),
@@ -102,18 +102,18 @@ export default defineConfig({
     // Key: In Vite dev mode, changes to .html files in the project root trigger a full page
     // reload. When the user exports HTML into the project (e.g. examples/demo.html), the write
     // is misread as a source change, causing the renderer to reload and lose workspace state.
-    // Here we ignore changes to any .html other than index.html — keeping index.html hot-reload
+    // Here we ignore changes to any .html other than index.html keeping index.html hot-reload
     // while avoiding accidental reloads from export operations.
     watch: {
       ignored: (path) => {
         if (/[^/\\]\.html$/i.test(path) && !/index\.html$/i.test(path)) return true
         // Markdown files are the app's DATA, never renderer source (the renderer
-        // imports no .md — only ?raw CSS from node_modules). Editing or renaming a
+        // imports no .md only ?raw CSS from node_modules). Editing or renaming a
         // .md INSIDE the project root while `npm run dev` runs must NOT trigger a
         // Vite full-reload: that reload resets the renderer and, because workspace
         // state is not persisted, silently "closes" the open document and the whole
         // workspace (TODO-4). Dev-only (no Vite watcher in packaged builds), but a
-        // real bug — the app is a markdown editor, so editing a .md that happens to
+        // real bug the app is a markdown editor, so editing a .md that happens to
         // live in its own repo root is perfectly normal. The app's OWN chokidar
         // watcher (electron/main/model/folderWatcher.ts) tracks .md independently,
         // so ignoring them here costs nothing.

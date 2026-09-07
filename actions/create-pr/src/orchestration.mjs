@@ -5,7 +5,7 @@
 //   - GhService       (gh version, pr list/create/edit)
 //
 // The function returns a result object describing what happened (or throws on
-// hard failures). It NEVER calls `process.exit` — that is the entry point's
+// hard failures). It NEVER calls `process.exit` that is the entry point's
 // job. It NEVER reads env vars or Action inputs. This makes the whole flow
 // unit-testable with fake services.
 //
@@ -16,7 +16,7 @@
 //   - Splits the PR body into independent auto blocks (see render.mjs).
 //   - Derives the PR title from the branch name.
 //   - Delegates rendering to render-template.mjs (one render step in the flow);
-//     it does NOT implement rendering itself — rendering lives in exactly one
+// it does NOT implement rendering itself rendering lives in exactly one
 //     module.
 import { deriveTitle } from './render.mjs'
 import { renderTemplate as renderTemplateImpl } from './render-template.mjs'
@@ -26,19 +26,19 @@ function fail(msg) {
 }
 
 // Create or refresh a PR. Returns one of:
-//   { action: 'noop',     url }                  — existing PR already up to date
-//   { action: 'updated', url }                  — existing PR body refreshed
-//   { action: 'would-update', number, url, body } — dryRun, existing PR would be updated
-//   { action: 'created',  url }                  — new PR created
-//   { action: 'would-create', title, body }      — dryRun, new PR would be created
-//   { action: 'concurrent', url }                — a concurrent run created the PR
+// { action: 'noop', url } existing PR already up to date
+// { action: 'updated', url } existing PR body refreshed
+// { action: 'would-update', number, url, body } dryRun, existing PR would be updated
+// { action: 'created', url } new PR created
+// { action: 'would-create', title, body } dryRun, new PR would be created
+// { action: 'concurrent', url } a concurrent run created the PR
 //
 // Throws on hard failures (gh missing, no origin, branch not on origin, gh
 // command failed with no concurrent PR).
 //
 // Rendering is one of the orchestrated steps: after we learn the existing PR
 // body (if any) from `gh.prList`, we delegate to `renderTemplate` to produce the
-// final body — a fresh render for a new PR, or the refresh-merged body for an
+// final body a fresh render for a new PR, or the refresh-merged body for an
 // existing one. This keeps all rendering in exactly one module while leaving
 // the create/refresh *decision* (noop / updated / created / concurrent) here.
 export async function createOrRefreshPr({
@@ -84,7 +84,7 @@ export async function createOrRefreshPr({
   const existingBody = existingPrs.length > 0 ? (existingPrs[0].body ?? '') : null
 
   // Rendering step (delegated to the single rendering module): produces the
-  // final body — fresh for a new PR, refresh-merged for an existing one.
+  // final body fresh for a new PR, refresh-merged for an existing one
   const body = await renderTemplate({
     head,
     base,
@@ -119,7 +119,7 @@ export async function createOrRefreshPr({
     return { action: 'updated', url }
   }
 
-  // This script only manages the PR — it never pushes. The head branch must
+  // This script only manages the PR it never pushes. The head branch must
   // already exist on origin. Fail fast if it is missing remotely.
   log(`create-pr: verifying '${head}' exists on origin...`)
   if (!git.lsRemote(head)) {

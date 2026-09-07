@@ -125,7 +125,7 @@ describe('markdownPipeline — syntax highlighting', () => {
     expect(html).toContain('class="hljs"')
   })
 
-  // 能力 4: the preview context menu reads the language from data-lang.
+  // the preview context menu reads the language from data-lang
   it('exposes the fence language as data-lang (PLAN §12 能力 4)', () => {
     const { html } = render('```js\nconst x = 1;\n```\n', docId)
     expect(html).toContain('data-lang="js"')

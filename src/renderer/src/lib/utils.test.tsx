@@ -7,6 +7,7 @@ import {
   isMac,
   formatShortcut,
   baseName,
+  joinPath,
   isInFolder,
   isDirInFolder,
   buildFileTree,
@@ -14,6 +15,7 @@ import {
   stripMarkdownExt,
   withMarkdownExt,
   markdownExtOf,
+  repointExpandedSet,
 } from './utils'
 import { useCreateDocument } from '../hooks/useDocuments'
 import { useUIStore } from '../store/ui'
@@ -153,6 +155,21 @@ describe('baseName', () => {
   })
 })
 
+describe('joinPath', () => {
+  it('joins with a forward slash for POSIX paths', () => {
+    expect(joinPath('/docs', 'sub')).toBe('/docs/sub')
+  })
+
+  it('joins with a backslash for Windows paths', () => {
+    expect(joinPath('C:\\docs', 'sub')).toBe('C:\\docs\\sub')
+  })
+
+  it('collapses trailing separators on the directory', () => {
+    expect(joinPath('/docs/', 'sub')).toBe('/docs/sub')
+    expect(joinPath('C:\\docs\\', 'sub')).toBe('C:\\docs\\sub')
+  })
+})
+
 describe('isInFolder / buildFileTree', () => {
   it('detects files inside a folder', () => {
     expect(isInFolder('/a/b/foo.md', '/a/b')).toBe(true)
@@ -166,7 +183,7 @@ describe('isInFolder / buildFileTree', () => {
   it('isDirInFolder: accepts the folder itself and its subtree, rejects prefixed siblings', () => {
     expect(isDirInFolder('/a/b', '/a/b')).toBe(true)
     expect(isDirInFolder('/a/b/c', '/a/b')).toBe(true)
-    // '/a/b-x' shares the '/a/b' prefix but is NOT inside '/a/b' — the separator guard.
+    // '/a/b-x' shares the '/a/b' prefix but is NOT inside '/a/b' the separator guard
     expect(isDirInFolder('/a/b-x', '/a/b')).toBe(false)
     expect(isDirInFolder('/x', '/a/b')).toBe(false)
   })
@@ -318,7 +335,7 @@ describe('isInFolder / buildFileTree', () => {
   })
 })
 
-// ─── Memory-only (unsaved draft) contract (PLAN §6.3 / §6.5 / §6.6) ───────────
+// ─── Memory-only (unsaved draft) contract ( / / ) ───────────
 function renderHook<T>(factory: () => T) {
   const result = { current: undefined as unknown as T }
   function Wrapper() {
@@ -604,5 +621,63 @@ describe('buildFileTree — nested folders', () => {
     // then files alphabetically: mango before zeta
     expect(tree[1].name).toBe('mango.md')
     expect(tree[2].name).toBe('zeta.md')
+  })
+
+  // A tree built from documents alone cannot represent a folder with no Markdown file,
+  // so the on-disk folder list seeds those nodes
+  it('gives a folder with no document its own node', () => {
+    const tree = buildFileTree([makeDoc('1', '/a/foo.md')], '/a', ['/a/empty'])
+    const empty = tree.find((n) => n.name === 'empty')
+    expect(empty?.isFolder).toBe(true)
+    expect(empty?.children).toHaveLength(0)
+  })
+
+  it('seeds a nested chain of empty folders', () => {
+    const tree = buildFileTree([], '/a', ['/a/x/y'])
+    expect(tree).toHaveLength(1)
+    expect(tree[0].name).toBe('x')
+    expect(tree[0].isFolder).toBe(true)
+    expect(tree[0].children.map((c) => c.name)).toEqual(['y'])
+  })
+
+  it('merges a seeded folder with the node derived from a document path', () => {
+    const tree = buildFileTree([makeDoc('1', '/a/sub/one.md')], '/a', ['/a/sub'])
+    // One folder node holding the doc never a duplicate folder beside it
+    expect(tree).toHaveLength(1)
+    expect(tree[0].name).toBe('sub')
+    expect(tree[0].children.map((c) => c.name)).toEqual(['one.md'])
+  })
+})
+
+describe('repointExpandedSet', () => {
+  it('rewrites the renamed folder itself onto the new path', () => {
+    const prev = new Set(['/docs/old'])
+    expect(repointExpandedSet(prev, '/docs/old', '/docs/new')).toEqual(new Set(['/docs/new']))
+  })
+
+  it('preserves siblings outside the renamed subtree', () => {
+    const prev = new Set(['/docs/other', '/docs/old'])
+    expect(repointExpandedSet(prev, '/docs/old', '/docs/new')).toEqual(
+      new Set(['/docs/other', '/docs/new']),
+    )
+  })
+
+  it('re-points expanded descendants under the renamed folder', () => {
+    const prev = new Set(['/docs/old', '/docs/old/sub', '/docs/old/sub/deep'])
+    expect(repointExpandedSet(prev, '/docs/old', '/docs/new')).toEqual(
+      new Set(['/docs/new', '/docs/new/sub', '/docs/new/sub/deep']),
+    )
+  })
+
+  it('normalizes separator differences between old/expanded paths', () => {
+    const prev = new Set(['C:\\docs\\old\\sub'])
+    expect(repointExpandedSet(prev, 'C:/docs/old', 'C:/docs/new')).toEqual(
+      new Set(['C:/docs/new/sub']),
+    )
+  })
+
+  it('is a no-op when nothing matches the old path', () => {
+    const prev = new Set(['/docs/a', '/docs/b'])
+    expect(repointExpandedSet(prev, '/docs/old', '/docs/new')).toEqual(prev)
   })
 })

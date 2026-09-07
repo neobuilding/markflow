@@ -42,7 +42,7 @@ export function countMarkdownFiles(dir: string): number {
         if (st.isDirectory()) total += countMarkdownFiles(full)
         else if (MD_EXTS.has(name.slice(name.lastIndexOf('.')).toLowerCase())) total += 1
       } catch {
-        /* unreadable entry — mirrors collectMarkdownFiles */
+        /* unreadable entry mirrors collectMarkdownFiles */
       }
     }
   } catch {
@@ -100,7 +100,7 @@ export function makeNoisyFolder(docs: number, noiseFiles: number): string {
   }
   for (let i = 0; i < docs; i++) writeDoc(dir, i)
   for (let i = 0; i < noiseFiles; i++) writeNoise(dir, i)
-  // Deliberately FLAT — do not add noise sub-directories here. Depth was tried
+  // Deliberately FLAT do not add noise sub-directories here. Depth was tried
   // and made the gate worse, not better: collecting the markdown files requires
   // walking the whole tree regardless of what chokidar watches, so a deeper
   // fixture raises the FIXED baseline too (measured: maxLag went 110ms -> 374ms
@@ -108,11 +108,7 @@ export function makeNoisyFolder(docs: number, noiseFiles: number): string {
   return dir
 }
 
-/**
- * Open a folder through the real pipeline (resolve -> import -> watch -> activate).
- * Returns the ms it took, since with a large folder the import itself can be a
- * major cost — and chokidar starts watching as part of this same step.
- */
+/* * * Open a folder through the real pipeline (resolve -> import -> watch -> activate). * Returns the ms it took, since with a large folder the import itself can be a * major cost and chokidar starts watching as part of this same step */
 export async function openFolder(
   page: AppHandle['page'],
   folder: string,
@@ -136,15 +132,7 @@ export async function openFolder(
   return { ms: Date.now() - t0, imported: imported.imported, shown }
 }
 
-/**
- * Click a sidebar document and return the wall-clock ms until the new document
- * is actually on screen.
- *
- * The sidebar is ordered by updatedAt (desc), NOT by name, so a given index does
- * not map to a stable document — and clicking the already-active one changes
- * nothing. So we walk the items and skip any click that does not change the
- * active document id; only a real switch is timed.
- */
+/* * * Click a sidebar document and return the wall-clock ms until the new document * is actually on screen. * * The sidebar is ordered by updatedAt (desc), NOT by name, so a given index does * not map to a stable document and clicking the already-active one changes * nothing. So we walk the items and skip any click that does not change the * active document id; only a real switch is timed */
 export async function switchToNext(page: AppHandle['page']): Promise<number> {
   // Pick the target from the DOM itself, not from the query cache: the cache can
   // hold more entries than the sidebar renders (sub-folder docs, memory-only
@@ -153,7 +141,7 @@ export async function switchToNext(page: AppHandle['page']): Promise<number> {
   const items = page.locator('[data-testid="doc-item"]')
   // Read the active row straight from the DOM: DocItem marks it with the
   // accent-muted class (there is no data attribute for it). Comparing against
-  // titles from the query cache is unreliable — that cache can hold more entries
+  // titles from the query cache is unreliable that cache can hold more entries
   // than the sidebar renders, and title text alone cannot tell us which row is
   // actually selected.
   const info = await page.evaluate(() => {
@@ -198,19 +186,7 @@ export function reportMainLag(samples: MainSample[]): void {
 /** Stall threshold: the probe ticks every 20ms, so >100ms is a real freeze. */
 export const STALL_MS = 100
 
-/**
- * Summarise main-process event-loop lag for the regression gate.
- *
- * `stallMs` (total time spent stalled) is the PRIMARY metric, not `spikes`
- * (count of stalls). The count turned out to be unusable as a gate: repeatedly
- * running the SAME fixed build produced 1, 2, 3 and 5 stalls, which overlaps the
- * 5 a deliberately-broken build produces — pure scheduling noise on a busy
- * machine. Total stalled time integrates how long the loop was actually blocked
- * and varies far less between identical runs.
- *
- * `p95` is reported alongside it as a secondary signal, and `spikes`/`maxLag`
- * are still returned for the diagnostic printout.
- */
+/* * * Summarise main-process event-loop lag for the regression gate. * * `stallMs` (total time spent stalled) is the PRIMARY metric, not `spikes` * (count of stalls). The count turned out to be unusable as a gate: repeatedly * running the SAME fixed build produced 1, 2, 3 and 5 stalls, which overlaps the * 5 a deliberately-broken build produces pure scheduling noise on a busy * machine. Total stalled time integrates how long the loop was actually blocked * and varies far less between identical runs. * * `p95` is reported alongside it as a secondary signal, and `spikes`/`maxLag` * are still returned for the diagnostic printout */
 export function summarizeMainLag(samples: MainSample[]): {
   spikes: MainSample[]
   maxLag: number

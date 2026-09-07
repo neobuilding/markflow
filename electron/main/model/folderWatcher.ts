@@ -37,8 +37,8 @@ const IGNORED_DIRS: RegExp[] = [/(^|[/\\])\.[^/\\]*/, /[/\\]node_modules([/\\]|$
 // costs a recursive crawl plus a watch handle per entry, and that cost is paid for
 // EVERY file regardless of whether its events are later used. The previous config
 // only excluded a handful of extensions, so in a real workspace chokidar watched
-// all 680 files (build output, coverage reports, images, sources…) while only 16
-// of them were markdown — and ~97% of the events it paid for were then discarded
+// all 680 files (build output, coverage reports, images, sources) while only 16
+// of them were markdown and ~97% of the events it paid for were then discarded
 // by isMarkdownFile in dispatch(). Measured on the markflow repo, that overhead
 // showed up as up to 8 main-process stalls of up to 2s right after opening a
 // folder; the same run on an 8-file folder had zero stalls.

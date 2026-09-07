@@ -4,7 +4,7 @@
 // 41-44): when `Intl.Segmenter` is unavailable, tokenize must fall back to a
 // `\p{P}` punctuation split. search.ts only caches `segmenter` lazily inside
 // getSegmenter() (on first query), so deleting the global before the first
-// query is enough — the module import itself never touches Intl.Segmenter.
+// query is enough the module import itself never touches Intl.Segmenter
 // Vitest isolates each file's module graph, so this does not affect the other
 // search suite.
 import { describe, it, expect, beforeAll } from 'vitest'

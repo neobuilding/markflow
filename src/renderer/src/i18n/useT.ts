@@ -9,7 +9,7 @@ import type { Locale } from './storage'
 // import was the source of the i18n/index <-> store/ui circular dependency). The
 // store has a legitimate reason to depend on i18n (via ./storage), but i18n/index
 // must stay store-free; this hook is the only place that bridges the two.
-// NOTE: this file must NOT import ./index (even as a type) — doing so would recreate
+// NOTE: this file must NOT import ./index (even as a type) doing so would recreate
 // the i18n/index <-> useT cycle. Locale is taken from ./storage instead.
 export function useT(): {
   t: (key: TranslationKey, params?: Record<string, string | number>) => string

@@ -23,26 +23,28 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.delete': '删除',
   'sidebar.up': '上层文件夹',
   'sidebar.enter': '进入此文件夹',
+
+  'sidebar.folderNamePlaceholder': '文件夹名称…',
   'details.unsaved': '未保存（仅存在于内存中）',
 
   // ── Editor pane ────────────────────────────────────────────────────────
   'editor.save': '保存',
-  'editor.saveShortcut': '保存 ({shortcut})',
+  'editor.saveShortcut': '保存 ({{shortcut}})',
   'editor.noChanges': '没有需要保存的更改',
   'editor.saveSwitchEdit': '保存 — 请先切换到编辑模式',
   'editor.saveAs': '另存为…',
-  'editor.saveAsShortcut': '另存为… ({shortcut})',
+  'editor.saveAsShortcut': '另存为… ({{shortcut}})',
   'editor.saveAsSwitchEdit': '另存为… — 请先切换到编辑模式',
   'editor.reload': '从磁盘重新加载',
-  'editor.reloadShortcut': '从磁盘重新加载 ({shortcut})',
+  'editor.reloadShortcut': '从磁盘重新加载 ({{shortcut}})',
   'editor.fileDetails': '文件详情',
-  'editor.fileDetailsShortcut': '文件详情 ({shortcut})',
+  'editor.fileDetailsShortcut': '文件详情 ({{shortcut}})',
   'editor.export': '导出为 HTML…',
-  'editor.exportShortcut': '导出为 HTML… ({shortcut})',
+  'editor.exportShortcut': '导出为 HTML… ({{shortcut}})',
   'editor.closeFile': '关闭文件',
   'editor.renameTitle': '重命名文件',
   'editor.fileDeleted': '文件已在磁盘上删除 —— 保存即可恢复',
-  'editor.toggleSidebarShortcut': '切换侧边栏 ({shortcut})',
+  'editor.toggleSidebarShortcut': '切换侧边栏 ({{shortcut}})',
   'editor.switchReadOnly': '切换到只读模式',
   'editor.switchEdit': '切换到编辑模式',
   'editor.readOnly': '只读',
@@ -156,6 +158,12 @@ export const zhCN: Record<TranslationKey, string> = {
   'app.deleteConfirm': '确定要删除此文件吗？',
   'app.discardDraftConfirm': '确定要丢弃此草稿吗？此操作不可撤销。',
   'app.deleteConfirmOk': '删除',
+
+  'app.deleteFolderConfirm': '确定要将「{{name}}」及其中的全部内容移到回收站吗？',
+
+  'app.switchEolConfirm': '确定要将换行符切换为 {{eol}} 吗？',
+  'app.switchEolDetail': '文件将被重写并从磁盘重新加载，未保存的更改会丢失。',
+  'app.switchEolOk': '切换',
   'app.cancel': '取消',
   'app.printNotReady': '预览尚未就绪。请先切换到预览或分屏视图。',
   'app.printFailed': '打印失败：{{message}}',
@@ -202,8 +210,8 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.filterHtml': 'HTML',
 
   // ── Context menus (ctx.*) ─────────────────────────────────────────────
-  // 右键菜单项，57 条，中英必须一一对应。
-  // 编辑器
+  // 57
+
   'ctx.undo': '撤销',
   'ctx.redo': '重做',
   'ctx.cut': '剪切',
@@ -211,39 +219,39 @@ export const zhCN: Record<TranslationKey, string> = {
   'ctx.paste': '粘贴',
   'ctx.selectAll': '全选',
   'ctx.openLinkInBrowser': '在浏览器中打开链接',
-  // 预览 — 链接
+
   'ctx.openLink': '打开链接',
   'ctx.copyLink': '复制链接地址',
-  // 预览 — 代码块
+
   'ctx.copyCode': '复制代码',
   'ctx.copyCodeBlock': '复制为代码块',
   'ctx.copyLang': '复制语言名',
-  // 预览 — 图片
+
   'ctx.copyImage': '复制图片',
   'ctx.saveImageAs': '图片另存为…',
   'ctx.copyImageSrc': '复制图片地址',
   'ctx.copyImageAlt': '复制替代文本',
-  // 预览 — 表格
+
   'ctx.copyTable': '复制表格',
   'ctx.copyTableTsv': '复制表格（可粘贴到 Excel）',
-  // 预览 — 任务
+
   'ctx.copyTaskText': '复制任务文字',
-  // 预览 — 公式
+
   'ctx.copyFormula': '复制公式',
   'ctx.copyFormulaSource': '复制 TeX 源码',
-  // 预览 — 图表（Mermaid）
+  // Mermaid
   'ctx.copyDiagramSource': '复制图表源码',
   'ctx.copySvg': '复制为 SVG',
   'ctx.saveSvgAs': '图表另存为 SVG…',
-  // 预览 — 标题
+
   'ctx.copyHeading': '复制标题文字',
   'ctx.copyAnchorId': '复制锚点 ID',
-  // 侧边栏文档条目
+
   'ctx.openDocument': '打开',
   'ctx.copyFileName': '复制文件名',
   'ctx.copyContent': '复制文档内容',
   'ctx.discardDraft': '丢弃草稿',
-  // 侧边栏文件夹行
+
   'ctx.openFolder': '打开此文件夹',
   'ctx.expand': '展开',
   'ctx.collapse': '折叠',
@@ -251,34 +259,31 @@ export const zhCN: Record<TranslationKey, string> = {
   'ctx.copyFolderPath': '复制文件夹路径',
   'ctx.newDocHere': '在此文件夹中新建文档',
   'ctx.newSubfolder': '新建子文件夹…',
+
+  'ctx.newFolderHere': '在此新建文件夹…',
   'ctx.renameFolder': '重命名文件夹…',
   'ctx.deleteFolder': '删除文件夹',
   'ctx.refresh': '刷新',
-  // 当前文件夹栏 / 面包屑
+
   'ctx.goUp': '向上到父文件夹',
   'ctx.openFolderInSidebar': '在侧边栏中打开此文件夹',
-  // 状态栏
+
   'ctx.copyWordCount': '复制字数',
   'ctx.redetectEncoding': '重新检测编码',
   'ctx.switchToLf': '切换为 LF',
   'ctx.switchToCrlf': '切换为 CRLF',
   'ctx.copyLineEnding': '复制换行符名称',
   'ctx.copyEncoding': '复制编码名称',
-  // 搜索面板
+
   'ctx.copyTitle': '复制标题',
   'ctx.copyResultPath': '复制文件路径',
-  // 关于弹窗
+
   'ctx.copyVersion': '复制版本号',
   'ctx.copyVersionFull': '复制名称与版本',
-  // 导出弹窗
-  'ctx.chooseSaveLocation': '选择保存位置…',
-  'ctx.copyToClipboard': '复制到剪贴板',
-  // 拖动条
+
   'ctx.resetSplit': '重置分栏为 50%',
   'ctx.resetSidebarWidth': '重置侧边栏宽度',
   'ctx.collapseSidebar': '折叠侧边栏',
 
-  // ── 编辑器补充 ────────────────────────────────────────────────────────
-  // 只读模式下置灰的重命名/保存项的悬停提示（PLAN §2.2）。
   'editor.needsEditMode': '请先切换到编辑模式',
 }

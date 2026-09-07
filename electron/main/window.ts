@@ -52,7 +52,7 @@ export function createWindow(): void {
       preload: join(__dirname, 'preload.cjs'),
       // NOTE: sandbox was disabled (was true) to work around an Electron 43 / Windows 11
       // regression where a sandboxed renderer on Win11 fails to report document.hasFocus()
-      // after a document switch / focus change — leaving the editor unable to receive keyboard
+      // after a document switch / focus change leaving the editor unable to receive keyboard
       // input until an Alt-Tab. With sandbox:true the window is foreground (mainWindow.isFocused()
       // is true) yet document.hasFocus() stays false, which CodeMirror's input path depends on.
       // Disabling sandbox lets the renderer correctly gain OS focus. The preload still uses
@@ -80,7 +80,7 @@ export function createWindow(): void {
     }
     // Always maximized: window size is not persisted, so the bounds above only
     // serve as the restore size when the user un-maximizes. There is no
-    // "start un-maximized" mode — the previous `if (startMaximized)` guarded a
+    // "start un-maximized" mode the previous `if (startMaximized)` guarded a
     // constant `true`, so its else-branch was unreachable dead code that also
     // showed up as an uncoverable branch in the coverage gate.
     win.maximize()
@@ -111,27 +111,27 @@ export function createWindow(): void {
   })
 
   // Intercept the *window* close (red X / traffic-light close) so it runs the SAME
-  // unsaved prompt as quitting — never destroys a window with unsaved changes silently.
+  // unsaved prompt as quitting never destroys a window with unsaved changes silently
   // Only once the renderer replies with app:quit-allowed do we set isQuiting and let the
   // close proceed. This guarantees the prompt always happens while the window is alive,
   // eliminating the race where before-quit fires after the window is already destroyed.
   //
   // Safety net mirrors lifecycle.ts's before-quit grace period: if the renderer never
   // replies (crashed / detached / dev server gone in e2e), force the quit after 5s so
-  // the app can never get stuck un-exitable — both app.quit() (before-quit) and the
+  // the app can never get stuck un-exitable both app.quit (before-quit) and the
   // window X (this handler) paths are now bounded. Without this, closing the window on
   // a dead renderer left the main process waiting forever and the user could not even
   // close the window by hand (every X re-armed the preventDefault).
   //
   // The safety net is DISARMED when the renderer sends app:quit-pending (it is actively
   // showing the unsaved-changes confirm box). Without that, a dirty workspace would
-  // force-quit 5s after the prompt opened, silently discarding the user's edits — see
+  // force-quit 5s after the prompt opened, silently discarding the user's edits see
   // the dirty-confirm regression. The renderer sends app:quit-pending synchronously
   // from tryCloseWorkspace() before opening the async dialog, so there's no race
   // between the prompt opening and the safety net firing.
   let closeForceTimer: NodeJS.Timeout | null = null
   ipcMain.on('app:quit-pending', () => {
-    // Renderer is showing the unsaved-changes confirm — disarmed the safety net so
+    // Renderer is showing the unsaved-changes confirm disarmed the safety net so
     // the user has unlimited time to decide. Registered here (not in lifecycle.ts) so
     // the close handler and the pending signal share the same closeForceTimer handle.
     setQuitPending(true)
@@ -143,11 +143,11 @@ export function createWindow(): void {
   win.on('close', (event) => {
     if (getIsQuiting()) return
     // Every close attempt starts with the safety net ARMED. quitPending is a
-    // PER-ATTEMPT signal — the renderer sends app:quit-pending only once it is
-    // actually showing the confirm box — so a leftover `true` from a prompt the
+    // PER-ATTEMPT signal the renderer sends app:quit-pending only once it is
+    // actually showing the confirm box so a leftover `true` from a prompt the
     // user dismissed must not carry over: it would disarm the net for every later
     // attempt too. Then a renderer that died in the meantime (crashed tab, gone
-    // dev server) could never be force-closed — an un-exitable app, which is the
+    // dev server) could never be force-closed an un-exitable app, which is the
     // exact failure the net exists to prevent.
     setQuitPending(false)
     event.preventDefault()

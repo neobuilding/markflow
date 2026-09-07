@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Document } from '../types'
-import { dirName } from '../lib/utils'
+import { dirName, normalizePathSegments } from '../lib/utils'
 import { useUIStore } from '../store/ui'
 import { DOCS_KEY } from '../lib/queryClient'
 
@@ -8,6 +8,21 @@ export function useDocuments(folderPath?: string) {
   return useQuery({
     queryKey: [...DOCS_KEY, 'list', folderPath ?? ''],
     queryFn: () => window.api.documents.list(folderPath),
+    staleTime: 0,
+  })
+}
+
+// Directories below `folderPath` (recursive, empty ones included). The sidebar tree is
+// otherwise derived from documents alone, which has no node to represent a folder that
+// holds no Markdown file and a folder the user just created is always empty
+export function useFolderDirs(folderPath?: string | null) {
+  return useQuery({
+    queryKey: [...DOCS_KEY, 'dirs', folderPath ?? ''],
+    // folderPath is only read here while enabled (see `enabled` below), so the `?? ''`
+    // branch is unreachable in practice; keep it for type-safety without a coverage gap.
+    /* v8 ignore next */
+    queryFn: () => window.api.documents.listFolders(folderPath ?? ''),
+    enabled: !!folderPath,
     staleTime: 0,
   })
 }
@@ -33,14 +48,14 @@ export function useCreateDocument() {
     }) => {
       // When the caller does not pin a folder, save non-memory-only docs into the
       // currently opened folder (activeFolder, an absolute path) so they appear in
-      // the active list — VS Code "save into the opened folder" semantics (PLAN §6.#13).
+      // the active list VS Code "save into the opened folder" semantics (#13)
       const activeFolder = useUIStore.getState().activeFolder
       const folderPath = params.folderPath ?? (activeFolder ? activeFolder : undefined)
       return window.api.documents.create({
         ...params,
         folderPath,
         // New documents are memory-only drafts by default: no file is written to disk
-        // until the user explicitly saves (Save As). See PLAN §6.3.
+        // until the user explicitly saves (Save As). See
         memoryOnly: params.memoryOnly ?? true,
       })
     },
@@ -184,7 +199,7 @@ export function useOpenPaths() {
       // and it only picks up files created or deleted from here on.
       // Best-effort: the files are already imported, so a watcher that cannot start
       // must not stop us from opening the folder (it only costs live refresh).
-      // Awaited so the watcher is live before the folder becomes active — otherwise a
+      // Awaited so the watcher is live before the folder becomes active otherwise a
       // file created in between would never be reported.
       try {
         await window.api.documents.setOpenFolder(folder)
@@ -197,7 +212,7 @@ export function useOpenPaths() {
       // NOTE: do NOT force `editable` to false here. `editable` is a workspace-wide mode that
       // defaults to false only when there is no document open (store default + closeWorkspace/
       // closeDocument reset it). Forcing it false on every open would clobber the user's current
-      // edit mode — e.g. after switching to edit, opening/switching another file would silently
+      // edit mode e.g. after switching to edit, opening/switching another file would silently
       // revert to read-only and the editor could not be edited ("switch file -> can't edit" bug).
       ui.setDirty(false) // opening/importing a file clears any stale dirty flag
       return { folder, documentId: imported[0].id }
@@ -213,7 +228,7 @@ export function useOpenFolder() {
   })
 }
 
-// Switch line endings of a file on disk (PLAN §12-6, destructive write). The renderer
+// Switch line endings of a file on disk (, destructive write). The renderer
 // must confirm first and reload afterwards; invalidation refreshes the EOL pill.
 export function useSetEol() {
   const qc = useQueryClient()
@@ -226,7 +241,7 @@ export function useSetEol() {
   })
 }
 
-// Re-detect a file's encoding from disk (PLAN §12-11). Returns the detected encoding
+// Re-detect a file's encoding from disk . Returns the detected encoding
 // so the caller can offer to apply it via useSetEncoding.
 export function useDetectEncoding() {
   return useMutation({
@@ -234,7 +249,7 @@ export function useDetectEncoding() {
   })
 }
 
-// Create a folder on disk (PLAN §12-7).
+// Create a folder on disk
 export function useCreateFolder() {
   const qc = useQueryClient()
   return useMutation({
@@ -245,19 +260,70 @@ export function useCreateFolder() {
   })
 }
 
-// Rename a folder on disk (PLAN §12-7).
+// Re-point every cached path that lives under `oldPath` onto `newPath`, so the sidebar
+// never holds a stale document/folder pointing at the old name while the refetch is in
+// flight. The list query (store scan + IPC) resolves after the dirs query (a local disk
+// walk); without this rewrite the tree would show the new folder (fresh dirs) next to the
+// old one (stale list doc) for a frame, then snap to just the new folder.
+//
+// Matching covers both the exact path (the renamed folder itself, and a document whose
+// folderPath equals it — neither carries a trailing separator) and anything beneath it.
+function rewriteFolderInCache(
+  qc: ReturnType<typeof useQueryClient>,
+  oldPath: string,
+  newPath: string,
+): void {
+  const oldNorm = normalizePathSegments(oldPath).replace(/\/$/, '').toLowerCase()
+  const newNorm = normalizePathSegments(newPath).replace(/\/$/, '')
+  const prefix = oldNorm + '/'
+  const hits = (p: string) => {
+    const n = normalizePathSegments(p).toLowerCase()
+    return n === oldNorm || n.startsWith(prefix)
+  }
+  // List caches: arrays of Document.
+  qc.setQueriesData({ queryKey: [...DOCS_KEY, 'list'] }, (docs: unknown) => {
+    if (!Array.isArray(docs)) return docs
+    return (docs as Array<{ filePath: string; folderPath: string }>).map((d) => {
+      const fpHit = hits(d.filePath)
+      const foHit = hits(d.folderPath)
+      if (!fpHit && !foHit) return d
+      return {
+        ...d,
+        filePath: fpHit
+          ? newNorm + normalizePathSegments(d.filePath).slice(oldNorm.length)
+          : d.filePath,
+        folderPath: foHit
+          ? newNorm + normalizePathSegments(d.folderPath).slice(oldNorm.length)
+          : d.folderPath,
+      }
+    })
+  })
+  // Dirs caches: arrays of folder-path strings.
+  qc.setQueriesData({ queryKey: [...DOCS_KEY, 'dirs'] }, (dirs: unknown) => {
+    if (!Array.isArray(dirs)) return dirs
+    return (dirs as string[]).map((dir) => {
+      if (!hits(dir)) return dir
+      return newNorm + normalizePathSegments(dir).slice(oldNorm.length)
+    })
+  })
+}
+
+// Rename a folder on disk
 export function useRenameFolder() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ oldPath, newPath }: { oldPath: string; newPath: string }) =>
       window.api.documents.renameFolder(oldPath, newPath),
-    onSuccess: () => {
+    onSuccess: (_data, { oldPath, newPath }) => {
+      // Fix the cache synchronously so the sidebar never flashes the old folder; the
+      // invalidate below then refreshes both queries from the (already re-pointed) store.
+      rewriteFolderInCache(qc, oldPath, newPath)
       qc.invalidateQueries({ queryKey: DOCS_KEY })
     },
   })
 }
 
-// Delete a folder on disk (PLAN §12-7).
+// Delete a folder on disk
 export function useDeleteFolder() {
   const qc = useQueryClient()
   return useMutation({

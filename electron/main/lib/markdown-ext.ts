@@ -18,8 +18,8 @@ export function isMarkdownFile(filePath: string): boolean {
 
 // Drop the Markdown extension from a file name to derive a display title.
 // The single place that knows the extension list, so that adding an extension to
-// MD_EXTS cannot leave a stray extension in document titles (the alternative — a
-// hardcoded regex at each call site — drifts out of sync silently).
+// MD_EXTS cannot leave a stray extension in document titles (the alternative a
+// hardcoded regex at each call site drifts out of sync silently)
 // Non-Markdown names are returned untouched, so callers need no guard.
 export function stripMarkdownExt(fileName: string): string {
   const ext = extname(fileName).toLowerCase()

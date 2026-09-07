@@ -195,7 +195,7 @@ describe('ContextMenu (Radix wrapper)', () => {
     const item = await screen.findByTestId('item')
     fireEvent.click(item)
     // The Content's onClick stopPropagation prevents the synthetic event from reaching
-    // the ancestor <div onClick>. (PLAN §1.7 — Portal event bubpling trap.)
+    // the ancestor <div onClick>. ( Portal event bubpling trap.)
     expect(ancestorClick).not.toHaveBeenCalled()
   })
 

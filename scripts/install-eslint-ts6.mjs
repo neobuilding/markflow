@@ -56,7 +56,7 @@ if (alreadyDone) {
 // mkdtempSync creates a uniquely-named, randomly-suffixed directory atomically
 // under os.tmpdir() (CWE-377 / CWE-378 fix).
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'markflow-ts6-'))
-// Always remove the temp dir — including on the failure paths below (process.exit
+// Always remove the temp dir including on the failure paths below (process.exit
 // bypasses `finally`, so we must clean up explicitly before each exit).
 const cleanupTmp = () => rmSync(tmp, { recursive: true, force: true })
 

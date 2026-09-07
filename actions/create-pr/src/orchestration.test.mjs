@@ -115,7 +115,7 @@ const TEMPLATE = [
 
 // A fake renderer that mirrors render-template.mjs but uses the test's FAKE git
 // service (no real git / filesystem). It takes the same options the real
-// renderer takes — including `existingBody`, which it merges via buildBody so
+// renderer takes including `existingBody`, which it merges via buildBody so
 // the refresh path is exercised exactly like production. Orchestration is given
 // this via the `renderTemplate` param, keeping the flow testable with fakes.
 function fakeRender(git) {

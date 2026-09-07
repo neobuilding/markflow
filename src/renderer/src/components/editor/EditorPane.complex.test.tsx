@@ -189,7 +189,7 @@ async function makeDirty(container: HTMLElement): Promise<void> {
   // restores the previously-focused element at the end of the interaction, which
   // steals focus from the just-mounted autoFocus <input>; its onBlur fires
   // handleTitleSave → setEditingTitle(false) and the <input> vanishes before the
-  // next step can hold it — a racy flake ("expected null not to be null" /
+  // next step can hold it a racy flake ("expected null not to be null" /
   // user.clear on null). fireEvent dispatches synchronously inside act, and we
   // grab + edit + commit the input in the SAME sync flush, so the async focus
   // restore never gets a window to remove it.
@@ -404,7 +404,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     // The on-disk line ending is read from the active document's path before saving.
     // This pins the true-branch of `doc?.filePath ? await eol(...) : getEol()`:
     // v8 reports line 102 (the `? await ...` arm) as having 0 hits even though this
-    // call proves it executes — a line-attribution artifact of the transpiled
+    // call proves it executes a line-attribution artifact of the transpiled
     // async/await ternary, not genuinely uncovered code.
     expect(api.documents.eol).toHaveBeenCalledWith('/a.md')
   })

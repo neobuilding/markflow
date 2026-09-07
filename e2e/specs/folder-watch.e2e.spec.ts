@@ -48,7 +48,7 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
 
   // Open a folder through the SAME pipeline the "Open Folder" menu uses, so the
   // in-memory document store actually gets populated (a watcher alone shows
-  // nothing in the sidebar — chokidar only reports *changes*, it does not
+  // nothing in the sidebar chokidar only reports *changes*, it does not
   // back-fill existing files). This is exactly what useOpenPaths does:
   //   resolvePaths → importMany → setOpenFolder → setActiveFolder/Document.
   // Sets the active folder on the UI store so the folder-changed handler's
@@ -99,7 +99,7 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
 
     // Create a file in the UNRELATED folder. The main process still watches it
     // (chokidar watches every opened folder), but the renderer's activeFolder
-    // filter must drop the refresh — the active sidebar count stays at 1.
+    // filter must drop the refresh the active sidebar count stays at 1
     writeFileSync(join(other!, 'late.md'), '# Late\n\nbody', 'utf-8')
     // Give chokidar's stability window time to fire + any stray refetch to
     // settle, then assert the count is unchanged.
@@ -116,7 +116,7 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
 
     // Create a file to queue a folder-changed broadcast, then immediately
     // close the workspace (which tears down the watcher and cancels pending
-    // broadcasts). The app must remain responsive — no crash, no stuck UI.
+    // broadcasts). The app must remain responsive no crash, no stuck UI
     writeFileSync(join(scratch, 'pending.md'), '# Pending\n\nbody', 'utf-8')
     await page.evaluate(() => (window as any).__uiStore.getState().closeWorkspace())
     // The editor unmounts and the welcome state returns.
@@ -132,7 +132,7 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
 
     // The chokidar-lag root cause: the watcher used to ignore only a handful of
     // extensions, so in a real repo it watched every file (build output, coverage
-    // reports, images, sources…) — hundreds of entries — while only markdown ever
+    // reports, images, sources) hundreds of entries while only markdown ever
     // mattered. That crawl/scan overhead showed up as a multi-hundred-ms stall
     // right after opening a folder. The fix makes chokidar watch MARKDOWN ONLY,
     // so the non-md noise below must be ignored entirely: no crash, no spurious
@@ -147,7 +147,7 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
 
     await openFolder(page, scratch, 1)
 
-    // The sidebar lists ONLY markdown — none of the 150 non-md files leaked in.
+    // The sidebar lists ONLY markdown none of the 150 non-md files leaked in
     await expect(page.getByTestId('doc-item')).toHaveCount(1)
 
     // A NEW markdown file on disk is still detected through the (now md-only) watcher.

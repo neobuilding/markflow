@@ -3,7 +3,7 @@
 // renderTemplate integrates read-template(string) + git service + registry +
 // ctx + fillAutoBlocks + buildBody(refresh) behind ONE function. These tests
 // exercise the FULL integration path, but the git service is ALWAYS injected as
-// a fake — no test here shells out to real git (consistent with the project
+// a fake no test here shells out to real git (consistent with the project
 // rule that unit tests must not perform real I/O). The I/O boundary itself is
 // covered separately in services/git-service.test.mjs (mocking exec-glue).
 //

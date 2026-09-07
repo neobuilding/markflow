@@ -7,9 +7,10 @@ import {
   mkdirSync,
   existsSync,
   unlinkSync,
+  promises as fsPromises,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve, sep } from 'node:path'
 import {
   registerDocumentHandlers,
   normEnc,
@@ -24,7 +25,7 @@ import {
 // listeners use, so these tests never depend on filesystem event timing.
 import { __emitFolderEvent } from '../model/folderWatcher'
 // Import the REAL isInFolder (from the un-mocked folderMatch module) so the fake
-// store's listDocuments matches production semantics exactly — no drift between the
+// store's listDocuments matches production semantics exactly no drift between the
 // test double and documentStore.listDocuments.
 import { isInFolder } from '../model/folderMatch'
 
@@ -295,7 +296,7 @@ describe('documents IPC — update', () => {
 
   it('strips a Markdown extension from the incoming title so a rename does not double it', async () => {
     // The title bar shows `name.ext`, so the renderer sends `Renamed.md`. The stored
-    // title is extension-free and the rename re-appends the extension itself — without
+    // title is extension-free and the rename re-appends the extension itself without
     // stripping, the file would become `Renamed.md.md`.
     const created = await call('documents:create', {
       title: 'RenameExt',
@@ -613,7 +614,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     const b = join(dir, 'b.md')
     writeFileSync(b, '# imported', 'utf-8')
 
-    __emitFolderEvent('unlink', a) // marks a.md missing (one refresh — not the one we assert)
+    __emitFolderEvent('unlink', a) // marks a.md missing (one refresh not the one we assert)
     sentDocumentRefresh.length = 0
 
     __emitFolderEvent('add', b) // folds the rename back into the same doc (one refresh)
@@ -682,7 +683,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     __emitFolderEvent('unlink', a)
     __flushFolderChanged()
 
-    // Same bytes, but a different folder — must not be treated as the same rename.
+    // Same bytes, but a different folder must not be treated as the same rename
     const b = join(dirB, 'b.md')
     writeFileSync(b, '# imported', 'utf-8')
     __emitFolderEvent('add', b)
@@ -730,7 +731,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
   it('ignores a removal for a path that is still on disk (stale rename unlink)', async () => {
     // Regression: renaming a.md -> b.md and back to a.md replays the step-1 `unlink`
     // for a.md. chokidar reports a rename as an unpaired `unlink` + `add`, so that
-    // event can be delivered AFTER the file exists again — at which point a.md is the
+    // event can be delivered AFTER the file exists again at which point a.md is the
     // OPEN document. Deleting the record on the stale event closed the file and
     // emptied the sidebar, which is what made it look like the workspace closed.
     const dir = tmpDir('mf-watch-rename-')
@@ -857,7 +858,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
 
   it('does not send app:document-refresh once the window is destroyed', async () => {
     // Unlike the previous test, here the file is GONE, so onFileRemoved proceeds past the
-    // existsSync guard and actually reaches notifyDocumentRefresh — which must still skip
+    // existsSync guard and actually reaches notifyDocumentRefresh which must still skip
     // sending to a destroyed webContents.
     const dir = tmpDir('mf-watch-refresh-gone-')
     const created = await call('documents:create', { title: 'Gone', content: 'x', folderPath: dir })
@@ -880,9 +881,9 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     writeFileSync(file, '# Cancelled\n\ndropped', 'utf-8')
     sentFolderChanged.length = 0
 
-    // Queue a broadcast through the normal dispatch path…
+    // Queue a broadcast through the normal dispatch path
     __emitFolderEvent('add', file)
-    // …then close the workspace before the coalesce window elapses: the watcher is
+    // then close the workspace before the coalesce window elapses: the watcher is
     // gone, so the pending refresh must be dropped rather than delivered.
     await call('documents:clear-open-folders')
 
@@ -902,8 +903,8 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     sentFolderChanged.length = 0
 
     // Two directories change inside the same coalesce window. With one shared pending
-    // slot, the second event would overwrite the first and dirA — the folder the
-    // renderer is showing — would never be told to refresh.
+    // slot, the second event would overwrite the first and dirA the folder the
+    // renderer is showing would never be told to refresh
     __emitFolderEvent('add', fileA)
     __emitFolderEvent('add', fileB)
     __flushFolderChanged()
@@ -940,7 +941,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
       writeFileSync(fileB, '# B\n\nskipped', 'utf-8')
       sentFolderChanged.length = 0
 
-      // Live window: only the real 300ms timer may deliver this — no __flush
+      // Live window: only the real 300ms timer may deliver this no __flush
       // shortcut, so the delayed-send path itself is what gets exercised.
       __emitFolderEvent('add', fileA)
       expect(sentFolderChanged).toEqual([]) // still inside the coalesce window
@@ -1462,7 +1463,7 @@ describe('documents — pure encoding / text utilities', () => {
       // A UTF-8 buffer decoded as latin1 is fully decodable (1:1 byte->code), so 0.
       expect(countReplacements(Buffer.from('abc', 'utf-8'), 'latin1')).toBe(0)
       // GBK bytes that are invalid under UTF-8 produce replacement chars when forced to utf-8.
-      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]) // "中文" in GBK
+      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]) // "" in GBK
       const n = countReplacements(gbkBuf, 'utf-8')
       expect(n).toBeGreaterThan(0)
     })
@@ -1480,7 +1481,7 @@ describe('documents — pure encoding / text utilities', () => {
     it('flips to a cleaner CJK candidate when the primary decodes poorly', () => {
       // GBK bytes; primary wrongly claims utf-8 (which yields many replacements),
       // so a CJK candidate (gbk) should win with far fewer replacements.
-      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]) // "中文"
+      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4])
       const res = cjkSecondPass(gbkBuf, 'utf-8')
       expect(res.enc).toBe('gbk')
       expect(res.confidence).toBe(0.99)
@@ -1547,7 +1548,7 @@ describe('documents — pure encoding / text utilities', () => {
     it('trusts a forced high-confidence non-CJK primary without the second pass', () => {
       // Explicitly exercise the `!inCjkScope` early return. The byte-level test
       // below (Cyrillic/cp1251) only asserts the OUTCOME, and the real detector's
-      // verdict for those bytes can route it elsewhere — so pin the verdict here
+      // verdict for those bytes can route it elsewhere so pin the verdict here
       // to make the branch under test unambiguous.
       detectState.override = () => ({ encoding: 'windows-1252', confidence: 0.95 })
       try {
@@ -1578,7 +1579,7 @@ describe('documents — pure encoding / text utilities', () => {
       // Force the detector to claim utf-8 for bytes that are NOT valid utf-8, so
       // the primary decodes with replacement chars and the second pass must run.
       // (See the detectState comment above for why this needs a forced verdict.)
-      // GBK bytes for "中文" are invalid under utf-8, so gbk should win.
+      // GBK bytes for "" are invalid under utf-8, so gbk should win
       const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4])
       detectState.override = () => ({ encoding: 'utf-8', confidence: 0.9 })
       try {
@@ -1602,13 +1603,13 @@ describe('documents — pure encoding / text utilities', () => {
 
     it('skips the CJK second pass when the in-scope primary decodes with zero replacements', () => {
       // Performance guard for the chokidar-lag fix: cjkSecondPass decodes the sample
-      // once per candidate (utf-8 + gbk + big5 + shift_jis + euc-kr) — five full
+      // once per candidate (utf-8 + gbk + big5 + shift_jis + euc-kr) five full
       // decodes. When the primary encoding already decodes cleanly (0 replacement
       // chars), no candidate can do better, so the pass is pure waste.
       //
       // Verify the fast return by forcing the detector to a utf-8 verdict for bytes
       // that are valid utf-8: the primary decodes with 0 replacements, so the only
-      // way to reach utf-8/0.99 is the early "primaryRep === 0" return — entering
+      // way to reach utf-8/0.99 is the early "primaryRep === 0" return entering
       // the second pass could only change or lower the confidence, never confirm 0.99.
       detectState.override = () => ({ encoding: 'utf-8', confidence: 0.9 })
       try {
@@ -1639,7 +1640,7 @@ describe('documents — pure encoding / text utilities', () => {
     it('decodes a GBK file as gbk via the CJK second pass', () => {
       const dir = mkdtempSync(join(tmpdir(), 'mf-rmt-'))
       const p = join(dir, 'g.md')
-      writeFileSync(p, Buffer.from([0xd6, 0xd0, 0xce, 0xc4])) // "中文"
+      writeFileSync(p, Buffer.from([0xd6, 0xd0, 0xce, 0xc4]))
       const { text, encoding } = readMarkdownText(p)
       expect(encoding).toBe('gbk')
       expect(text).toBe('中文')
@@ -1693,7 +1694,7 @@ describe('isInFolder (folderMatch, shared with documentStore)', () => {
   })
 })
 
-// ─── M3 new handlers (PLAN §12-2/3/6/7/11/13) ─────────────────────────────────────
+// ─── M3 new handlers (/3/6/7/11/13) ─────────────────────────────────────
 describe('documents IPC — resolve-appdoc (能力 3)', () => {
   const dir = join(stableDocsRoot, 'ra')
   const filePath = join(dir, 'note.md')
@@ -1810,11 +1811,161 @@ describe('documents IPC — folder ops (能力 7)', () => {
     expect(existsSync(b)).toBe(true)
     expect(existsSync(a)).toBe(false)
   })
-  it('delete-folder removes the directory tree', async () => {
+  it('rename-folder re-points tracked documents so no stale duplicates remain', async () => {
+    const a = join(stableDocsRoot, `mv-docs-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-docs-b-${Date.now()}`)
+    mkdirSync(join(a, 'sub'), { recursive: true })
+    const file = join(a, 'x.md')
+    const nested = join(a, 'sub', 'y.md')
+    writeFileSync(file, 'x')
+    writeFileSync(nested, 'y')
+    expect(await call('documents:import', file)).not.toBeNull()
+    expect(await call('documents:import', nested)).not.toBeNull()
+    await call('documents:rename-folder', a, b)
+    const list = (await call('documents:list')) as Array<{ filePath: string }>
+    // Every tracked record now lives under the new folder including nested ones
+    // and the old paths are gone instead of lingering as "missing" duplicates.
+    expect(list.some((d) => d.filePath === join(b, 'x.md'))).toBe(true)
+    expect(list.some((d) => d.filePath === join(b, 'sub', 'y.md'))).toBe(true)
+    expect(list.some((d) => d.filePath === file)).toBe(false)
+    expect(list.some((d) => d.filePath === nested)).toBe(false)
+  })
+  it('rename-folder re-points tracked documents when renderer uses forward slashes (Windows)', async () => {
+    const a = join(stableDocsRoot, `mv-slashes-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-slashes-b-${Date.now()}`)
+    mkdirSync(a, { recursive: true })
+    const file = join(a, 'x.md')
+    writeFileSync(file, 'x')
+    expect(await call('documents:import', file)).not.toBeNull()
+
+    // The renderer builds tree paths with forward slashes, so it calls rename-folder
+    // with forward-slash paths even on Windows where stored file paths use backslashes.
+    const forwardA = a.replace(/\\/g, '/')
+    const forwardB = b.replace(/\\/g, '/')
+    await call('documents:rename-folder', forwardA, forwardB)
+
+    const list = (await call('documents:list')) as Array<{ filePath: string }>
+    expect(list.some((d) => d.filePath === join(b, 'x.md'))).toBe(true)
+    expect(list.some((d) => d.filePath === file)).toBe(false)
+  })
+  it("rename-folder preserves each document's own separator style when re-pointing", async () => {
+    const a = join(stableDocsRoot, `mv-sep-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-sep-b-${Date.now()}`)
+    mkdirSync(a, { recursive: true })
+
+    // Call the handler with forward-slash paths (how the renderer builds tree paths)
+    // so BOTH branches of the `docSep` ternary are reachable on every platform:
+    //   - a doc stored with forward slashes only -> docSep === '/'
+    //   - a doc stored with a backslash           -> docSep === '\\'
+    // rePointFolderRecords must keep each doc's own separator instead of forcing the
+    // folder's normalized separator onto it.
+    const aFwd = a.split(sep).join('/')
+    const bFwd = b.split(sep).join('/')
+    docs.set('sep-fwd', {
+      id: 'sep-fwd',
+      title: 'Fwd',
+      folderPath: `${aFwd}/fwd`,
+      filePath: `${aFwd}/fwd.md`,
+      content: 'x',
+      wordCount: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      memoryOnly: false,
+    })
+    docs.set('sep-bs', {
+      id: 'sep-bs',
+      title: 'Bs',
+      folderPath: `${aFwd}/deep`,
+      filePath: `${aFwd}/deep\\odd.md`,
+      content: 'y',
+      wordCount: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      memoryOnly: false,
+    })
+
+    await call('documents:rename-folder', aFwd, bFwd)
+
+    const fwd = docs.get('sep-fwd')
+    const bs = docs.get('sep-bs')
+    // Both re-pointed onto the new folder (old name gone, new name present).
+    expect(fwd.filePath).toContain('mv-sep-b')
+    expect(bs.filePath).toContain('mv-sep-b')
+    expect(fwd.filePath).not.toContain('mv-sep-a')
+    expect(bs.filePath).not.toContain('mv-sep-a')
+    // Each doc keeps its OWN separator style in the re-pointed suffix: the forward-slash
+    // doc stays forward-slash, the backslash doc stays backslash (the docSep branches).
+    expect(fwd.filePath.endsWith('/fwd.md')).toBe(true)
+    expect(bs.filePath.includes('deep\\odd.md')).toBe(true)
+
+    docs.delete('sep-fwd')
+    docs.delete('sep-bs')
+    await fsPromises.rm(b, { recursive: true, force: true })
+  })
+  it('delete-folder moves the folder to the OS trash (trashItem called)', async () => {
     const p = join(stableDocsRoot, `rm-${Date.now()}`)
     mkdirSync(p, { recursive: true })
     writeFileSync(join(p, 'y.md'), 'y')
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined)
     await call('documents:delete-folder', p)
-    expect(existsSync(p)).toBe(false)
+    expect(shell.trashItem).toHaveBeenCalledWith(resolve(p))
+    // The handler delegates the removal to the OS, so the on-disk tree is left for the
+    // (mocked) trash; clean it up so it doesn't pollute later folder listings.
+    await fsPromises.rm(p, { recursive: true, force: true })
+  })
+
+  it('delete-folder rethrows when trashItem fails for a non-ENOENT reason', async () => {
+    const p = join(stableDocsRoot, `rm-${Date.now()}`)
+    mkdirSync(p, { recursive: true })
+    const err = Object.assign(new Error('no trash'), { code: 'EPERM' })
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
+    await expect(call('documents:delete-folder', p)).rejects.toThrow()
+    expect(shell.trashItem).toHaveBeenCalledWith(resolve(p))
+    await fsPromises.rm(p, { recursive: true, force: true })
+  })
+
+  it('delete-folder treats an already-gone folder (ENOENT) as success', async () => {
+    const p = join(stableDocsRoot, `gone-${Date.now()}`)
+    const err = Object.assign(new Error('gone'), { code: 'ENOENT' })
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
+    await expect(call('documents:delete-folder', p)).resolves.toBeUndefined()
+    expect(shell.trashItem).toHaveBeenCalledWith(resolve(p))
+  })
+  it('list-folders reports nested directories and skips hidden ones', async () => {
+    const p = join(stableDocsRoot, `lf-${Date.now()}`)
+    mkdirSync(join(p, 'sub', 'deeper'), { recursive: true })
+    mkdirSync(join(p, '.hidden'), { recursive: true })
+    writeFileSync(join(p, 'a.md'), 'a')
+    const dirs = (await call('documents:list-folders', p)) as string[]
+    expect(dirs).toContain(join(p, 'sub'))
+    expect(dirs).toContain(join(p, 'sub', 'deeper'))
+    // Files are not directories, and dot-directories are workspace noise.
+    expect(dirs).not.toContain(join(p, 'a.md'))
+    expect(dirs.some((d) => d.endsWith('.hidden'))).toBe(false)
+  })
+  it('list-folders stops at the MAX_DEPTH limit instead of recursing forever', async () => {
+    const p = join(stableDocsRoot, `deep-${Date.now()}`)
+    let cur = p
+    for (let i = 0; i < 12; i++) cur = join(cur, `l${i}`)
+    mkdirSync(cur, { recursive: true })
+    const dirs = (await call('documents:list-folders', p)) as string[]
+    // The walk must bail out once depth exceeds MAX_DEPTH (8): the folder 9 levels down
+    // (l8) is still reported because the depth-8 walk enumerates it as its last child, but
+    // nothing deeper is recursion into l8 is skipped
+    const deepest = join(p, 'l0', 'l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7', 'l8')
+    const tooDeep = join(deepest, 'l9', 'l10', 'l11')
+    expect(dirs).toContain(deepest)
+    expect(dirs).not.toContain(tooDeep)
+  })
+
+  it('list-folders returns nothing for a missing path instead of throwing', async () => {
+    const dirs = (await call(
+      'documents:list-folders',
+      join(stableDocsRoot, `nope-${Date.now()}`),
+    )) as string[]
+    expect(dirs).toEqual([])
   })
 })
