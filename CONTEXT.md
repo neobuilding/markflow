@@ -1,0 +1,104 @@
+# CONTEXT.md
+
+Domain glossary for MarkFlow. Agents and humans should use these terms consistently when writing
+issue titles, refactor proposals, tests, or docs. If a term you need isn't here, that's a signal to
+either reconsider the invented wording or flag it for `/domain-modeling`.
+
+MarkFlow is a cross-platform Markdown editor with a Linear-style UI, built with Electron 43 +
+React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder.
+
+## Documents & editing
+
+- **Document** — a Markdown file (`.md` / `.mdx`) loaded into the app. Carries `content`, `filePath`,
+  `encoding`, `wordCount`, `createdAt`, `updatedAt`, and derived `title`.
+- **Draft (in-memory document)** — a newly created document that lives entirely in memory until
+  explicitly saved. Its first **Save** opens **Save As** to choose a path; nothing is ever written to a
+  hidden default location.
+- **Memory-only document** — a draft created via `documents:create` with `memoryOnly: true`: no file is
+  written and no watcher is attached; the store holds a row with `file_path = ''` and the UI marks it
+  `isNewUnsaved`. The sidebar lists such docs in a dedicated **"Unsaved drafts"** group (they have no path
+  to place in the folder tree). Drafts are never persisted across app restarts.
+- **.mdx handling** — `.mdx` files open, list, and preview like regular Markdown (extension shown in the
+  sidebar). JSX / embedded components are **not** parsed (true MDX compilation is a deferred RFC); `.mdx` is
+  currently treated as plain Markdown.
+- **Read-only by default** — files open read-only to prevent accidental edits; toggle to Edit mode anytime.
+- **Manual save** — no auto-save. **Save** (`Ctrl/Cmd+S`), **Save As…** (`Ctrl/Cmd+Shift+S`), and
+  **Reload from Disk** (`Ctrl/Cmd+Shift+R`).
+- **Split-pane / preview mode** — view modes: edit, preview, or split (editor + live preview side by side
+  with a draggable divider).
+- **Synchronized scrolling** — in split view, source and preview panes scroll in lockstep by scroll ratio.
+- **.mdx support** — `.mdx` files open, list, and preview like regular Markdown (extension shown in sidebar).
+
+## Navigation & workspace
+
+- **Workspace** — the currently open folder plus its loaded documents (tracked via `openFolders`).
+  **Close workspace** returns to an empty state; **Close file** keeps the folder + sidebar.
+- **Active Folder** — the folder whose file tree is shown in the sidebar; renderer-side UI state in the
+  Zustand `ui` store.
+- **Sidebar** — collapsible nested folder tree listing Markdown files; file names include their extension
+  and subfolders start collapsed.
+- **File path breadcrumb** — current file path shown above the editor; folder icon reveals it in the system
+  file manager.
+- **Open anywhere** — launch via CLI, drag-and-drop, or as the default app for `.md`. App starts fresh
+  (no previous file/folder restored); window size is not persisted.
+
+## Storage & search (main process)
+
+- **Document Store** — the in-memory `Map` (`electron/main/model/documentStore.ts`) holding loaded documents;
+  the single source of truth in the main process. Replaced the old SQLite `:memory:` layer (see
+  `docs/adr/0001-disk-driven-document-model.md`).
+- **minisearch index** — pure-JS full-text search (`electron/main/ipc/search.ts`), rebuilt per query,
+  powering the Command Palette. No native dependency.
+- **folderWatcher (chokidar)** — recursive watcher over `openFolders` that syncs disk changes into the
+  store; ignores non-Markdown and build output (`**/*.html`, `**/*.pdf`, `**/*.docx`, `**/*.tmp`).
+- **Markdown dual-write** — Markdown files are written to disk; there is no separate index file.
+- **Full-text search** — minisearch-powered, instant results with highlighted snippets.
+
+## Rendering & security
+
+- **Markdown pipeline** — `src/renderer/src/lib/markdownPipeline.ts` + `sanitize.ts`, producing sanitized
+  HTML from GFM + KaTeX + Mermaid + GitHub Alerts + custom containers.
+- **SafeHtml / single sanitization gate** — the sole XSS boundary: rendered HTML passes through
+  `SafeHtml` → `sanitizeHtml` (DOMPurify). Never bypassed (see `docs/adr/0002-single-sanitization-gate.md`).
+- **appdoc:// protocol** — custom scheme for in-app document image / asset rewriting.
+
+## App behavior, dialogs & UI
+
+- **dialog:confirm (app-modal)** — the only sanctioned way to prompt for unsaved-change discard and similar
+  yes/no questions. It is a `dialog:confirm` IPC backed by `dialog.showMessageBox` (an app-modal dialog that
+  returns focus to the window on close). Native `window.confirm` is **forbidden** for these prompts: it fires
+  a WIN-BLUR on Windows that leaves the editor untypeable (see `docs/adr/0009-app-modal-dialogs.md`).
+- **tryCloseWorkspace (unified quit path)** — closing a file, closing the workspace, and quitting the app all
+  run the same `tryCloseWorkspace()` logic (same unsaved-change prompt, same `app:quit-allowed` →
+  `before-quit` → `app.quit()` flow). New documents and existing unsaved edits are treated identically.
+- **Context menu (right-click)** — right-click menus use `@radix-ui/react-context-menu` (pops at the cursor,
+  native Shift+F10); button-triggered dropdowns use `@radix-ui/react-dropdown-menu`. Menu items stop event
+  propagation to avoid firing ancestor handlers. See `docs/adr/0008-context-menu-architecture.md`.
+- **formatShortcut** — renders a keyboard shortcut string per platform (⌘ on macOS, Ctrl elsewhere); tooltip
+  and menu shortcuts must use it rather than a hardcoded `⌘`.
+- **AUTO-block PR body** — the Create-PR Action manages PR bodies via symmetric `<!-- AUTO:key --> … <!-- /AUTO:key -->`
+  markers; on refresh each segment resets to the template while human-written content outside the markers is
+  preserved. (A planned generalization replaces the hardcoded blocks with scanned `.mjs` **block plugins** —
+  designed but not yet implemented.) See `docs/adr/0005-committed-action-bundle.md`.
+- **TypeScript 7 + ESLint TS6 shim** — the app builds on TS7 while `typescript-eslint` v8 still needs TS6 for
+  the linter; `scripts/install-eslint-ts6.mjs` installs the TS6 checker side-by-side purely for lint. A
+  documented transitional measure. See `docs/adr/0007-typescript7-eslint-ts6-shim.md`.
+
+## App architecture
+
+- **IPC** — main↔renderer messaging: `documents`, `search`, `export`, `app`, `dialog`, `window`, `menu`,
+  `events`.
+- **preload / contextBridge** — `electron/preload/` exposes a typed `window.api`.
+- **TanStack Query** — renderer-side wrapper over IPC calls (`useDocuments`, `useSearch`).
+- **Zustand** — UI state store (`src/renderer/src/store/ui.ts`).
+- **i18n** — internationalization with locale detection/storage, decomposed into `storage.ts` + `useT.ts`
+  (no circular dependency with the UI store; see `docs/adr/0003-main-process-entry-decomposition.md`).
+
+## Repo conventions
+
+- **Create-PR Action** — in-repo GitHub Action (`actions/create-pr`) that idempotently creates/refreshes PRs;
+  its bundled `dist/index.mjs` is committed (see `docs/adr/0005-committed-action-bundle.md`).
+- **Coverage gate** — `npm run test:coverage` enforces 100% per-file on the unit-testable logic surface
+  (see `docs/adr/0004-per-file-100-percent-coverage.md`).
+- **ADR** — Architecture Decision Record, kept under `docs/adr/` (this file's sibling directory).
+- **Issue tracker** — local markdown under `.scratch/<feature-slug>/` (see `docs/agents/issue-tracker.md`).
