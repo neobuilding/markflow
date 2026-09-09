@@ -109,6 +109,10 @@ describe('preload documentsApi', () => {
     documentsApi.renameFolder('/a', '/b')
     expect(invokes[0]).toEqual({ channel: 'documents:rename-folder', args: ['/a', '/b'] })
   })
+  it('renameFile invokes documents:rename-file with old and new paths', () => {
+    documentsApi.renameFile('/a.md', '/b.md')
+    expect(invokes[0]).toEqual({ channel: 'documents:rename-file', args: ['/a.md', '/b.md'] })
+  })
 
   it('deleteFolder invokes documents:delete-folder with the path', () => {
     documentsApi.deleteFolder('/notes/old')
@@ -128,5 +132,10 @@ describe('preload documentsApi', () => {
   it('clearOpenFolders invokes documents:clear-open-folders with no arguments', () => {
     documentsApi.clearOpenFolders()
     expect(invokes[0]).toEqual({ channel: 'documents:clear-open-folders', args: [] })
+  })
+
+  it('undoRename invokes documents:undo-rename with no arguments', () => {
+    documentsApi.undoRename()
+    expect(invokes[0]).toEqual({ channel: 'documents:undo-rename', args: [] })
   })
 })

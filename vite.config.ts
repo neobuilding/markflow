@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron/simple'
 import { fileURLToPath } from 'node:url'
+import { relative } from 'node:path'
 import checker from 'vite-plugin-checker'
 
 // ROOT CAUSE FIX: Clear ELECTRON_RUN_AS_NODE so Electron runs in full mode
@@ -99,26 +100,48 @@ export default defineConfig({
   server: {
     port: 5174,
     strictPort: false,
-    // Key: In Vite dev mode, changes to .html files in the project root trigger a full page
-    // reload. When the user exports HTML into the project (e.g. examples/demo.html), the write
-    // is misread as a source change, causing the renderer to reload and lose workspace state.
-    // Here we ignore changes to any .html other than index.html keeping index.html hot-reload
-    // while avoiding accidental reloads from export operations.
+    // Dev-server file watch scope. The renderer is served from index.html; in dev
+    // mode a change to a watched .html triggers a full page reload. We must keep
+    // index.html hot-reloaded but avoid reloads from app DATA writes (e.g. a user
+    // exporting HTML into examples/). The WHITELIST below achieves this cleanly:
+    // only src/shared + root config are watched, so any exported html lands in an
+    // unwatched data directory and never triggers a reload. Packaged builds have no
+    // Vite watcher at all.
     watch: {
+      // Watch WHITELIST (not blacklist) of what the Vite dev server must track for
+      // HMR. The renderer's entire import graph is confined to `src/` (entry:
+      // src/renderer/src/main.tsx) and `shared/` (i18n), plus a few root config
+      // files. Everything else — user data folders the app can edit/delete
+      // (examples, docs, docs.local, notes, …), build/test output (coverage,
+      // dist-electron, release, out) and standalone Node tooling (actions, scripts,
+      // e2e) — must NOT be watched. If Vite's chokidar holds a directory handle on a
+      // watched folder, shell.trashItem's recycle rename on Windows is blocked and the
+      // OS raises the "needs admin permission" elevation prompt; the app's own
+      // watcher is released by folderWatcher.pauseFolderWatching, but it cannot
+      // release Vite's handle. A blacklist would silently start watching any NEW data
+      // directory and re-introduce that bug; a whitelist makes it impossible by
+      // construction. (electron/main + electron/preload are watched by
+      // vite-plugin-electron's own watcher, independent of this dev-server watch.)
+      //
+      // chokidar has no native multi-root/allowlist, so we invert the predicate:
+      // ignore everything EXCEPT the allowlist. The repo root itself must NOT be
+      // ignored or chokidar traverses nothing — handled by the `rel === ''` guard.
+      // Paths are normalised via path.relative(process.cwd(), …) so the check is
+      // correct on Windows, where chokidar passes ABSOLUTE paths (a naive
+      // split(/[/\\]/)[0] would return the drive letter and match nothing).
       ignored: (path) => {
-        if (/[^/\\]\.html$/i.test(path) && !/index\.html$/i.test(path)) return true
-        // Markdown files are the app's DATA, never renderer source (the renderer
-        // imports no .md only ?raw CSS from node_modules). Editing or renaming a
-        // .md INSIDE the project root while `npm run dev` runs must NOT trigger a
-        // Vite full-reload: that reload resets the renderer and, because workspace
-        // state is not persisted, silently "closes" the open document and the whole
-        // workspace (TODO-4). Dev-only (no Vite watcher in packaged builds), but a
-        // real bug the app is a markdown editor, so editing a .md that happens to
-        // live in its own repo root is perfectly normal. The app's OWN chokidar
-        // watcher (electron/main/model/folderWatcher.ts) tracks .md independently,
-        // so ignoring them here costs nothing.
-        if (/\.(md|markdown|mdx|mdtxt|mdtext)$/i.test(path)) return true
-        return false
+        const rel = relative(process.cwd(), String(path)).replace(/[\\/]+/g, '/')
+        if (rel === '') return false // repo root: must be watched to reach src/shared
+        const top = rel.split('/', 1)[0]
+        const ALLOWED = [
+          'src', // renderer source (entry src/renderer/src/main.tsx)
+          'shared', // i18n imported by the renderer
+          'index.html', // full-reload trigger on change
+          'vite.config.ts', // dev-server config reload
+          'postcss.config.ts', // CSS pipeline
+          'tailwind.config.cjs', // Tailwind content/presets
+        ]
+        return !ALLOWED.includes(top) && !ALLOWED.includes(rel)
       },
     },
   },

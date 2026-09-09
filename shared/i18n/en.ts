@@ -7,14 +7,13 @@ export const en = {
   'sidebar.search': 'Search',
   'sidebar.openFile': 'Open File…',
   'sidebar.openFolder': 'Open Folder…',
-  'sidebar.newDocument': 'New Document',
+  'sidebar.newDraft': 'New Draft',
   'sidebar.close': 'Close',
   'sidebar.resizeHint': 'Drag to resize sidebar',
   'sidebar.noFolderOpen': 'No folder open',
   'sidebar.openToStart': 'Open a file or folder to start reading.',
   'sidebar.openFileAction': 'Open File…',
   'sidebar.openFolderAction': 'Open Folder…',
-  'sidebar.newDocumentAction': 'New Document',
   'sidebar.emptyFolder': 'No documents in this folder',
   'sidebar.createFirst': 'Create your first document',
   'sidebar.newBadge': 'new',
@@ -25,6 +24,19 @@ export const en = {
   'sidebar.enter': 'Open this folder',
   // Placeholder of the inline <input> used to name a new/renamed folder
   'sidebar.folderNamePlaceholder': 'Folder name…',
+  'sidebar.fileNamePlaceholder': 'File name…',
+  'sidebar.showAllFolders': 'Show All Folders',
+  'sidebar.showAllFoldersHint': 'Show All Folders (even without Markdown)',
+  'sidebar.newFile': 'New File',
+  // Shown when a folder could not be moved to the Trash (in use / permission denied).
+  'app.deleteFolderFailed':
+    'Could not move "{{name}}" to the Trash. It may be open in another program.',
+  // Shown when a rename cannot be undone (original name taken again, or the file moved on).
+  'app.renameUndoBlocked':
+    'Cannot undo the rename — the original name is taken or the file has moved.',
+  // Shown under the inline name input when what was typed cannot be used as typed.
+  'sidebar.unsupportedExt': '"{{ext}}" is not a Markdown extension — changed to .md',
+  'sidebar.unsupportedName': 'Path separators are not allowed — changed to "{{name}}"',
 
   // ── Editor pane ────────────────────────────────────────────────────────
   'editor.save': 'Save',
@@ -145,7 +157,7 @@ export const en = {
   'details.close': 'Close',
 
   // ── New document dialog ────────────────────────────────────────────────
-  'new.title': 'New Document',
+  'new.title': 'New Draft',
   'new.documentTitle': 'Document title',
   'new.extension': 'Extension',
   'new.untitled': 'Untitled',
@@ -196,7 +208,7 @@ export const en = {
   'menu.language': 'Language',
   'menu.english': 'English',
   'menu.chinese': '简体中文',
-  'menu.newDocument': 'New Document',
+  'menu.newDraft': 'New Draft',
   'menu.openFile': 'Open File…',
   'menu.openFolder': 'Open Folder…',
   'menu.save': 'Save',
@@ -245,7 +257,7 @@ export const en = {
   // Preview task
   'ctx.copyTaskText': 'Copy Task Text',
   // Preview formula
-  'ctx.copyFormula': 'Copy Formula',
+  'ctx.copyFormula': 'Copy Formula as Text',
   'ctx.copyFormulaSource': 'Copy TeX Source',
   // Preview diagram (mermaid)
   'ctx.copyDiagramSource': 'Copy Diagram Source',
@@ -265,7 +277,7 @@ export const en = {
   'ctx.collapse': 'Collapse',
   'ctx.expandAll': 'Expand All',
   'ctx.copyFolderPath': 'Copy Folder Path',
-  'ctx.newDocHere': 'New Document in This Folder',
+  'ctx.newFileHere': 'New File in This Folder',
   'ctx.newSubfolder': 'New Subfolder…',
   // Current folder bar: create a folder directly under the opened folder.
   'ctx.newFolderHere': 'New Folder Here…',

@@ -7,14 +7,13 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.search': '搜索',
   'sidebar.openFile': '打开文件…',
   'sidebar.openFolder': '打开文件夹…',
-  'sidebar.newDocument': '新建文档',
+  'sidebar.newDraft': '新建草稿',
   'sidebar.close': '关闭',
   'sidebar.resizeHint': '拖动以调整侧边栏宽度',
   'sidebar.noFolderOpen': '未打开文件夹',
   'sidebar.openToStart': '打开文件或文件夹即可开始阅读。',
   'sidebar.openFileAction': '打开文件…',
   'sidebar.openFolderAction': '打开文件夹…',
-  'sidebar.newDocumentAction': '新建文档',
   'sidebar.emptyFolder': '此文件夹中没有文档',
   'sidebar.createFirst': '创建你的第一个文档',
   'sidebar.newBadge': '新建',
@@ -25,6 +24,14 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.enter': '进入此文件夹',
 
   'sidebar.folderNamePlaceholder': '文件夹名称…',
+  'sidebar.fileNamePlaceholder': '文件名称…',
+  'sidebar.showAllFolders': '显示所有文件夹',
+  'sidebar.showAllFoldersHint': '显示所有文件夹（即使不含 Markdown 文档）',
+  'sidebar.newFile': '新建文件',
+  'app.deleteFolderFailed': '无法将“{{name}}”移到回收站，它可能正被其他程序占用。',
+  'app.renameUndoBlocked': '无法撤销改名——原名称已被占用，或文件已被移动。',
+  'sidebar.unsupportedExt': '不支持 {{ext}} 扩展名，已改为 .md',
+  'sidebar.unsupportedName': '不能包含路径分隔符，已改为 {{name}}',
   'details.unsaved': '未保存（仅存在于内存中）',
 
   // ── Editor pane ────────────────────────────────────────────────────────
@@ -140,7 +147,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'details.close': '关闭',
 
   // ── New document dialog ────────────────────────────────────────────────
-  'new.title': '新建文档',
+  'new.title': '新建草稿',
   'new.documentTitle': '文档标题',
   'new.extension': '扩展名',
   'new.untitled': '未命名',
@@ -188,7 +195,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.language': '语言',
   'menu.english': 'English',
   'menu.chinese': '简体中文',
-  'menu.newDocument': '新建文档',
+  'menu.newDraft': '新建草稿',
   'menu.openFile': '打开文件…',
   'menu.openFolder': '打开文件夹…',
   'menu.save': '保存',
@@ -237,7 +244,7 @@ export const zhCN: Record<TranslationKey, string> = {
 
   'ctx.copyTaskText': '复制任务文字',
 
-  'ctx.copyFormula': '复制公式',
+  'ctx.copyFormula': '复制公式（渲染后的文本）',
   'ctx.copyFormulaSource': '复制 TeX 源码',
   // Mermaid
   'ctx.copyDiagramSource': '复制图表源码',
@@ -257,7 +264,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'ctx.collapse': '折叠',
   'ctx.expandAll': '全部展开',
   'ctx.copyFolderPath': '复制文件夹路径',
-  'ctx.newDocHere': '在此文件夹中新建文档',
+  'ctx.newFileHere': '在此文件夹中新建文件',
   'ctx.newSubfolder': '新建子文件夹…',
 
   'ctx.newFolderHere': '在此新建文件夹…',

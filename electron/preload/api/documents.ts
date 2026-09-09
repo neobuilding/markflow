@@ -33,6 +33,10 @@ export const documentsApi = {
   createFolder: (folderPath: string) => ipcRenderer.invoke('documents:create-folder', folderPath),
   renameFolder: (oldPath: string, newPath: string) =>
     ipcRenderer.invoke('documents:rename-folder', oldPath, newPath),
+  renameFile: (oldPath: string, newPath: string) =>
+    ipcRenderer.invoke('documents:rename-file', oldPath, newPath),
+  // Undo the most recent file/folder rename. Single slot; the main process owns the history.
+  undoRename: () => ipcRenderer.invoke('documents:undo-rename'),
   deleteFolder: (folderPath: string) => ipcRenderer.invoke('documents:delete-folder', folderPath),
   // Directory listing : every folder below the given path, empty ones
   // included, so the sidebar tree is not limited to folders that hold a Markdown file.

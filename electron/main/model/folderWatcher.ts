@@ -23,9 +23,18 @@ export type FolderWatchHandlers = {
   onFileRemoved: (filePath: string) => void
   // A Markdown file's contents changed and we did not cause the write ourselves.
   onFileChanged: (filePath: string) => void
+  // A directory appeared / disappeared (created, deleted or moved by another program).
+  // The sidebar tree lists FOLDERS, not just Markdown files, so a folder holding no
+  // Markdown produces no file event at all — without these the tree would keep showing
+  // a folder that no longer exists. Optional: file-only callers need not supply them.
+  onDirAdded?: (dirPath: string) => void
+  onDirRemoved?: (dirPath: string) => void
 }
 
 export type FolderEvent = 'add' | 'unlink' | 'change'
+// chokidar's directory equivalents, dispatched separately because `dispatch` filters on
+// the Markdown extension (which no directory has).
+export type DirEvent = 'addDir' | 'unlinkDir'
 
 // Directories never worth crawling: dot dirs (notably .git, .DS_Store) and
 // node_modules.
@@ -106,6 +115,21 @@ export function __emitFolderEvent(event: FolderEvent, filePath: string): void {
   dispatch(event, filePath)
 }
 
+// Test seam for the directory path, mirroring __emitFolderEvent.
+export function __emitFolderDirEvent(event: DirEvent, dirPath: string): void {
+  dispatchDir(event, dirPath)
+}
+
+// Directory events get their own dispatch: `dispatch` drops every non-Markdown path, which
+// is exactly every directory. `shouldIgnore` already keeps chokidar out of dot-directories
+// and node_modules, so what arrives here is a real, user-visible folder.
+function dispatchDir(event: DirEvent, dirPath: string): void {
+  const h = handlers
+  if (!h) return
+  if (event === 'addDir') h.onDirAdded?.(dirPath)
+  else h.onDirRemoved?.(dirPath)
+}
+
 // Start chokidar over every opened folder, or return null when there is nothing to
 // watch yet (the user has not opened a folder).
 function createWatcher(): FSWatcher | null {
@@ -122,6 +146,9 @@ function createWatcher(): FSWatcher | null {
   w.on('add', (p) => dispatch('add', p))
   w.on('unlink', (p) => dispatch('unlink', p))
   w.on('change', (p) => dispatch('change', p))
+  // Directory create/remove, so the folder tree follows changes made outside the app.
+  w.on('addDir', (p) => dispatchDir('addDir', p))
+  w.on('unlinkDir', (p) => dispatchDir('unlinkDir', p))
   w.on('error', () => {
     // Individual unreadable paths are already filtered by ignorePermissionErrors;
     // swallow anything left so a stray watcher error cannot crash the main process.
@@ -147,6 +174,39 @@ export function addWatchedFolder(folderPath: string): void {
     watcher.add(folderPath)
     return
   }
+  watcher = createWatcher()
+}
+
+// Temporarily release every watch handle, keeping the open-folder set intact so the
+// watch can be restored afterwards.
+//
+// Windows cannot move a directory to the Recycle Bin while anything still holds an open
+// handle on it, and chokidar holds one per watched directory. So deleting a folder that
+// lives INSIDE the watched tree fails — the OS surfaces it as a permissions / "folder in
+// use" error even though nothing is actually wrong with the ACLs. Releasing the watch
+// first is what makes "delete folder" work for a subfolder of the open workspace.
+// Only markdown files are watched, but directories are always traversed (and therefore
+// held open), which is why even a folder containing no Markdown is affected.
+// Set only between pause and resume, so a resume can never start a watcher that was
+// not running before (and a pause is idempotent if something already paused).
+let watchingPaused = false
+
+export async function pauseFolderWatching(): Promise<void> {
+  if (watchingPaused) return
+  const w = watcher
+  // Nothing is being watched (no folder open yet) — there is no handle to release.
+  if (!w) return
+  watchingPaused = true
+  watcher = null
+  await w.close()
+}
+
+// Restore the watch after pauseFolderWatching(). A no-op unless a pause actually
+// happened, so it can never create a watcher that was not there before.
+export function resumeFolderWatching(): void {
+  if (!watchingPaused) return
+  watchingPaused = false
+  if (watcher) return
   watcher = createWatcher()
 }
 

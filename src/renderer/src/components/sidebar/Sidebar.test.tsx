@@ -42,7 +42,15 @@ const openPathsMock = vi.fn()
 const openFolderMock = vi.fn()
 const createFolderMock = vi.fn(async () => ({}))
 const renameFolderMock = vi.fn(async () => ({}))
+const renameFileMock = vi.fn(async () => ({}))
 const deleteFolderMock = vi.fn(async () => ({}))
+// Resolves to "nothing to undo" by default, so a stray Ctrl+Z in a test stays silent.
+// `reason` is a general refusal code (the handler alerts on any value other than 'none'),
+// so the type must stay open rather than narrowing to the literal 'none'.
+const undoRenameMock = vi.fn(async (): Promise<{ ok: boolean; reason: string }> => ({
+  ok: false,
+  reason: 'none' as const,
+}))
 // Directories reported by the main process for the active folder; set per test so the
 // tree can be exercised with folders that hold no document.
 let folderDirs: string[] = []
@@ -55,7 +63,9 @@ vi.mock('../../hooks/useDocuments', () => ({
   useOpenFolder: () => ({ mutate: openFolderMock, isPending: false }),
   useCreateFolder: () => ({ mutateAsync: createFolderMock, isPending: false }),
   useRenameFolder: () => ({ mutateAsync: renameFolderMock, isPending: false }),
+  useRenameFile: () => ({ mutateAsync: renameFileMock, isPending: false }),
   useDeleteFolder: () => ({ mutateAsync: deleteFolderMock, isPending: false }),
+  useUndoRename: () => ({ mutateAsync: undoRenameMock, isPending: false }),
   useFolderDirs: () => ({ data: folderDirs }),
 }))
 
@@ -77,6 +87,10 @@ beforeEach(() => {
   useUIStore.getState().setActiveFolder(null)
   useUIStore.getState().setActiveDocumentId(null)
   useUIStore.getState().setDirty(false)
+  // "Show All Folders" and the just-created-folder pins are session state on the same
+  // store, so they have to be cleared per test like the rest of the workspace.
+  useUIStore.getState().setShowAllFolders(false)
+  useUIStore.setState({ recentlyCreatedFolders: new Set<string>() })
   ;(window as unknown as { api: unknown }).api = {
     dialog: {
       openFiles: vi.fn(async () => ['/x.md']),
@@ -92,6 +106,7 @@ beforeEach(() => {
   // "must not have been called" assertions.
   createFolderMock.mockReset()
   renameFolderMock.mockReset()
+  renameFileMock.mockReset()
   deleteFolderMock.mockReset()
   folderDirs = []
 })
@@ -168,12 +183,31 @@ describe('Sidebar', () => {
     expect(await screen.findAllByTestId('doc-item')).toHaveLength(2)
   })
 
-  it('shows a folder that holds no Markdown document yet (能力 7)', async () => {
+  it('hides a folder that holds no Markdown document by default (能力 7)', async () => {
     useUIStore.getState().setActiveFolder('/docs')
     folderDirs = ['/docs/empty']
     mount()
-    // The folder comes from the on-disk listing, not from any document, so it is
-    // visible (and enterable) the moment it is created.
+    // Default: the tree is derived from documents alone, so the empty folder present in
+    // the on-disk listing never becomes a node.
+    await waitFor(() => expect(screen.queryByTestId('folder-row')).toBeNull())
+    expect(screen.queryByText('empty')).toBeNull()
+  })
+
+  it('shows every folder once "Show All Folders" is turned on (能力 7)', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setShowAllFolders(true)
+    folderDirs = ['/docs/empty']
+    mount()
+    expect(await screen.findByText('empty')).toBeInTheDocument()
+  })
+
+  it('keeps a just-created folder visible even while it is still empty', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    // Created this session, so it is pinned: without the pin the filter would hide it
+    // immediately and naming a folder would look like it did nothing.
+    useUIStore.setState({ recentlyCreatedFolders: new Set(['/docs/empty']) })
+    folderDirs = ['/docs/empty']
+    mount()
     expect(await screen.findByText('empty')).toBeInTheDocument()
   })
 
@@ -399,12 +433,14 @@ describe('Sidebar — interactions', () => {
     }
   })
 
-  it('shows the empty state and creates the first document', async () => {
+  it('shows the empty state and opens the inline New File row', async () => {
     seedDocs([])
     mount()
     expect(screen.getByText(/No documents in this folder/i)).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('empty-create-btn'))
-    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    // The sidebar manages the current folder, so the empty-state CTA creates a real file
+    // (not a memory-only draft): it opens the inline file-name input instead of calling create.
+    await waitFor(() => expect(screen.getByTestId('file-create-row')).toBeInTheDocument())
   })
 
   it('resizes the sidebar by dragging the handle', async () => {
@@ -639,41 +675,201 @@ describe('Sidebar document item context menu (PLAN §5)', () => {
     expect(screen.getByTestId('side-delete')).toBeInTheDocument()
   })
 
-  it('disables rename in read-only mode and shows a tooltip', async () => {
+  it('renames from read-only mode: the item stays enabled and enters inline rename (decoupled from edit mode)', async () => {
+    // Files open read-only, so gating rename behind edit mode made the item permanently
+    // grey. Renaming is a file operation (like delete), never gated; and it must NOT switch
+    // edit mode on — it is a direct on-disk move, not a content edit.
     useUIStore.getState().setEditable(false)
+    useUIStore.getState().setActiveDocumentId('a')
     mount()
     fireEvent.contextMenu(await docItem('a.md'))
     const rename = screen.getByTestId('side-rename')
-    expect(rename).toHaveAttribute('aria-disabled', 'true')
-    expect(rename).toHaveAttribute('title', 'Switch to edit mode first')
+    expect(rename).not.toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(rename)
+    // Clicking flips the row into an inline input prefilled with the current base name.
+    const input = await screen.findByTestId('folder-name-input')
+    expect(input).toHaveValue('a.md')
+    // Edit mode was left untouched.
+    expect(useUIStore.getState().editable).toBe(false)
   })
 
-  it('rename of the active doc sets pendingFileAction', async () => {
-    useUIStore.getState().setActiveDocumentId('a')
+  it('starts an inline rename with F2 on the focused file row', async () => {
+    mount()
+    const item = await docItem('a.md')
+    ;(item as HTMLElement).focus()
+    fireEvent.keyDown(item as HTMLElement, { key: 'F2' })
+    const input = await screen.findByTestId('folder-name-input')
+    // Prefilled with the current base name, exactly like the context-menu rename.
+    expect(input).toHaveValue('a.md')
+  })
+
+  it('ignores F2 when no row is focused (no data-kind ancestor)', () => {
+    // Covers the `if (!row) return` branch of the F2 handler: the key landed on the sidebar root,
+    // not on a document/folder row, so there is nothing to rename.
+    mount()
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'F2' })
+    expect(screen.queryByTestId('folder-name-input')).toBeNull()
+  })
+
+  it('ignores F2 on a row that has no on-disk path (a draft)', async () => {
+    // Covers the `if (!path) return` branch: a memory-only draft row carries no data-path.
+    mount()
+    fireEvent.keyDown((await draftItem()) as HTMLElement, { key: 'F2' })
+    expect(screen.queryByTestId('folder-name-input')).toBeNull()
+  })
+
+  it('ignores F2 on a stale file row whose document left the store', async () => {
+    // Covers the `if (doc) startFileRename(doc)` false branch: the row is still a doc row, but the
+    // store no longer holds a document with that path, so there is nothing to start renaming.
+    mount()
+    const row = (await docItem('a.md')) as HTMLElement
+    row.dataset.path = '/gone.md'
+    fireEvent.keyDown(row, { key: 'F2' })
+    expect(screen.queryByTestId('folder-name-input')).toBeNull()
+  })
+
+  it('renders a memory-only row whose filePath is nullish (data-path falls back to empty)', async () => {
+    // Covers the `doc.filePath ?? ''` RIGHT branch: a memory-only draft whose filePath is
+    // nullish (never assigned a path) must still render, with data-path defaulting to ''.
+    // activeFolder is null so the folder tree — which would call dirName on every doc and crash
+    // on a nullish path — stays empty, and the doc falls into the "Unsaved drafts" group instead.
+    useUIStore.getState().setActiveFolder(null)
+    useUIStore.getState().setActiveDocumentId(null)
+    const saved = [...allDocs]
+    allDocs.length = 0
+    allDocs.push({
+      id: 'nopath',
+      title: 'NoPath',
+      folderPath: '',
+      filePath: undefined as unknown as string,
+      content: '# x',
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      wordCount: 1,
+    })
+    mount()
+    const rows = await screen.findAllByTestId('doc-item')
+    expect(rows.length).toBeGreaterThan(0)
+    // The `?? ''` fallback: a nullish filePath yields an empty data-path rather than undefined.
+    expect(rows[0].getAttribute('data-path')).toBe('')
+    allDocs.length = 0
+    allDocs.push(...saved)
+  })
+
+  it('renames any file, not just the open one, and moves it on disk immediately', async () => {
+    // The active document is the draft; renaming the saved file a.md must not switch to it.
+    useUIStore.getState().setActiveDocumentId('draft')
     mount()
     fireEvent.contextMenu(await docItem('a.md'))
     fireEvent.click(await screen.findByTestId('side-rename'))
-    expect(useUIStore.getState().pendingFileAction).toEqual({ type: 'rename', id: 'a' })
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'renamed.md' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(renameFileMock).toHaveBeenCalledWith({
+        oldPath: '/docs/a.md',
+        newPath: '/docs/renamed.md',
+      }),
+    )
+    // The rename never touched the open document or edit mode.
+    expect(useUIStore.getState().activeDocumentId).toBe('draft')
+    expect(useUIStore.getState().editable).toBe(false)
   })
 
-  it('rename of a non-active doc switches then sets pendingFileAction', async () => {
-    useUIStore.getState().setActiveDocumentId('a')
+  it('honours a typed Markdown extension instead of forcing .md', async () => {
+    // The extension is shown in the input and is part of the name being edited, so typing a
+    // different SUPPORTED one must rename a.md → a.markdown rather than forcing `.md` back on.
     mount()
-    fireEvent.contextMenu(await draftItem())
+    fireEvent.contextMenu(await docItem('a.md'))
     fireEvent.click(await screen.findByTestId('side-rename'))
+    const input = await screen.findByTestId('folder-name-input')
+    expect(input).toHaveValue('a.md')
+    fireEvent.change(input, { target: { value: 'a.markdown' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() =>
-      expect(useUIStore.getState().pendingFileAction).toEqual({ type: 'rename', id: 'draft' }),
+      expect(renameFileMock).toHaveBeenCalledWith({
+        oldPath: '/docs/a.md',
+        newPath: '/docs/a.markdown',
+      }),
     )
   })
 
-  it('rename aborts if switching is cancelled', async () => {
-    useUIStore.getState().setActiveDocumentId('a')
-    useUIStore.getState().setDirty(true)
-    ;(window.api.dialog.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
+  it('refuses an extension the app cannot open and offers the .md spelling instead', async () => {
+    // Renaming to a.txt would leave a file this app can never open again, so the commit is
+    // refused: nothing is written and the row stays open showing the `.md` spelling.
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    fireEvent.click(await screen.findByTestId('side-rename'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'a.txt' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(input).toHaveValue('a.md'))
+    expect(renameFileMock).not.toHaveBeenCalled()
+    // Still in edit state, so the user can accept the offered name or change it.
+    expect(screen.getByTestId('folder-name-input')).toBeInTheDocument()
+  })
+
+  it('refuses a name with a path separator so a rename cannot escape the folder', async () => {
+    // `sub/a.md` would move the file out of the folder (or fail on a missing directory), so it
+    // is refused and the separator folded to `-` — the same folding create already applies.
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    fireEvent.click(await screen.findByTestId('side-rename'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'sub/a.md' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(input).toHaveValue('sub-a.md'))
+    expect(renameFileMock).not.toHaveBeenCalled()
+  })
+
+  it('does not grow a second extension on a bare .md name', async () => {
+    // A leading dot is not an extension elsewhere, but `.md` IS a supported one, so it must be
+    // recognised as such instead of becoming `.md.md`.
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    fireEvent.click(await screen.findByTestId('side-rename'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: '.md' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(renameFileMock).toHaveBeenCalledWith({
+        oldPath: '/docs/a.md',
+        newPath: '/docs/.md',
+      }),
+    )
+  })
+
+  it('explains the refusal under the input and drops the note once the user types', async () => {
+    // The rewrite alone would be a silent surprise, so the note names what was rejected — and
+    // it must get out of the way the moment the user edits the name again.
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    fireEvent.click(await screen.findByTestId('side-rename'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'a.txt' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    const hint = await screen.findByTestId('file-name-hint')
+    expect(hint.textContent).toContain('.txt')
+    fireEvent.change(input, { target: { value: 'a.markdown' } })
+    expect(screen.queryByTestId('file-name-hint')).toBeNull()
+  })
+
+  it('cancels the inline file rename on Escape', async () => {
+    mount()
+    fireEvent.contextMenu(await docItem('a.md'))
+    fireEvent.click(await screen.findByTestId('side-rename'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('folder-name-input')).toBeNull())
+    expect(renameFileMock).not.toHaveBeenCalled()
+  })
+
+  it('does not rename a memory-only draft (it has no path on disk yet)', async () => {
     mount()
     fireEvent.contextMenu(await draftItem())
-    fireEvent.click(await screen.findByTestId('side-rename'))
-    await waitFor(() => expect(useUIStore.getState().pendingFileAction).toBeNull())
+    expect(screen.getByTestId('side-rename')).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('prompts for confirmation and removes the document on confirm (PLAN §5-4)', async () => {
@@ -956,10 +1152,14 @@ describe('Sidebar — folder row context menu (PLAN §5.4)', () => {
     await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs/sub'))
   })
 
-  it('creates a new document inside the folder', async () => {
+  it('names a new file inside the folder inline instead of auto-naming it Untitled', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-new-doc-here'))
+    // Same inline naming flow as the tree-area "New File": the row opens and the user types.
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'note.md' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() =>
       expect(createMock).toHaveBeenCalledWith(
         expect.objectContaining({ folderPath: '/docs/sub', memoryOnly: false }),
@@ -1019,6 +1219,16 @@ describe('Sidebar — folder row context menu (PLAN §5.4)', () => {
     fireEvent.change(input, { target: { value: 'Renamed' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(renameFolderMock).toHaveBeenCalled())
+  })
+
+  it('names a folder in the folder-row font size', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('side-rename-folder'))
+    const input = await screen.findByTestId('folder-name-input')
+    // A folder row prints its name at `text-base`; the input has to match it instead of
+    // shrinking to the `text-xs` used for file names.
+    expect(input.className).toContain('text-base')
   })
 
   it('deletes a folder to trash behind a confirmation (能力 7)', async () => {
@@ -1147,22 +1357,52 @@ describe('Sidebar — folder high-order items (PLAN §6.2 coverage)', () => {
     expect(deleteFolderMock).not.toHaveBeenCalled()
   })
 
-  it('surfaces a failed folder delete without crashing (能力 7)', async () => {
+  it('starts a folder rename with F2 on the focused folder row', async () => {
+    mount()
+    const row = screen.getByTestId('folder-row')
+    row.focus()
+    fireEvent.keyDown(row, { key: 'F2' })
+    expect(await screen.findByTestId('folder-name-input')).toBeInTheDocument()
+  })
+
+  it('undoes the last rename on Ctrl+Z whenever focus is inside the sidebar', async () => {
+    mount()
+    // No row focused: unlike F2, the undo only needs the focus to be somewhere in the
+    // sidebar (the handler is bound on the sidebar root, which is itself focusable).
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'z', ctrlKey: true })
+    await waitFor(() => expect(undoRenameMock).toHaveBeenCalled())
+  })
+
+  it('alerts the user when an undo is blocked (target name taken again)', async () => {
+    // A blocked undo (any reason other than "none") must surface to the user instead of
+    // staying silent — this exercises the `window.alert` branch of the Ctrl+Z handler.
+    undoRenameMock.mockImplementationOnce(async () => ({ ok: false, reason: 'occupied' as const }))
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    mount()
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'z', ctrlKey: true })
+    await waitFor(() => expect(alert).toHaveBeenCalled())
+    alert.mockRestore()
+  })
+
+  it('surfaces a failed folder delete to the user instead of swallowing it (能力 7)', async () => {
     deleteFolderMock.mockRejectedValueOnce(new Error('boom'))
+    // The failure used to be console-only, leaving the folder in the tree with no explanation.
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-delete-folder'))
     await waitFor(() => expect(deleteFolderMock).toHaveBeenCalled())
+    await waitFor(() => expect(alert).toHaveBeenCalled())
+    alert.mockRestore()
   })
 
-  it('refreshes the folder listing from the empty-state menu', async () => {
+  it('toggles "Show All Folders" from the empty-state menu', async () => {
     seed([])
     mount()
     expect(await screen.findByText(/No documents in this folder/i)).toBeInTheDocument()
     fireEvent.contextMenu(screen.getByTestId('sidebar-empty-state'))
-    fireEvent.click(await screen.findByTestId('side-refresh'))
-    // The refresh invalidates the document queries; assert the action ran without crashing.
-    await waitFor(() => expect(screen.getByTestId('sidebar-empty-state')).toBeInTheDocument())
+    fireEvent.click(await screen.findByTestId('side-show-all-folders'))
+    await waitFor(() => expect(useUIStore.getState().showAllFolders).toBe(true))
   })
 
   it('opens the search panel from the welcome-state menu', async () => {
@@ -1216,6 +1456,8 @@ describe('Sidebar — folder high-order items (PLAN §6.2 coverage)', () => {
     ])
     folderDirs = ['/docs', '/docs/zzz']
     useUIStore.getState().setActiveFolder('/docs')
+    // The folder listing only seeds the tree when the user asks for all folders.
+    useUIStore.getState().setShowAllFolders(true)
     mount()
     // 'zzz' exists only in the on-disk folder listing (no document under it), so it proves
     // folderDirs reached buildFileTree; '/docs' already exists as a document folder, so it
@@ -1284,5 +1526,322 @@ describe('Sidebar — folder high-order items (PLAN §6.2 coverage)', () => {
     expect(screen.queryByText('sub')).toBeNull()
     expect(screen.getByText('renamed')).toBeInTheDocument()
     expect(screen.getByText('b.md')).toBeInTheDocument()
+  })
+})
+
+describe('Sidebar — folder filtering & tree-area menu', () => {
+  const docA = (): Document => ({
+    id: 'a',
+    title: 'Note A',
+    folderPath: '/docs',
+    content: '# A',
+    filePath: '/docs/a.md',
+    encoding: 'utf-8',
+    encodingConfidence: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    wordCount: 3,
+  })
+
+  beforeEach(() => {
+    allDocs.length = 0
+    allDocs.push(docA())
+    folderDirs = []
+    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setActiveDocumentId(null)
+    ;(window as unknown as { api: unknown }).api = {
+      dialog: {
+        openFiles: vi.fn(async () => ['/x.md']),
+        openFolderPath: vi.fn(async () => null),
+        confirm: vi.fn(async () => true),
+      },
+      clipboard: { writeText: vi.fn(async () => {}) },
+      app: { showInFolder: vi.fn(async () => {}) },
+    }
+  })
+
+  it('shows the toolbar toggle while a folder is open', async () => {
+    mount()
+    expect(await screen.findByTestId('show-all-folders-btn')).toBeInTheDocument()
+  })
+
+  it('hides the toolbar toggle when no folder is open', async () => {
+    useUIStore.getState().setActiveFolder(null)
+    mount()
+    await waitFor(() => expect(screen.queryByTestId('show-all-folders-btn')).toBeNull())
+  })
+
+  it('flips the flag from the toolbar toggle', async () => {
+    mount()
+    fireEvent.click(await screen.findByTestId('show-all-folders-btn'))
+    await waitFor(() => expect(useUIStore.getState().showAllFolders).toBe(true))
+    fireEvent.click(screen.getByTestId('show-all-folders-btn'))
+    await waitFor(() => expect(useUIStore.getState().showAllFolders).toBe(false))
+  })
+
+  it('offers create + filter items in the tree-area background menu', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    for (const id of ['side-bg-new-folder', 'side-bg-new-file', 'side-bg-show-all-folders']) {
+      expect(await screen.findByTestId(id)).toBeInTheDocument()
+    }
+  })
+
+  it('starts a folder create from the tree-area background menu', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
+    expect(await screen.findByTestId('folder-create-row')).toBeInTheDocument()
+  })
+
+  it('focuses the new-folder input on open so the user can type straight away', async () => {
+    // Without this the row renders an empty input that is not focused: the user has to click
+    // it before typing, and clicking a narrow row mid-list is easy to miss.
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
+    const input = within(await screen.findByTestId('folder-create-row')).getByTestId(
+      'folder-name-input',
+    )
+    await waitFor(() => expect(input).toHaveFocus())
+  })
+
+  it('gives up instead of spinning forever when the input can never take focus', async () => {
+    // focus() can be swallowed (the real case: the context menu has not finished closing), so
+    // the grab retries — but a permanently unfocusable input must not reschedule endlessly.
+    const focusSpy = vi.spyOn(HTMLInputElement.prototype, 'focus').mockImplementation(() => {})
+    const rafSpy = vi.spyOn(window, 'requestAnimationFrame')
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
+    await screen.findByTestId('folder-create-row')
+    await waitFor(() => expect(rafSpy.mock.calls.length).toBeGreaterThanOrEqual(8))
+    // Past the bounded window the retrying has stopped: no new frames are being requested.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const seen = rafSpy.mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(rafSpy.mock.calls.length).toBe(seen)
+    focusSpy.mockRestore()
+    rafSpy.mockRestore()
+  })
+
+  it('stops trying to refocus a renamed row that never reappears', async () => {
+    // The focus-grab effect retries for a few rAF frames waiting for the renamed row to land,
+    // then falls back to clearing focusPath (the `else setFocusPath(null)` branch) instead of
+    // rescheduling forever. Renaming the real file row to a path the static tree never gains
+    // means the row is never found, so the fallback runs. No shared fixture is mutated.
+    const rafSpy = vi.spyOn(window, 'requestAnimationFrame')
+    mount()
+    const row = screen.getByTestId('doc-item')
+    row.focus()
+    fireEvent.keyDown(row, { key: 'F2' })
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'renamed' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(renameFileMock).toHaveBeenCalled())
+    // Let the real rAF loop exhaust its 10 retries, so the fallback branch executes.
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(rafSpy.mock.calls.length).toBeGreaterThanOrEqual(10)
+    rafSpy.mockRestore()
+  })
+
+  it('names a new folder / file in the font size of the row it is naming', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
+    const folderRow = await screen.findByTestId('folder-create-row')
+    expect(within(folderRow).getByTestId('folder-name-input').className).toContain('text-base')
+
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const fileRow = await screen.findByTestId('file-create-row')
+    // File names are listed at `text-xs`, so naming a file stays at `text-xs`.
+    expect(within(fileRow).getByTestId('folder-name-input').className).toContain('text-xs')
+  })
+
+  it('toggles the flag from the background menu checkbox', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-show-all-folders'))
+    await waitFor(() => expect(useUIStore.getState().showAllFolders).toBe(true))
+  })
+
+  it('creates a Markdown file in place from the background menu', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'notes' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'notes',
+          ext: '.md',
+          folderPath: '/docs',
+          memoryOnly: false,
+        }),
+      ),
+    )
+  })
+
+  it('strips a typed extension so the file never becomes notes.md.md', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'notes.md' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'notes' })),
+    )
+  })
+
+  it('creates the file with the Markdown extension the user typed', async () => {
+    // Typing notes.markdown must produce notes.markdown — the extension the user typed is the
+    // one they get, `.md` is only filled in when they did not type one at all.
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'notes.markdown' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'notes', ext: '.markdown' }),
+      ),
+    )
+  })
+
+  it('refuses to create a file with an extension the app cannot open', async () => {
+    // notes.txt could never be opened by this app, so the commit is refused rather than
+    // silently written: nothing is created and the `.md` spelling is offered instead.
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'notes.txt' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(input).toHaveValue('notes.md'))
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('explains a refused new-file name under the input', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'notes.txt' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    const hint = await within(row).findByTestId('file-name-hint')
+    expect(hint.textContent).toContain('.txt')
+  })
+
+  it('cancels the new-file input on Escape without creating anything', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.keyDown(input, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('file-create-row')).toBeNull())
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('drops the pin once a created folder holds a Markdown document', async () => {
+    useUIStore.setState({ recentlyCreatedFolders: new Set(['/docs/sub']) })
+    // b.md lives under /docs/sub, so the folder qualifies on its own and the pin is dead.
+    allDocs.push({ ...docA(), id: 'b', filePath: '/docs/sub/b.md', folderPath: '/docs/sub' })
+    mount()
+    await waitFor(() => expect(useUIStore.getState().recentlyCreatedFolders.size).toBe(0))
+  })
+
+  it('opens the row menu without also opening the tree-area menu', async () => {
+    mount()
+    fireEvent.contextMenu(await screen.findByTestId('doc-item'))
+    expect(await screen.findByTestId('side-open-document')).toBeInTheDocument()
+    expect(screen.queryByTestId('side-bg-new-folder')).toBeNull()
+  })
+
+  it('creates a folder from the empty-state menu', async () => {
+    allDocs.length = 0 // no documents at all: the sidebar falls back to the empty state
+    mount()
+    fireEvent.contextMenu(await screen.findByTestId('sidebar-empty-state'))
+    fireEvent.click(await screen.findByTestId('side-empty-new-folder'))
+    // The row has to appear even though the tree is empty, otherwise the menu item would
+    // set the edit state and show nothing — looking completely broken.
+    const row = await screen.findByTestId('folder-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'docs' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(createFolderMock).toHaveBeenCalled())
+  })
+
+  it('drops the pin when a deeper descendant gains a Markdown document', async () => {
+    useUIStore.setState({ recentlyCreatedFolders: new Set(['/docs/sub']) })
+    // c.md sits two levels below the pinned folder, so only the prefix match finds it.
+    allDocs.push({
+      ...docA(),
+      id: 'c',
+      filePath: '/docs/sub/deep/c.md',
+      folderPath: '/docs/sub/deep',
+    })
+    mount()
+    await waitFor(() => expect(useUIStore.getState().recentlyCreatedFolders.size).toBe(0))
+  })
+
+  it('keeps a just-created folder visible after renaming it (the pin follows the rename)', async () => {
+    // 'fresh' was created this session and is still empty, so it only shows because it is
+    // pinned. Renaming must move the pin to the new path: an empty folder that loses its
+    // pin is filtered straight back out and simply disappears.
+    useUIStore.setState({ recentlyCreatedFolders: new Set(['/docs/fresh']) })
+    folderDirs = ['/docs/fresh']
+    // Mirror what a refetch would do: the on-disk listing now carries the new name.
+    renameFolderMock.mockImplementation(async () => {
+      folderDirs = ['/docs/renamed']
+      return {}
+    })
+    mount()
+    fireEvent.contextMenu(await screen.findByText('fresh'))
+    fireEvent.click(await screen.findByTestId('side-rename-folder'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'renamed' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(renameFolderMock).toHaveBeenCalled())
+    expect(useUIStore.getState().recentlyCreatedFolders).toContain('/docs/renamed')
+    await waitFor(() => expect(screen.getByText('renamed')).toBeInTheDocument())
+  })
+
+  it('leaves an unrelated pin alone when another folder is renamed', async () => {
+    // The pin belongs to a different folder, so renaming this one must not touch it.
+    useUIStore.setState({ recentlyCreatedFolders: new Set(['/docs/other']) })
+    allDocs.push({ ...docA(), id: 'b', filePath: '/docs/sub/b.md', folderPath: '/docs/sub' })
+    mount()
+    fireEvent.contextMenu(await screen.findByText('sub'))
+    fireEvent.click(await screen.findByTestId('side-rename-folder'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'renamed' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(renameFolderMock).toHaveBeenCalled())
+    expect([...useUIStore.getState().recentlyCreatedFolders]).toEqual(['/docs/other'])
+  })
+
+  it('surfaces a failed file create without crashing', async () => {
+    createMock.mockRejectedValueOnce(new Error('boom'))
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'notes' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    // The input stays open, so what the user typed is not lost.
+    expect(screen.getByTestId('file-create-row')).toBeInTheDocument()
   })
 })

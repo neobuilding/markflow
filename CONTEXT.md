@@ -22,6 +22,15 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   sidebar). JSX / embedded components are **not** parsed (true MDX compilation is a deferred RFC); `.mdx` is
   currently treated as plain Markdown.
 - **Read-only by default** — files open read-only to prevent accidental edits; toggle to Edit mode anytime.
+- **Renaming is a file operation, not an edit** — renaming from the sidebar is an inline, immediate on-disk
+  move (`documents:rename-file`): it does **not** require Edit mode, does not switch the document into edit
+  mode, and needs no save. It works on any listed file, not just the open one. (The **title bar /
+  breadcrumb** rename still goes through Edit mode, unchanged.)
+- **File names & extensions** — the inline name input shows the **full file name including the extension**,
+  and the typed extension is the one that lands on disk: a supported Markdown extension (`.md` / `.markdown`
+  / `.mdx` / `.mdtxt` / `.mdtext`) is used as typed; a name with no extension gets `.md` appended; anything
+  else (e.g. `.txt`) is **refused** — nothing is written and the `.md` spelling is offered back in the
+  input. Path separators are refused too (folded to `-`) so a rename cannot escape the folder.
 - **Manual save** — no auto-save. **Save** (`Ctrl/Cmd+S`), **Save As…** (`Ctrl/Cmd+Shift+S`), and
   **Reload from Disk** (`Ctrl/Cmd+Shift+R`).
 - **Split-pane / preview mode** — view modes: edit, preview, or split (editor + live preview side by side
@@ -41,6 +50,23 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   file manager.
 - **Open anywhere** — launch via CLI, drag-and-drop, or as the default app for `.md`. App starts fresh
   (no previous file/folder restored); window size is not persisted.
+- **Markdown-bearing folder (含 Markdown 的文件夹)** — a folder containing a Markdown document in itself or
+  any descendant (transitive containment). The sidebar shows only these by default; this matches `main`'s
+  pre-feature behavior.
+  _Avoid_: "folder with md"
+- **Document-less folder / empty branch (不含文档的文件夹 / 空文件夹)** — a folder (and its subtree) that
+  contains no Markdown document anywhere. Hidden by default; revealed only when **显示所有文件夹** is ON or
+  when it is a **recently-created folder**. "Empty" means no Markdown, not necessarily zero subfolders.
+  _Avoid_: "empty folder" (imprecise — may contain subfolders)
+- **Recently-created folder (最近新建文件夹)** — a folder made this session and held in the in-memory
+  `recentlyCreated` set; force-shown even when **显示所有文件夹** is OFF, until it gains its first Markdown
+  document or the app restarts.
+  _Avoid_: "new folder"
+- **显示所有文件夹 (show all folders)** — the opt-in sidebar toggle (default OFF) that reveals
+  document-less folders by seeding `buildFileTree` with the on-disk directory listing. One source of truth
+  (`useUIStore.showAllFolders`) shared by the toolbar button and the background-context-menu checkbox;
+  in-memory only, never persisted. See `docs/adr/0010-sidebar-folder-filter-toggle.md`.
+  _Avoid_: "show empty folders" (a valid checkbox synonym, but the canonical toggle name is 显示所有文件夹)
 
 ## Storage & search (main process)
 

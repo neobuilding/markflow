@@ -62,6 +62,15 @@ export interface Api {
     // Folder operations
     createFolder: (folderPath: string) => Promise<void>
     renameFolder: (oldPath: string, newPath: string) => Promise<void>
+    renameFile: (oldPath: string, newPath: string) => Promise<void>
+    // Undo the most recent rename (single slot). `ok:false` + a reason means nothing was
+    // moved: 'none' = nothing to undo, 'occupied' = the old name is taken again,
+    // 'gone' = the renamed file no longer exists, 'failed' = the reverse move errored.
+    undoRename: () => Promise<{
+      ok: boolean
+      reason: 'none' | 'gone' | 'occupied' | 'failed'
+      oldPath?: string
+    }>
     deleteFolder: (folderPath: string) => Promise<void>
     // Directory listing : folders below the path, empty ones included
     listFolders: (folderPath: string) => Promise<string[]>

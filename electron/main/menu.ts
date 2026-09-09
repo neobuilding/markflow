@@ -71,7 +71,7 @@ export function setupMenu(): void {
       label: menuT('menu.file'),
       submenu: [
         {
-          label: menuT('menu.newDocument'),
+          label: menuT('menu.newDraft'),
           accelerator: 'CmdOrCtrl+N',
           click: () => getMainWindow()?.webContents.send('menu:new-document'),
         },

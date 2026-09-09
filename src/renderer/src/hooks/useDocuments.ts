@@ -323,6 +323,34 @@ export function useRenameFolder() {
   })
 }
 
+// Rename a single file on disk (decoupled from edit mode: a file rename is a direct move,
+// not a content edit, so it works for any file — not just the one open in the editor — and
+// persists immediately without a save).
+export function useRenameFile() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ oldPath, newPath }: { oldPath: string; newPath: string }) =>
+      window.api.documents.renameFile(oldPath, newPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: DOCS_KEY })
+    },
+  })
+}
+
+// Undo the most recent file/folder rename. The main process owns the (single-slot) history,
+// so this only triggers it and refreshes when something actually moved.
+// Deliberately NOT bound to a global Ctrl+Z: the caller decides by focus, so the editor
+// keeps Ctrl+Z for text undo.
+export function useUndoRename() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => window.api.documents.undoRename(),
+    onSuccess: (res) => {
+      if (res?.ok) qc.invalidateQueries({ queryKey: DOCS_KEY })
+    },
+  })
+}
+
 // Delete a folder on disk
 export function useDeleteFolder() {
   const qc = useQueryClient()

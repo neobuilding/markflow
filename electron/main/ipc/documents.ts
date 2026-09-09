@@ -25,6 +25,8 @@ import {
   markOwnWrite,
   startFolderWatching,
   stopFolderWatching,
+  pauseFolderWatching,
+  resumeFolderWatching,
 } from '../model/folderWatcher'
 import {
   type Document,
@@ -443,11 +445,51 @@ function rePointFolderRecords(oldPath: string, newPath: string): void {
     // Preserve the document's own separator style when rebuilding the new path: a doc
     // imported under a path with a different separator than `newNorm` keeps that style.
     const docSep = d.filePath.includes('\\') ? '\\' : '/'
-    const filePath = newNorm.replace(/\//g, docSep) + d.filePath.slice(oldNorm.length)
+    const filePath = (newNorm + d.filePath.slice(oldNorm.length)).replace(/[\\/]/g, docSep)
     storeUpdate(d.id, { folderPath: dirname(filePath), filePath, missing: false })
     notifyDocumentRefresh(d.id)
   }
   notifyFolderChanged(newNorm)
+}
+
+// A FILE rename moves a single document to a new name (same directory). Unlike a folder
+// rename it has no nested children to walk, but it still has to re-point the one tracked
+// record whose filePath matches — otherwise the watcher's unlink<old> + add<new> would
+// surface as a stale "missing" record beside a fresh duplicate. Titles are rebuilt from
+// the new base name (the sidebar shows `doc.title`, not the raw path), so the rename is
+// reflected in the tree immediately. Separator-insensitive, like rePointFolderRecords.
+function rePointFileRecord(oldPath: string, newPath: string): void {
+  const toPlatform = (p: string) => p.replace(/[\\/]+$/, '').replace(/\//g, sep)
+  const oldNorm = toPlatform(oldPath)
+  const newNorm = toPlatform(newPath)
+  for (const d of storeList()) {
+    if (d.filePath.replace(/\//g, sep) !== oldNorm) continue
+    const filePath = newNorm.replace(/[\\/]/g, d.filePath.includes('\\') ? '\\' : '/')
+    storeUpdate(d.id, {
+      folderPath: dirname(filePath),
+      filePath,
+      title: stripMarkdownExt(basename(filePath)),
+      missing: false,
+    })
+    notifyDocumentRefresh(d.id)
+  }
+  notifyFolderChanged(dirname(newNorm))
+}
+
+// Remove every tracked document whose file lives inside `folderPath`. Driven by an
+// explicit folder delete (documents:delete-folder): the recursive watcher is paused
+// during the trash move, so it never fires the per-file onFileRemoved events for the
+// documents inside, and resumeFolderWatching() does not replay removals. Without this
+// the sidebar tree — which is ALSO built from document folderPaths — keeps showing the
+// deleted folder even though list-folders would no longer report it.
+function removeDocumentsUnder(folderPath: string): void {
+  const norm = folderPath.replace(/[\\/]+$/, '').replace(/\//g, sep)
+  const prefix = norm + sep
+  for (const d of [...storeList()]) {
+    const fp = d.filePath.replace(/\//g, sep)
+    if (fp === norm) continue // the folder itself, not a document
+    if (fp.startsWith(prefix)) storeDelete(d.id)
+  }
 }
 
 export function registerDocumentHandlers(
@@ -492,6 +534,11 @@ export function registerDocumentHandlers(
       if (!existing) return
       notifyFileChanged(existing.id, filePath)
     },
+    // A folder created or removed outside the app (Explorer, another editor, git…). The
+    // tree lists folders, so it has to be told — and it is the PARENT that has to re-read
+    // its children: the affected folder itself may be long gone by the time we look.
+    onDirAdded: (dirPath) => notifyFolderChanged(dirname(dirPath)),
+    onDirRemoved: (dirPath) => notifyFolderChanged(dirname(dirPath)),
   })
 
   // List all documents (sorted by updated_at): read directly from the store, the single
@@ -833,6 +880,14 @@ export function registerDocumentHandlers(
     addWatchedFolder(folderPath)
   })
 
+  // Single-slot rename history. Only the MOST RECENT rename can be undone (a full stack was
+  // deliberately not built: see docs.local/todo-rename-undo). Owned here, in the main process,
+  // because the undo has to re-point the tracked records exactly like the rename did.
+  let lastRename: { kind: 'file' | 'folder'; oldPath: string; newPath: string } | null = null
+  function rememberRename(kind: 'file' | 'folder', oldPath: string, newPath: string): void {
+    lastRename = { kind, oldPath, newPath }
+  }
+
   // Rename a folder on disk. The watcher is told about the new path; chokidar
   // tolerates the old one ceasing to exist. Tracked documents are re-pointed proactively,
   // otherwise the rename reaches the store as unrelated unlink/add pairs and the sidebar
@@ -841,6 +896,46 @@ export function registerDocumentHandlers(
     renameSync(oldPath, newPath)
     addWatchedFolder(newPath)
     rePointFolderRecords(oldPath, newPath)
+    rememberRename('folder', oldPath, newPath)
+  })
+
+  // Rename a single file on disk. Parallel to rename-folder but for one document: the
+  // watcher is not told about a new folder (the file stays inside an already-watched one),
+  // and the one tracked record is re-pointed (title + path) so the sidebar keeps the same
+  // document under the new name with no stale duplicate. Renaming is a direct on-disk move,
+  // independent of any open editor / edit mode, so it persists immediately.
+  ipcMain.handle('documents:rename-file', (_event, oldPath: string, newPath: string) => {
+    renameSync(oldPath, newPath)
+    rePointFileRecord(oldPath, newPath)
+    rememberRename('file', oldPath, newPath)
+  })
+
+  // Undo the most recent rename — the reverse of the move that was made, plus the same
+  // record re-pointing so no stale duplicate is left behind.
+  // Single slot by design. It is NOT bound to a global Ctrl+Z: the renderer only calls it
+  // when focus is in the sidebar, so the editor keeps Ctrl+Z for text undo.
+  ipcMain.handle('documents:undo-rename', () => {
+    const last = lastRename
+    if (!last) return { ok: false, reason: 'none' as const }
+    // Refuse instead of clobbering: the old name may have been taken again since the rename,
+    // or the renamed file may itself have been moved on / deleted.
+    if (!existsSync(last.newPath)) return { ok: false, reason: 'gone' as const }
+    if (existsSync(last.oldPath)) return { ok: false, reason: 'occupied' as const }
+    try {
+      renameSync(last.newPath, last.oldPath)
+    } catch (e) {
+      console.error('Failed to undo rename:', e)
+      return { ok: false, reason: 'failed' as const }
+    }
+    if (last.kind === 'folder') {
+      addWatchedFolder(last.oldPath)
+      rePointFolderRecords(last.newPath, last.oldPath)
+    } else {
+      rePointFileRecord(last.newPath, last.oldPath)
+    }
+    lastRename = null
+    notifyFolderChanged(dirname(last.oldPath))
+    return { ok: true, reason: 'none' as const, oldPath: last.oldPath }
   })
 
   // List every directory beneath `folderPath` (recursive, depth-capped) so the sidebar
@@ -878,14 +973,34 @@ export function registerDocumentHandlers(
   // fall back to a permanent delete, so a non-ENOENT rejection is re-thrown (the caller logs it
   // and keeps the folder in the tree). A folder already gone (ENOENT) is treated as success.
   ipcMain.handle('documents:delete-folder', async (_event, folderPath: string) => {
+    const resolved = resolve(folderPath)
+    const parent = dirname(resolved)
+    // Release the watcher first: on Windows a directory that chokidar still holds open
+    // cannot be moved to the Recycle Bin, and the OS reports that as a permissions error
+    // (see pauseFolderWatching). Without this, deleting a folder INSIDE the currently
+    // open workspace — the common case — fails while looking like an ACL problem.
+    await pauseFolderWatching()
     try {
-      await shell.trashItem(resolve(folderPath))
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error('Failed to move folder to trash:', e)
-        throw e
+      try {
+        await shell.trashItem(resolved)
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.error('Failed to move folder to trash:', e)
+          throw e
+        }
       }
+    } finally {
+      // Restored even when the trash move throws, so a failed delete cannot leave the
+      // workspace permanently unwatched.
+      resumeFolderWatching()
     }
+    // The watcher was paused during the move, so it never observed the deletion and
+    // resume() does not replay removals. Mirror what the watcher WOULD have emitted:
+    // drop the documents that lived inside the folder (the sidebar tree is also derived
+    // from document folderPaths, so leaving them would keep the folder visible), and ask
+    // the parent directory to re-read its children so the tree refreshes.
+    removeDocumentsUnder(resolved)
+    notifyFolderChanged(parent)
   })
 
   // Import markdown file from disk

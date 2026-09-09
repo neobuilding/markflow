@@ -23,7 +23,7 @@ import {
 } from './documents'
 // Test seam of model/folderWatcher.ts: drives the exact dispatch the real chokidar
 // listeners use, so these tests never depend on filesystem event timing.
-import { __emitFolderEvent } from '../model/folderWatcher'
+import { __emitFolderEvent, __emitFolderDirEvent } from '../model/folderWatcher'
 // Import the REAL isInFolder (from the un-mocked folderMatch module) so the fake
 // store's listDocuments matches production semantics exactly no drift between the
 // test double and documentStore.listDocuments.
@@ -138,6 +138,17 @@ vi.mock('chokidar', () => ({
 vi.mock('electron', () => ({
   shell: { trashItem: vi.fn().mockResolvedValue(undefined) },
 }))
+
+// documents.ts calls renameSync (in rename-file / rename-folder / undo-rename). The module
+// namespace is not spyable in ESM, so wrap it through a hoisted mock that calls through by
+// default; individual tests can make it throw via mockImplementationOnce to hit the undo-rename
+// failure branch.
+const fsRenameMock = vi.hoisted(() => vi.fn())
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import('node:fs')
+  fsRenameMock.mockImplementation((...args: any[]) => (actual.renameSync as any)(...args))
+  return { ...actual, renameSync: fsRenameMock }
+})
 
 // app:getInitialPaths etc. not used by documents handlers; also need app for getPath.
 const handlers: Record<string, (...a: any[]) => any> = {}
@@ -1902,6 +1913,155 @@ describe('documents IPC — folder ops (能力 7)', () => {
     docs.delete('sep-bs')
     await fsPromises.rm(b, { recursive: true, force: true })
   })
+  it('rename-file moves the file on disk', async () => {
+    const dir = join(stableDocsRoot, `mvf-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'x.md')
+    const renamed = join(dir, 'y.md')
+    writeFileSync(file, 'x')
+    await call('documents:rename-file', file, renamed)
+    expect(existsSync(renamed)).toBe(true)
+    expect(existsSync(file)).toBe(false)
+    await fsPromises.rm(dir, { recursive: true, force: true })
+  })
+  it('rename-file re-points the tracked document so no stale duplicate remains', async () => {
+    const dir = join(stableDocsRoot, `mvf-docs-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'x.md')
+    const renamed = join(dir, 'y.md')
+    writeFileSync(file, 'x')
+    expect(await call('documents:import', file)).not.toBeNull()
+    await call('documents:rename-file', file, renamed)
+    const list = (await call('documents:list')) as Array<{ filePath: string; title: string }>
+    // The record now lives under the new name (title follows the new base name) and the
+    // old path is gone instead of lingering as a "missing" duplicate.
+    expect(list.some((d) => d.filePath === renamed)).toBe(true)
+    expect(list.some((d) => d.title === 'y')).toBe(true)
+    expect(list.some((d) => d.filePath === file)).toBe(false)
+    await fsPromises.rm(dir, { recursive: true, force: true })
+  })
+  it('rename-file re-points a record whose stored path uses forward slashes (Windows)', async () => {
+    const dir = join(stableDocsRoot, `mvf-sl-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'x.md')
+    const renamed = join(dir, 'y.md')
+    writeFileSync(file, 'x')
+    expect(await call('documents:import', file)).not.toBeNull()
+    // The imported record uses backslashes; seed a SECOND record at the same old path but with
+    // forward slashes, as the renderer builds tree paths on Windows. This exercises
+    // rePointFileRecord's `? '/'` separator branch (the imported record covers the `'\\'` branch).
+    const fileFwd = file.split(sep).join('/')
+    docs.set('fs-fwd', {
+      id: 'fs-fwd',
+      title: 'x',
+      folderPath: dir.split(sep).join('/'),
+      filePath: fileFwd,
+      content: 'x',
+      wordCount: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      memoryOnly: false,
+    })
+    await call('documents:rename-file', file, renamed)
+    const list = (await call('documents:list')) as Array<{ filePath: string; title: string }>
+    expect(list.some((d) => d.filePath === renamed)).toBe(true)
+    // The forward-slash record is re-pointed onto the new name, keeping its separator style.
+    const fwd = docs.get('fs-fwd')
+    expect(fwd?.filePath).toBe(renamed.split(sep).join('/'))
+    expect(fwd?.title).toBe('y')
+    docs.delete('fs-fwd')
+    await fsPromises.rm(dir, { recursive: true, force: true })
+  })
+  // ── undo-rename (single slot) ─────────────────────────────────────────
+  it('undo-rename moves a renamed file back and then reports "none"', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-file-'))
+    const oldP = join(dir, 'a.md')
+    const newP = join(dir, 'b.md')
+    writeFileSync(oldP, '# A', 'utf-8')
+    await call('documents:rename-file', oldP, newP)
+    expect(existsSync(newP)).toBe(true)
+    const res = (await call('documents:undo-rename')) as { ok: boolean }
+    expect(res.ok).toBe(true)
+    // A real move back, not a copy: the file is under the old name and the new one is gone.
+    expect(existsSync(oldP)).toBe(true)
+    expect(existsSync(newP)).toBe(false)
+    // The slot is single-use: a second Ctrl+Z has nothing left to undo. Asserted here (rather
+    // than as its own case) because the history is module-level and shared with earlier
+    // rename tests — only right after a successful undo is "nothing to undo" guaranteed.
+    const again = (await call('documents:undo-rename')) as { ok: boolean; reason: string }
+    expect(again).toEqual({ ok: false, reason: 'none' })
+  })
+
+  it('undo-rename refuses with "occupied" when the original name is taken again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-occ-'))
+    const oldP = join(dir, 'a.md')
+    const newP = join(dir, 'b.md')
+    writeFileSync(oldP, '# A', 'utf-8')
+    await call('documents:rename-file', oldP, newP)
+    // Someone (another program, or the user) recreates the old name in the meantime.
+    writeFileSync(oldP, '# taken', 'utf-8')
+    const res = (await call('documents:undo-rename')) as { ok: boolean; reason: string }
+    expect(res).toEqual({ ok: false, reason: 'occupied' })
+    // Refusing must neither clobber the recreated file nor move anything.
+    expect(existsSync(newP)).toBe(true)
+  })
+
+  it('undo-rename refuses with "gone" when the renamed file no longer exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-gone-'))
+    const oldP = join(dir, 'a.md')
+    const newP = join(dir, 'b.md')
+    writeFileSync(oldP, '# A', 'utf-8')
+    await call('documents:rename-file', oldP, newP)
+    unlinkSync(newP)
+    const res = (await call('documents:undo-rename')) as { ok: boolean; reason: string }
+    expect(res).toEqual({ ok: false, reason: 'gone' })
+  })
+
+  it('notifies the renderer when a folder is added or removed outside the app', () => {
+    // The registerDocumentHandlers folder-watch callbacks (onDirAdded / onDirRemoved) only fire
+    // for directory events; this exercises them end-to-end and confirms the renderer is told to
+    // refresh the tree rooted at the PARENT of the changed folder.
+    const addedDir = dirname(join('/w1', 'added'))
+    const removedDir = dirname(join('/w2', 'removed'))
+    sentFolderChanged.length = 0
+    __emitFolderDirEvent('addDir', join('/w1', 'added'))
+    __emitFolderDirEvent('unlinkDir', join('/w2', 'removed'))
+    __flushFolderChanged()
+    expect(sentFolderChanged).toContainEqual({ dirPath: addedDir })
+    expect(sentFolderChanged).toContainEqual({ dirPath: removedDir })
+  })
+
+  it('undo-rename moves a renamed FOLDER back and re-points the folder tree', async () => {
+    // Covers the `last.kind === 'folder'` branch of undo-rename: it must put the watched folder
+    // back and re-point the folder records, not just move a single file.
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-folder-'))
+    const oldP = join(dir, 'sub')
+    const newP = join(dir, 'renamed')
+    mkdirSync(oldP)
+    await call('documents:rename-folder', oldP, newP)
+    expect(existsSync(newP)).toBe(true)
+    const res = (await call('documents:undo-rename')) as { ok: boolean }
+    expect(res.ok).toBe(true)
+    // A real move back: the folder is under the old name and the new one is gone.
+    expect(existsSync(oldP)).toBe(true)
+    expect(existsSync(newP)).toBe(false)
+  })
+
+  it('undo-rename reports "failed" when the disk move throws', async () => {
+    // Covers the catch branch of undo-rename: a rename that fails on disk must surface as a
+    // "failed" refusal rather than an unhandled exception.
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-fail-'))
+    const oldP = join(dir, 'a.md')
+    const newP = join(dir, 'b.md')
+    writeFileSync(oldP, '# A', 'utf-8')
+    await call('documents:rename-file', oldP, newP)
+    fsRenameMock.mockImplementationOnce(() => {
+      throw new Error('EBUSY')
+    })
+    const res = (await call('documents:undo-rename')) as { ok: boolean; reason: string }
+    expect(res).toEqual({ ok: false, reason: 'failed' })
+  })
+
   it('delete-folder moves the folder to the OS trash (trashItem called)', async () => {
     const p = join(stableDocsRoot, `rm-${Date.now()}`)
     mkdirSync(p, { recursive: true })
@@ -1915,6 +2075,30 @@ describe('documents IPC — folder ops (能力 7)', () => {
     await fsPromises.rm(p, { recursive: true, force: true })
   })
 
+  it('delete-folder removes contained documents from the store and notifies the parent', async () => {
+    const p = join(stableDocsRoot, `rm-${Date.now()}`)
+    mkdirSync(join(p, 'sub'), { recursive: true })
+    writeFileSync(join(p, 'top.md'), 'top')
+    writeFileSync(join(p, 'sub', 'inner.md'), 'inner')
+    // Track both files so the store has documents living inside the folder.
+    await call('documents:import-many', [join(p, 'top.md'), join(p, 'sub', 'inner.md')])
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined)
+    sentFolderChanged.length = 0
+    await call('documents:delete-folder', p)
+    // The watcher was paused during the move, so it would not have emitted per-file
+    // removals. The handler must clean the store directly, otherwise the sidebar tree
+    // (built from document folderPaths) keeps showing the deleted folder.
+    const remaining = [...docs.values()].filter((d) =>
+      d.filePath.replace(/\//g, sep).startsWith(p.replace(/\//g, sep) + sep),
+    )
+    expect(remaining).toHaveLength(0)
+    // The parent directory is told to re-read its children.
+    __flushFolderChanged()
+    expect(sentFolderChanged.some((e) => e.dirPath === dirname(p))).toBe(true)
+    await fsPromises.rm(p, { recursive: true, force: true })
+  })
+
   it('delete-folder rethrows when trashItem fails for a non-ENOENT reason', async () => {
     const p = join(stableDocsRoot, `rm-${Date.now()}`)
     mkdirSync(p, { recursive: true })
@@ -1923,6 +2107,37 @@ describe('documents IPC — folder ops (能力 7)', () => {
     ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
     await expect(call('documents:delete-folder', p)).rejects.toThrow()
     expect(shell.trashItem).toHaveBeenCalledWith(resolve(p))
+    await fsPromises.rm(p, { recursive: true, force: true })
+  })
+
+  it('delete-folder leaves a document whose path is the folder itself (skips the folder node)', async () => {
+    // Covers the `if (fp === norm) continue` branch of removeDocumentsUnder: a stored document
+    // whose filePath equals the folder being deleted is the folder node, not a child, and must be
+    // skipped rather than removed from the store.
+    const p = join(stableDocsRoot, `rm-${Date.now()}`)
+    mkdirSync(join(p, 'sub'), { recursive: true })
+    writeFileSync(join(p, 'sub', 'inner.md'), 'inner')
+    await call('documents:import-many', [join(p, 'sub', 'inner.md')])
+    docs.set('folderNode', {
+      id: 'folderNode',
+      title: 'Folder',
+      folderPath: p,
+      filePath: p,
+      content: '',
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      wordCount: 0,
+    })
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined)
+    await call('documents:delete-folder', p)
+    const remainingInner = [...docs.values()].filter((d) =>
+      d.filePath.replace(/\//g, sep).startsWith(p.replace(/\//g, sep) + sep),
+    )
+    expect(remainingInner).toHaveLength(0)
+    expect(docs.has('folderNode')).toBe(true)
     await fsPromises.rm(p, { recursive: true, force: true })
   })
 

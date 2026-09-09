@@ -136,6 +136,18 @@ describe('useLocalDocument — title draft is in display form', () => {
   })
 })
 
+describe('useLocalDocument — title refresh on external rename (bug 3b)', () => {
+  it('updates the title when only the filePath changes, even with the same updatedAt', () => {
+    const { result, setDoc } = renderLocalDocument({ ...baseDoc })
+    expect(result.current.localTitle).toBe(baseDisplayTitle)
+    // A sidebar rename is a disk move: the document id and updatedAt are unchanged, only the
+    // path differs. The earlier implementation keyed the title refresh on (id, updatedAt), so
+    // the title bar kept showing the OLD file name.
+    setDoc({ ...baseDoc, filePath: '/a/renamed.md' })
+    expect(result.current.localTitle).toBe('renamed.md')
+  })
+})
+
 describe('useLocalDocument — handleTitleSave', () => {
   it('reverts to the saved title and clears dirty when the new title is empty', () => {
     const { result } = renderLocalDocument(baseDoc)

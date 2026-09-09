@@ -38,6 +38,21 @@ interface UIState {
   toggleSidebar: () => void
   setSidebarOpen: (open: boolean) => void
 
+  // Sidebar folder filtering. OFF (the default) shows only folders that transitively hold a
+  // Markdown document; ON seeds the tree from the on-disk directory listing so folders
+  // without Markdown appear too. In-memory only: no setting is ever persisted, so the app
+  // always restarts on the clean default.
+  showAllFolders: boolean
+  setShowAllFolders: (v: boolean) => void
+  toggleShowAllFolders: () => void
+
+  // Folders created during this session. A brand-new folder is empty, so the filter above
+  // would hide it the instant it is made; these are pinned visible until the folder gains
+  // its first Markdown document (or until the app restarts).
+  recentlyCreatedFolders: ReadonlySet<string>
+  markFolderCreated: (path: string) => void
+  clearCreatedFolder: (path: string) => void
+
   // Active document
   activeDocumentId: string | null
   setActiveDocumentId: (id: string | null) => void
@@ -134,6 +149,20 @@ export const useUIStore = create<UIState>((set, get) => ({
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+
+  showAllFolders: false,
+  setShowAllFolders: (showAllFolders) => set({ showAllFolders }),
+  toggleShowAllFolders: () => set((s) => ({ showAllFolders: !s.showAllFolders })),
+
+  recentlyCreatedFolders: new Set<string>(),
+  markFolderCreated: (path) =>
+    set((s) => ({ recentlyCreatedFolders: new Set(s.recentlyCreatedFolders).add(path) })),
+  clearCreatedFolder: (path) =>
+    set((s) => {
+      const next = new Set(s.recentlyCreatedFolders)
+      next.delete(path)
+      return { recentlyCreatedFolders: next }
+    }),
 
   activeDocumentId: null,
   // Switching documents always returns to read-only mode. This protects files from accidental

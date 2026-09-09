@@ -452,7 +452,11 @@ test.describe('M3 write-operation menus (supplement)', () => {
     const createRow = page.getByTestId('folder-create-row')
     await expect(createRow).toBeVisible()
     const createInput = createRow.locator('input')
-    await createInput.fill('nested')
+    // Must be focused the moment it opens, so the user can type straight away — no click needed.
+    // Typing via the real keyboard (not .fill) makes this a behaviour-level check: if the
+    // context menu steals focus back, the keystrokes go nowhere and no folder is created.
+    await expect(createInput).toBeFocused()
+    await page.keyboard.type('nested')
     await createInput.press('Enter')
     await expect.poll(() => existsSync(join(dir, 'sub', 'nested')), { timeout: 15000 }).toBe(true)
   })
@@ -490,6 +494,72 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await expect(page.getByTestId('doc-item').filter({ hasText: 'b.md' })).toBeVisible()
   })
 
+  // Sidebar file rename (this change): inline rename must move the file on disk directly and
+  // stay decoupled from edit mode — it works for a non-active file and neither flips `editable`
+  // nor switches the active document. Guards the new Sidebar inline rename + documents:rename-file
+  // path (decoupled from the old editor-title rename, which is unchanged for the title menu).
+  test('file rename (inline, sidebar) moves the file and stays decoupled from edit mode', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-filerename-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    writeFileSync(join(dir, 'beta.md'), '# Beta\n', 'utf-8')
+    await openFolder(page, dir, 2)
+    // Pin the active doc to alpha so we can prove renaming beta does not disturb it.
+    await page.getByTestId('doc-item').filter({ hasText: 'alpha' }).click()
+    const activeBefore = await page.evaluate(
+      () => (window as any).__uiStore.getState().activeDocumentId,
+    )
+    expect(await page.evaluate(() => (window as any).__uiStore.getState().editable)).toBe(false)
+    // Right-click beta -> rename -> inline input -> commit with the new name.
+    await page.getByTestId('doc-item').filter({ hasText: 'beta' }).click({ button: 'right' })
+    await page.getByTestId('side-rename').click()
+    const input = page.getByTestId('folder-name-input')
+    await expect(input).toBeVisible()
+    // The extension must be SHOWN in the input (not stripped away) so the user can see it…
+    await expect(input).toHaveValue('beta.md')
+    // …and an extension this app cannot open is REFUSED: nothing is written, the name is
+    // turned into the `.md` spelling and the row stays open for the user to accept.
+    await input.fill('gamma.txt')
+    await input.press('Enter')
+    await expect(input).toHaveValue('gamma.md')
+    await expect.poll(() => existsSync(join(dir, 'beta.md')), { timeout: 15000 }).toBe(true)
+    // A SUPPORTED extension typed by the user is the one that lands on disk.
+    await input.fill('gamma.markdown')
+    await input.press('Enter')
+    // File moved on disk under exactly the typed name: gamma.markdown exists, beta.md is gone.
+    await expect.poll(() => existsSync(join(dir, 'gamma.markdown')), { timeout: 15000 }).toBe(true)
+    await expect.poll(() => existsSync(join(dir, 'beta.md')), { timeout: 15000 }).toBe(false)
+    // Edit mode untouched, active doc untouched (decoupling).
+    expect(await page.evaluate(() => (window as any).__uiStore.getState().editable)).toBe(false)
+    expect(await page.evaluate(() => (window as any).__uiStore.getState().activeDocumentId)).toBe(
+      activeBefore,
+    )
+    // Sidebar shows the renamed file, not the old name.
+    await expect(page.getByTestId('doc-item').filter({ hasText: 'gamma.markdown' })).toBeVisible()
+    await expect(page.getByTestId('doc-item').filter({ hasText: 'beta.md' })).toHaveCount(0)
+  })
+
+  // New File (inline): the extension the user types is the one that lands on disk — `.md` is
+  // only filled in when they typed none at all.
+  test('new file (inline) uses the Markdown extension the user typed, not a forced .md', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-newfile-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    // Right-click empty tree space -> New File -> name it with an explicit extension.
+    await page
+      .getByTestId('sidebar-tree-area')
+      .click({ button: 'right', position: { x: 80, y: 200 } })
+    await page.getByTestId('side-bg-new-file').click()
+    const createRow = page.getByTestId('file-create-row')
+    await expect(createRow).toBeVisible()
+    await createRow.locator('input').fill('notes.markdown')
+    await createRow.locator('input').press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'notes.markdown')), { timeout: 15000 }).toBe(true)
+  })
+
   test('go-up (empty-folder bar) navigates to the parent folder (PLAN §6.2)', async () => {
     const { page } = handle
     await waitForAppReady(page)
@@ -502,5 +572,210 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await expect(page.getByTestId('side-go-up')).toBeVisible()
     await page.getByTestId('side-go-up').click()
     await expect(page.getByTestId('current-folder-bar')).toContainText(basename(dir))
+  })
+
+  // ── Folder filtering (ADR-0010) ────────────────────────────────────────────────
+  // Default: only folders that (transitively) hold Markdown are shown. "Show All Folders"
+  // (toolbar button and tree-area checkbox are ONE shared flag) reveals the rest, and a
+  // folder the user just created stays visible even while it is still empty.
+  test('sidebar: empty folders hidden by default, revealed by "Show All Folders" (ADR-0010)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-showall-'))
+    writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
+    mkdirSync(join(dir, 'pics')) // holds no Markdown at all
+    await openFolder(page, dir, 1)
+    // Default (toggle OFF): the document-less folder never becomes a tree node.
+    await expect(page.getByTestId('folder-row').filter({ hasText: 'pics' })).toHaveCount(0)
+    // Toggle on: the very same folder shows up.
+    await page.getByTestId('show-all-folders-btn').click()
+    await expect(page.getByTestId('folder-row').filter({ hasText: 'pics' })).toBeVisible()
+  })
+
+  test('sidebar: tree-area right-click offers create + filter items (ADR-0010)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-treemenu-'))
+    writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    // Aim below the document row: the middle of the scroll area is empty space, so the
+    // background menu opens instead of the document row's own menu.
+    await page
+      .getByTestId('sidebar-tree-area')
+      .click({ button: 'right', position: { x: 80, y: 200 } })
+    await expect(page.getByTestId('side-bg-new-folder')).toBeVisible()
+    await expect(page.getByTestId('side-bg-new-file')).toBeVisible()
+    // Checkbox and toolbar button drive the same flag: ticking one presses the other.
+    await page.getByTestId('side-bg-show-all-folders').click()
+    await expect(page.getByTestId('show-all-folders-btn')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  // Regression guard: the inline create row used to live inside the `tree.length > 0`
+  // branch, so in the empty state (tree is empty by definition) the menu item set the edit
+  // state and then rendered nothing — it looked completely broken.
+  test('sidebar: the empty state can still create a folder (ADR-0010)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-emptynew-'))
+    await openFolder(page, dir, 0) // no Markdown at all → sidebar shows the empty state
+    await expect(page.getByTestId('sidebar-empty-state')).toBeVisible()
+    await page.getByTestId('sidebar-empty-state').click({ button: 'right' })
+    await page.getByTestId('side-empty-new-folder').click()
+    const createRow = page.getByTestId('folder-create-row')
+    await expect(createRow).toBeVisible()
+    await createRow.locator('input').fill('docs')
+    await createRow.locator('input').press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'docs')), { timeout: 15000 }).toBe(true)
+  })
+
+  test('sidebar: empty-state New File writes a real .md into the open folder (ADR-0010)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-emptynewfile-'))
+    await openFolder(page, dir, 0) // no Markdown at all → sidebar shows the empty state
+    await expect(page.getByTestId('sidebar-empty-state')).toBeVisible()
+    await page.getByTestId('sidebar-empty-state').click({ button: 'right' })
+    // The empty-state menu offers New File (a real file) — there is no "New Draft" here, since
+    // the sidebar manages the current folder, not the in-memory draft list.
+    await expect(page.getByTestId('side-empty-new-file')).toBeVisible()
+    await page.getByTestId('side-empty-new-file').click()
+    const createRow = page.getByTestId('file-create-row')
+    await expect(createRow).toBeVisible()
+    await createRow.locator('input').fill('hello')
+    await createRow.locator('input').press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'hello.md')), { timeout: 15000 }).toBe(true)
+  })
+
+  test('sidebar: New File inside a subfolder names it inline and lands in THAT subfolder', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-subnewfile-'))
+    mkdirSync(join(dir, 'sub'), { recursive: true })
+    // A non-empty subfolder so its row is rendered: empty folders are hidden by default
+    // (ADR-0010), which would make the row unfindable.
+    writeFileSync(join(dir, 'sub', 'placeholder.md'), '# Placeholder\n', 'utf-8')
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    const sub = page.getByTestId('folder-row').filter({ hasText: 'sub' })
+    await sub.click({ button: 'right' })
+    await page.getByTestId('side-new-doc-here').click()
+    // Regression: this used to create "Untitled.md" straight away with no chance to name it,
+    // unlike the tree-area "New File". The inline row must open INSIDE the subfolder.
+    const row = page.getByTestId('sub-file-create-row')
+    await expect(row).toBeVisible()
+    await row.locator('input').fill('note')
+    await row.locator('input').press('Enter')
+    // A real file — and inside the SUBFOLDER, not at the folder root.
+    await expect.poll(() => existsSync(join(dir, 'sub', 'note.md')), { timeout: 15000 }).toBe(true)
+    expect(existsSync(join(dir, 'note.md'))).toBe(false)
+  })
+
+  test('sidebar: F2 starts an inline rename on the focused row', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-f2-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    const row = page.getByTestId('doc-item').filter({ hasText: 'alpha.md' })
+    await row.click() // put the focus on the row (rows are a tab stop)
+    await page.keyboard.press('F2')
+    const input = page.getByTestId('folder-name-input')
+    await expect(input).toBeVisible()
+    // Prefilled with the current name, exactly like the context-menu rename.
+    await expect(input).toHaveValue('alpha.md')
+  })
+
+  test('sidebar: Ctrl+Z undoes the last rename on disk and restores the old file', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-renameundo-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    await page.getByTestId('doc-item').filter({ hasText: 'alpha.md' }).click({ button: 'right' })
+    await page.getByTestId('side-rename').click()
+    const input = page.getByTestId('folder-name-input')
+    await input.fill('beta.md')
+    await input.press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'beta.md')), { timeout: 15000 }).toBe(true)
+    // Focus is handed back to the renamed row, so Ctrl+Z reaches the sidebar-scoped handler.
+    await page.getByTestId('doc-item').filter({ hasText: 'beta.md' }).click()
+    await page.keyboard.press('Control+z')
+    // The file moves back: old name present again, new name gone.
+    await expect.poll(() => existsSync(join(dir, 'alpha.md')), { timeout: 15000 }).toBe(true)
+    await expect.poll(() => existsSync(join(dir, 'beta.md')), { timeout: 15000 }).toBe(false)
+  })
+
+  test('sidebar: a just-created empty folder stays visible (ADR-0010)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-newfolder-'))
+    writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    await page
+      .getByTestId('sidebar-tree-area')
+      .click({ button: 'right', position: { x: 80, y: 200 } })
+    await page.getByTestId('side-bg-new-folder').click()
+    const createRow = page.getByTestId('folder-create-row')
+    await expect(createRow).toBeVisible()
+    await createRow.locator('input').fill('fresh')
+    await createRow.locator('input').press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'fresh')), { timeout: 15000 }).toBe(true)
+    // Still empty, but pinned: it must not disappear behind the filter.
+    await expect(page.getByTestId('folder-row').filter({ hasText: 'fresh' })).toBeVisible()
+  })
+
+  test('sidebar: the pin is dropped once the created folder holds Markdown (ADR-0010)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-pindrop-'))
+    writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    await page
+      .getByTestId('sidebar-tree-area')
+      .click({ button: 'right', position: { x: 80, y: 200 } })
+    await page.getByTestId('side-bg-new-folder').click()
+    const createRow = page.getByTestId('folder-create-row')
+    await expect(createRow).toBeVisible()
+    await createRow.locator('input').fill('fresh')
+    await createRow.locator('input').press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'fresh')), { timeout: 15000 }).toBe(true)
+    // Pinned while it is empty — that is the whole reason it stays on screen.
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as any).__uiStore.getState().recentlyCreatedFolders.size),
+      )
+      .toBe(1)
+    // Give it a Markdown document: from now on it qualifies on its own, so the pin is dropped.
+    writeFileSync(join(dir, 'fresh', 'b.md'), '# B\n', 'utf-8')
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as any).__uiStore.getState().recentlyCreatedFolders.size),
+      )
+      .toBe(0)
+    // Still shown — now because it holds Markdown, not because it is pinned.
+    await expect(page.getByTestId('folder-row').filter({ hasText: 'fresh' })).toBeVisible()
+  })
+
+  test('sidebar: a New File with an unsupported extension is refused, not written (ADR-0011)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-newfile-badext-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    await page
+      .getByTestId('sidebar-tree-area')
+      .click({ button: 'right', position: { x: 80, y: 200 } })
+    await page.getByTestId('side-bg-new-file').click()
+    const createRow = page.getByTestId('file-create-row')
+    await expect(createRow).toBeVisible()
+    const input = createRow.locator('input')
+    await input.fill('notes.txt')
+    await input.press('Enter')
+    // Refused: nothing is written and the `.md` spelling is offered in the still-open row.
+    await expect(input).toHaveValue('notes.md')
+    // Accepting the offered name is what actually writes the file.
+    await input.press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'notes.md')), { timeout: 15000 }).toBe(true)
+    expect(existsSync(join(dir, 'notes.txt'))).toBe(false)
   })
 })

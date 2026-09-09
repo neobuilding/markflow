@@ -8,7 +8,9 @@ import {
   useDetectEncoding,
   useCreateFolder,
   useRenameFolder,
+  useRenameFile,
   useDeleteFolder,
+  useUndoRename,
 } from './useDocuments'
 import { DOCS_KEY } from '../lib/queryClient'
 
@@ -53,7 +55,9 @@ const api = {
     detectEncoding: vi.fn(async (_p: string) => ({ enc: 'utf-8', confidence: 1 })),
     createFolder: vi.fn(async (_p: string) => undefined),
     renameFolder: vi.fn(async (_o: string, _n: string) => undefined),
+    renameFile: vi.fn(async (_o: string, _n: string) => undefined),
     deleteFolder: vi.fn(async (_p: string) => undefined),
+    undoRename: vi.fn(async () => ({ ok: true })),
   },
 }
 
@@ -230,6 +234,16 @@ describe('useRenameFolder (能力 7)', () => {
   })
 })
 
+describe('useRenameFile', () => {
+  it('calls documents.renameFile and invalidates the documents list', async () => {
+    const { result } = mountHook(() => useRenameFile())
+    await act(async () => {
+      await result.current.mutateAsync({ oldPath: '/a.md', newPath: '/b.md' })
+    })
+    expect(api.documents.renameFile).toHaveBeenCalledWith('/a.md', '/b.md')
+  })
+})
+
 describe('useDeleteFolder (能力 7)', () => {
   it('calls documents.deleteFolder and invalidates the documents list', async () => {
     const { result } = mountHook(() => useDeleteFolder())
@@ -237,5 +251,25 @@ describe('useDeleteFolder (能力 7)', () => {
       await result.current.mutateAsync('/d')
     })
     expect(api.documents.deleteFolder).toHaveBeenCalledWith('/d')
+  })
+})
+
+describe('useUndoRename (能力 7)', () => {
+  it('calls documents.undoRename and invalidates the documents list on success', async () => {
+    const { result } = mountHook(() => useUndoRename())
+    await act(async () => {
+      await result.current.mutateAsync()
+    })
+    expect(api.documents.undoRename).toHaveBeenCalled()
+  })
+
+  it('does not invalidate when there is nothing to undo', async () => {
+    // Covers the `if (res?.ok)` false branch: a silent "nothing to undo" must not refetch.
+    api.documents.undoRename.mockImplementationOnce(async () => ({ ok: false, reason: 'none' }))
+    const { result } = mountHook(() => useUndoRename())
+    await act(async () => {
+      await result.current.mutateAsync()
+    })
+    expect(api.documents.undoRename).toHaveBeenCalled()
   })
 })

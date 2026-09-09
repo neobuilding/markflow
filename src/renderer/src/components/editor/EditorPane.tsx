@@ -661,7 +661,7 @@ export function EditorPane(): React.ReactElement {
               data-testid="ed-new-document"
               onClick={() => useUIStore.getState().setNewDocOpen(true)}
             >
-              <Plus size={13} /> {t('sidebar.newDocumentAction')}
+              <Plus size={13} /> {t('sidebar.newDraft')}
             </ContextMenuItem>
             <ContextMenuItem
               data-testid="ed-search-documents"

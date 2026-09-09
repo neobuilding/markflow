@@ -99,7 +99,10 @@ export function useLocalDocument(
     savedTitleRef.current = title
     setDirtyState(false)
     useUIStore.getState().setDirty(false)
-  }, [doc?.id, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
+    // `filePath` is part of the dependency set on purpose: a sidebar (or external) rename is a
+    // disk-level move that leaves `updatedAt` untouched, so without it the draft title would
+    // keep showing the old name forever.
+  }, [doc?.id, doc?.updatedAt, doc?.filePath]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Manual encoding switch (same document, encoding field changed): overwrite the local draft
   // with the re-decoded content, clear dirty and refresh the "saved" baseline (disk bytes are
