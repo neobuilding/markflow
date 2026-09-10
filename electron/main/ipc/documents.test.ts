@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import {
   writeFileSync,
   mkdtempSync,
@@ -26,7 +26,7 @@ import {
 import { __emitFolderEvent, __emitFolderDirEvent } from '../model/folderWatcher'
 // In-memory DiskIO: lets a case drive the handlers with paths that need not exist on
 // any real disk (see lib/disk-io.ts).
-import { createMemoryDiskIO } from '../lib/disk-io'
+import { createMemoryDiskIO, type MemoryDiskIO } from '../lib/disk-io'
 // Import the REAL isInFolder (from the un-mocked folderMatch module) so the fake
 // store's listDocuments matches production semantics exactly no drift between the
 // test double and documentStore.listDocuments.
@@ -146,11 +146,132 @@ vi.mock('electron', () => ({
 // namespace is not spyable in ESM, so wrap it through a hoisted mock that calls through by
 // default; individual tests can make it throw via mockImplementationOnce to hit the undo-rename
 // failure branch.
+// The whole suite runs against an in-memory filesystem so it never touches a real
+// disk (platform-independent, no risk of clobbering real files). Every `node:fs`
+// entry point the handlers and the test setup use is forwarded to the shared
+// `createMemoryDiskIO()` instance created just below (lives on globalThis).
+//
+// NOTE: the instance is created OUTSIDE this factory. Importing `../lib/disk-io`
+// from inside a vi.mock factory would load that module while node:fs is still being
+// mocked, handing its `nodeDiskIO` adapter the REAL fs (a recursive-mock hazard) and
+// sending calls back to disk — so we only read the already-created instance here.
 const fsRenameMock = vi.hoisted(() => vi.fn())
 vi.mock('node:fs', async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import('node:fs')
-  fsRenameMock.mockImplementation((...args: any[]) => (actual.renameSync as any)(...args))
-  return { ...actual, renameSync: fsRenameMock }
+  // `security.ts`/`appdoc.ts` call `realpathSync` for the containment check. On a
+  // real disk the in-memory paths do not exist, so the REAL call throws and the
+  // resolve-appdoc handler (which catches) returns null. Mirror it lexically so the
+  // check still runs without touching a real disk.
+  const { resolve } = await import('node:path')
+  const getMem = () => (globalThis as any).__memFs as MemoryDiskIO
+
+  // renameSync keeps using the controllable spy so the EBUSY failure branch stays
+  // stubbable; by default it just delegates to the in-memory rename.
+  fsRenameMock.mockImplementation((oldPath: string, newPath: string) =>
+    getMem().rename(oldPath, newPath),
+  )
+
+  return {
+    ...actual,
+    realpathSync: (p: string) => resolve(p),
+    readFileSync: (p: string, opts?: any) => {
+      const buf = getMem().readFile(p)
+      if (typeof opts === 'string') return buf.toString(opts as BufferEncoding)
+      if (opts && typeof opts === 'object' && opts.encoding)
+        return buf.toString(opts.encoding as BufferEncoding)
+      return buf
+    },
+    writeFileSync: (p: string, data: string | Buffer, opts?: any) => {
+      const enc =
+        typeof opts === 'string'
+          ? opts
+          : opts && typeof opts === 'object'
+            ? (opts.encoding as BufferEncoding | undefined)
+            : undefined
+      const buf = Buffer.isBuffer(data)
+        ? data
+        : Buffer.from(String(data), (enc ?? 'utf-8') as BufferEncoding)
+      getMem().writeFile(p, buf)
+    },
+    mkdirSync: (p: string) => {
+      getMem().mkdir(p)
+    },
+    existsSync: (p: string) => getMem().exists(p),
+    renameSync: (...args: any[]) => (fsRenameMock as any)(...args),
+    statSync: (p: string) => {
+      const st = getMem().stat(p)
+      return {
+        ...st,
+        isFile: () => true,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+        isBlockDevice: () => false,
+        isCharacterDevice: () => false,
+        isFIFO: () => false,
+        isSocket: () => false,
+        dev: 0,
+        ino: 0,
+        mode: 0,
+        nlink: 0,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        blksize: 0,
+        blocks: 0,
+        atimeMs: 0,
+        ctimeMs: 0,
+        atime: new Date(0),
+        ctime: new Date(0),
+        mtime: new Date(0),
+        birthtime: new Date(0),
+      }
+    },
+    readdirSync: (p: string, opts?: any) => {
+      const entries = getMem().readdir(p)
+      if (opts && opts.withFileTypes) {
+        return entries.map((e: { name: string; isDirectory: () => boolean }) => ({
+          name: e.name,
+          isDirectory: e.isDirectory,
+          isFile: () => !e.isDirectory(),
+          isSymbolicLink: () => false,
+        }))
+      }
+      return entries.map((e: { name: string }) => e.name)
+    },
+    openSync: (p: string) => getMem().openExclusive(p),
+    writeSync: (fd: number, s: string) => {
+      getMem().writeToFd(fd, s)
+    },
+    closeSync: (fd: number) => getMem().closeFd(fd),
+    unlinkSync: (p: string) => getMem().remove(p),
+    mkdtempSync: (prefix: string) => {
+      const seq = ((globalThis as any).__memFsSeq =
+        (((globalThis as any).__memFsSeq as number) ?? 0) + 1)
+      const p = `${prefix}${seq}`
+      getMem().mkdir(p)
+      return p
+    },
+    promises: {
+      ...actual.promises,
+      open: async (path: string, _flags?: string) => {
+        const handle = await getMem().openForRead(path)
+        return {
+          read: async (buffer: Buffer, offset: number, length: number, _position?: number) => {
+            const data = await handle.read(length)
+            data.copy(buffer, offset)
+            return { bytesRead: data.length, buffer }
+          },
+          close: () => handle.close(),
+        }
+      },
+      rm: async (path: string, opts?: any) => {
+        getMem().rm(path, opts)
+      },
+      rename: async (oldPath: string, newPath: string) => {
+        getMem().rename(oldPath, newPath)
+      },
+    },
+  } as any
 })
 
 // app:getInitialPaths etc. not used by documents handlers; also need app for getPath.
@@ -160,8 +281,15 @@ const fakeIpcMain = {
     handlers[ch] = fn
   },
 } as any
-// A stable temp dir for the whole test file, so collision-retry tests can pre-create files
-// in the exact directory the create/update handlers will write into.
+// The shared in-memory filesystem for the whole suite. disk-io is loaded with node:fs
+// already mocked (vi.mock is hoisted above the import that brings createMemoryDiskIO
+// in), so its nodeDiskIO adapter forwards every fs call here — handlers and test setup
+// both run disk-free.
+const __memFs = createMemoryDiskIO()
+;(globalThis as any).__memFs = __memFs
+
+// A stable "temp dir" for the whole test file, so collision-retry tests can pre-create
+// files in the exact directory the create/update handlers will write into.
 const stableDocsRoot = mkdtempSync(join(tmpdir(), 'mf-docs-'))
 const fakeApp = { getPath: () => stableDocsRoot } as any
 
@@ -186,6 +314,15 @@ let fakeMainWindow: any = {
 beforeAll(() => {
   docs.clear()
   registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+})
+
+// Fresh in-memory filesystem for every test, so a previous test's files can never
+// leak into the next one. `stableDocsRoot` is re-created inside it so the default
+// documents directory stays available after a reset.
+beforeEach(() => {
+  const mem = createMemoryDiskIO()
+  ;(globalThis as any).__memFs = mem
+  mem.mkdir(stableDocsRoot)
 })
 
 // Safety net: drain (send + clear the timer of) any folder-changed broadcast a test
@@ -1712,7 +1849,7 @@ describe('isInFolder (folderMatch, shared with documentStore)', () => {
 describe('documents IPC — resolve-appdoc (能力 3)', () => {
   const dir = join(stableDocsRoot, 'ra')
   const filePath = join(dir, 'note.md')
-  beforeAll(() => {
+  beforeEach(() => {
     mkdirSync(dir, { recursive: true })
     writeFileSync(filePath, '# note')
     docs.set('ra1', {
@@ -1757,7 +1894,7 @@ describe('documents IPC — resolve-appdoc (能力 3)', () => {
 describe('documents IPC — set-eol (能力 6)', () => {
   const dir = join(stableDocsRoot, 'eol')
   const filePath = join(dir, 'file.md')
-  beforeAll(() => {
+  beforeEach(() => {
     mkdirSync(dir, { recursive: true })
     writeFileSync(filePath, 'a\nb\nc')
     docs.set('eol1', {
@@ -1792,7 +1929,7 @@ describe('documents IPC — set-eol (能力 6)', () => {
 describe('documents IPC — detect-encoding (能力 11)', () => {
   const dir = join(stableDocsRoot, 'det')
   const filePath = join(dir, 'file.md')
-  beforeAll(() => {
+  beforeEach(() => {
     mkdirSync(dir, { recursive: true })
     writeFileSync(filePath, Buffer.from([0xef, 0xbb, 0xbf, 0x68, 0x69])) // UTF-8 BOM
   })

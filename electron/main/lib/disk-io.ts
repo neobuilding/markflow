@@ -101,6 +101,10 @@ export const nodeDiskIO: DiskIO = {
 export interface MemoryDiskIO extends DiskIO {
   /** Seed a UTF-8 file, for test setup. */
   seed(path: string, content: string): void
+  /** Delete a file. Test-only: production deletes go through shell.trashItem. */
+  remove(path: string): void
+  /** Recursive delete for test cleanup. Mirrors fsPromises.rm semantics. */
+  rm(path: string, options?: { recursive?: boolean; force?: boolean }): void
 }
 
 export function createMemoryDiskIO(): MemoryDiskIO {
@@ -117,38 +121,94 @@ export function createMemoryDiskIO(): MemoryDiskIO {
     throw Object.assign(new Error(`${code}: ${what}`), { code })
   }
 
+  // Windows' fs treats `/` and `\` as the same separator, and real `fs.rename`
+  // recurses, so this fake mirrors both: every path key is normalised to `\` so a
+  // request in either separator shape resolves to the same in-memory entry.
+  const canon = (p: string) => p.replace(/\//g, '\\')
+
   return {
     seed(path, content) {
-      files.set(path, Buffer.from(content, 'utf-8'))
+      files.set(canon(path), Buffer.from(content, 'utf-8'))
     },
     readFile(path) {
-      const buf = files.get(path)
-      if (buf === undefined) fail('ENOENT', path)
+      const buf = files.get(canon(path))
+      if (buf === undefined) fail('ENOENT', canon(path))
       return buf
     },
     writeFile(path, data) {
-      files.set(path, Buffer.from(data))
+      files.set(canon(path), Buffer.from(data))
     },
     exists(path) {
-      return files.has(path) || dirs.has(path)
+      const c = canon(path)
+      return files.has(c) || dirs.has(c)
     },
     mkdir(path) {
-      dirs.add(path)
+      // Mirror `fs.mkdirSync(recursive: true)`: create every ancestor, not just the leaf.
+      const norm = canon(path).replace(/[\\/]+$/, '')
+      const segs = norm.split(/[\\/]/)
+      let cur = segs[0]
+      dirs.add(cur)
+      for (let i = 1; i < segs.length; i++) {
+        // `canon` has already normalised every separator to `\`, so the join is `\`.
+        cur += '\\' + segs[i]
+        dirs.add(cur)
+      }
     },
     rename(oldPath, newPath) {
-      const buf = files.get(oldPath)
-      if (buf === undefined) fail('ENOENT', oldPath)
-      files.delete(oldPath)
-      files.set(newPath, buf)
+      // Windows' fs treats `/` and `\` as one separator, so a request may use a
+      // different separator shape than the stored keys (e.g. the renderer builds
+      // tree paths with `/` on Windows where stored paths use `\`). Every key is
+      // normalised to `\` on the way in (see the `canon` helper below), so both
+      // sides already match.
+      const oldCanon = canon(oldPath)
+      const newCanon = canon(newPath)
+      const buf = files.get(oldCanon)
+      if (buf !== undefined) {
+        files.delete(oldCanon)
+        files.set(newCanon, buf)
+        return
+      }
+      // Directory move: relocate `oldPath` and every entry beneath it (real `fs.rename`
+      // recurses, so the fake must too — a folder rename would otherwise ENOENT).
+      const base = oldCanon.replace(/[\\/]+$/, '')
+      const matches = [...files.keys(), ...dirs].filter((p) => {
+        if (p === base) return true
+        const rest = p.startsWith(base) ? p.slice(base.length) : ''
+        return /^[\\/]/.test(rest)
+      })
+      if (matches.length === 0) fail('ENOENT', oldPath)
+      const targetBase = newCanon.replace(/[\\/]+$/, '')
+      for (const p of matches) {
+        const rel = p.slice(base.length).replace(/^[\\/]/, '')
+        const np = targetBase + (rel ? '\\' + rel : '')
+        if (files.has(p)) {
+          files.set(np, files.get(p)!)
+          files.delete(p)
+        } else {
+          dirs.delete(p)
+          dirs.add(np)
+        }
+      }
     },
     stat(path) {
-      const buf = files.get(path)
-      if (buf === undefined) fail('ENOENT', path)
+      const buf = files.get(canon(path))
+      if (buf === undefined) fail('ENOENT', canon(path))
       // Timestamps are meaningless in memory; the shape matters, not the values.
       return { size: buf.length, birthtimeMs: 0, mtimeMs: 0 }
     },
     readdir(path) {
-      const base = path.replace(/[\\/]+$/, '')
+      const base = canon(path).replace(/[\\/]+$/, '')
+      // Mirror `fs.readdirSync`: a missing directory must surface (the caller decides
+      // whether to swallow it) rather than silently returning an empty list — real
+      // fs throws here, and `documents:list-folders` relies on that to skip unreadable
+      // branches instead of crashing IPC.
+      const exists =
+        dirs.has(base) ||
+        [...files.keys(), ...dirs].some((p) => {
+          const rest = p.startsWith(base) ? p.slice(base.length) : ''
+          return /^[\\/]/.test(rest)
+        })
+      if (!exists) fail('ENOENT', base)
       const names = new Set<string>()
       for (const p of [...files.keys(), ...dirs]) {
         // A child must sit DIRECTLY under `base`: the remainder has to begin with a
@@ -165,11 +225,36 @@ export function createMemoryDiskIO(): MemoryDiskIO {
           isDirectory: () => dirs.has(`${base}/${name}`) || dirs.has(`${base}\\${name}`),
         }))
     },
+    remove(path) {
+      const c = canon(path)
+      if (!files.has(c)) fail('ENOENT', c)
+      files.delete(c)
+    },
+    rm(path, options) {
+      const base = canon(path).replace(/[\\/]+$/, '')
+      const targets = [...files.keys(), ...dirs].filter((p) => {
+        if (p === base) return true
+        // A recursive rm only removes entries that sit DIRECTLY under `base`
+        // (separator-bounded), so a same-prefix sibling is never swept up.
+        const rest = p.startsWith(base) ? p.slice(base.length) : ''
+        return options?.recursive === true && /^[\\/]/.test(rest)
+      })
+      if (targets.length === 0 && options?.force !== true) fail('ENOENT', path)
+      for (const p of targets) {
+        files.delete(p)
+        dirs.delete(p)
+      }
+    },
     openExclusive(path) {
-      if (files.has(path)) fail('EEXIST', path)
+      // A NUL byte makes the path un-openable on every real platform (not a name
+      // collision), so the create retry loop must surface it — mirror that here.
+      const c = canon(path)
+      if (c.includes('\0')) fail('EINVAL', c)
+      if (dirs.has(c)) fail('EISDIR', c)
+      if (files.has(c)) fail('EEXIST', c)
       const fd = nextFd++
-      openFds.set(fd, path)
-      files.set(path, Buffer.alloc(0))
+      openFds.set(fd, c)
+      files.set(c, Buffer.alloc(0))
       return fd
     },
     writeToFd(fd, content) {
@@ -181,8 +266,8 @@ export function createMemoryDiskIO(): MemoryDiskIO {
       openFds.delete(fd)
     },
     async openForRead(path) {
-      const buf = files.get(path)
-      if (buf === undefined) fail('ENOENT', path)
+      const buf = files.get(canon(path))
+      if (buf === undefined) fail('ENOENT', canon(path))
       return {
         async read(maxBytes: number) {
           return buf.subarray(0, maxBytes)
