@@ -15,3 +15,8 @@ The five canonical triage roles, using their default label strings. See `docs/ag
 ### Domain docs
 
 Single-context: one `CONTEXT.md` at the root plus `docs/adr/`. See `docs/agents/domain.md`.
+
+### Testing conventions
+
+Path-shape and filesystem rules that keep the unit suite deterministic across Windows and Linux
+CI. See `docs/agents/testing.md`.

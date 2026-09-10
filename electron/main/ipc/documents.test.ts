@@ -24,6 +24,9 @@ import {
 // Test seam of model/folderWatcher.ts: drives the exact dispatch the real chokidar
 // listeners use, so these tests never depend on filesystem event timing.
 import { __emitFolderEvent, __emitFolderDirEvent } from '../model/folderWatcher'
+// In-memory DiskIO: lets a case drive the handlers with paths that need not exist on
+// any real disk (see lib/disk-io.ts).
+import { createMemoryDiskIO } from '../lib/disk-io'
 // Import the REAL isInFolder (from the un-mocked folderMatch module) so the fake
 // store's listDocuments matches production semantics exactly no drift between the
 // test double and documentStore.listDocuments.
@@ -1994,11 +1997,18 @@ describe('documents IPC — folder ops (能力 7)', () => {
       updatedAt: 0,
       memoryOnly: false,
     })
-    // Pure path arithmetic: no OS has a file at 'C:\\docs\\x.md', so the real rename is
-    // stubbed out. Only the re-pointing logic is under test here.
-    fsRenameMock.mockImplementationOnce(() => undefined)
-
-    await call('documents:rename-file', oldP, newP)
+    // Drive this case through the in-memory DiskIO. 'C:\\docs\\x.md' cannot exist on a
+    // real disk, so with the real adapter the rename would throw before the re-pointing
+    // ever ran — the fake is what makes this path shape usable at all.
+    const io = createMemoryDiskIO()
+    io.seed(oldP, 'x')
+    registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow, io)
+    try {
+      await call('documents:rename-file', oldP, newP)
+    } finally {
+      // Restore the default (real filesystem) registration for the remaining cases.
+      registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+    }
 
     // Re-pointed with the record's OWN separator, so the result is still all
     // backslashes. A '/' here would mean the `'\\'` branch was not taken.

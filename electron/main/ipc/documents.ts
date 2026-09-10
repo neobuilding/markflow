@@ -1,25 +1,13 @@
 import type { App, IpcMain } from 'electron'
 import { shell } from 'electron'
 import { join, dirname, basename, extname, isAbsolute, resolve, sep } from 'node:path'
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  renameSync,
-  existsSync,
-  statSync,
-  openSync,
-  writeSync,
-  closeSync,
-  readdirSync,
-  promises as fsPromises,
-} from 'node:fs'
-import type { Dirent } from 'node:fs'
-import type { FileHandle } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
 import iconv from 'iconv-lite'
 import { MD_EXTS, stripMarkdownExt } from '../lib/markdown-ext'
+// Every filesystem access goes through this port (see lib/disk-io.ts): the handlers
+// below stay pure orchestration and can be driven by an in-memory fake in tests.
+import { nodeDiskIO, type DirEntry, type DiskIO, type ReadHandle } from '../lib/disk-io'
 import {
   addWatchedFolder,
   markOwnWrite,
@@ -218,12 +206,15 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   return cjkSecondPass(sample, primary)
 }
 // Raw Buffer read -> detect encoding -> decode to string (with encoding metadata).
-export function readMarkdownText(filePath: string): {
+export function readMarkdownText(
+  filePath: string,
+  io: DiskIO = nodeDiskIO,
+): {
   text: string
   encoding: string
   confidence: number
 } {
-  const buf = readFileSync(filePath) // raw Buffer, no encoding specified
+  const buf = io.readFile(filePath) // raw Buffer, no encoding specified
   const { enc, confidence } = detectEncoding(buf)
   return { text: iconv.decode(buf, enc), encoding: enc, confidence }
 }
@@ -235,9 +226,9 @@ export function countWords(text: string): number {
     .filter((w) => w.length > 0).length
 }
 
-function getDefaultDocsDir(): string {
+function getDefaultDocsDir(io: DiskIO = nodeDiskIO): string {
   const docsDir = join(_app!.getPath('documents'), 'MarkFlow')
-  mkdirSync(docsDir, { recursive: true })
+  io.mkdir(docsDir, { recursive: true })
   return docsDir
 }
 
@@ -365,7 +356,7 @@ function findRenamedDocument(filePath: string, text: string): Document | null {
 // Files we already know about are left alone: our own saves and Save As already
 // upserted them, and their watcher events must not create a second record for the
 // same path (which would show up as a duplicate entry in the sidebar).
-function syncAddedFile(filePath: string): void {
+function syncAddedFile(filePath: string, io: DiskIO = nodeDiskIO): void {
   const tracked = storeGetByPath(filePath)
   if (tracked) {
     reviveDocument(tracked)
@@ -375,7 +366,7 @@ function syncAddedFile(filePath: string): void {
   let encoding: string
   let confidence: number
   try {
-    ;({ text, encoding, confidence } = readMarkdownText(filePath))
+    ;({ text, encoding, confidence } = readMarkdownText(filePath, io))
   } catch {
     // Unreadable or already gone: leave the store untouched rather than let the
     // watcher callback throw.
@@ -492,10 +483,13 @@ function removeDocumentsUnder(folderPath: string): void {
   }
 }
 
+// `io` is the filesystem port (defaults to the real node:fs adapter). Injecting a fake
+// is what lets the tests drive every handler without a real disk — see lib/disk-io.ts.
 export function registerDocumentHandlers(
   ipcMain: IpcMain,
   app: App,
   getMainWindow: () => unknown,
+  io: DiskIO = nodeDiskIO,
 ): void {
   _app = app
   _getMainWindow = getMainWindow as () => {
@@ -508,7 +502,7 @@ export function registerDocumentHandlers(
   // model/folderWatcher.ts) so that folderWatcher stays free of any dependency on the
   // document store — otherwise documents.ts and folderWatcher.ts would import each other.
   startFolderWatching({
-    onFileAdded: (filePath) => syncAddedFile(filePath),
+    onFileAdded: (filePath) => syncAddedFile(filePath, io),
     onFileRemoved: (filePath) => {
       // A rename reaches chokidar as `unlink <old>` + `add <new>`, and the two are not
       // paired: either can be delivered long after the filesystem has moved on. Renaming
@@ -516,7 +510,7 @@ export function registerDocumentHandlers(
       // when that path EXISTS again and is still the open document — deleting the record
       // then closed the file (and emptied the sidebar). Never trust the removal while
       // the file is still on disk; a genuinely deleted file is gone by now.
-      if (existsSync(filePath)) return
+      if (io.exists(filePath)) return
       const existing = storeGetByPath(filePath)
       if (!existing) return
       // VS Code behaviour: a file deleted (or moved) outside the app stays OPEN, its
@@ -601,12 +595,12 @@ export function registerDocumentHandlers(
       const baseDir = folderPath
         ? isAbsolute(folderPath)
           ? folderPath
-          : join(getDefaultDocsDir(), folderPath)
-        : getDefaultDocsDir()
-      mkdirSync(baseDir, { recursive: true })
+          : join(getDefaultDocsDir(io), folderPath)
+        : getDefaultDocsDir(io)
+      io.mkdir(baseDir, { recursive: true })
 
       // Create a unique filename atomically: open with O_EXCL ('wx') and retry with an
-      // incrementing suffix until we win a free name, avoiding the existsSync/writeFileSync TOCTOU.
+      // incrementing suffix until we win a free name, avoiding an exists/write TOCTOU.
       const safeTitle = title.replace(/[/\\:*?"<>|]/g, '-')
       let fd: number
       let filePath: string
@@ -615,7 +609,7 @@ export function registerDocumentHandlers(
         const candidate = counter === 0 ? `${safeTitle}${ext}` : `${safeTitle}-${counter}${ext}`
         filePath = join(baseDir, candidate)
         try {
-          fd = openSync(filePath, 'wx')
+          fd = io.openExclusive(filePath)
           break
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
@@ -626,9 +620,9 @@ export function registerDocumentHandlers(
         }
       }
       try {
-        writeSync(fd, content, undefined, 'utf-8')
+        io.writeToFd(fd, content)
       } finally {
-        closeSync(fd)
+        io.closeFd(fd)
       }
       // Suppress the watcher events this write raises (some platforms report a
       // follow-up `change` right after `add`, which would otherwise pop the
@@ -674,7 +668,7 @@ export function registerDocumentHandlers(
       // A memory-only draft (file_path === '') has no file yet; the first Save is always routed to
       // Save As, so this branch is defensive only. Skip the disk write to avoid writing to an empty path.
       if (existing.filePath) {
-        writeFileSync(existing.filePath, iconv.encode(newContent, existing.encoding || 'utf-8'))
+        io.writeFile(existing.filePath, iconv.encode(newContent, existing.encoding || 'utf-8'))
         // Suppress the "file changed" notification this write raises. Anchored after the
         // write rather than before it: the watcher reports once the file settles, so a
         // slow write would otherwise outlive the window and pop a bogus prompt.
@@ -698,12 +692,12 @@ export function registerDocumentHandlers(
         // so we probe existence explicitly to avoid clobbering an unrelated file.)
         let target = join(dir, `${safeTitle}${ext}`)
         let counter = 0
-        while (target !== existing.filePath && existsSync(target)) {
+        while (target !== existing.filePath && io.exists(target)) {
           counter++
           target = join(dir, `${safeTitle}-${counter}${ext}`)
         }
         if (target !== existing.filePath) {
-          renameSync(existing.filePath, target)
+          io.rename(existing.filePath, target)
         }
         newFilePath = target
       }
@@ -737,9 +731,9 @@ export function registerDocumentHandlers(
       const wordCount = countWords(content)
       const now = Date.now()
 
-      mkdirSync(dirname(newFilePath), { recursive: true })
+      io.mkdir(dirname(newFilePath), { recursive: true })
       // Save As: write back in the source document's original encoding (the copy inherits that encoding, R5).
-      writeFileSync(newFilePath, iconv.encode(content, existing.encoding || 'utf-8'))
+      io.writeFile(newFilePath, iconv.encode(content, existing.encoding || 'utf-8'))
       // Suppress the "file changed" notification this write raises, anchored after the
       // write so that a slow write cannot outlive the window.
       markOwnWrite(newFilePath)
@@ -768,7 +762,7 @@ export function registerDocumentHandlers(
     let encoding: string
     let confidence: number
     try {
-      ;({ text, encoding, confidence } = readMarkdownText(existing.filePath))
+      ;({ text, encoding, confidence } = readMarkdownText(existing.filePath, io))
     } catch {
       return null
     }
@@ -846,7 +840,7 @@ export function registerDocumentHandlers(
   // read error so the caller (the encoding re-detect menu item) can fall back gracefully.
   ipcMain.handle('documents:detect-encoding', (_event, filePath: string) => {
     try {
-      const buf = readFileSync(filePath)
+      const buf = io.readFile(filePath)
       return detectEncoding(buf)
     } catch {
       return { enc: 'utf-8', confidence: 0 }
@@ -859,14 +853,14 @@ export function registerDocumentHandlers(
   // file is gone or unreadable.
   ipcMain.handle('documents:set-eol', (_event, filePath: string, eol: '\r\n' | '\n') => {
     try {
-      const buf = readFileSync(filePath)
+      const buf = io.readFile(filePath)
       const enc = storeGetByPath(filePath)?.encoding ?? 'utf-8'
       const text = iconv.decode(buf, enc)
       const normalized =
         eol === '\r\n'
           ? text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
           : text.replace(/\r\n/g, '\n')
-      writeFileSync(filePath, iconv.encode(normalized, enc))
+      io.writeFile(filePath, iconv.encode(normalized, enc))
       markOwnWrite(filePath)
     } catch {
       // Unreadable / missing file: the renderer's confirm+reload is best-effort.
@@ -876,7 +870,7 @@ export function registerDocumentHandlers(
   // Create a folder on disk and start watching it so files dropped into it show up
   // recursive: true so nested paths are created too.
   ipcMain.handle('documents:create-folder', (_event, folderPath: string) => {
-    mkdirSync(folderPath, { recursive: true })
+    io.mkdir(folderPath, { recursive: true })
     addWatchedFolder(folderPath)
   })
 
@@ -893,7 +887,7 @@ export function registerDocumentHandlers(
   // otherwise the rename reaches the store as unrelated unlink/add pairs and the sidebar
   // shows the old folder (struck-through "missing") beside a duplicate of the new one.
   ipcMain.handle('documents:rename-folder', (_event, oldPath: string, newPath: string) => {
-    renameSync(oldPath, newPath)
+    io.rename(oldPath, newPath)
     addWatchedFolder(newPath)
     rePointFolderRecords(oldPath, newPath)
     rememberRename('folder', oldPath, newPath)
@@ -905,7 +899,7 @@ export function registerDocumentHandlers(
   // document under the new name with no stale duplicate. Renaming is a direct on-disk move,
   // independent of any open editor / edit mode, so it persists immediately.
   ipcMain.handle('documents:rename-file', (_event, oldPath: string, newPath: string) => {
-    renameSync(oldPath, newPath)
+    io.rename(oldPath, newPath)
     rePointFileRecord(oldPath, newPath)
     rememberRename('file', oldPath, newPath)
   })
@@ -919,10 +913,10 @@ export function registerDocumentHandlers(
     if (!last) return { ok: false, reason: 'none' as const }
     // Refuse instead of clobbering: the old name may have been taken again since the rename,
     // or the renamed file may itself have been moved on / deleted.
-    if (!existsSync(last.newPath)) return { ok: false, reason: 'gone' as const }
-    if (existsSync(last.oldPath)) return { ok: false, reason: 'occupied' as const }
+    if (!io.exists(last.newPath)) return { ok: false, reason: 'gone' as const }
+    if (io.exists(last.oldPath)) return { ok: false, reason: 'occupied' as const }
     try {
-      renameSync(last.newPath, last.oldPath)
+      io.rename(last.newPath, last.oldPath)
     } catch (e) {
       console.error('Failed to undo rename:', e)
       return { ok: false, reason: 'failed' as const }
@@ -948,9 +942,9 @@ export function registerDocumentHandlers(
     const out: string[] = []
     const walk = (dir: string, depth: number): void => {
       if (depth > MAX_DEPTH) return
-      let entries: Dirent[]
+      let entries: DirEntry[]
       try {
-        entries = readdirSync(dir, { withFileTypes: true })
+        entries = io.readdir(dir)
       } catch {
         // Unreadable or already gone: report what we have instead of throwing into IPC.
         return
@@ -1009,7 +1003,7 @@ export function registerDocumentHandlers(
     let encoding: string
     let confidence: number
     try {
-      ;({ text, encoding, confidence } = readMarkdownText(filePath))
+      ;({ text, encoding, confidence } = readMarkdownText(filePath, io))
     } catch {
       return null
     }
@@ -1056,7 +1050,7 @@ export function registerDocumentHandlers(
     for (const filePath of filePaths) {
       let parsed: { text: string; encoding: string; confidence: number }
       try {
-        parsed = readMarkdownText(filePath)
+        parsed = readMarkdownText(filePath, io)
       } catch {
         continue
       }
@@ -1111,12 +1105,11 @@ export function registerDocumentHandlers(
   // freezes for a moment when I switch files" symptom, and it is intermittent
   // precisely because it depends on the storage path's current latency.
   ipcMain.handle('documents:eol', async (_event, filePath: string) => {
-    let handle: FileHandle | undefined
+    let handle: ReadHandle | undefined
     try {
-      handle = await fsPromises.open(filePath, 'r')
-      const buf = Buffer.alloc(65536)
-      const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
-      const sample = buf.subarray(0, bytesRead).toString('utf-8')
+      handle = await io.openForRead(filePath)
+      const buf = await handle.read(65536)
+      const sample = buf.toString('utf-8')
       return sample.includes('\r\n') ? '\r\n' : '\n'
     } catch {
       return '\n'
@@ -1134,7 +1127,7 @@ export function registerDocumentHandlers(
   // File details: return the on-disk size / creation time / modification time (for the details dialog)
   ipcMain.handle('documents:stat', (_event, filePath: string) => {
     try {
-      const st = statSync(filePath)
+      const st = io.stat(filePath)
       return {
         exists: true,
         size: st.size,
@@ -1153,7 +1146,7 @@ export function registerDocumentHandlers(
     if (!existing) return null
     let buf: Buffer
     try {
-      buf = readFileSync(existing.filePath)
+      buf = io.readFile(existing.filePath)
     } catch {
       return null
     }
