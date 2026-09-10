@@ -10,7 +10,7 @@ import {
   promises as fsPromises,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname, resolve, sep } from 'node:path'
+import { join, dirname, resolve, sep, win32 } from 'node:path'
 import {
   registerDocumentHandlers,
   normEnc,
@@ -1972,6 +1972,40 @@ describe('documents IPC — folder ops (能力 7)', () => {
     docs.delete('fs-fwd')
     await fsPromises.rm(dir, { recursive: true, force: true })
   })
+  // Covers the `'\\'` half of rePointFileRecord's docSep ternary — the half the
+  // Windows-only test above could not reach on POSIX.
+  //
+  // The paths are built with path.win32 (pure JS: identical output on every host)
+  // instead of the host `join`, whose shape follows the OS. Deriving them from `join`
+  // is exactly what made this branch unreachable on Linux: on Windows `join` yields
+  // backslashes so imported records contain one, while on POSIX every stored path is
+  // forward-slash-only and `includes('\\')` is never true.
+  it("rename-file preserves a backslash-stored record's own separator style", async () => {
+    const oldP = win32.join('C:\\docs', 'x.md') // 'C:\\docs\\x.md' on every platform
+    const newP = win32.join('C:\\docs', 'y.md')
+    docs.set('bs-doc', {
+      id: 'bs-doc',
+      title: 'x',
+      folderPath: 'C:\\docs',
+      filePath: oldP,
+      content: 'x',
+      wordCount: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      memoryOnly: false,
+    })
+    // Pure path arithmetic: no OS has a file at 'C:\\docs\\x.md', so the real rename is
+    // stubbed out. Only the re-pointing logic is under test here.
+    fsRenameMock.mockImplementationOnce(() => undefined)
+
+    await call('documents:rename-file', oldP, newP)
+
+    // Re-pointed with the record's OWN separator, so the result is still all
+    // backslashes. A '/' here would mean the `'\\'` branch was not taken.
+    expect(docs.get('bs-doc')?.filePath).toBe(newP)
+    docs.delete('bs-doc')
+  })
+
   // ── undo-rename (single slot) ─────────────────────────────────────────
   it('undo-rename moves a renamed file back and then reports "none"', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-file-'))
