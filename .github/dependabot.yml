@@ -6,7 +6,12 @@ updates:
   # npm / yarn dependencies
   # ======================
   - package-ecosystem: "npm"
-    directory: "/"
+    # Scan both the repo root and the standalone create-pr GitHub Action, which
+    # has its own package.json/package-lock.json (not an npm workspace of root).
+    # `directories` keeps them in the same npm-all / npm-security grouped PRs.
+    directories:
+      - "/"
+      - "/actions/create-pr"
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 5          # Only limits version updates; security updates are unaffected
