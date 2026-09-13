@@ -43,7 +43,9 @@ async function main() {
 
   // Real I/O services. These are the only places that touch git / gh.
   const git = createExecGitService()
-  const gh = createExecGhService(token)
+  // Pass the runner's console so gh retry/attempt logs surface in the Actions log
+  // (the factory's default is a silent no-op, used only by tests).
+  const gh = createExecGhService(token, console.log)
 
   // Read the template FILE into a string. The caller owns file I/O; the
   // renderer takes the string. If unreadable, pass '' so the renderer falls

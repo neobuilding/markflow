@@ -165,7 +165,8 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 ## Repo conventions
 
 - **Create-PR Action** — in-repo GitHub Action (`actions/create-pr`) that idempotently creates/refreshes PRs;
-  its bundled `dist/index.mjs` is committed (see `docs/adr/0005-committed-action-bundle.md`).
+  its bundled `dist/index.mjs` is **built at runtime** by `auto-pr.yml` from committed `src/` and is
+  not committed (see `docs/adr/0005-committed-action-bundle.md`).
 - **Coverage gate** — `npm run test:coverage` enforces 100% per-file on the unit-testable logic surface
   (see `docs/adr/0004-per-file-100-percent-coverage.md`).
 - **ADR** — Architecture Decision Record, kept under `docs/adr/` (this file's sibling directory).

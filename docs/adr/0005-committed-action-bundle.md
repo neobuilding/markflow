@@ -1,17 +1,20 @@
 # ADR-0005: Committed GitHub Action bundle
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-09-13 — the bundle is no longer committed; it is built at workflow
+  runtime. See the Amendment subsection in Decision.)
 
 ## Context
 
 `actions/create-pr` is a self-contained GitHub Action referenced from CI via `uses: ./actions/create-pr`.
-GitHub requires a `uses:` reference to point at **checked-in code**, not a build step that runs at workflow
-time. The action's runtime is `actions/create-pr/dist/index.mjs`, bundled from `actions/create-pr/src/`.
+GitHub requires a `uses:` reference to point at **checked-in code** (the committed `action.yml` + `src/`);
+the bundle itself is regenerated at workflow runtime (see Decision), not checked in. The action's runtime is
+`actions/create-pr/dist/index.mjs`, produced by `ncc` from `actions/create-pr/src/index.mjs`.
 
 Beyond the committed bundle, the action was designed (phase 1, `plan-create-pr-github-action-done.md`) as a
 **temporary tenant of this repo, structured for extraction into its own repo with zero refactor**: the
 `actions/create-pr/` directory is fully self-contained (its own `package.json` with `@actions/core` as the
-only runtime dep, `@vercel/ncc` as a build devDep; its own `README.md`; committed `dist/`). Dependencies
+only runtime dep, `@vercel/ncc` as a build devDep; its own `README.md`). `dist/` is git-ignored —
+it is generated at workflow runtime. Dependencies
 live in that directory, **not** in the root `package.json`.
 
 Its core design principles (all implemented):
@@ -36,15 +39,29 @@ Its core design principles (all implemented):
 
 ## Decision
 
-Commit `actions/create-pr/dist/index.mjs` alongside `actions/create-pr/src/`. After **any** change under
-`actions/create-pr/src/`, run `npm run build:action` (ncc bundles `src/index.mjs` → `dist/index.mjs`) and
-commit the rebuilt bundle together with the source change. Keep `core.mjs` pure and at 100% coverage; the
-entry owns input parsing, token injection, and (post-generalization) block scanning.
+Do **not** commit `actions/create-pr/dist/index.mjs`. The bundle is produced from `actions/create-pr/src/`
+at workflow runtime: `auto-pr.yml` runs `npm ci --prefix actions/create-pr` and `npm run build:action`
+(ncc bundles `src/index.mjs` → `dist/index.mjs`) in a step **before** `uses: ./actions/create-pr`, so the
+code the action executes is always freshly built from the committed `src/` and can never be stale. Contributors
+edit only `src/` and never commit `dist/`; for local runs/tests, `npm run build:action` builds it on demand
+(it is git-ignored). Keep `core.mjs` pure and at 100% coverage; the entry owns input parsing, token injection,
+and (post-generalization) block scanning.
+
+### Amendment (2026-09-13)
+
+The original decision committed the bundle. That was reversed because a committed `dist/` reintroduced a
+"stale bundle" failure mode that a rebuild-and-commit discipline could not reliably prevent, and it let
+`auto-pr.yml` consume an outdated bundle on feature-branch pushes _before_ any CI gate ran. Building the
+bundle at runtime removes the committed artifact entirely — there is nothing to drift. `dist/` is therefore
+git-ignored again (see `.gitignore`). GitHub's "checked-in code" requirement is satisfied by the committed
+`action.yml` + `src/`; the bundle is regenerated in-place in the workspace before `uses:` resolves it.
 
 ## Consequences
 
-- **Positive:** the action runs reproducibly in CI from a known, reviewed bundle, and can be lifted into its
-  own repo by moving the directory — no refactor.
-- **Negative:** a stale `dist/index.mjs` is a real failure mode — CI would ship old behavior. The
-  rebuild-and-commit step is therefore **mandatory**, not optional; `npm run local-test-render` lets you
-  preview the rendered PR body without a token or `gh`.
+- **Positive:** contributors never commit a build artifact, and the action always runs a bundle regenerated
+  from the reviewed `src/`, so it cannot execute outdated code. The action remains liftable into its own repo
+  (move the directory; the consuming workflow builds the bundle before `uses:`). `npm run local-test-render`
+  still previews the rendered PR body without a token or `gh`.
+- **Negative (retired):** the old committed-bundle approach had a "stale `dist/index.mjs`" failure mode
+  (CI could ship old behavior if a source change was not accompanied by a committed rebuild). Building at
+  runtime eliminates that class of bug — there is no committed artifact to drift.
