@@ -92,6 +92,62 @@ describe('createExecGhService', () => {
     )
   })
 
+  it('retries prEdit and succeeds after a transient EOF', () => {
+    // A bare `EOF` is Go's io.EOF — a transient GitHub-API connection drop that
+    // surfaces when `gh` reads a response that was closed mid-stream. It must be
+    // retried, not treated as a fatal edit failure.
+    const gh = createExecGhService('t')
+    let calls = 0
+    execFileSync.mockImplementation(() => {
+      calls += 1
+      if (calls < 3) throw new Error('Command failed: gh pr edit 7 --body ...\nEOF')
+      return ''
+    })
+    expect(gh.prEdit(7, 'new body')).toBeUndefined()
+    expect(calls).toBe(3)
+  })
+
+  it('does not retry a non-transient gh error', () => {
+    const gh = createExecGhService('t')
+    let calls = 0
+    execFileSync.mockImplementation(() => {
+      calls += 1
+      throw new Error('Command failed: gh pr edit 7 --body ...\nHTTP 422: Validation Failed')
+    })
+    expect(() => gh.prEdit(7, 'new body')).toThrow(/Validation Failed/)
+    expect(calls).toBe(1)
+  })
+
+  it('gives up after the max attempts on a persistent transient error', () => {
+    const gh = createExecGhService('t')
+    let calls = 0
+    execFileSync.mockImplementation(() => {
+      calls += 1
+      throw new Error('Command failed: gh pr edit 7 --body ...\nEOF')
+    })
+    expect(() => gh.prEdit(7, 'new body')).toThrow(/EOF/)
+    expect(calls).toBe(3)
+  })
+
+  it('logs each retry attempt and the final give-up when a log is provided', () => {
+    // Transparency: transient failures are retried silently by default (the
+    // no-op logger); with a logger wired (production passes console.log), every
+    // retry and the final give-up are surfaced so CI logs show what happened.
+    const log = vi.fn()
+    const gh = createExecGhService('t', log)
+    execFileSync.mockImplementation(() => {
+      throw new Error('Command failed: gh pr edit 7 --body ...\nEOF')
+    })
+    expect(() => gh.prEdit(7, 'new body')).toThrow(/EOF/)
+    expect(log).toHaveBeenCalledTimes(3)
+    expect(String(log.mock.calls[0][0])).toContain('attempt 1/3')
+    expect(String(log.mock.calls[0][0])).toContain('retrying in 250ms')
+    expect(String(log.mock.calls[1][0])).toContain('attempt 2/3')
+    expect(String(log.mock.calls[1][0])).toContain('retrying in 500ms')
+    expect(String(log.mock.calls[2][0])).toContain('attempt 3/3')
+    expect(String(log.mock.calls[2][0])).not.toContain('retrying')
+  })
+
   it('prListUrls returns the first url, or null when gh fails', () => {
     const gh = createExecGhService('t')
     execFileSync.mockReturnValue('https://github.com/o/r/pull/3')

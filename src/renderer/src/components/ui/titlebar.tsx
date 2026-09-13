@@ -3,11 +3,7 @@ import { PanelLeft } from 'lucide-react'
 import { useUIStore } from '../../store/ui'
 import { Button } from '../ui/button'
 
-/**
- * TitleBar — cross-platform window drag region.
- * On macOS this provides the hiddenInset space for traffic lights.
- * On Windows it fills the gap at top.
- */
+/* * * TitleBar cross-platform window drag region. * On macOS this provides the hiddenInset space for traffic lights. * On Windows it fills the gap at top */
 export function TitleBar(): React.ReactElement {
   const { sidebarOpen, toggleSidebar } = useUIStore()
   const isMac = navigator.platform.includes('Mac')

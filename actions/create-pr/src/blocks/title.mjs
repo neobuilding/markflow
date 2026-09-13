@@ -9,7 +9,7 @@
 // sibling module) so it can be copied verbatim into `dist/blocks/` and loaded
 // at runtime by the directory scanner, independent of how the action is bundled.
 //
-// Form: `export default (ctx) => string` — the single shared plugin contract
+// Form: `export default (ctx) => string` the single shared plugin contract
 // used by both built-in blocks (this directory) and user-provided blocks.
 
 // Mirrors core.deriveTitle so the plugin stays standalone in dist/blocks.

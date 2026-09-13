@@ -1,31 +1,20 @@
-import type { IpcMain } from 'electron'
-import type { App } from 'electron'
-
-let _app: App | null = null
-import { join, dirname, basename, extname, isAbsolute } from 'node:path'
-import {
-  readFileSync,
-  writeFileSync,
-  unlinkSync,
-  mkdirSync,
-  renameSync,
-  existsSync,
-  statSync,
-  openSync,
-  writeSync,
-  closeSync,
-  promises as fsPromises,
-} from 'node:fs'
-import type { FileHandle } from 'node:fs/promises'
+import type { App, IpcMain } from 'electron'
+import { shell } from 'electron'
+import { join, dirname, basename, extname, isAbsolute, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
 import iconv from 'iconv-lite'
 import { MD_EXTS, stripMarkdownExt } from '../lib/markdown-ext'
+// Every filesystem access goes through this port (see lib/disk-io.ts): the handlers
+// below stay pure orchestration and can be driven by an in-memory fake in tests.
+import { nodeDiskIO, type DirEntry, type DiskIO, type ReadHandle } from '../lib/disk-io'
 import {
   addWatchedFolder,
   markOwnWrite,
   startFolderWatching,
   stopFolderWatching,
+  pauseFolderWatching,
+  resumeFolderWatching,
 } from '../model/folderWatcher'
 import {
   type Document,
@@ -36,6 +25,19 @@ import {
   deleteDocument as storeDelete,
   getDocumentByFilePath as storeGetByPath,
 } from '../model/documentStore'
+import { resolveAppdocPath } from './appdoc'
+// Case-sensitivity rule (pure) and its main-process edge detection. See
+// docs/adr/0014-*.md: the rule lives in shared/fileUtils.ts and takes the detected
+// flag as an argument so no platform check is baked into the rule itself.
+import { arePathsSame } from '../../../shared/fileUtils'
+import { isFileSystemCaseSensitive } from '../lib/disk-io'
+
+// The active platform seam, chosen at handler-registration time (see registerDocumentHandlers).
+// Module-local so every handler reads the single value the test (or the app) injected, instead of
+// reaching into `process.platform` itself. Defaults to the real OS detector.
+let activeIsFileSystemCaseSensitive: () => boolean = isFileSystemCaseSensitive
+
+let _app: App | null = null
 
 export type { Document } from '../model/documentStore'
 
@@ -109,7 +111,7 @@ export function countReplacements(sample: Buffer, encName: string): number {
 
 // CJK second pass: compare how cleanly UTF-8 vs common CJK encodings decode, correcting GBK/Big5 misdetected as UTF-8.
 // Only called when primary is in the "UTF-8 / CJK candidate / low confidence" range (see the inCjkScope gate in detectEncoding);
-// this avoids wrongly overriding high-confidence non-CJK encodings (e.g. Cyrillic windows-1251, ISO-8859-5) with GBK —
+// this avoids wrongly overriding high-confidence non-CJK encodings (e.g. Cyrillic windows-1251, ISO-8859-5) with GBK
 // GBK decoding arbitrary bytes usually yields 0 replacements, making it appear "cleaner" than the real encoding and seizing best.
 const CJK_CANDIDATES = ['utf-8', 'gbk', 'big5', 'shift_jis', 'euc-kr']
 export function cjkSecondPass(
@@ -139,12 +141,12 @@ export function cjkSecondPass(
 
 // True when the buffer is plain ASCII text: every byte <= 0x7f AND no NUL bytes.
 // Such a buffer decodes identically under every encoding, so it is unambiguously
-// UTF-8 and needs no detection at all. This is a plain byte scan — orders of
+// UTF-8 and needs no detection at all. This is a plain byte scan orders of
 // magnitude cheaper than iconv.decode, which has to build a full JS string
 // before it can be inspected.
 //
 // The NUL check is not optional. UTF-16/32 encode ASCII text as NUL-interleaved
-// bytes (0x41 0x00 …), so EVERY byte passes a naive <= 0x7f test; letting those
+// bytes (0x41 0x00 ), so EVERY byte passes a naive <= 0x7f test; letting those
 // through classifies a BOM-less UTF-16 note as UTF-8 and hands the caller
 // NUL-interleaved garbage. jschardet detects them correctly (UTF-16 / UTF-32),
 // but only if it is given the chance.
@@ -163,7 +165,7 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   if (buf[0] === 0xff && buf[1] === 0xfe) return { enc: 'utf-16le', confidence: 1 }
   if (buf[0] === 0xfe && buf[1] === 0xff) return { enc: 'utf-16be', confidence: 1 }
   const sample = buf.subarray(0, Math.min(buf.length, SAMPLE_LIMIT))
-  // Fast path: ASCII-only input is UTF-8 by definition — skip the detector and
+  // Fast path: ASCII-only input is UTF-8 by definition skip the detector and
   // every decode below. (BOMs were handled above.) Large English notes hit this
   // and go from hundreds of milliseconds to a fraction of one.
   //
@@ -186,7 +188,7 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
     return { enc: primary, confidence: primaryConf }
   }
 
-  // Fast path — the single biggest cost in this function used to be right here.
+  // Fast path the single biggest cost in this function used to be right here
   //
   // cjkSecondPass decodes the WHOLE sample once per candidate encoding (utf-8 +
   // gbk + big5 + shift_jis + euc-kr = 5 full decodes) and scans every character
@@ -195,7 +197,7 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   // the whole app: everything is on the same single thread.
   //
   // But the loop only ever replaces `best` when a candidate yields FEWER
-  // replacement chars. Zero is already the floor — no candidate can beat it. So
+  // replacement chars. Zero is already the floor no candidate can beat it. So
   // when the primary encoding decodes cleanly, the other four decodes are pure
   // waste and can be skipped with identical results.
   const primaryRep = countReplacements(sample, primary)
@@ -205,21 +207,24 @@ export function detectEncoding(buf: Buffer): { enc: string; confidence: number }
   // Deliberately NOT truncated to a small window. Encoding is a property of the
   // whole file, and a note whose first kilobytes are English (byte-identical in
   // ASCII, UTF-8 and GBK) with Chinese only appearing further in looks perfectly
-  // clean as UTF-8 inside a short window — which silently garbles the file.
+  // clean as UTF-8 inside a short window which silently garbles the file
   // Decoding the full sample here is affordable precisely because reaching this
   // line already requires the primary decode to have produced replacement chars;
   // the common, clean case exits via the fast path above instead.
   // The CJK second pass already floors the returned confidence (utf-8: 0.1, CJK candidates: 0.7),
-  // so its result is always a safe, decisive pick — return it directly.
+  // so its result is always a safe, decisive pick return it directly
   return cjkSecondPass(sample, primary)
 }
 // Raw Buffer read -> detect encoding -> decode to string (with encoding metadata).
-export function readMarkdownText(filePath: string): {
+export function readMarkdownText(
+  filePath: string,
+  io: DiskIO = nodeDiskIO,
+): {
   text: string
   encoding: string
   confidence: number
 } {
-  const buf = readFileSync(filePath) // raw Buffer, no encoding specified
+  const buf = io.readFile(filePath) // raw Buffer, no encoding specified
   const { enc, confidence } = detectEncoding(buf)
   return { text: iconv.decode(buf, enc), encoding: enc, confidence }
 }
@@ -231,9 +236,9 @@ export function countWords(text: string): number {
     .filter((w) => w.length > 0).length
 }
 
-function getDefaultDocsDir(): string {
+function getDefaultDocsDir(io: DiskIO = nodeDiskIO): string {
   const docsDir = join(_app!.getPath('documents'), 'MarkFlow')
-  mkdirSync(docsDir, { recursive: true })
+  io.mkdir(docsDir, { recursive: true })
   return docsDir
 }
 
@@ -361,7 +366,7 @@ function findRenamedDocument(filePath: string, text: string): Document | null {
 // Files we already know about are left alone: our own saves and Save As already
 // upserted them, and their watcher events must not create a second record for the
 // same path (which would show up as a duplicate entry in the sidebar).
-function syncAddedFile(filePath: string): void {
+function syncAddedFile(filePath: string, io: DiskIO = nodeDiskIO): void {
   const tracked = storeGetByPath(filePath)
   if (tracked) {
     reviveDocument(tracked)
@@ -371,7 +376,7 @@ function syncAddedFile(filePath: string): void {
   let encoding: string
   let confidence: number
   try {
-    ;({ text, encoding, confidence } = readMarkdownText(filePath))
+    ;({ text, encoding, confidence } = readMarkdownText(filePath, io))
   } catch {
     // Unreadable or already gone: leave the store untouched rather than let the
     // watcher callback throw.
@@ -415,12 +420,92 @@ function syncAddedFile(filePath: string): void {
   notifyFolderChanged(dirname(filePath))
 }
 
+// A FOLDER rename moves every file under it to a different directory, so chokidar
+// reports each as an unpaired `unlink <old>` + `add <new>` whose directories differ —
+// findRenamedDocument (which only folds same-directory renames) can never match them.
+// Left to the watcher alone, every tracked file under the folder would end up as a
+// stale "missing" record beside a fresh duplicate of itself in the sidebar. Re-point
+// every record under the old prefix onto the new one right after the directory move,
+// so the watcher events that follow find nothing left to do: `add <new>` hits
+// storeGetByPath and revives (a no-op), and `unlink <old>` no longer has a record to
+// mark missing. Titles stay untouched — a folder rename never changes a file's name.
+function rePointFolderRecords(oldPath: string, newPath: string): void {
+  // Trailing separators are normalised away, and the separator-terminated prefix keeps
+  // a rename of `/examples` from matching a sibling `/examples2`.
+  // The prefix match must be separator-insensitive: the renderer builds tree paths with
+  // forward slashes (buildFileTree joins with '/'), so it calls rename-folder with
+  // forward-slash paths even on Windows, where stored document paths use backslashes.
+  // A mismatch here makes the prefix check fail, the old records stay behind, and the
+  // sidebar shows the old folder beside a duplicate of the new one.
+  const toPlatform = (p: string) => p.replace(/[\\/]+$/, '').replace(/\//g, sep)
+  const oldNorm = toPlatform(oldPath)
+  const newNorm = toPlatform(newPath)
+  const prefix = oldNorm + sep
+  for (const d of storeList()) {
+    if (!d.filePath.replace(/\//g, sep).startsWith(prefix)) continue
+    // Preserve the document's own separator style when rebuilding the new path: a doc
+    // imported under a path with a different separator than `newNorm` keeps that style.
+    const docSep = d.filePath.includes('\\') ? '\\' : '/'
+    const filePath = (newNorm + d.filePath.slice(oldNorm.length)).replace(/[\\/]/g, docSep)
+    storeUpdate(d.id, { folderPath: dirname(filePath), filePath, missing: false })
+    notifyDocumentRefresh(d.id)
+  }
+  notifyFolderChanged(newNorm)
+}
+
+// A FILE rename moves a single document to a new name (same directory). Unlike a folder
+// rename it has no nested children to walk, but it still has to re-point the one tracked
+// record whose filePath matches — otherwise the watcher's unlink<old> + add<new> would
+// surface as a stale "missing" record beside a fresh duplicate. Titles are rebuilt from
+// the new base name (the sidebar shows `doc.title`, not the raw path), so the rename is
+// reflected in the tree immediately. Separator-insensitive, like rePointFolderRecords.
+function rePointFileRecord(oldPath: string, newPath: string): void {
+  const toPlatform = (p: string) => p.replace(/[\\/]+$/, '').replace(/\//g, sep)
+  const oldNorm = toPlatform(oldPath)
+  const newNorm = toPlatform(newPath)
+  for (const d of storeList()) {
+    if (d.filePath.replace(/\//g, sep) !== oldNorm) continue
+    const filePath = newNorm.replace(/[\\/]/g, d.filePath.includes('\\') ? '\\' : '/')
+    storeUpdate(d.id, {
+      folderPath: dirname(filePath),
+      filePath,
+      title: stripMarkdownExt(basename(filePath)),
+      missing: false,
+    })
+    notifyDocumentRefresh(d.id)
+  }
+  notifyFolderChanged(dirname(newNorm))
+}
+
+// Remove every tracked document whose file lives inside `folderPath`. Driven by an
+// explicit folder delete (documents:delete-folder): the recursive watcher is paused
+// during the trash move, so it never fires the per-file onFileRemoved events for the
+// documents inside, and resumeFolderWatching() does not replay removals. Without this
+// the sidebar tree — which is ALSO built from document folderPaths — keeps showing the
+// deleted folder even though list-folders would no longer report it.
+function removeDocumentsUnder(folderPath: string): void {
+  const norm = folderPath.replace(/[\\/]+$/, '').replace(/\//g, sep)
+  const prefix = norm + sep
+  for (const d of [...storeList()]) {
+    const fp = d.filePath.replace(/\//g, sep)
+    if (fp === norm) continue // the folder itself, not a document
+    if (fp.startsWith(prefix)) storeDelete(d.id)
+  }
+}
+
+// `io` is the filesystem port (defaults to the real node:fs adapter). Injecting a fake
+// is what lets the tests drive every handler without a real disk — see lib/disk-io.ts.
 export function registerDocumentHandlers(
   ipcMain: IpcMain,
   app: App,
   getMainWindow: () => unknown,
+  io: DiskIO = nodeDiskIO,
+  isFileSystemCaseSensitiveSeam: () => boolean = isFileSystemCaseSensitive,
 ): void {
   _app = app
+  // Capture the platform seam so `isSamePath` (used by every rename guard) reads the value the
+  // caller chose, without the domain rule depending on `process.platform` directly.
+  activeIsFileSystemCaseSensitive = isFileSystemCaseSensitiveSeam
   _getMainWindow = getMainWindow as () => {
     webContents: { send: (channel: string, ...args: unknown[]) => void }
     isDestroyed?: () => boolean
@@ -431,7 +516,7 @@ export function registerDocumentHandlers(
   // model/folderWatcher.ts) so that folderWatcher stays free of any dependency on the
   // document store — otherwise documents.ts and folderWatcher.ts would import each other.
   startFolderWatching({
-    onFileAdded: (filePath) => syncAddedFile(filePath),
+    onFileAdded: (filePath) => syncAddedFile(filePath, io),
     onFileRemoved: (filePath) => {
       // A rename reaches chokidar as `unlink <old>` + `add <new>`, and the two are not
       // paired: either can be delivered long after the filesystem has moved on. Renaming
@@ -439,7 +524,7 @@ export function registerDocumentHandlers(
       // when that path EXISTS again and is still the open document — deleting the record
       // then closed the file (and emptied the sidebar). Never trust the removal while
       // the file is still on disk; a genuinely deleted file is gone by now.
-      if (existsSync(filePath)) return
+      if (io.exists(filePath)) return
       const existing = storeGetByPath(filePath)
       if (!existing) return
       // VS Code behaviour: a file deleted (or moved) outside the app stays OPEN, its
@@ -457,6 +542,11 @@ export function registerDocumentHandlers(
       if (!existing) return
       notifyFileChanged(existing.id, filePath)
     },
+    // A folder created or removed outside the app (Explorer, another editor, git…). The
+    // tree lists folders, so it has to be told — and it is the PARENT that has to re-read
+    // its children: the affected folder itself may be long gone by the time we look.
+    onDirAdded: (dirPath) => notifyFolderChanged(dirname(dirPath)),
+    onDirRemoved: (dirPath) => notifyFolderChanged(dirname(dirPath)),
   })
 
   // List all documents (sorted by updated_at): read directly from the store, the single
@@ -512,41 +602,28 @@ export function registerDocumentHandlers(
         return storeUpsert(doc)
       }
 
-      // Plan §6.#13/#19: when an absolute folder path is supplied (e.g. the
+      // When an absolute folder path is supplied (e.g. the
       // renderer's activeFolder), write directly there (VS Code "save into the
       // opened folder" semantics). A relative sub-folder name is still joined onto
       // the default docs dir to preserve the legacy behavior.
       const baseDir = folderPath
         ? isAbsolute(folderPath)
           ? folderPath
-          : join(getDefaultDocsDir(), folderPath)
-        : getDefaultDocsDir()
-      mkdirSync(baseDir, { recursive: true })
+          : join(getDefaultDocsDir(io), folderPath)
+        : getDefaultDocsDir(io)
+      io.mkdir(baseDir, { recursive: true })
 
-      // Create a unique filename atomically: open with O_EXCL ('wx') and retry with an
-      // incrementing suffix until we win a free name, avoiding the existsSync/writeFileSync TOCTOU.
+      // Create the file atomically with O_EXCL ('wx'): it must NOT already exist. A name
+      // clash is a user-facing error (the sidebar already blocks the commit live, so this
+      // only catches a race), not something to silently rename away — appending `-N` would
+      // create a file the user never asked for (VS Code refuses the name instead).
       const safeTitle = title.replace(/[/\\:*?"<>|]/g, '-')
-      let fd: number
-      let filePath: string
-      let counter = 0
-      while (true) {
-        const candidate = counter === 0 ? `${safeTitle}${ext}` : `${safeTitle}-${counter}${ext}`
-        filePath = join(baseDir, candidate)
-        try {
-          fd = openSync(filePath, 'wx')
-          break
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
-            counter++
-            continue
-          }
-          throw e
-        }
-      }
+      const filePath = join(baseDir, `${safeTitle}${ext}`)
+      const fd = io.openExclusive(filePath)
       try {
-        writeSync(fd, content, undefined, 'utf-8')
+        io.writeToFd(fd, content)
       } finally {
-        closeSync(fd)
+        io.closeFd(fd)
       }
       // Suppress the watcher events this write raises (some platforms report a
       // follow-up `change` right after `add`, which would otherwise pop the
@@ -587,12 +664,37 @@ export function registerDocumentHandlers(
       const newContent = updates.content ?? existing.content
       const wordCount = countWords(newContent)
 
+      // Resolve a title change into a real rename BEFORE writing anything. A taken name is
+      // refused outright: silently appending `-N` (as this used to do) moved the file to a name
+      // the user never chose. Refusing up front also means a refusal leaves nothing written
+      // behind — the content write below is skipped rather than landing under the old name.
+      let renameTarget: string | null = null
+      if (newTitle && newTitle !== existing.title && existing.filePath) {
+        const dir = dirname(existing.filePath)
+        const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
+        const ext = extname(existing.filePath).toLowerCase() || '.md'
+        const target = join(dir, `${safeTitle}${ext}`)
+        // Compare against the file's own path so saving the SAME title (or a caller passing the
+        // display form `notes.md`) never counts as a collision with itself.
+        if (target !== existing.filePath) {
+          if (io.exists(target)) {
+            // EEXIST is the standard code for "the name is taken"; the renderer's save-failure
+            // path surfaces the message, so no extra plumbing is needed here.
+            throw Object.assign(
+              new Error(`A file named "${basename(target)}" already exists here.`),
+              { code: 'EEXIST' },
+            )
+          }
+          renameTarget = target
+        }
+      }
+
       // Write to file (suppress the "file changed" notification that this write would otherwise trigger)
       // Write back in the document's original metadata encoding to preserve byte-level fidelity (R5).
       // A memory-only draft (file_path === '') has no file yet; the first Save is always routed to
       // Save As, so this branch is defensive only. Skip the disk write to avoid writing to an empty path.
       if (existing.filePath) {
-        writeFileSync(existing.filePath, iconv.encode(newContent, existing.encoding || 'utf-8'))
+        io.writeFile(existing.filePath, iconv.encode(newContent, existing.encoding || 'utf-8'))
         // Suppress the "file changed" notification this write raises. Anchored after the
         // write rather than before it: the watcher reports once the file settles, so a
         // slow write would otherwise outlive the window and pop a bogus prompt.
@@ -601,29 +703,9 @@ export function registerDocumentHandlers(
 
       // Rename file if title changed
       let newFilePath = existing.filePath
-      // Compare the NORMALIZED title, not the raw one. The renderer sends the
-      // extension-free name, but a caller that still passes the display form
-      // (`notes.md`) would otherwise differ from `existing.title` (`notes`) on
-      // every save and walk into the rename branch for nothing — the `-N` probe
-      // below only survives that because of its own `target !== existing.filePath`
-      // check. `newTitle &&` keeps an empty title from renaming to a bare extension.
-      if (newTitle && newTitle !== existing.title && existing.filePath) {
-        const dir = dirname(existing.filePath)
-        const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
-        const ext = extname(existing.filePath).toLowerCase() || '.md'
-        // Pick a free target name: the title-based name, or `<title>-N<ext>` if already taken by
-        // a *different* file. (renameSync replaces the target atomically on both Windows and POSIX,
-        // so we probe existence explicitly to avoid clobbering an unrelated file.)
-        let target = join(dir, `${safeTitle}${ext}`)
-        let counter = 0
-        while (target !== existing.filePath && existsSync(target)) {
-          counter++
-          target = join(dir, `${safeTitle}-${counter}${ext}`)
-        }
-        if (target !== existing.filePath) {
-          renameSync(existing.filePath, target)
-        }
-        newFilePath = target
+      if (renameTarget) {
+        io.rename(existing.filePath, renameTarget)
+        newFilePath = renameTarget
       }
 
       return storeUpdate(id, {
@@ -655,9 +737,9 @@ export function registerDocumentHandlers(
       const wordCount = countWords(content)
       const now = Date.now()
 
-      mkdirSync(dirname(newFilePath), { recursive: true })
+      io.mkdir(dirname(newFilePath), { recursive: true })
       // Save As: write back in the source document's original encoding (the copy inherits that encoding, R5).
-      writeFileSync(newFilePath, iconv.encode(content, existing.encoding || 'utf-8'))
+      io.writeFile(newFilePath, iconv.encode(content, existing.encoding || 'utf-8'))
       // Suppress the "file changed" notification this write raises, anchored after the
       // write so that a slow write cannot outlive the window.
       markOwnWrite(newFilePath)
@@ -686,7 +768,7 @@ export function registerDocumentHandlers(
     let encoding: string
     let confidence: number
     try {
-      ;({ text, encoding, confidence } = readMarkdownText(existing.filePath))
+      ;({ text, encoding, confidence } = readMarkdownText(existing.filePath, io))
     } catch {
       return null
     }
@@ -721,25 +803,232 @@ export function registerDocumentHandlers(
     cancelPendingFolderChanged()
   })
 
-  // Delete document
-  ipcMain.handle('documents:delete', (_event, id: string) => {
+  // Delete document — move the file to the OS trash rather than permanently deleting it
+  // A memory-only draft has no file on disk
+  // (file_path === ''); it is discarded from the store without touching the filesystem.
+  // trashItem is asynchronous and rejects on failure; per Electron's guidance we must NOT
+  // silently fall back to a permanent delete — if the move fails we keep the original file
+  // and still drop the store record so the UI stays consistent.
+  ipcMain.handle('documents:delete', async (_event, id: string) => {
     const existing = storeGet(id)
     if (!existing) return false
 
-    try {
-      // A memory-only draft has no file on disk (file_path === ''); skip the unlink so we
-      // neither error nor leave a stray log line. Deleting such a draft just removes the store entry.
-      if (existing.filePath) {
-        unlinkSync(existing.filePath)
-      }
-    } catch (e) {
-      // A missing file is not a failure here (already removed externally); only log real errors.
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error('Failed to delete file:', e)
+    if (existing.filePath) {
+      try {
+        await shell.trashItem(existing.filePath)
+      } catch (e) {
+        // A file already removed externally is not a failure. Any other rejection
+        // (no permission, trash unavailable) keeps the original file on disk; we
+        // only log it — never fall back to a permanent unlink.
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.error('Failed to move file to trash:', e)
+        }
       }
     }
 
     return storeDelete(id)
+  })
+
+  // Resolve an appdoc:// URL to its on-disk absolute path. Reuses the
+  // security layer in appdoc.ts (doc lookup → containment → exists). Returns null for
+  // malformed URLs, escapes, or missing files; callers must handle the null (the
+  // renderer greys out / skips the menu item).
+  ipcMain.handle('documents:resolve-appdoc', (_event, src: string) => {
+    try {
+      return resolveAppdocPath(src)
+    } catch {
+      return null
+    }
+  })
+
+  // Re-detect a file's encoding without modifying its bytes. Reads the raw
+  // buffer and runs the same detector used on import. Returns utf-8 / confidence 0 on any
+  // read error so the caller (the encoding re-detect menu item) can fall back gracefully.
+  ipcMain.handle('documents:detect-encoding', (_event, filePath: string) => {
+    try {
+      const buf = io.readFile(filePath)
+      return detectEncoding(buf)
+    } catch {
+      return { enc: 'utf-8', confidence: 0 }
+    }
+  })
+
+  // Set the line endings of a file on disk. Destructive write: it rewrites the
+  // file with the chosen EOL, so the renderer must confirm first and reload afterwards.
+  // The document's stored encoding is preserved byte-for-byte (R5). Fails silently when the
+  // file is gone or unreadable.
+  ipcMain.handle('documents:set-eol', (_event, filePath: string, eol: '\r\n' | '\n') => {
+    try {
+      const buf = io.readFile(filePath)
+      const enc = storeGetByPath(filePath)?.encoding ?? 'utf-8'
+      const text = iconv.decode(buf, enc)
+      const normalized =
+        eol === '\r\n'
+          ? text.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n')
+          : text.replace(/\r\n/g, '\n')
+      io.writeFile(filePath, iconv.encode(normalized, enc))
+      markOwnWrite(filePath)
+    } catch {
+      // Unreadable / missing file: the renderer's confirm+reload is best-effort.
+    }
+  })
+
+  // Create a folder on disk and start watching it so files dropped into it show up.
+  // Non-recursive on purpose: `mkdir` must reject with EEXIST (not silently swallow it
+  // the way `recursive: true` would) when the name already exists, so the sidebar's
+  // create row can surface the clash. The parent always exists in our flows, so we never
+  // need mkdir to create ancestors.
+  ipcMain.handle('documents:create-folder', (_event, folderPath: string) => {
+    io.mkdir(folderPath, { recursive: false })
+    addWatchedFolder(folderPath)
+  })
+
+  // Single-slot rename history. Only the MOST RECENT rename can be undone (a full stack was
+  // deliberately not built: see docs.local/todo-rename-undo). Owned here, in the main process,
+  // because the undo has to re-point the tracked records exactly like the rename did.
+  let lastRename: { kind: 'file' | 'folder'; oldPath: string; newPath: string } | null = null
+  function rememberRename(kind: 'file' | 'folder', oldPath: string, newPath: string): void {
+    lastRename = { kind, oldPath, newPath }
+  }
+
+  // Rename a folder on disk. The watcher is told about the new path; chokidar
+  // tolerates the old one ceasing to exist. Tracked documents are re-pointed proactively,
+  // otherwise the rename reaches the store as unrelated unlink/add pairs and the sidebar
+  // shows the old folder (struck-through "missing") beside a duplicate of the new one.
+  // VS Code's rule, mirrored here: only Linux treats paths as case-sensitive. On Windows/macOS
+  // `a.md` and `A.md` are the SAME file, so a rename that only changes the case is not a move
+  // onto a different file — and must not be mistaken for a collision with itself.
+  // Same file? Identical paths always are; off a case-sensitive filesystem a name
+  // that differs only in case is too. The case-sensitivity fact comes from the
+  // injectable platform seam (see docs/adr/0014-*.md), never a direct `process.platform` read.
+  function isSamePath(a: string, b: string): boolean {
+    return arePathsSame(a, b, activeIsFileSystemCaseSensitive())
+  }
+
+  // Refuse a rename whose target name is already taken. POSIX `rename()` SILENTLY REPLACES the
+  // target (Windows already errors), so without this guard a collision is silent data loss —
+  // the same "refuse, never silently clobber or renumber" rule create/update already follow.
+  // The renderer's live check normally prevents it; this is the backstop for a race.
+  function guardRenameTarget(io: DiskIO, oldPath: string, newPath: string): void {
+    if (isSamePath(oldPath, newPath)) return
+    if (!io.exists(newPath)) return
+    throw Object.assign(
+      new Error(`A file or folder named "${basename(newPath)}" already exists here.`),
+      { code: 'EEXIST' },
+    )
+  }
+
+  ipcMain.handle('documents:rename-folder', (_event, oldPath: string, newPath: string) => {
+    guardRenameTarget(io, oldPath, newPath)
+    io.rename(oldPath, newPath)
+    addWatchedFolder(newPath)
+    rePointFolderRecords(oldPath, newPath)
+    rememberRename('folder', oldPath, newPath)
+  })
+
+  // Rename a single file on disk. Parallel to rename-folder but for one document: the
+  // watcher is not told about a new folder (the file stays inside an already-watched one),
+  // and the one tracked record is re-pointed (title + path) so the sidebar keeps the same
+  // document under the new name with no stale duplicate. Renaming is a direct on-disk move,
+  // independent of any open editor / edit mode, so it persists immediately.
+  ipcMain.handle('documents:rename-file', (_event, oldPath: string, newPath: string) => {
+    guardRenameTarget(io, oldPath, newPath)
+    io.rename(oldPath, newPath)
+    rePointFileRecord(oldPath, newPath)
+    rememberRename('file', oldPath, newPath)
+  })
+
+  // Undo the most recent rename — the reverse of the move that was made, plus the same
+  // record re-pointing so no stale duplicate is left behind.
+  // Single slot by design. It is NOT bound to a global Ctrl+Z: the renderer only calls it
+  // when focus is in the sidebar, so the editor keeps Ctrl+Z for text undo.
+  ipcMain.handle('documents:undo-rename', () => {
+    const last = lastRename
+    if (!last) return { ok: false, reason: 'none' as const }
+    // Refuse instead of clobbering: the old name may have been taken again since the rename,
+    // or the renamed file may itself have been moved on / deleted.
+    if (!io.exists(last.newPath)) return { ok: false, reason: 'gone' as const }
+    if (io.exists(last.oldPath)) return { ok: false, reason: 'occupied' as const }
+    try {
+      io.rename(last.newPath, last.oldPath)
+    } catch (e) {
+      console.error('Failed to undo rename:', e)
+      return { ok: false, reason: 'failed' as const }
+    }
+    if (last.kind === 'folder') {
+      addWatchedFolder(last.oldPath)
+      rePointFolderRecords(last.newPath, last.oldPath)
+    } else {
+      rePointFileRecord(last.newPath, last.oldPath)
+    }
+    lastRename = null
+    notifyFolderChanged(dirname(last.oldPath))
+    return { ok: true, reason: 'none' as const, oldPath: last.oldPath }
+  })
+
+  // List every directory beneath `folderPath` (recursive, depth-capped) so the sidebar
+  // tree can show folders that hold no Markdown file. The tree is otherwise derived from
+  // documents alone, which has no node to represent an empty folder — and a folder the
+  // user just created is always empty. Hidden directories are skipped: .git/.cache are
+  // noise in a document workspace and can be enormous.
+  ipcMain.handle('documents:list-folders', (_event, folderPath: string) => {
+    const MAX_DEPTH = 8
+    const out: string[] = []
+    const walk = (dir: string, depth: number): void => {
+      if (depth > MAX_DEPTH) return
+      let entries: DirEntry[]
+      try {
+        entries = io.readdir(dir)
+      } catch {
+        // Unreadable or already gone: report what we have instead of throwing into IPC.
+        return
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        if (entry.name.startsWith('.')) continue
+        const full = join(dir, entry.name)
+        out.push(full)
+        walk(full, depth + 1)
+      }
+    }
+    walk(folderPath, 0)
+    return out
+  })
+
+  // Delete a folder and everything beneath it. Move it to the OS
+  // trash rather than permanently deleting — matching the document delete and VS
+  // Code behaviour. trashItem rejects on failure; per Electron's guidance we must NOT silently
+  // fall back to a permanent delete, so a non-ENOENT rejection is re-thrown (the caller logs it
+  // and keeps the folder in the tree). A folder already gone (ENOENT) is treated as success.
+  ipcMain.handle('documents:delete-folder', async (_event, folderPath: string) => {
+    const resolved = resolve(folderPath)
+    const parent = dirname(resolved)
+    // Release the watcher first: on Windows a directory that chokidar still holds open
+    // cannot be moved to the Recycle Bin, and the OS reports that as a permissions error
+    // (see pauseFolderWatching). Without this, deleting a folder INSIDE the currently
+    // open workspace — the common case — fails while looking like an ACL problem.
+    await pauseFolderWatching()
+    try {
+      try {
+        await shell.trashItem(resolved)
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.error('Failed to move folder to trash:', e)
+          throw e
+        }
+      }
+    } finally {
+      // Restored even when the trash move throws, so a failed delete cannot leave the
+      // workspace permanently unwatched.
+      resumeFolderWatching()
+    }
+    // The watcher was paused during the move, so it never observed the deletion and
+    // resume() does not replay removals. Mirror what the watcher WOULD have emitted:
+    // drop the documents that lived inside the folder (the sidebar tree is also derived
+    // from document folderPaths, so leaving them would keep the folder visible), and ask
+    // the parent directory to re-read its children so the tree refreshes.
+    removeDocumentsUnder(resolved)
+    notifyFolderChanged(parent)
   })
 
   // Import markdown file from disk
@@ -748,7 +1037,7 @@ export function registerDocumentHandlers(
     let encoding: string
     let confidence: number
     try {
-      ;({ text, encoding, confidence } = readMarkdownText(filePath))
+      ;({ text, encoding, confidence } = readMarkdownText(filePath, io))
     } catch {
       return null
     }
@@ -795,7 +1084,7 @@ export function registerDocumentHandlers(
     for (const filePath of filePaths) {
       let parsed: { text: string; encoding: string; confidence: number }
       try {
-        parsed = readMarkdownText(filePath)
+        parsed = readMarkdownText(filePath, io)
       } catch {
         continue
       }
@@ -850,12 +1139,11 @@ export function registerDocumentHandlers(
   // freezes for a moment when I switch files" symptom, and it is intermittent
   // precisely because it depends on the storage path's current latency.
   ipcMain.handle('documents:eol', async (_event, filePath: string) => {
-    let handle: FileHandle | undefined
+    let handle: ReadHandle | undefined
     try {
-      handle = await fsPromises.open(filePath, 'r')
-      const buf = Buffer.alloc(65536)
-      const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
-      const sample = buf.subarray(0, bytesRead).toString('utf-8')
+      handle = await io.openForRead(filePath)
+      const buf = await handle.read(65536)
+      const sample = buf.toString('utf-8')
       return sample.includes('\r\n') ? '\r\n' : '\n'
     } catch {
       return '\n'
@@ -873,7 +1161,7 @@ export function registerDocumentHandlers(
   // File details: return the on-disk size / creation time / modification time (for the details dialog)
   ipcMain.handle('documents:stat', (_event, filePath: string) => {
     try {
-      const st = statSync(filePath)
+      const st = io.stat(filePath)
       return {
         exists: true,
         size: st.size,
@@ -892,7 +1180,7 @@ export function registerDocumentHandlers(
     if (!existing) return null
     let buf: Buffer
     try {
-      buf = readFileSync(existing.filePath)
+      buf = io.readFile(existing.filePath)
     } catch {
       return null
     }

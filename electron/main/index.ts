@@ -144,7 +144,7 @@ if (!shouldStart) {
     registerAppDocProtocol()
 
     // Deny all permission requests: a Markdown reader needs no camera/microphone/geolocation
-    // permissions (§4.1)
+    // permissions
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false)
     })

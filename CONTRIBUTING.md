@@ -186,7 +186,7 @@ documented in [`actions/create-pr/README.md`](actions/create-pr/README.md).
 Two root-level scripts wrap it:
 
 ```bash
-npm run build:action        # ncc bundles actions/create-pr/src/index.mjs -> dist/index.mjs
+npm run build:action        # ncc bundles src/index.mjs -> dist/index.mjs (built at runtime by auto-pr.yml; dist/ is git-ignored)
 npm run local-test-render    # Preview the rendered PR body for a branch (no token, no gh)
 ```
 
@@ -196,11 +196,10 @@ against the default template and prints the result. Optional flags: `--base main
 `--template .github/pull-request-template.md`, `--blocks-dir .github/create-pr/blocks`, `--no-git`,
 `--existing <body.md>` (to preview a refresh of an existing PR).
 
-> ⚠️ **Rebuild the bundle after editing the Action**: the bundled
-> `actions/create-pr/dist/index.mjs` is committed on purpose (GitHub requires it for a direct
-> `uses:` reference). Any change under `actions/create-pr/src/` must be followed by
-> `npm run build:action`, and the rebuilt `dist/index.mjs` committed alongside the source change —
-> otherwise CI ships a stale bundle. Treat `dist/` as a build artifact that must track `src/`.
+> ℹ️ **No committed bundle**: `actions/create-pr/dist/index.mjs` is **not** committed (it is
+> git-ignored). `auto-pr.yml` rebuilds it from `src/` at workflow runtime, in a step before
+> `uses: ./actions/create-pr`, so the action always runs a fresh bundle — there is no stale-bundle
+> risk and nothing to commit. Just edit `src/`.
 
 ## Building & Packaging
 

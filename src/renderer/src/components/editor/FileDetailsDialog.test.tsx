@@ -101,7 +101,8 @@ describe('FileDetailsDialog', () => {
     await screen.findByText('Hello')
     fireEvent.click(screen.getByRole('button', { name: /copy path/i }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('/tmp/hello.md'))
-    expect(screen.getByText('Copied')).toBeInTheDocument()
+    // The "Copied" toast renders on a later tick after the clipboard write resolves.
+    await waitFor(() => expect(screen.getByText('Copied')).toBeInTheDocument())
   })
 
   it('shows placeholders when the file stat is missing', async () => {
@@ -133,5 +134,44 @@ describe('FileDetailsDialog', () => {
     await waitFor(() => expect(screen.getByText('Copied')).toBeInTheDocument())
     await new Promise((r) => setTimeout(r, 1600))
     expect(screen.queryByText('Copied')).toBeNull()
+  })
+
+  it('copies the path from the right-click menu (能力 4)', async () => {
+    const writeText = vi.fn(async () => {})
+    ;(window as unknown as { api: { clipboard: { writeText: typeof writeText } } }).api = {
+      clipboard: { writeText },
+    }
+    useUIStore.getState().setFileDetailsId('doc-1')
+    render(<FileDetailsDialog />)
+    await screen.findByText('Hello')
+    fireEvent.contextMenu(screen.getByText('/tmp/hello.md'))
+    fireEvent.click(await screen.findByTestId('fdd-details-copy-path'))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('/tmp/hello.md'))
+  })
+
+  it('opens the containing folder from the right-click menu (能力 4)', async () => {
+    const showInFolder = vi.fn()
+    ;(window as unknown as { api: { app: { showInFolder: typeof showInFolder } } }).api = {
+      app: { showInFolder },
+    }
+    useUIStore.getState().setFileDetailsId('doc-1')
+    render(<FileDetailsDialog />)
+    await screen.findByText('Hello')
+    fireEvent.contextMenu(screen.getByText('/tmp/hello.md'))
+    fireEvent.click(await screen.findByTestId('fdd-details-show-in-folder'))
+    expect(showInFolder).toHaveBeenCalledWith('/tmp/hello.md')
+  })
+
+  it('copies just the file name from the right-click menu', async () => {
+    const writeText = vi.fn(async () => {})
+    ;(window as unknown as { api: { clipboard: { writeText: typeof writeText } } }).api = {
+      clipboard: { writeText },
+    }
+    useUIStore.getState().setFileDetailsId('doc-1')
+    render(<FileDetailsDialog />)
+    await screen.findByText('Hello')
+    fireEvent.contextMenu(screen.getByText('/tmp/hello.md'))
+    fireEvent.click(await screen.findByTestId('fdd-details-copy-filename'))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('hello.md'))
   })
 })

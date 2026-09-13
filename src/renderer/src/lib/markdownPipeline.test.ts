@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import hljs from 'highlight.js'
-import { render, rewriteImageSrc } from './markdownPipeline'
+import { render, rewriteImageSrc, codeLangAttr } from './markdownPipeline'
 
 const docId = 'doc-123'
 
@@ -123,6 +123,24 @@ describe('markdownPipeline — syntax highlighting', () => {
   it('auto-detects highlighting for a code block with an unknown language', () => {
     const { html } = render('```unknowndef\nconst x = 1;\n```\n', docId)
     expect(html).toContain('class="hljs"')
+  })
+
+  // the preview context menu reads the language from data-lang
+  it('exposes the fence language as data-lang (PLAN §12 能力 4)', () => {
+    const { html } = render('```js\nconst x = 1;\n```\n', docId)
+    expect(html).toContain('data-lang="js"')
+  })
+
+  it('omits data-lang when the fence carries no language', () => {
+    const { html } = render('```\nconst x = 1;\n```\n', docId)
+    expect(html).not.toContain('data-lang')
+  })
+
+  it('escapes a hostile fence language before it reaches the attribute', () => {
+    // The info string is user-authored: without escaping it could break out of the
+    // attribute and inject markup.
+    expect(codeLangAttr('a" onload="x')).toBe(' data-lang="a&quot; onload=&quot;x"')
+    expect(codeLangAttr('a<b>&c')).toBe(' data-lang="a&lt;b&gt;&amp;c"')
   })
 })
 

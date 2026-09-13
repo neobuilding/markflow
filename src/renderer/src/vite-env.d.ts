@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { Document, SearchResult, ThemeMode } from './types'
+import type { Document, SearchResult, ThemeMode, SearchOptions } from './types'
 
 // Status information of a file on disk (size / creation time / modification time)
 export interface FileStat {
@@ -51,6 +51,29 @@ export interface Api {
     setEncoding: (id: string, encoding: string) => Promise<Document | null>
     stat: (filePath: string) => Promise<FileStat | null>
     eol: (filePath: string) => Promise<'\r\n' | '\n'>
+    // Resolve an appdoc:// URL to its on-disk absolute path . Returns
+    // null when the URL is malformed, escapes the document directory, or the file
+    // does not exist.
+    resolveAppdoc: (src: string) => Promise<string | null>
+    // Set the line endings of a file on disk (, destructive write)
+    setEol: (filePath: string, eol: '\r\n' | '\n') => Promise<void>
+    // Detect the encoding of a file on disk
+    detectEncoding: (filePath: string) => Promise<{ enc: string; confidence: number }>
+    // Folder operations
+    createFolder: (folderPath: string) => Promise<void>
+    renameFolder: (oldPath: string, newPath: string) => Promise<void>
+    renameFile: (oldPath: string, newPath: string) => Promise<void>
+    // Undo the most recent rename (single slot). `ok:false` + a reason means nothing was
+    // moved: 'none' = nothing to undo, 'occupied' = the old name is taken again,
+    // 'gone' = the renamed file no longer exists, 'failed' = the reverse move errored.
+    undoRename: () => Promise<{
+      ok: boolean
+      reason: 'none' | 'gone' | 'occupied' | 'failed'
+      oldPath?: string
+    }>
+    deleteFolder: (folderPath: string) => Promise<void>
+    // Directory listing : folders below the path, empty ones included
+    listFolders: (folderPath: string) => Promise<string[]>
     // Folder watching is owned by the main process (chokidar); the renderer only
     // reports which folder was opened / that the workspace was closed.
     setOpenFolder: (folderPath: string) => Promise<void>
@@ -62,7 +85,7 @@ export interface Api {
     print: (html: string) => Promise<void>
   }
   search: {
-    query: (q: string) => Promise<SearchResult[]>
+    query: (q: string, opts?: SearchOptions) => Promise<SearchResult[]>
   }
   app: {
     getTheme: () => Promise<ThemeMode>
@@ -70,6 +93,8 @@ export interface Api {
     getVersion: () => Promise<string>
     getInitialPaths: () => Promise<string[]>
     showInFolder: (filePath: string) => Promise<void>
+    openExternal: (url: string) => Promise<void>
+    copyFile: (src: string, dest: string) => Promise<void>
     setLanguage: (locale: 'en' | 'zh-CN') => void
     allowQuit: () => void
     notifyQuitPending: () => void
@@ -104,6 +129,7 @@ export interface Api {
   }
   clipboard: {
     writeText: (text: string) => Promise<void>
+    writeImage: (src: string) => Promise<void>
   }
   onMenuEvent: (event: MenuEvent, callback: (data?: string | string[]) => void) => () => void
   onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => () => void

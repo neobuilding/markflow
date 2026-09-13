@@ -9,7 +9,7 @@ export function useLocalDocument(
 ) {
   const [localContent, setLocalContent] = useState('')
   // The title draft is kept in DISPLAY form (`notes.md`, extension included) so the
-  // title bar can simply render it — see the dirty computation below.
+  // title bar can simply render it see the dirty computation below
   const [localTitle, setLocalTitle] = useState('')
   // Latest title draft, for use inside stable callbacks (handleContentChange must
   // stay identity-stable for the editor, so it cannot close over `localTitle`).
@@ -26,7 +26,7 @@ export function useLocalDocument(
   // The current document id, used to distinguish "switching documents" from "refreshing the same document's content"
   const prevIdRef = useRef<string | null>(null)
   // Set by the switch branch (layout effect) so the refresh effect below can skip
-  // the same pass instead of repeating it — notably re-issuing setDirty(false),
+  // the same pass instead of repeating it notably re-issuing setDirty(false),
   // which would push another global store update for no reason.
   const justSwitchedRef = useRef(false)
   // The encoding currently applied to the document (used to detect a "manual encoding switch" event)
@@ -81,7 +81,7 @@ export function useLocalDocument(
     // if the user has unsaved changes, don't overwrite the local draft; just update the "saved"
     // baseline for later comparison. But if the refreshed on-disk content matches the saved
     // baseline (e.g. an import-many transaction refreshed updated_at while the bytes are
-    // unchanged), there is genuinely nothing dirty — clear the dirty flag.
+    // unchanged), there is genuinely nothing dirty clear the dirty flag
     const title = displayTitle(doc)
     if (dirtyRef.current) {
       if (doc.content === savedContentRef.current && title === savedTitleRef.current) {
@@ -99,7 +99,10 @@ export function useLocalDocument(
     savedTitleRef.current = title
     setDirtyState(false)
     useUIStore.getState().setDirty(false)
-  }, [doc?.id, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
+    // `filePath` is part of the dependency set on purpose: a sidebar (or external) rename is a
+    // disk-level move that leaves `updatedAt` untouched, so without it the draft title would
+    // keep showing the old name forever.
+  }, [doc?.id, doc?.updatedAt, doc?.filePath]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Manual encoding switch (same document, encoding field changed): overwrite the local draft
   // with the re-decoded content, clear dirty and refresh the "saved" baseline (disk bytes are
@@ -107,7 +110,7 @@ export function useLocalDocument(
   useEffect(() => {
     if (!doc) return
     // The main effect (above) always runs first and updates prevIdRef on a document switch,
-    // so by the time this effect runs the id already matches — no separate id check is needed.
+    // so by the time this effect runs the id already matches no separate id check is needed
     if (doc.encoding === appliedEncodingRef.current) return
     const title = displayTitle(doc)
     appliedEncodingRef.current = doc.encoding
@@ -184,7 +187,7 @@ export function useLocalDocument(
     return base ? base + (markdownExtOf(currentName) || '.md') : ''
   }, [])
 
-  // Enter the rename edit, remembering the draft so Escape can restore it exactly —
+  // Enter the rename edit, remembering the draft so Escape can restore it exactly
   // including a rename that was already committed to the draft but not yet saved.
   const startTitleEdit = useCallback(() => {
     titleBeforeEditRef.current = localTitleRef.current
@@ -203,7 +206,7 @@ export function useLocalDocument(
     setEditingTitle(false)
     const normalized = normalizeTitle(localTitle, savedTitleRef.current)
     if (!normalized) {
-      // Blank name: fall back to the saved one. Only the title is reverted — content
+      // Blank name: fall back to the saved one. Only the title is reverted content
       // dirtiness is recomputed so an abandoned rename cannot hide unsaved edits.
       setLocalTitle(savedTitleRef.current)
       setDirty(computeDraftDirty(localContent, savedTitleRef.current))
@@ -214,7 +217,7 @@ export function useLocalDocument(
   }, [localTitle, localContent, setDirty, computeDraftDirty, normalizeTitle])
 
   // Called after Save / Save As / Reload succeeds: update the "saved" baseline to the latest content/title.
-  // `title` must be in DISPLAY form (see displayTitle) — the same form the draft uses.
+  // `title` must be in DISPLAY form (see displayTitle) the same form the draft uses
   const markSaved = useCallback((content: string, title: string) => {
     savedContentRef.current = content
     savedTitleRef.current = title

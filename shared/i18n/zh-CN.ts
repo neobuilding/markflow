@@ -7,14 +7,13 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.search': '搜索',
   'sidebar.openFile': '打开文件…',
   'sidebar.openFolder': '打开文件夹…',
-  'sidebar.newDocument': '新建文档',
+  'sidebar.newDraft': '新建草稿',
   'sidebar.close': '关闭',
   'sidebar.resizeHint': '拖动以调整侧边栏宽度',
   'sidebar.noFolderOpen': '未打开文件夹',
   'sidebar.openToStart': '打开文件或文件夹即可开始阅读。',
   'sidebar.openFileAction': '打开文件…',
   'sidebar.openFolderAction': '打开文件夹…',
-  'sidebar.newDocumentAction': '新建文档',
   'sidebar.emptyFolder': '此文件夹中没有文档',
   'sidebar.createFirst': '创建你的第一个文档',
   'sidebar.newBadge': '新建',
@@ -23,26 +22,47 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.delete': '删除',
   'sidebar.up': '上层文件夹',
   'sidebar.enter': '进入此文件夹',
+
+  'sidebar.folderNamePlaceholder': '文件夹名称…',
+  'sidebar.fileNamePlaceholder': '文件名称…',
+  'sidebar.showAllFolders': '显示所有文件夹',
+  'sidebar.showAllFoldersHint': '显示所有文件夹（即使不含 Markdown 文档）',
+  'sidebar.newFile': '新建文件',
+  'app.deleteFolderFailed': '无法将“{{name}}”移到回收站，它可能正被其他程序占用。',
+  'app.renameUndoBlocked': '无法撤销改名——原名称已被占用，或文件已被移动。',
+  'sidebar.unsupportedExt': '不支持 {{ext}} 扩展名，已改为 .md',
+  'sidebar.unsupportedName': '不能包含路径分隔符，已改为 {{name}}',
+  // 实时显示（红色边框、回车被拦截）：当输入的名称与即将放入位置的既有条目重名时。
+  'sidebar.nameExists': '“{{name}}” 已存在',
+  // 在没有扩展名的名称上按回车后显示：尚未写入任何文件，已补上 “.md”，行保持打开以便确认（再次回车才真正创建）。
+  'sidebar.missingExt': '未填写扩展名 —— 已补上 “.md”，再次按回车创建',
+  // 当提交被主进程以“非重名”的原因拒绝时（如权限错误）显示在该行下方；重名显示为 nameExists。
+  'sidebar.createFailed': '无法创建 “{{name}}”。',
+  // 对应 VS Code 的 invalidFileNameError：含分隔符或操作系统非法字符，实时拦截，不让它走到提交。
+  'sidebar.invalidName': '“{{name}}” 不是合法的文件或文件夹名。',
   'details.unsaved': '未保存（仅存在于内存中）',
 
   // ── Editor pane ────────────────────────────────────────────────────────
   'editor.save': '保存',
-  'editor.saveShortcut': '保存 (⌘S)',
+  'editor.saveShortcut': '保存 ({{shortcut}})',
   'editor.noChanges': '没有需要保存的更改',
   'editor.saveSwitchEdit': '保存 — 请先切换到编辑模式',
   'editor.saveAs': '另存为…',
-  'editor.saveAsShortcut': '另存为… (⌘⇧S)',
+  'editor.saveAsShortcut': '另存为… ({{shortcut}})',
   'editor.saveAsSwitchEdit': '另存为… — 请先切换到编辑模式',
   'editor.reload': '从磁盘重新加载',
-  'editor.reloadShortcut': '从磁盘重新加载 (⌘⇧R)',
+  'editor.reloadShortcut': '从磁盘重新加载 ({{shortcut}})',
   'editor.fileDetails': '文件详情',
-  'editor.fileDetailsShortcut': '文件详情 (⌘I)',
+  'editor.fileDetailsShortcut': '文件详情 ({{shortcut}})',
   'editor.export': '导出为 HTML…',
-  'editor.exportShortcut': '导出为 HTML… (⌘⇧E)',
+  'editor.exportShortcut': '导出为 HTML… ({{shortcut}})',
+  'editor.findShortcut': '查找 ({{shortcut}})',
+  'editor.replace': '替换',
+  'editor.replaceShortcut': '替换 ({{shortcut}})',
   'editor.closeFile': '关闭文件',
   'editor.renameTitle': '重命名文件',
   'editor.fileDeleted': '文件已在磁盘上删除 —— 保存即可恢复',
-  'editor.toggleSidebarShortcut': '切换侧边栏 (⌘\\)',
+  'editor.toggleSidebarShortcut': '切换侧边栏 ({{shortcut}})',
   'editor.switchReadOnly': '切换到只读模式',
   'editor.switchEdit': '切换到编辑模式',
   'editor.readOnly': '只读',
@@ -81,6 +101,12 @@ export const zhCN: Record<TranslationKey, string> = {
   'status.encodingInaccurate': '编码可能不准确，点击切换',
   'status.encoding': '编码：{{encoding}}',
   'status.lineEnding': '换行符',
+  'status.lineEndingSwitch': '点击切换换行符（CRLF/LF）',
+  'status.switchToCrlf': '切换为 CRLF',
+  'status.switchToLf': '切换为 LF',
+  'status.redetectEncoding': '重新检测编码',
+  'status.redetecting': '正在检测…',
+  'status.redetectDisabled': '草稿无文件，无法检测编码',
 
   // ── Command palette ────────────────────────────────────────────────────
   'palette.placeholder': '搜索文档…',
@@ -89,6 +115,10 @@ export const zhCN: Record<TranslationKey, string> = {
   'palette.startTyping': '开始输入以搜索你的文档…',
   'palette.navigate': '导航',
   'palette.open': '打开',
+  'palette.mode.filename': '文件名',
+  'palette.mode.content': '正文',
+  'palette.scopeFolder': '当前文件夹及其子文件夹',
+  'palette.scopeAll': '全部文档',
 
   // ── About dialog ───────────────────────────────────────────────────────
   'about.title': '关于 MarkFlow',
@@ -132,7 +162,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'details.close': '关闭',
 
   // ── New document dialog ────────────────────────────────────────────────
-  'new.title': '新建文档',
+  'new.title': '新建草稿',
   'new.documentTitle': '文档标题',
   'new.extension': '扩展名',
   'new.untitled': '未命名',
@@ -147,6 +177,16 @@ export const zhCN: Record<TranslationKey, string> = {
   'app.confirmKeep': '继续编辑',
   'app.saveFailed': '保存文件失败。',
   'app.fileGone': '该文件在磁盘上已不存在。',
+  'app.deleteConfirm': '确定要删除此文件吗？',
+  'app.discardDraftConfirm': '确定要丢弃此草稿吗？此操作不可撤销。',
+  'app.deleteConfirmOk': '删除',
+
+  'app.deleteFolderConfirm': '确定要将「{{name}}」及其中的全部内容移到回收站吗？',
+
+  'app.switchEolConfirm': '确定要将换行符切换为 {{eol}} 吗？',
+  'app.switchEolDetail': '文件将被重写并从磁盘重新加载，未保存的更改会丢失。',
+  'app.switchEolOk': '切换',
+  'app.cancel': '取消',
   'app.printNotReady': '预览尚未就绪。请先切换到预览或分屏视图。',
   'app.printFailed': '打印失败：{{message}}',
   'app.preparingPrint': '正在准备打印…',
@@ -160,6 +200,12 @@ export const zhCN: Record<TranslationKey, string> = {
   'preview.mermaidFailed': 'Mermaid 渲染失败',
   'preview.imageFailed': '图片加载失败',
   'preview.imageFailedAlt': '图片加载失败：{{alt}}',
+  'preview.find': '在预览中查找',
+  'preview.findPlaceholder': '在预览中查找…',
+  'preview.findPrev': '上一个匹配',
+  'preview.findNext': '下一个匹配',
+  'preview.findClose': '关闭查找',
+  'preview.findNone': '无匹配',
 
   // ── Native menu (Electron main process) ────────────────────────────────
   'menu.file': '文件',
@@ -170,7 +216,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.language': '语言',
   'menu.english': 'English',
   'menu.chinese': '简体中文',
-  'menu.newDocument': '新建文档',
+  'menu.newDraft': '新建草稿',
   'menu.openFile': '打开文件…',
   'menu.openFolder': '打开文件夹…',
   'menu.save': '保存',
@@ -190,4 +236,82 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.filterMarkdown': 'Markdown',
   'menu.filterAllFiles': '所有文件',
   'menu.filterHtml': 'HTML',
+
+  // ── Context menus (ctx.*) ─────────────────────────────────────────────
+  // 57
+
+  'ctx.undo': '撤销',
+  'ctx.redo': '重做',
+  'ctx.cut': '剪切',
+  'ctx.copy': '复制',
+  'ctx.paste': '粘贴',
+  'ctx.selectAll': '全选',
+  'ctx.openLinkInBrowser': '在浏览器中打开链接',
+
+  'ctx.openLink': '打开链接',
+  'ctx.copyLink': '复制链接地址',
+
+  'ctx.copyCode': '复制代码',
+  'ctx.copyCodeBlock': '复制为代码块',
+  'ctx.copyLang': '复制语言名',
+
+  'ctx.copyImage': '复制图片',
+  'ctx.saveImageAs': '图片另存为…',
+  'ctx.copyImageSrc': '复制图片地址',
+  'ctx.copyImageAlt': '复制替代文本',
+
+  'ctx.copyTable': '复制表格',
+  'ctx.copyTableTsv': '复制表格（可粘贴到 Excel）',
+
+  'ctx.copyTaskText': '复制任务文字',
+
+  'ctx.copyFormula': '复制公式（渲染后的文本）',
+  'ctx.copyFormulaSource': '复制 TeX 源码',
+  // Mermaid
+  'ctx.copyDiagramSource': '复制图表源码',
+  'ctx.copySvg': '复制为 SVG',
+  'ctx.saveSvgAs': '图表另存为 SVG…',
+
+  'ctx.copyHeading': '复制标题文字',
+  'ctx.copyAnchorId': '复制锚点 ID',
+
+  'ctx.openDocument': '打开',
+  'ctx.copyFileName': '复制文件名',
+  'ctx.copyContent': '复制文档内容',
+  'ctx.discardDraft': '丢弃草稿',
+
+  'ctx.openFolder': '打开此文件夹',
+  'ctx.expand': '展开',
+  'ctx.collapse': '折叠',
+  'ctx.expandAll': '全部展开',
+  'ctx.copyFolderPath': '复制文件夹路径',
+  'ctx.newFileHere': '新建文件',
+  'ctx.newSubfolder': '新建文件夹',
+
+  'ctx.newFolderHere': '新建文件夹',
+  'ctx.renameFolder': '重命名文件夹…',
+  'ctx.deleteFolder': '删除文件夹',
+  'ctx.refresh': '刷新',
+
+  'ctx.goUp': '向上到父文件夹',
+  'ctx.openFolderInSidebar': '在侧边栏中打开此文件夹',
+
+  'ctx.copyWordCount': '复制字数',
+  'ctx.redetectEncoding': '重新检测编码',
+  'ctx.switchToLf': '切换为 LF',
+  'ctx.switchToCrlf': '切换为 CRLF',
+  'ctx.copyLineEnding': '复制换行符名称',
+  'ctx.copyEncoding': '复制编码名称',
+
+  'ctx.copyTitle': '复制标题',
+  'ctx.copyResultPath': '复制文件路径',
+
+  'ctx.copyVersion': '复制版本号',
+  'ctx.copyVersionFull': '复制名称与版本',
+
+  'ctx.resetSplit': '重置分栏为 50%',
+  'ctx.resetSidebarWidth': '重置侧边栏宽度',
+  'ctx.collapseSidebar': '折叠侧边栏',
+
+  'editor.needsEditMode': '请先切换到编辑模式',
 }

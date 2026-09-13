@@ -4,8 +4,14 @@ import { useUIStore } from '../../store/ui'
 import { useDocument, useFileStat } from '../../hooks/useDocuments'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
-import { formatFileSize, formatDateTime } from '../../lib/utils'
+import { baseName, formatFileSize, formatDateTime } from '../../lib/utils'
 import { useT } from '../../i18n'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+} from '../ui/context-menu'
 
 function Row({
   icon,
@@ -56,6 +62,18 @@ export function FileDetailsDialog(): React.ReactElement | null {
     }
   }
 
+  // The dialog has buttons for the other two path actions but none for the bare file
+  // name, so the menu carries it. Only reachable when a path exists.
+  const copyFileName = async () => {
+    /* v8 ignore next -- defensive: the path menu only renders when doc.filePath exists, so this null branch is unreachable */
+    if (!doc?.filePath) return
+    try {
+      await window.api.clipboard.writeText(baseName(doc.filePath))
+    } catch {
+      // Ignore when the clipboard is unavailable
+    }
+  }
+
   const showInFolder = () => {
     /* v8 ignore next -- defensive: the Show-in-Folder button only renders when doc.filePath exists, so this false branch is unreachable */
     if (doc?.filePath) window.api.app.showInFolder(doc.filePath)
@@ -86,7 +104,34 @@ export function FileDetailsDialog(): React.ReactElement | null {
             <Row icon={<FileText size={14} />} label={t('details.path')}>
               {doc.filePath ? (
                 <>
-                  <span className="font-mono text-xs">{doc.filePath}</span>
+                  {/* wrap the path in a right-click menu so the full path / "show in folder" are reachable without hunting for the small buttons below */}
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <span className="font-mono text-xs" data-testid="file-details-path">
+                        {doc.filePath}
+                      </span>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem
+                        data-testid="fdd-details-copy-path"
+                        onClick={() => void copyPath()}
+                      >
+                        <Copy size={13} /> {t('details.copyPath')}
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        data-testid="fdd-details-copy-filename"
+                        onClick={() => void copyFileName()}
+                      >
+                        <Copy size={13} /> {t('editor.copyFileName')}
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        data-testid="fdd-details-show-in-folder"
+                        onClick={() => showInFolder()}
+                      >
+                        <FolderOpen size={13} /> {t('details.showInFolder')}
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                   <div className="flex items-center gap-2 mt-1.5">
                     <Button variant="outline" size="sm" onClick={copyPath} className="gap-1">
                       <Copy size={12} /> {copied ? t('about.copied') : t('details.copyPath')}

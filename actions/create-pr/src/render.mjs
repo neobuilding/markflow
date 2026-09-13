@@ -18,7 +18,7 @@
 // preserved across refreshes.
 //
 // A block may contain `{{placeholder}}` tokens. Each placeholder is rendered by
-// a "block plugin" — a `(ctx) => string` function looked up in the `blocks`
+// a "block plugin" a `(ctx) => string` function looked up in the `blocks`
 // registry (see `renderBlock`). Built-in plugins (`title` / `issue` / `commits`)
 // ship with the action; users may register their own (e.g. `types`) via
 // `.github/create-pr/blocks/`. A placeholder with no matching plugin is left
@@ -53,7 +53,7 @@ export function replaceAutoBlock(body, key, content) {
 // template (above the {{commits}} placeholder), so this helper returns only the
 // list body. Exported for unit testing. The git-log executor can be injected
 // (gitLogFn) so tests run without a real repository; when no gitLogFn is given
-// it returns '' (this module never spawns git — the caller provides commits).
+// it returns '' (this module never spawns git the caller provides commits)
 export function buildCommitsSection(head, base, gitLogFn) {
   if (!gitLogFn) return ''
   const log = gitLogFn(head, base)
@@ -106,7 +106,7 @@ export function renderBlock(name, ctx, blocks) {
 // Discover every auto-block key present in a template by scanning its
 // `<!-- AUTO:x --> ... <!-- /AUTO:x -->` markers. Keys are returned in document
 // order, with duplicates de-duplicated (the first occurrence wins). A template
-// with no markers yields an empty list — in that case nothing is rendered and
+// with no markers yields an empty list in that case nothing is rendered and
 // the template is used verbatim as the PR body. Exported for unit testing.
 export function discoverSegments(template) {
   const openRe = new RegExp(`${AUTO_OPEN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([\\w-]+) -->`, 'g')
@@ -149,7 +149,7 @@ export function fillAutoBlocks(template, ctx, blocks = {}) {
 //
 // Cases:
 //   1. No existing body (first creation): use the freshly filled template
-//      verbatim — it already carries every AUTO block.
+// verbatim it already carries every AUTO block
 //   2. Existing body already has the AUTO blocks: refresh each block in place
 //      and keep all human content between/around them.
 //   3. Legacy body with no AUTO blocks at all: prepend the filled template and
@@ -190,11 +190,11 @@ export function blockContent(body, key) {
 // `services.templateSource`. The context exposes `head` / `base` (resolved base
 // ref) / `title` plus two *shared derived facts* the plugins commonly consume:
 // `fixes` (linked issue number) and `typeFlags` (Bug/feature/breaking/docs).
-// These two are derived once here — from `services.git.logSubjects` — so the
+// These two are derived once here from `services.git.logSubjects` so the
 // `issue` and `types` plugins don't each re-run git. Individual plugins may
 // still call `ctx.services.git` themselves for data only they need (e.g. the
 // `commits` plugin fetches the commit list itself). This keeps the renderer and
-// orchestrator free of "which data does each plugin need" — a new plugin can
+// orchestrator free of "which data does each plugin need" a new plugin can
 // pull whatever it wants from `ctx.services`.
 export function buildCtx(head, baseRef, title, services) {
   const git = services && services.git

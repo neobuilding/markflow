@@ -63,13 +63,13 @@ npm run e2e             # 端到端：用 Playwright 驱动真实的 Electron �
 `actions/create-pr/` 是随仓库内置的 GitHub Action，用于从 head 分支幂等创建/刷新到 `main` 的 PR（完整设计与插件机制见 [`actions/create-pr/README.md`](actions/create-pr/README.md)）。两个根级脚本封装了它：
 
 ```bash
-npm run build:action        # ncc 打包 actions/create-pr/src/index.mjs -> dist/index.mjs
+npm run build:action        # ncc 打包 src/index.mjs -> dist/index.mjs（由 auto-pr.yml 在运行时构建，dist/ 不提交）
 npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 token，无需 gh）
 ```
 
 `npm run local-test-render` 直接调用 `actions/create-pr/src/cli-render.mjs`，无需 GitHub token 或 `gh` CLI，即可预览 Action 会写入 PR 的正文。它按默认模板解析 `feature/my-branch` 并打印渲染结果；可选参数：`--base main`、`--template .github/pull-request-template.md`、`--blocks-dir .github/create-pr/blocks`、`--no-git`、`--existing <body.md>`（预览对已有 PR 的刷新）。
 
-> ⚠️ **改完 Action 后必须重建产物**：已提交的 `actions/create-pr/dist/index.mjs` 是刻意保留的（GitHub 要求直接 `uses:` 引用时必须存在）。任何改动 `actions/create-pr/src/` 后都要执行 `npm run build:action`，并将重建后的 `dist/index.mjs` 一并提交——否则 CI 用的是过期产物。
+> ℹ️ **改完 Action 后无需提交产物**：`actions/create-pr/dist/index.mjs` **不再提交**。`auto-pr.yml` 在 `uses: ./actions/create-pr` 之前会自动跑 `npm run build:action`，用已提交的 `src/` 现编 bundle，因此永远最新、不会过期。你只改 `src/`；本地预览/测试时再跑 `npm run build:action`（产物被 git 忽略）。
 
 ### CI 流水线（`.github/workflows/ci.yml`）
 

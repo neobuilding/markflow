@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { FileText } from 'lucide-react'
 import { useUIStore } from '../../store/ui'
 import { useCreateDocument } from '../../hooks/useDocuments'
@@ -6,12 +6,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Input } from '../ui/input'
 import { Button } from '../ui/button'
 import { useT } from '../../i18n'
+import { InputContextMenu } from '../ui/input-context-menu'
 
 export function NewDocumentDialog(): React.ReactElement {
   const { t } = useT()
   const { newDocOpen, setNewDocOpen, setActiveDocumentId, setEditable, setIsNewUnsaved } =
     useUIStore()
   const [title, setTitle] = useState('')
+  // Ref for the right-click edit menu
+  const titleRef = useRef<HTMLInputElement>(null)
   const [ext, setExt] = useState('.md')
   const createMut = useCreateDocument()
 
@@ -39,16 +42,20 @@ export function NewDocumentDialog(): React.ReactElement {
             <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
               {t('new.documentTitle')}
             </label>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder={t('new.untitled')}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreate()
-                if (e.key === 'Escape') setNewDocOpen(false)
-              }}
-            />
+            {/* Right-click edit menu */}
+            <InputContextMenu targetRef={titleRef}>
+              <Input
+                ref={titleRef}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={t('new.untitled')}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleCreate()
+                  if (e.key === 'Escape') setNewDocOpen(false)
+                }}
+              />
+            </InputContextMenu>
           </div>
           <div>
             <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">

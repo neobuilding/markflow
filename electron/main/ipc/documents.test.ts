@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import {
   writeFileSync,
   mkdtempSync,
@@ -7,9 +7,10 @@ import {
   mkdirSync,
   existsSync,
   unlinkSync,
+  promises as fsPromises,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve, sep, win32 } from 'node:path'
 import {
   registerDocumentHandlers,
   normEnc,
@@ -22,9 +23,12 @@ import {
 } from './documents'
 // Test seam of model/folderWatcher.ts: drives the exact dispatch the real chokidar
 // listeners use, so these tests never depend on filesystem event timing.
-import { __emitFolderEvent } from '../model/folderWatcher'
+import { __emitFolderEvent, __emitFolderDirEvent } from '../model/folderWatcher'
+// In-memory DiskIO: lets a case drive the handlers with paths that need not exist on
+// any real disk (see lib/disk-io.ts).
+import { createMemoryDiskIO, type MemoryDiskIO } from '../lib/disk-io'
 // Import the REAL isInFolder (from the un-mocked folderMatch module) so the fake
-// store's listDocuments matches production semantics exactly — no drift between the
+// store's listDocuments matches production semantics exactly no drift between the
 // test double and documentStore.listDocuments.
 import { isInFolder } from '../model/folderMatch'
 
@@ -132,6 +136,144 @@ vi.mock('chokidar', () => ({
   },
 }))
 
+// documents.ts imports `shell` from electron (trashItem on delete); provide a no-op
+// stub so the node test env doesn't need a real Electron runtime.
+vi.mock('electron', () => ({
+  shell: { trashItem: vi.fn().mockResolvedValue(undefined) },
+}))
+
+// documents.ts calls renameSync (in rename-file / rename-folder / undo-rename). The module
+// namespace is not spyable in ESM, so wrap it through a hoisted mock that calls through by
+// default; individual tests can make it throw via mockImplementationOnce to hit the undo-rename
+// failure branch.
+// The whole suite runs against an in-memory filesystem so it never touches a real
+// disk (platform-independent, no risk of clobbering real files). Every `node:fs`
+// entry point the handlers and the test setup use is forwarded to the shared
+// `createMemoryDiskIO()` instance created just below (lives on globalThis).
+//
+// NOTE: the instance is created OUTSIDE this factory. Importing `../lib/disk-io`
+// from inside a vi.mock factory would load that module while node:fs is still being
+// mocked, handing its `nodeDiskIO` adapter the REAL fs (a recursive-mock hazard) and
+// sending calls back to disk — so we only read the already-created instance here.
+const fsRenameMock = vi.hoisted(() => vi.fn())
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import('node:fs')
+  // `security.ts`/`appdoc.ts` call `realpathSync` for the containment check. On a
+  // real disk the in-memory paths do not exist, so the REAL call throws and the
+  // resolve-appdoc handler (which catches) returns null. Mirror it lexically so the
+  // check still runs without touching a real disk.
+  const { resolve } = await import('node:path')
+  const getMem = () => (globalThis as any).__memFs as MemoryDiskIO
+
+  // renameSync keeps using the controllable spy so the EBUSY failure branch stays
+  // stubbable; by default it just delegates to the in-memory rename.
+  fsRenameMock.mockImplementation((oldPath: string, newPath: string) =>
+    getMem().rename(oldPath, newPath),
+  )
+
+  return {
+    ...actual,
+    realpathSync: (p: string) => resolve(p),
+    readFileSync: (p: string, opts?: any) => {
+      const buf = getMem().readFile(p)
+      if (typeof opts === 'string') return buf.toString(opts as BufferEncoding)
+      if (opts && typeof opts === 'object' && opts.encoding)
+        return buf.toString(opts.encoding as BufferEncoding)
+      return buf
+    },
+    writeFileSync: (p: string, data: string | Buffer, opts?: any) => {
+      const enc =
+        typeof opts === 'string'
+          ? opts
+          : opts && typeof opts === 'object'
+            ? (opts.encoding as BufferEncoding | undefined)
+            : undefined
+      const buf = Buffer.isBuffer(data)
+        ? data
+        : Buffer.from(String(data), (enc ?? 'utf-8') as BufferEncoding)
+      getMem().writeFile(p, buf)
+    },
+    mkdirSync: (p: string) => {
+      getMem().mkdir(p)
+    },
+    existsSync: (p: string) => getMem().exists(p),
+    renameSync: (...args: any[]) => (fsRenameMock as any)(...args),
+    statSync: (p: string) => {
+      const st = getMem().stat(p)
+      return {
+        ...st,
+        isFile: () => true,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+        isBlockDevice: () => false,
+        isCharacterDevice: () => false,
+        isFIFO: () => false,
+        isSocket: () => false,
+        dev: 0,
+        ino: 0,
+        mode: 0,
+        nlink: 0,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        blksize: 0,
+        blocks: 0,
+        atimeMs: 0,
+        ctimeMs: 0,
+        atime: new Date(0),
+        ctime: new Date(0),
+        mtime: new Date(0),
+        birthtime: new Date(0),
+      }
+    },
+    readdirSync: (p: string, opts?: any) => {
+      const entries = getMem().readdir(p)
+      if (opts && opts.withFileTypes) {
+        return entries.map((e: { name: string; isDirectory: () => boolean }) => ({
+          name: e.name,
+          isDirectory: e.isDirectory,
+          isFile: () => !e.isDirectory(),
+          isSymbolicLink: () => false,
+        }))
+      }
+      return entries.map((e: { name: string }) => e.name)
+    },
+    openSync: (p: string) => getMem().openExclusive(p),
+    writeSync: (fd: number, s: string) => {
+      getMem().writeToFd(fd, s)
+    },
+    closeSync: (fd: number) => getMem().closeFd(fd),
+    unlinkSync: (p: string) => getMem().remove(p),
+    mkdtempSync: (prefix: string) => {
+      const seq = ((globalThis as any).__memFsSeq =
+        (((globalThis as any).__memFsSeq as number) ?? 0) + 1)
+      const p = `${prefix}${seq}`
+      getMem().mkdir(p)
+      return p
+    },
+    promises: {
+      ...actual.promises,
+      open: async (path: string, _flags?: string) => {
+        const handle = await getMem().openForRead(path)
+        return {
+          read: async (buffer: Buffer, offset: number, length: number, _position?: number) => {
+            const data = await handle.read(length)
+            data.copy(buffer, offset)
+            return { bytesRead: data.length, buffer }
+          },
+          close: () => handle.close(),
+        }
+      },
+      rm: async (path: string, opts?: any) => {
+        getMem().rm(path, opts)
+      },
+      rename: async (oldPath: string, newPath: string) => {
+        getMem().rename(oldPath, newPath)
+      },
+    },
+  } as any
+})
+
 // app:getInitialPaths etc. not used by documents handlers; also need app for getPath.
 const handlers: Record<string, (...a: any[]) => any> = {}
 const fakeIpcMain = {
@@ -139,8 +281,15 @@ const fakeIpcMain = {
     handlers[ch] = fn
   },
 } as any
-// A stable temp dir for the whole test file, so collision-retry tests can pre-create files
-// in the exact directory the create/update handlers will write into.
+// The shared in-memory filesystem for the whole suite. disk-io is loaded with node:fs
+// already mocked (vi.mock is hoisted above the import that brings createMemoryDiskIO
+// in), so its nodeDiskIO adapter forwards every fs call here — handlers and test setup
+// both run disk-free.
+const __memFs = createMemoryDiskIO()
+;(globalThis as any).__memFs = __memFs
+
+// A stable "temp dir" for the whole test file, so collision-retry tests can pre-create
+// files in the exact directory the create/update handlers will write into.
 const stableDocsRoot = mkdtempSync(join(tmpdir(), 'mf-docs-'))
 const fakeApp = { getPath: () => stableDocsRoot } as any
 
@@ -165,6 +314,15 @@ let fakeMainWindow: any = {
 beforeAll(() => {
   docs.clear()
   registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+})
+
+// Fresh in-memory filesystem for every test, so a previous test's files can never
+// leak into the next one. `stableDocsRoot` is re-created inside it so the default
+// documents directory stays available after a reset.
+beforeEach(() => {
+  const mem = createMemoryDiskIO()
+  ;(globalThis as any).__memFs = mem
+  mem.mkdir(stableDocsRoot)
 })
 
 // Safety net: drain (send + clear the timer of) any folder-changed broadcast a test
@@ -201,20 +359,24 @@ describe('documents IPC — create (memory-only)', () => {
     expect(readFileSync(row.filePath, 'utf-8')).toBe('# Real')
   })
 
-  it('retries with a -N suffix when the target filename already exists (EEXIST collision)', async () => {
+  it('rejects with EEXIST when the target filename already exists (no silent -N rename)', () => {
     // The create handler writes into <docsRoot>/MarkFlow, so pre-create the would-be target there
-    // to force openSync('wx') to fail with EEXIST and the retry loop to pick `ColTest-1.md`.
+    // to force openSync('wx') to fail with EEXIST. The handler is synchronous, so the clash
+    // surfaces as a thrown EEXIST (it must refuse rather than auto-rename with `-N`).
     const markFlowDir = join(stableDocsRoot, 'MarkFlow')
     mkdirSync(markFlowDir, { recursive: true })
     const target = join(markFlowDir, 'ColTest.md')
     writeFileSync(target, 'preexisting')
-    const row = await call('documents:create', {
-      title: 'ColTest',
-      content: '# ColTest',
-      memoryOnly: false,
-    })
-    expect(row.filePath).toBe(join(markFlowDir, 'ColTest-1.md'))
-    expect(readFileSync(row.filePath, 'utf-8')).toBe('# ColTest')
+    expect(() =>
+      call('documents:create', {
+        title: 'ColTest',
+        content: '# ColTest',
+        memoryOnly: false,
+      }),
+    ).toThrow(/EEXIST/)
+    // The original file is untouched and no -N variant was written.
+    expect(readFileSync(target, 'utf-8')).toBe('preexisting')
+    expect(existsSync(join(markFlowDir, 'ColTest-1.md'))).toBe(false)
   })
 
   it('first Save As of a memory-only draft writes the file and stores its path (no writeFileSync(""))', async () => {
@@ -269,9 +431,10 @@ describe('documents IPC — update', () => {
     expect(readFileSync(updated.filePath, 'utf-8')).toBe('x')
   })
 
-  it('retries the rename with a -N suffix when the new filename is already taken (EEXIST)', async () => {
+  it('refuses a title change whose target filename is already taken (no -N fallback)', async () => {
     // docB owns RenTarget.md on disk. Updating docA's title to 'RenTarget' collides, so the
-    // rename path retries and lands on RenTarget-1.md.
+    // handler must refuse outright instead of silently moving the file to a RenTarget-1.md the
+    // user never asked for. The handler is synchronous, so the refusal is a thrown EEXIST.
     const docA = await call('documents:create', {
       title: 'RenameCollideA',
       content: 'a',
@@ -282,14 +445,25 @@ describe('documents IPC — update', () => {
       content: 'b',
       memoryOnly: false,
     })
-    const updated = await call('documents:update', docA.id, { title: 'RenTarget' })
-    expect(updated.filePath).toBe(join(stableDocsRoot, 'MarkFlow', 'RenTarget-1.md'))
-    expect(readFileSync(updated.filePath, 'utf-8')).toBe('a')
+    // The handler is synchronous, so the refusal surfaces as a thrown error carrying the standard
+    // EEXIST code (callers can classify it) plus a message the save-failure path can show.
+    let thrown: unknown
+    try {
+      call('documents:update', docA.id, { title: 'RenTarget' })
+    } catch (e) {
+      thrown = e
+    }
+    expect((thrown as NodeJS.ErrnoException)?.code).toBe('EEXIST')
+    expect((thrown as Error)?.message).toContain('already exists')
+    // Nothing moved and nothing was renumbered: the colliding file still holds docB's content.
+    const target = join(stableDocsRoot, 'MarkFlow', 'RenTarget.md')
+    expect(readFileSync(target, 'utf-8')).toBe('b')
+    expect(existsSync(join(stableDocsRoot, 'MarkFlow', 'RenTarget-1.md'))).toBe(false)
   })
 
   it('strips a Markdown extension from the incoming title so a rename does not double it', async () => {
     // The title bar shows `name.ext`, so the renderer sends `Renamed.md`. The stored
-    // title is extension-free and the rename re-appends the extension itself — without
+    // title is extension-free and the rename re-appends the extension itself without
     // stripping, the file would become `Renamed.md.md`.
     const created = await call('documents:create', {
       title: 'RenameExt',
@@ -345,6 +519,39 @@ describe('documents IPC — delete', () => {
     const ok = await call('documents:delete', created.id)
     expect(ok).toBe(true)
     expect(docs.has(created.id)).toBe(false)
+  })
+
+  it('logs but still deletes when trashItem fails for a non-ENOENT reason', async () => {
+    const created = await call('documents:create', {
+      title: 'DelTrash',
+      content: 'x',
+      memoryOnly: false,
+    })
+    const { shell } = await import('electron')
+    const err = Object.assign(new Error('boom'), { code: 'EPERM' })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
+    const ok = await call('documents:delete', created.id)
+    expect(ok).toBe(true)
+    expect(docs.has(created.id)).toBe(false)
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('does not log when trashItem fails with ENOENT (file already gone)', async () => {
+    const created = await call('documents:create', {
+      title: 'DelTrash2',
+      content: 'x',
+      memoryOnly: false,
+    })
+    const { shell } = await import('electron')
+    const err = Object.assign(new Error('gone'), { code: 'ENOENT' })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
+    const ok = await call('documents:delete', created.id)
+    expect(ok).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
+    spy.mockRestore()
   })
 })
 
@@ -574,7 +781,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     const b = join(dir, 'b.md')
     writeFileSync(b, '# imported', 'utf-8')
 
-    __emitFolderEvent('unlink', a) // marks a.md missing (one refresh — not the one we assert)
+    __emitFolderEvent('unlink', a) // marks a.md missing (one refresh not the one we assert)
     sentDocumentRefresh.length = 0
 
     __emitFolderEvent('add', b) // folds the rename back into the same doc (one refresh)
@@ -643,7 +850,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     __emitFolderEvent('unlink', a)
     __flushFolderChanged()
 
-    // Same bytes, but a different folder — must not be treated as the same rename.
+    // Same bytes, but a different folder must not be treated as the same rename
     const b = join(dirB, 'b.md')
     writeFileSync(b, '# imported', 'utf-8')
     __emitFolderEvent('add', b)
@@ -691,7 +898,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
   it('ignores a removal for a path that is still on disk (stale rename unlink)', async () => {
     // Regression: renaming a.md -> b.md and back to a.md replays the step-1 `unlink`
     // for a.md. chokidar reports a rename as an unpaired `unlink` + `add`, so that
-    // event can be delivered AFTER the file exists again — at which point a.md is the
+    // event can be delivered AFTER the file exists again at which point a.md is the
     // OPEN document. Deleting the record on the stale event closed the file and
     // emptied the sidebar, which is what made it look like the workspace closed.
     const dir = tmpDir('mf-watch-rename-')
@@ -818,7 +1025,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
 
   it('does not send app:document-refresh once the window is destroyed', async () => {
     // Unlike the previous test, here the file is GONE, so onFileRemoved proceeds past the
-    // existsSync guard and actually reaches notifyDocumentRefresh — which must still skip
+    // existsSync guard and actually reaches notifyDocumentRefresh which must still skip
     // sending to a destroyed webContents.
     const dir = tmpDir('mf-watch-refresh-gone-')
     const created = await call('documents:create', { title: 'Gone', content: 'x', folderPath: dir })
@@ -841,9 +1048,9 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     writeFileSync(file, '# Cancelled\n\ndropped', 'utf-8')
     sentFolderChanged.length = 0
 
-    // Queue a broadcast through the normal dispatch path…
+    // Queue a broadcast through the normal dispatch path
     __emitFolderEvent('add', file)
-    // …then close the workspace before the coalesce window elapses: the watcher is
+    // then close the workspace before the coalesce window elapses: the watcher is
     // gone, so the pending refresh must be dropped rather than delivered.
     await call('documents:clear-open-folders')
 
@@ -863,8 +1070,8 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     sentFolderChanged.length = 0
 
     // Two directories change inside the same coalesce window. With one shared pending
-    // slot, the second event would overwrite the first and dirA — the folder the
-    // renderer is showing — would never be told to refresh.
+    // slot, the second event would overwrite the first and dirA the folder the
+    // renderer is showing would never be told to refresh
     __emitFolderEvent('add', fileA)
     __emitFolderEvent('add', fileB)
     __flushFolderChanged()
@@ -901,7 +1108,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
       writeFileSync(fileB, '# B\n\nskipped', 'utf-8')
       sentFolderChanged.length = 0
 
-      // Live window: only the real 300ms timer may deliver this — no __flush
+      // Live window: only the real 300ms timer may deliver this no __flush
       // shortcut, so the delayed-send path itself is what gets exercised.
       __emitFolderEvent('add', fileA)
       expect(sentFolderChanged).toEqual([]) // still inside the coalesce window
@@ -1423,7 +1630,7 @@ describe('documents — pure encoding / text utilities', () => {
       // A UTF-8 buffer decoded as latin1 is fully decodable (1:1 byte->code), so 0.
       expect(countReplacements(Buffer.from('abc', 'utf-8'), 'latin1')).toBe(0)
       // GBK bytes that are invalid under UTF-8 produce replacement chars when forced to utf-8.
-      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]) // "中文" in GBK
+      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]) // "" in GBK
       const n = countReplacements(gbkBuf, 'utf-8')
       expect(n).toBeGreaterThan(0)
     })
@@ -1441,7 +1648,7 @@ describe('documents — pure encoding / text utilities', () => {
     it('flips to a cleaner CJK candidate when the primary decodes poorly', () => {
       // GBK bytes; primary wrongly claims utf-8 (which yields many replacements),
       // so a CJK candidate (gbk) should win with far fewer replacements.
-      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4]) // "中文"
+      const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4])
       const res = cjkSecondPass(gbkBuf, 'utf-8')
       expect(res.enc).toBe('gbk')
       expect(res.confidence).toBe(0.99)
@@ -1508,7 +1715,7 @@ describe('documents — pure encoding / text utilities', () => {
     it('trusts a forced high-confidence non-CJK primary without the second pass', () => {
       // Explicitly exercise the `!inCjkScope` early return. The byte-level test
       // below (Cyrillic/cp1251) only asserts the OUTCOME, and the real detector's
-      // verdict for those bytes can route it elsewhere — so pin the verdict here
+      // verdict for those bytes can route it elsewhere so pin the verdict here
       // to make the branch under test unambiguous.
       detectState.override = () => ({ encoding: 'windows-1252', confidence: 0.95 })
       try {
@@ -1539,7 +1746,7 @@ describe('documents — pure encoding / text utilities', () => {
       // Force the detector to claim utf-8 for bytes that are NOT valid utf-8, so
       // the primary decodes with replacement chars and the second pass must run.
       // (See the detectState comment above for why this needs a forced verdict.)
-      // GBK bytes for "中文" are invalid under utf-8, so gbk should win.
+      // GBK bytes for "" are invalid under utf-8, so gbk should win
       const gbkBuf = Buffer.from([0xd6, 0xd0, 0xce, 0xc4])
       detectState.override = () => ({ encoding: 'utf-8', confidence: 0.9 })
       try {
@@ -1563,13 +1770,13 @@ describe('documents — pure encoding / text utilities', () => {
 
     it('skips the CJK second pass when the in-scope primary decodes with zero replacements', () => {
       // Performance guard for the chokidar-lag fix: cjkSecondPass decodes the sample
-      // once per candidate (utf-8 + gbk + big5 + shift_jis + euc-kr) — five full
+      // once per candidate (utf-8 + gbk + big5 + shift_jis + euc-kr) five full
       // decodes. When the primary encoding already decodes cleanly (0 replacement
       // chars), no candidate can do better, so the pass is pure waste.
       //
       // Verify the fast return by forcing the detector to a utf-8 verdict for bytes
       // that are valid utf-8: the primary decodes with 0 replacements, so the only
-      // way to reach utf-8/0.99 is the early "primaryRep === 0" return — entering
+      // way to reach utf-8/0.99 is the early "primaryRep === 0" return entering
       // the second pass could only change or lower the confidence, never confirm 0.99.
       detectState.override = () => ({ encoding: 'utf-8', confidence: 0.9 })
       try {
@@ -1600,7 +1807,7 @@ describe('documents — pure encoding / text utilities', () => {
     it('decodes a GBK file as gbk via the CJK second pass', () => {
       const dir = mkdtempSync(join(tmpdir(), 'mf-rmt-'))
       const p = join(dir, 'g.md')
-      writeFileSync(p, Buffer.from([0xd6, 0xd0, 0xce, 0xc4])) // "中文"
+      writeFileSync(p, Buffer.from([0xd6, 0xd0, 0xce, 0xc4]))
       const { text, encoding } = readMarkdownText(p)
       expect(encoding).toBe('gbk')
       expect(text).toBe('中文')
@@ -1651,5 +1858,625 @@ describe('isInFolder (folderMatch, shared with documentStore)', () => {
   it('returns false for an empty folder', () => {
     expect(isInFolder('/a/b/note.md', '')).toBe(false)
     expect(isInFolder('/a/b/note.md', undefined as unknown as string)).toBe(false)
+  })
+})
+
+// ─── M3 new handlers (/3/6/7/11/13) ─────────────────────────────────────
+describe('documents IPC — resolve-appdoc (能力 3)', () => {
+  const dir = join(stableDocsRoot, 'ra')
+  const filePath = join(dir, 'note.md')
+  beforeEach(() => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(filePath, '# note')
+    docs.set('ra1', {
+      id: 'ra1',
+      filePath,
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      title: 't',
+      content: '',
+      memoryOnly: false,
+      folderPath: dir,
+      updatedAt: 1,
+    })
+    writeFileSync(join(dir, 'img.png'), 'PNG')
+  })
+  it('resolves an appdoc:// URL to its on-disk absolute path', async () => {
+    const r = await call('documents:resolve-appdoc', 'appdoc://ra1/img.png')
+    expect(r).toBe(join(dir, 'img.png'))
+  })
+  it('returns null for a missing file', async () => {
+    expect(await call('documents:resolve-appdoc', 'appdoc://ra1/missing.png')).toBeNull()
+  })
+  it('returns null when the path escapes the document directory', async () => {
+    expect(await call('documents:resolve-appdoc', 'appdoc://ra1/../escape.png')).toBeNull()
+  })
+  it('returns null for an unknown document', async () => {
+    expect(await call('documents:resolve-appdoc', 'appdoc://ghost/img.png')).toBeNull()
+  })
+  it('returns null when getDocumentById throws (defensive catch)', async () => {
+    const orig = fakeStore.getDocumentById
+    fakeStore.getDocumentById = () => {
+      throw new Error('boom')
+    }
+    try {
+      expect(await call('documents:resolve-appdoc', 'appdoc://ra1/im.png')).toBeNull()
+    } finally {
+      fakeStore.getDocumentById = orig
+    }
+  })
+})
+
+describe('documents IPC — set-eol (能力 6)', () => {
+  const dir = join(stableDocsRoot, 'eol')
+  const filePath = join(dir, 'file.md')
+  beforeEach(() => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(filePath, 'a\nb\nc')
+    docs.set('eol1', {
+      id: 'eol1',
+      filePath,
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      title: 't',
+      content: '',
+      memoryOnly: false,
+      folderPath: dir,
+      updatedAt: 1,
+    })
+  })
+  it('rewrites LF to CRLF preserving bytes', async () => {
+    await call('documents:set-eol', filePath, '\r\n')
+    expect(readFileSync(filePath, 'utf-8')).toBe('a\r\nb\r\nc')
+  })
+  it('rewrites CRLF to LF', async () => {
+    writeFileSync(filePath, 'a\r\nb')
+    await call('documents:set-eol', filePath, '\n')
+    expect(readFileSync(filePath, 'utf-8')).toBe('a\nb')
+  })
+  it('falls back to utf-8 when the file is not in the document store', async () => {
+    const orphan = join(dir, 'orphan.md')
+    writeFileSync(orphan, 'a\nb')
+    await call('documents:set-eol', orphan, '\r\n')
+    expect(readFileSync(orphan, 'utf-8')).toBe('a\r\nb')
+  })
+})
+
+describe('documents IPC — detect-encoding (能力 11)', () => {
+  const dir = join(stableDocsRoot, 'det')
+  const filePath = join(dir, 'file.md')
+  beforeEach(() => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(filePath, Buffer.from([0xef, 0xbb, 0xbf, 0x68, 0x69])) // UTF-8 BOM
+  })
+  it('detects the encoding from disk', async () => {
+    expect(await call('documents:detect-encoding', filePath)).toEqual({
+      enc: 'utf-8',
+      confidence: 1,
+    })
+  })
+  it('falls back to utf-8/0 for a missing file', async () => {
+    expect(await call('documents:detect-encoding', join(dir, 'nope.md'))).toEqual({
+      enc: 'utf-8',
+      confidence: 0,
+    })
+  })
+})
+
+describe('documents IPC — folder ops (能力 7)', () => {
+  it('create-folder makes the directory', async () => {
+    const p = join(stableDocsRoot, `mk-${Date.now()}`)
+    await call('documents:create-folder', p)
+    expect(existsSync(p)).toBe(true)
+  })
+  it('create-folder rejects with EEXIST when the folder already exists', () => {
+    // Drive this through the in-memory DiskIO: the node:fs mock drops mkdirSync's options, so
+    // the recursive:false refusal cannot be observed via the mocked real adapter. Seed the folder,
+    // then the handler must refuse it with EEXIST instead of silently swallowing it.
+    const io = createMemoryDiskIO()
+    const p = join(stableDocsRoot, `dup-${Date.now()}`)
+    io.mkdir(p, { recursive: true })
+    registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow, io)
+    try {
+      expect(() => call('documents:create-folder', p)).toThrow(/EEXIST/)
+    } finally {
+      // Restore the default (real-filesystem) registration for the remaining cases.
+      registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+    }
+  })
+  it('rename-folder moves the directory', async () => {
+    const a = join(stableDocsRoot, `mv-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-b-${Date.now()}`)
+    mkdirSync(a, { recursive: true })
+    writeFileSync(join(a, 'x.md'), 'x')
+    await call('documents:rename-folder', a, b)
+    expect(existsSync(b)).toBe(true)
+    expect(existsSync(a)).toBe(false)
+  })
+  it('rename-folder re-points tracked documents so no stale duplicates remain', async () => {
+    const a = join(stableDocsRoot, `mv-docs-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-docs-b-${Date.now()}`)
+    mkdirSync(join(a, 'sub'), { recursive: true })
+    const file = join(a, 'x.md')
+    const nested = join(a, 'sub', 'y.md')
+    writeFileSync(file, 'x')
+    writeFileSync(nested, 'y')
+    expect(await call('documents:import', file)).not.toBeNull()
+    expect(await call('documents:import', nested)).not.toBeNull()
+    await call('documents:rename-folder', a, b)
+    const list = (await call('documents:list')) as Array<{ filePath: string }>
+    // Every tracked record now lives under the new folder including nested ones
+    // and the old paths are gone instead of lingering as "missing" duplicates.
+    expect(list.some((d) => d.filePath === join(b, 'x.md'))).toBe(true)
+    expect(list.some((d) => d.filePath === join(b, 'sub', 'y.md'))).toBe(true)
+    expect(list.some((d) => d.filePath === file)).toBe(false)
+    expect(list.some((d) => d.filePath === nested)).toBe(false)
+  })
+  it('rename-folder re-points tracked documents when renderer uses forward slashes (Windows)', async () => {
+    const a = join(stableDocsRoot, `mv-slashes-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-slashes-b-${Date.now()}`)
+    mkdirSync(a, { recursive: true })
+    const file = join(a, 'x.md')
+    writeFileSync(file, 'x')
+    expect(await call('documents:import', file)).not.toBeNull()
+
+    // The renderer builds tree paths with forward slashes, so it calls rename-folder
+    // with forward-slash paths even on Windows where stored file paths use backslashes.
+    const forwardA = a.replace(/\\/g, '/')
+    const forwardB = b.replace(/\\/g, '/')
+    await call('documents:rename-folder', forwardA, forwardB)
+
+    const list = (await call('documents:list')) as Array<{ filePath: string }>
+    expect(list.some((d) => d.filePath === join(b, 'x.md'))).toBe(true)
+    expect(list.some((d) => d.filePath === file)).toBe(false)
+  })
+  it("rename-folder preserves each document's own separator style when re-pointing", async () => {
+    const a = join(stableDocsRoot, `mv-sep-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-sep-b-${Date.now()}`)
+    mkdirSync(a, { recursive: true })
+
+    // Call the handler with forward-slash paths (how the renderer builds tree paths)
+    // so BOTH branches of the `docSep` ternary are reachable on every platform:
+    //   - a doc stored with forward slashes only -> docSep === '/'
+    //   - a doc stored with a backslash           -> docSep === '\\'
+    // rePointFolderRecords must keep each doc's own separator instead of forcing the
+    // folder's normalized separator onto it.
+    const aFwd = a.split(sep).join('/')
+    const bFwd = b.split(sep).join('/')
+    docs.set('sep-fwd', {
+      id: 'sep-fwd',
+      title: 'Fwd',
+      folderPath: `${aFwd}/fwd`,
+      filePath: `${aFwd}/fwd.md`,
+      content: 'x',
+      wordCount: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      memoryOnly: false,
+    })
+    docs.set('sep-bs', {
+      id: 'sep-bs',
+      title: 'Bs',
+      folderPath: `${aFwd}/deep`,
+      filePath: `${aFwd}/deep\\odd.md`,
+      content: 'y',
+      wordCount: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      memoryOnly: false,
+    })
+
+    await call('documents:rename-folder', aFwd, bFwd)
+
+    const fwd = docs.get('sep-fwd')
+    const bs = docs.get('sep-bs')
+    // Both re-pointed onto the new folder (old name gone, new name present).
+    expect(fwd.filePath).toContain('mv-sep-b')
+    expect(bs.filePath).toContain('mv-sep-b')
+    expect(fwd.filePath).not.toContain('mv-sep-a')
+    expect(bs.filePath).not.toContain('mv-sep-a')
+    // Each doc keeps its OWN separator style in the re-pointed suffix: the forward-slash
+    // doc stays forward-slash, the backslash doc stays backslash (the docSep branches).
+    expect(fwd.filePath.endsWith('/fwd.md')).toBe(true)
+    expect(bs.filePath.includes('deep\\odd.md')).toBe(true)
+
+    docs.delete('sep-fwd')
+    docs.delete('sep-bs')
+    await fsPromises.rm(b, { recursive: true, force: true })
+  })
+  it('rename-file moves the file on disk', async () => {
+    const dir = join(stableDocsRoot, `mvf-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'x.md')
+    const renamed = join(dir, 'y.md')
+    writeFileSync(file, 'x')
+    await call('documents:rename-file', file, renamed)
+    expect(existsSync(renamed)).toBe(true)
+    expect(existsSync(file)).toBe(false)
+    await fsPromises.rm(dir, { recursive: true, force: true })
+  })
+  it('rename-file re-points the tracked document so no stale duplicate remains', async () => {
+    const dir = join(stableDocsRoot, `mvf-docs-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'x.md')
+    const renamed = join(dir, 'y.md')
+    writeFileSync(file, 'x')
+    expect(await call('documents:import', file)).not.toBeNull()
+    await call('documents:rename-file', file, renamed)
+    const list = (await call('documents:list')) as Array<{ filePath: string; title: string }>
+    // The record now lives under the new name (title follows the new base name) and the
+    // old path is gone instead of lingering as a "missing" duplicate.
+    expect(list.some((d) => d.filePath === renamed)).toBe(true)
+    expect(list.some((d) => d.title === 'y')).toBe(true)
+    expect(list.some((d) => d.filePath === file)).toBe(false)
+    await fsPromises.rm(dir, { recursive: true, force: true })
+  })
+  it('rename-file re-points a record whose stored path uses forward slashes (Windows)', async () => {
+    const dir = join(stableDocsRoot, `mvf-sl-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'x.md')
+    const renamed = join(dir, 'y.md')
+    writeFileSync(file, 'x')
+    expect(await call('documents:import', file)).not.toBeNull()
+    // The imported record uses backslashes; seed a SECOND record at the same old path but with
+    // forward slashes, as the renderer builds tree paths on Windows. This exercises
+    // rePointFileRecord's `? '/'` separator branch (the imported record covers the `'\\'` branch).
+    const fileFwd = file.split(sep).join('/')
+    docs.set('fs-fwd', {
+      id: 'fs-fwd',
+      title: 'x',
+      folderPath: dir.split(sep).join('/'),
+      filePath: fileFwd,
+      content: 'x',
+      wordCount: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      memoryOnly: false,
+    })
+    await call('documents:rename-file', file, renamed)
+    const list = (await call('documents:list')) as Array<{ filePath: string; title: string }>
+    expect(list.some((d) => d.filePath === renamed)).toBe(true)
+    // The forward-slash record is re-pointed onto the new name, keeping its separator style.
+    const fwd = docs.get('fs-fwd')
+    expect(fwd?.filePath).toBe(renamed.split(sep).join('/'))
+    expect(fwd?.title).toBe('y')
+    docs.delete('fs-fwd')
+    await fsPromises.rm(dir, { recursive: true, force: true })
+  })
+  // Covers the `'\\'` half of rePointFileRecord's docSep ternary — the half the
+  // Windows-only test above could not reach on POSIX.
+  //
+  // The paths are built with path.win32 (pure JS: identical output on every host)
+  // instead of the host `join`, whose shape follows the OS. Deriving them from `join`
+  // is exactly what made this branch unreachable on Linux: on Windows `join` yields
+  // backslashes so imported records contain one, while on POSIX every stored path is
+  // forward-slash-only and `includes('\\')` is never true.
+  it("rename-file preserves a backslash-stored record's own separator style", async () => {
+    const oldP = win32.join('C:\\docs', 'x.md') // 'C:\\docs\\x.md' on every platform
+    const newP = win32.join('C:\\docs', 'y.md')
+    docs.set('bs-doc', {
+      id: 'bs-doc',
+      title: 'x',
+      folderPath: 'C:\\docs',
+      filePath: oldP,
+      content: 'x',
+      wordCount: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      memoryOnly: false,
+    })
+    // Drive this case through the in-memory DiskIO. 'C:\\docs\\x.md' cannot exist on a
+    // real disk, so with the real adapter the rename would throw before the re-pointing
+    // ever ran — the fake is what makes this path shape usable at all.
+    const io = createMemoryDiskIO()
+    io.seed(oldP, 'x')
+    registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow, io)
+    try {
+      await call('documents:rename-file', oldP, newP)
+    } finally {
+      // Restore the default (real filesystem) registration for the remaining cases.
+      registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+    }
+
+    // Re-pointed with the record's OWN separator, so the result is still all
+    // backslashes. A '/' here would mean the `'\\'` branch was not taken.
+    expect(docs.get('bs-doc')?.filePath).toBe(newP)
+    docs.delete('bs-doc')
+  })
+
+  // POSIX `rename()` silently REPLACES an existing target, so a collision has to be refused
+  // here — otherwise a lost race is silent data loss. Windows already errored; now both agree.
+  it('refuses a rename whose target name is already taken (no silent overwrite)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-rename-clash-'))
+    const src = join(dir, 'a.md')
+    const taken = join(dir, 'b.md')
+    writeFileSync(src, '# A', 'utf-8')
+    writeFileSync(taken, '# B', 'utf-8')
+    let thrown: unknown
+    try {
+      await call('documents:rename-file', src, taken)
+    } catch (e) {
+      thrown = e
+    }
+    expect((thrown as NodeJS.ErrnoException)?.code).toBe('EEXIST')
+    // Neither file is lost: an unguarded rename would have replaced `taken` with `src`.
+    expect(readFileSync(src, 'utf-8')).toBe('# A')
+    expect(readFileSync(taken, 'utf-8')).toBe('# B')
+  })
+
+  it('refuses a folder rename whose target name is already taken', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-renamefolder-clash-'))
+    const src = join(dir, 'sub')
+    const taken = join(dir, 'other')
+    mkdirSync(src)
+    mkdirSync(taken)
+    let thrown: unknown
+    try {
+      await call('documents:rename-folder', src, taken)
+    } catch (e) {
+      thrown = e
+    }
+    expect((thrown as NodeJS.ErrnoException)?.code).toBe('EEXIST')
+    expect(existsSync(src)).toBe(true)
+    expect(existsSync(taken)).toBe(true)
+  })
+
+  it('allows a rename that only changes the case of the name (case-insensitive fs)', async () => {
+    // `a.md` -> `A.md` is the SAME file on a case-insensitive filesystem, so the guard must
+    // not report a collision with itself (VS Code's `child !== item` rule). The platform seam is
+    // injected as a case-INsensitive OS via `registerDocumentHandlers` — no global mutation, no
+    // module mock — so this branch is covered on any runner.
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-rename-case-'))
+    const src = join(dir, 'a.md')
+    writeFileSync(src, '# A', 'utf-8')
+    registerDocumentHandlers(
+      fakeIpcMain,
+      fakeApp,
+      () => fakeMainWindow,
+      undefined,
+      () => false,
+    )
+    try {
+      await call('documents:rename-file', src, join(dir, 'A.md'))
+      expect(existsSync(join(dir, 'A.md'))).toBe(true)
+    } finally {
+      // Restore the default handlers/io/seam so later tests are unaffected by this injection.
+      registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+    }
+  })
+
+  it('treats a case-only difference as another file on Linux', () => {
+    // The in-memory adapter is always case-sensitive, so it can hold both spellings — which a
+    // Windows disk cannot. With the platform seam injected as Linux, `a.md` -> `A.md` is a real
+    // move onto a different file and must be refused.
+    const io = createMemoryDiskIO()
+    io.seed('/d/a.md', 'A')
+    io.seed('/d/A.md', 'other')
+    registerDocumentHandlers(
+      fakeIpcMain,
+      fakeApp,
+      () => fakeMainWindow,
+      io,
+      () => true,
+    )
+    try {
+      expect(() => call('documents:rename-file', '/d/a.md', '/d/A.md')).toThrow(/already exists/)
+      // The very same path is still never a collision, on any platform.
+      expect(() => call('documents:rename-file', '/d/a.md', '/d/a.md')).not.toThrow()
+    } finally {
+      registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+    }
+  })
+
+  // ── undo-rename (single slot) ─────────────────────────────────────────
+  it('undo-rename moves a renamed file back and then reports "none"', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-file-'))
+    const oldP = join(dir, 'a.md')
+    const newP = join(dir, 'b.md')
+    writeFileSync(oldP, '# A', 'utf-8')
+    await call('documents:rename-file', oldP, newP)
+    expect(existsSync(newP)).toBe(true)
+    const res = (await call('documents:undo-rename')) as { ok: boolean }
+    expect(res.ok).toBe(true)
+    // A real move back, not a copy: the file is under the old name and the new one is gone.
+    expect(existsSync(oldP)).toBe(true)
+    expect(existsSync(newP)).toBe(false)
+    // The slot is single-use: a second Ctrl+Z has nothing left to undo. Asserted here (rather
+    // than as its own case) because the history is module-level and shared with earlier
+    // rename tests — only right after a successful undo is "nothing to undo" guaranteed.
+    const again = (await call('documents:undo-rename')) as { ok: boolean; reason: string }
+    expect(again).toEqual({ ok: false, reason: 'none' })
+  })
+
+  it('undo-rename refuses with "occupied" when the original name is taken again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-occ-'))
+    const oldP = join(dir, 'a.md')
+    const newP = join(dir, 'b.md')
+    writeFileSync(oldP, '# A', 'utf-8')
+    await call('documents:rename-file', oldP, newP)
+    // Someone (another program, or the user) recreates the old name in the meantime.
+    writeFileSync(oldP, '# taken', 'utf-8')
+    const res = (await call('documents:undo-rename')) as { ok: boolean; reason: string }
+    expect(res).toEqual({ ok: false, reason: 'occupied' })
+    // Refusing must neither clobber the recreated file nor move anything.
+    expect(existsSync(newP)).toBe(true)
+  })
+
+  it('undo-rename refuses with "gone" when the renamed file no longer exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-gone-'))
+    const oldP = join(dir, 'a.md')
+    const newP = join(dir, 'b.md')
+    writeFileSync(oldP, '# A', 'utf-8')
+    await call('documents:rename-file', oldP, newP)
+    unlinkSync(newP)
+    const res = (await call('documents:undo-rename')) as { ok: boolean; reason: string }
+    expect(res).toEqual({ ok: false, reason: 'gone' })
+  })
+
+  it('notifies the renderer when a folder is added or removed outside the app', () => {
+    // The registerDocumentHandlers folder-watch callbacks (onDirAdded / onDirRemoved) only fire
+    // for directory events; this exercises them end-to-end and confirms the renderer is told to
+    // refresh the tree rooted at the PARENT of the changed folder.
+    const addedDir = dirname(join('/w1', 'added'))
+    const removedDir = dirname(join('/w2', 'removed'))
+    sentFolderChanged.length = 0
+    __emitFolderDirEvent('addDir', join('/w1', 'added'))
+    __emitFolderDirEvent('unlinkDir', join('/w2', 'removed'))
+    __flushFolderChanged()
+    expect(sentFolderChanged).toContainEqual({ dirPath: addedDir })
+    expect(sentFolderChanged).toContainEqual({ dirPath: removedDir })
+  })
+
+  it('undo-rename moves a renamed FOLDER back and re-points the folder tree', async () => {
+    // Covers the `last.kind === 'folder'` branch of undo-rename: it must put the watched folder
+    // back and re-point the folder records, not just move a single file.
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-folder-'))
+    const oldP = join(dir, 'sub')
+    const newP = join(dir, 'renamed')
+    mkdirSync(oldP)
+    await call('documents:rename-folder', oldP, newP)
+    expect(existsSync(newP)).toBe(true)
+    const res = (await call('documents:undo-rename')) as { ok: boolean }
+    expect(res.ok).toBe(true)
+    // A real move back: the folder is under the old name and the new one is gone.
+    expect(existsSync(oldP)).toBe(true)
+    expect(existsSync(newP)).toBe(false)
+  })
+
+  it('undo-rename reports "failed" when the disk move throws', async () => {
+    // Covers the catch branch of undo-rename: a rename that fails on disk must surface as a
+    // "failed" refusal rather than an unhandled exception.
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-fail-'))
+    const oldP = join(dir, 'a.md')
+    const newP = join(dir, 'b.md')
+    writeFileSync(oldP, '# A', 'utf-8')
+    await call('documents:rename-file', oldP, newP)
+    fsRenameMock.mockImplementationOnce(() => {
+      throw new Error('EBUSY')
+    })
+    const res = (await call('documents:undo-rename')) as { ok: boolean; reason: string }
+    expect(res).toEqual({ ok: false, reason: 'failed' })
+  })
+
+  it('delete-folder moves the folder to the OS trash (trashItem called)', async () => {
+    const p = join(stableDocsRoot, `rm-${Date.now()}`)
+    mkdirSync(p, { recursive: true })
+    writeFileSync(join(p, 'y.md'), 'y')
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined)
+    await call('documents:delete-folder', p)
+    expect(shell.trashItem).toHaveBeenCalledWith(resolve(p))
+    // The handler delegates the removal to the OS, so the on-disk tree is left for the
+    // (mocked) trash; clean it up so it doesn't pollute later folder listings.
+    await fsPromises.rm(p, { recursive: true, force: true })
+  })
+
+  it('delete-folder removes contained documents from the store and notifies the parent', async () => {
+    const p = join(stableDocsRoot, `rm-${Date.now()}`)
+    mkdirSync(join(p, 'sub'), { recursive: true })
+    writeFileSync(join(p, 'top.md'), 'top')
+    writeFileSync(join(p, 'sub', 'inner.md'), 'inner')
+    // Track both files so the store has documents living inside the folder.
+    await call('documents:import-many', [join(p, 'top.md'), join(p, 'sub', 'inner.md')])
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined)
+    sentFolderChanged.length = 0
+    await call('documents:delete-folder', p)
+    // The watcher was paused during the move, so it would not have emitted per-file
+    // removals. The handler must clean the store directly, otherwise the sidebar tree
+    // (built from document folderPaths) keeps showing the deleted folder.
+    const remaining = [...docs.values()].filter((d) =>
+      d.filePath.replace(/\//g, sep).startsWith(p.replace(/\//g, sep) + sep),
+    )
+    expect(remaining).toHaveLength(0)
+    // The parent directory is told to re-read its children.
+    __flushFolderChanged()
+    expect(sentFolderChanged.some((e) => e.dirPath === dirname(p))).toBe(true)
+    await fsPromises.rm(p, { recursive: true, force: true })
+  })
+
+  it('delete-folder rethrows when trashItem fails for a non-ENOENT reason', async () => {
+    const p = join(stableDocsRoot, `rm-${Date.now()}`)
+    mkdirSync(p, { recursive: true })
+    const err = Object.assign(new Error('no trash'), { code: 'EPERM' })
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
+    await expect(call('documents:delete-folder', p)).rejects.toThrow()
+    expect(shell.trashItem).toHaveBeenCalledWith(resolve(p))
+    await fsPromises.rm(p, { recursive: true, force: true })
+  })
+
+  it('delete-folder leaves a document whose path is the folder itself (skips the folder node)', async () => {
+    // Covers the `if (fp === norm) continue` branch of removeDocumentsUnder: a stored document
+    // whose filePath equals the folder being deleted is the folder node, not a child, and must be
+    // skipped rather than removed from the store.
+    const p = join(stableDocsRoot, `rm-${Date.now()}`)
+    mkdirSync(join(p, 'sub'), { recursive: true })
+    writeFileSync(join(p, 'sub', 'inner.md'), 'inner')
+    await call('documents:import-many', [join(p, 'sub', 'inner.md')])
+    docs.set('folderNode', {
+      id: 'folderNode',
+      title: 'Folder',
+      folderPath: p,
+      filePath: p,
+      content: '',
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      wordCount: 0,
+    })
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined)
+    await call('documents:delete-folder', p)
+    const remainingInner = [...docs.values()].filter((d) =>
+      d.filePath.replace(/\//g, sep).startsWith(p.replace(/\//g, sep) + sep),
+    )
+    expect(remainingInner).toHaveLength(0)
+    expect(docs.has('folderNode')).toBe(true)
+    await fsPromises.rm(p, { recursive: true, force: true })
+  })
+
+  it('delete-folder treats an already-gone folder (ENOENT) as success', async () => {
+    const p = join(stableDocsRoot, `gone-${Date.now()}`)
+    const err = Object.assign(new Error('gone'), { code: 'ENOENT' })
+    const { shell } = await import('electron')
+    ;(shell.trashItem as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err)
+    await expect(call('documents:delete-folder', p)).resolves.toBeUndefined()
+    expect(shell.trashItem).toHaveBeenCalledWith(resolve(p))
+  })
+  it('list-folders reports nested directories and skips hidden ones', async () => {
+    const p = join(stableDocsRoot, `lf-${Date.now()}`)
+    mkdirSync(join(p, 'sub', 'deeper'), { recursive: true })
+    mkdirSync(join(p, '.hidden'), { recursive: true })
+    writeFileSync(join(p, 'a.md'), 'a')
+    const dirs = (await call('documents:list-folders', p)) as string[]
+    expect(dirs).toContain(join(p, 'sub'))
+    expect(dirs).toContain(join(p, 'sub', 'deeper'))
+    // Files are not directories, and dot-directories are workspace noise.
+    expect(dirs).not.toContain(join(p, 'a.md'))
+    expect(dirs.some((d) => d.endsWith('.hidden'))).toBe(false)
+  })
+  it('list-folders stops at the MAX_DEPTH limit instead of recursing forever', async () => {
+    const p = join(stableDocsRoot, `deep-${Date.now()}`)
+    let cur = p
+    for (let i = 0; i < 12; i++) cur = join(cur, `l${i}`)
+    mkdirSync(cur, { recursive: true })
+    const dirs = (await call('documents:list-folders', p)) as string[]
+    // The walk must bail out once depth exceeds MAX_DEPTH (8): the folder 9 levels down
+    // (l8) is still reported because the depth-8 walk enumerates it as its last child, but
+    // nothing deeper is recursion into l8 is skipped
+    const deepest = join(p, 'l0', 'l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7', 'l8')
+    const tooDeep = join(deepest, 'l9', 'l10', 'l11')
+    expect(dirs).toContain(deepest)
+    expect(dirs).not.toContain(tooDeep)
+  })
+
+  it('list-folders returns nothing for a missing path instead of throwing', async () => {
+    const dirs = (await call(
+      'documents:list-folders',
+      join(stableDocsRoot, `nope-${Date.now()}`),
+    )) as string[]
+    expect(dirs).toEqual([])
   })
 })

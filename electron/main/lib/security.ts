@@ -20,7 +20,7 @@ export const APPDOC_MIME: Record<string, string> = {
 
 // Secondary containment check: resolve symlinks recursively, then compare real
 // paths to confirm child is still inside parent (blocks ../ traversal and symlink
-// escapes, see §4.5).
+// escapes, see )
 export function isSubdir(parent: string, child: string): boolean {
   const realParent = realpathSync(parent)
   let realChild: string
@@ -29,7 +29,7 @@ export function isSubdir(parent: string, child: string): boolean {
   } catch {
     // The child may not exist yet (e.g. a still-missing image, or a path that
     // escapes the base dir entirely). Fall back to a non-failing resolve so we
-    // can still judge containment by lexical comparison below — this keeps the
+    // can still judge containment by lexical comparison below this keeps the
     // traversal check robust when realpathSync would otherwise throw ENOENT.
     realChild = resolve(child)
   }

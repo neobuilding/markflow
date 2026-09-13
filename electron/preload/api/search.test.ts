@@ -17,8 +17,19 @@ beforeEach(() => {
 })
 
 describe('preload searchApi', () => {
-  it('query invokes search:query with the query string', () => {
+  it('query invokes search:query with the query and default scope/mode', () => {
     searchApi.query('hello')
-    expect(invokes[0]).toEqual({ channel: 'search:query', args: ['hello'] })
+    expect(invokes[0]).toEqual({
+      channel: 'search:query',
+      args: [{ query: 'hello', scopeFolder: null, mode: 'content' }],
+    })
+  })
+
+  it('forwards an explicit scope folder and mode', () => {
+    searchApi.query('hello', { scopeFolder: '/docs', mode: 'filename' })
+    expect(invokes[0]).toEqual({
+      channel: 'search:query',
+      args: [{ query: 'hello', scopeFolder: '/docs', mode: 'filename' }],
+    })
   })
 })

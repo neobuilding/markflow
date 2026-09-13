@@ -233,7 +233,7 @@ branch into `main` using the repo's PR template (full design & plugin mechanism:
 [`actions/create-pr/README.md`](actions/create-pr/README.md)). Two root-level scripts wrap it:
 
 ```bash
-npm run build:action        # ncc bundles actions/create-pr/src/index.mjs -> dist/index.mjs
+npm run build:action        # ncc bundles src/index.mjs -> dist/index.mjs (built at runtime by auto-pr.yml; dist/ is git-ignored)
 npm run local-test-render    # Preview the rendered PR body for a branch (no token, no gh)
 ```
 
@@ -249,9 +249,10 @@ node actions/create-pr/src/cli-render.mjs --head feature/my-branch
 #                 --blocks-dir .github/create-pr/blocks, --no-git, --existing <body.md>
 ```
 
-> The bundled `actions/create-pr/dist/index.mjs` is committed on purpose (GitHub requires it for a
-> direct `uses:` reference). **After any change to `actions/create-pr/src/`, run `npm run build:action`
-> and commit the rebuilt `dist/index.mjs`** — otherwise CI uses a stale bundle.
+> The bundled `actions/create-pr/dist/index.mjs` is **not** committed. GitHub requires a `uses:` reference
+> to point at checked-in code, so `auto-pr.yml` builds the bundle at workflow runtime (`npm ci --prefix
+actions/create-pr` + `npm run build:action`) in a step **before** `uses: ./actions/create-pr`. You only
+> edit `src/`; the action always runs a bundle freshly built from it, so it can never be stale.
 
 ### CI pipeline (`.github/workflows/ci.yml`)
 

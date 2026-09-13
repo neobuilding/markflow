@@ -5,14 +5,25 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   computeDirty,
   isMac,
+  formatShortcut,
   baseName,
+  joinPath,
   isInFolder,
   isDirInFolder,
   buildFileTree,
+  filterTreeForDisplay,
+  createRowIndex,
+  findTreeNode,
+  siblingBasenames,
+  invalidBaseName,
+  foldName,
+  isWindows,
+  pathCaseSensitive,
   displayTitle,
   stripMarkdownExt,
   withMarkdownExt,
   markdownExtOf,
+  repointExpandedSet,
 } from './utils'
 import { useCreateDocument } from '../hooks/useDocuments'
 import { useUIStore } from '../store/ui'
@@ -115,6 +126,32 @@ describe('isMac', () => {
   })
 })
 
+describe('formatShortcut', () => {
+  const original = navigator.userAgent
+  afterEach(() => {
+    Object.defineProperty(navigator, 'userAgent', { value: original, configurable: true })
+  })
+
+  it('keeps the macOS form unchanged on macOS', () => {
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Macintosh)',
+      configurable: true,
+    })
+    expect(formatShortcut('⌘S')).toBe('⌘S')
+    expect(formatShortcut('⌘⇧S')).toBe('⌘⇧S')
+  })
+
+  it('renders Ctrl/Shift with plus separators off macOS', () => {
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Windows NT 10.0)',
+      configurable: true,
+    })
+    expect(formatShortcut('⌘S')).toBe('Ctrl+S')
+    expect(formatShortcut('⌘⇧S')).toBe('Ctrl+Shift+S')
+    expect(formatShortcut('⌘\\')).toBe('Ctrl+\\')
+  })
+})
+
 describe('baseName', () => {
   it('returns the file name with extension', () => {
     expect(baseName('C:\\notes\\foo.md')).toBe('foo.md')
@@ -123,6 +160,21 @@ describe('baseName', () => {
 
   it('returns the input unchanged when there is no directory separator', () => {
     expect(baseName('foo.md')).toBe('foo.md')
+  })
+})
+
+describe('joinPath', () => {
+  it('joins with a forward slash for POSIX paths', () => {
+    expect(joinPath('/docs', 'sub')).toBe('/docs/sub')
+  })
+
+  it('joins with a backslash for Windows paths', () => {
+    expect(joinPath('C:\\docs', 'sub')).toBe('C:\\docs\\sub')
+  })
+
+  it('collapses trailing separators on the directory', () => {
+    expect(joinPath('/docs/', 'sub')).toBe('/docs/sub')
+    expect(joinPath('C:\\docs\\', 'sub')).toBe('C:\\docs\\sub')
   })
 })
 
@@ -139,7 +191,7 @@ describe('isInFolder / buildFileTree', () => {
   it('isDirInFolder: accepts the folder itself and its subtree, rejects prefixed siblings', () => {
     expect(isDirInFolder('/a/b', '/a/b')).toBe(true)
     expect(isDirInFolder('/a/b/c', '/a/b')).toBe(true)
-    // '/a/b-x' shares the '/a/b' prefix but is NOT inside '/a/b' — the separator guard.
+    // '/a/b-x' shares the '/a/b' prefix but is NOT inside '/a/b' the separator guard
     expect(isDirInFolder('/a/b-x', '/a/b')).toBe(false)
     expect(isDirInFolder('/x', '/a/b')).toBe(false)
   })
@@ -291,7 +343,7 @@ describe('isInFolder / buildFileTree', () => {
   })
 })
 
-// ─── Memory-only (unsaved draft) contract (PLAN §6.3 / §6.5 / §6.6) ───────────
+// ─── Memory-only (unsaved draft) contract ( / / ) ───────────
 function renderHook<T>(factory: () => T) {
   const result = { current: undefined as unknown as T }
   function Wrapper() {
@@ -577,5 +629,276 @@ describe('buildFileTree — nested folders', () => {
     // then files alphabetically: mango before zeta
     expect(tree[1].name).toBe('mango.md')
     expect(tree[2].name).toBe('zeta.md')
+  })
+
+  // A tree built from documents alone cannot represent a folder with no Markdown file,
+  // so the on-disk folder list seeds those nodes
+  it('gives a folder with no document its own node', () => {
+    const tree = buildFileTree([makeDoc('1', '/a/foo.md')], '/a', ['/a/empty'])
+    const empty = tree.find((n) => n.name === 'empty')
+    expect(empty?.isFolder).toBe(true)
+    expect(empty?.children).toHaveLength(0)
+  })
+
+  it('seeds a nested chain of empty folders', () => {
+    const tree = buildFileTree([], '/a', ['/a/x/y'])
+    expect(tree).toHaveLength(1)
+    expect(tree[0].name).toBe('x')
+    expect(tree[0].isFolder).toBe(true)
+    expect(tree[0].children.map((c) => c.name)).toEqual(['y'])
+  })
+
+  it('merges a seeded folder with the node derived from a document path', () => {
+    const tree = buildFileTree([makeDoc('1', '/a/sub/one.md')], '/a', ['/a/sub'])
+    // One folder node holding the doc never a duplicate folder beside it
+    expect(tree).toHaveLength(1)
+    expect(tree[0].name).toBe('sub')
+    expect(tree[0].children.map((c) => c.name)).toEqual(['one.md'])
+  })
+})
+
+describe('filterTreeForDisplay', () => {
+  const makeDoc = (id: string, filePath: string) =>
+    ({
+      id,
+      title: id,
+      folderPath: '',
+      filePath,
+      content: '',
+      wordCount: 0,
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    }) as never
+
+  const filter = (
+    tree: ReturnType<typeof buildFileTree>,
+    showAllFolders = false,
+    pinned: string[] = [],
+  ) => filterTreeForDisplay(tree, { showAllFolders, pinnedFolders: new Set(pinned) })
+
+  const names = (tree: ReturnType<typeof buildFileTree>) => tree.map((n) => n.name)
+
+  it('keeps the folders that transitively hold Markdown and drops the rest', () => {
+    const model = buildFileTree([makeDoc('1', '/a/docs/one.md')], '/a', ['/a/docs', '/a/pics'])
+    expect(names(filter(model))).toEqual(['docs'])
+  })
+
+  it('keeps every folder when 显示所有文件夹 is ON, empty ones included', () => {
+    const model = buildFileTree([makeDoc('1', '/a/one.md')], '/a', ['/a/pics'])
+    expect(names(filter(model, true))).toEqual(['pics', 'one.md'])
+  })
+
+  it('keeps the pinned folder and the ancestors needed to reach it', () => {
+    const model = buildFileTree([], '/a', ['/a/x/y', '/a/pics'])
+    // Neither x/y nor pics holds Markdown, and nothing is pinned: nothing survives.
+    expect(filter(model)).toEqual([])
+    // Pinning only the deepest folder keeps x (its ancestor) and drops the unrelated pics.
+    expect(names(filter(model, false, ['/a/x/y']))).toEqual(['x'])
+    expect(names(filter(model, false, ['/a/x/y'])[0].children)).toEqual(['y'])
+  })
+
+  it('pins a folder regardless of separator shape, trailing slash and case', () => {
+    const model = buildFileTree([], '/a', ['/a/empty'])
+    expect(names(filter(model, false, ['\\A\\EMPTY\\']))).toEqual(['empty'])
+  })
+})
+
+describe('createRowIndex', () => {
+  const makeDoc = (id: string, filePath: string) =>
+    ({
+      id,
+      title: id,
+      folderPath: '',
+      filePath,
+      content: '',
+      wordCount: 0,
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    }) as never
+
+  it('lands between the last folder and the first file', () => {
+    const tree = buildFileTree([makeDoc('1', '/a/z.md'), makeDoc('2', '/a/a.md')], '/a', [
+      '/a/mid',
+      '/a/zz',
+    ])
+    expect(tree.map((n) => n.name)).toEqual(['mid', 'zz', 'a.md', 'z.md'])
+    expect(createRowIndex(tree)).toBe(2)
+  })
+
+  it('lands first when the parent holds no folder at all', () => {
+    const tree = buildFileTree([makeDoc('1', '/a/a.md')], '/a')
+    expect(createRowIndex(tree)).toBe(0)
+  })
+
+  it('lands last when the parent holds no file, and for an empty parent', () => {
+    const tree = buildFileTree([], '/a', ['/a/one', '/a/two'])
+    expect(createRowIndex(tree)).toBe(2)
+    expect(createRowIndex([])).toBe(0)
+  })
+})
+
+describe('findTreeNode / siblingBasenames', () => {
+  const makeDoc = (id: string, filePath: string, folderPath: string) => ({
+    id,
+    title: id,
+    folderPath,
+    content: '',
+    filePath,
+    encoding: 'utf-8',
+    encodingConfidence: 1,
+    createdAt: 0,
+    updatedAt: 0,
+    wordCount: 0,
+  })
+  const tree = buildFileTree(
+    [
+      makeDoc('a', '/docs/a.md', '/docs'),
+      makeDoc('b', '/docs/b.md', '/docs'),
+      makeDoc('x', '/docs/sub/x.md', '/docs/sub'),
+      makeDoc('y', '/docs/sub/inner/y.md', '/docs/sub/inner'),
+    ],
+    '/docs',
+    ['/docs/sub', '/docs/sub/inner'],
+  )
+
+  it("lists a folder's immediate siblings, including document-less subfolders", () => {
+    const sibs = siblingBasenames(tree, '/docs')
+    expect(sibs.has('a.md')).toBe(true)
+    expect(sibs.has('b.md')).toBe(true)
+    expect(sibs.has('sub')).toBe(true)
+    expect(sibs.has('x.md')).toBe(false)
+  })
+
+  it('lists the siblings inside a nested folder', () => {
+    const sibs = siblingBasenames(tree, '/docs/sub')
+    expect(sibs.has('x.md')).toBe(true)
+    expect(sibs.has('inner')).toBe(true)
+  })
+
+  it('treats the root folder as its own top-level children and tolerates a trailing slash', () => {
+    expect(siblingBasenames(tree, '/docs/').has('a.md')).toBe(true)
+  })
+
+  it('falls back to the top level for an unknown parent and to empty for an empty tree', () => {
+    expect(siblingBasenames(tree, '/docs/nowhere').has('a.md')).toBe(true)
+    expect(siblingBasenames([], '/docs').size).toBe(0)
+  })
+
+  it('finds a node by path (normalized across separators) or returns undefined', () => {
+    expect(findTreeNode(tree, '\\docs\\sub')?.path).toBe('/docs/sub')
+    expect(findTreeNode(tree, '/docs/missing')).toBeUndefined()
+  })
+
+  it('finds a deeply nested node, propagating the match up through parent recursion', () => {
+    expect(findTreeNode(tree, '/docs/sub/inner/y.md')?.path).toBe('/docs/sub/inner/y.md')
+  })
+})
+
+describe('repointExpandedSet', () => {
+  it('rewrites the renamed folder itself onto the new path', () => {
+    const prev = new Set(['/docs/old'])
+    expect(repointExpandedSet(prev, '/docs/old', '/docs/new')).toEqual(new Set(['/docs/new']))
+  })
+
+  it('preserves siblings outside the renamed subtree', () => {
+    const prev = new Set(['/docs/other', '/docs/old'])
+    expect(repointExpandedSet(prev, '/docs/old', '/docs/new')).toEqual(
+      new Set(['/docs/other', '/docs/new']),
+    )
+  })
+
+  it('re-points expanded descendants under the renamed folder', () => {
+    const prev = new Set(['/docs/old', '/docs/old/sub', '/docs/old/sub/deep'])
+    expect(repointExpandedSet(prev, '/docs/old', '/docs/new')).toEqual(
+      new Set(['/docs/new', '/docs/new/sub', '/docs/new/sub/deep']),
+    )
+  })
+
+  it('normalizes separator differences between old/expanded paths', () => {
+    const prev = new Set(['C:\\docs\\old\\sub'])
+    expect(repointExpandedSet(prev, 'C:/docs/old', 'C:/docs/new')).toEqual(
+      new Set(['C:/docs/new/sub']),
+    )
+  })
+
+  it('is a no-op when nothing matches the old path', () => {
+    const prev = new Set(['/docs/a', '/docs/b'])
+    expect(repointExpandedSet(prev, '/docs/old', '/docs/new')).toEqual(prev)
+  })
+})
+
+describe('invalidBaseName', () => {
+  it('rejects separators and OS-illegal characters', () => {
+    for (const bad of ['a/b', 'a\\b', 'a:b', 'a*b', 'a?b', 'a"b', 'a<b', 'a>b', 'a|b']) {
+      expect(invalidBaseName(bad)).toBe(true)
+    }
+  })
+
+  it('treats the reserved dot names as invalid but a leading dot as a plain name', () => {
+    expect(invalidBaseName('.')).toBe(true)
+    expect(invalidBaseName('..')).toBe(true)
+    // `.gitignore` is a normal name: a leading dot is not an extension, and it is not reserved.
+    expect(invalidBaseName('.gitignore')).toBe(false)
+  })
+
+  it('accepts ordinary names and leaves emptiness to the caller', () => {
+    expect(invalidBaseName('notes')).toBe(false)
+    expect(invalidBaseName('my folder')).toBe(false)
+    // The inline input cancels an empty name itself, so it is not "invalid" here.
+    expect(invalidBaseName('')).toBe(false)
+    expect(invalidBaseName('   ')).toBe(false)
+  })
+})
+
+describe('platform-aware name comparison (VS Code rule)', () => {
+  const WIN_UA =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  const MAC_UA =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  const LINUX_UA =
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  const setUa = (ua: string) =>
+    Object.defineProperty(navigator, 'userAgent', { value: ua, configurable: true })
+  const restoreUa = () => delete (navigator as unknown as { userAgent?: string }).userAgent
+
+  it('is case-insensitive on Windows and macOS, case-sensitive on Linux', () => {
+    try {
+      setUa(WIN_UA)
+      expect(isWindows()).toBe(true)
+      expect(pathCaseSensitive()).toBe(false)
+      setUa(MAC_UA)
+      expect(pathCaseSensitive()).toBe(false)
+      setUa(LINUX_UA)
+      expect(isWindows()).toBe(false)
+      expect(pathCaseSensitive()).toBe(true)
+    } finally {
+      restoreUa()
+    }
+  })
+
+  it('folds case only where the filesystem is case-insensitive', () => {
+    try {
+      setUa(WIN_UA)
+      expect(foldName('Note.md')).toBe('note.md')
+      setUa(LINUX_UA)
+      expect(foldName('Note.md')).toBe('Note.md')
+    } finally {
+      restoreUa()
+    }
+  })
+
+  it('returns false for isWindows when navigator is unavailable', () => {
+    const original = globalThis.navigator
+    // @ts-expect-error - simulating a non-browser environment
+    delete globalThis.navigator
+    try {
+      expect(isWindows()).toBe(false)
+    } finally {
+      globalThis.navigator = original
+    }
   })
 })

@@ -37,11 +37,32 @@ function renderHook<T>(factory: () => T) {
 }
 
 describe('useSearch', () => {
-  it('queries the search api with the current query when non-empty', () => {
-    act(() => useUIStore.getState().setSearchQuery('hello'))
+  it('queries the search api with the current query, scope and mode when non-empty', () => {
+    act(() => {
+      useUIStore.getState().setSearchQuery('hello')
+      useUIStore.getState().setSearchMode('filename')
+      useUIStore.getState().setActiveFolder('/docs')
+    })
     api.search.query.mockResolvedValue([])
     renderHook(() => useSearch())
-    expect(api.search.query).toHaveBeenCalledWith('hello')
+    expect(api.search.query).toHaveBeenCalledWith('hello', {
+      scopeFolder: '/docs',
+      mode: 'filename',
+    })
+  })
+
+  it('passes a null scope and content mode by default', () => {
+    act(() => {
+      useUIStore.getState().setSearchQuery('hello')
+      useUIStore.getState().setActiveFolder(null)
+      useUIStore.getState().setSearchMode('content')
+    })
+    api.search.query.mockResolvedValue([])
+    renderHook(() => useSearch())
+    expect(api.search.query).toHaveBeenCalledWith('hello', {
+      scopeFolder: null,
+      mode: 'content',
+    })
   })
 
   it('does not query when the search query is empty', () => {

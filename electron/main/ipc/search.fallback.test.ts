@@ -4,7 +4,7 @@
 // 41-44): when `Intl.Segmenter` is unavailable, tokenize must fall back to a
 // `\p{P}` punctuation split. search.ts only caches `segmenter` lazily inside
 // getSegmenter() (on first query), so deleting the global before the first
-// query is enough — the module import itself never touches Intl.Segmenter.
+// query is enough the module import itself never touches Intl.Segmenter
 // Vitest isolates each file's module graph, so this does not affect the other
 // search suite.
 import { describe, it, expect, beforeAll } from 'vitest'
@@ -38,12 +38,16 @@ describe('tokenize fallback (no Intl.Segmenter)', () => {
   })
 
   it('still tokenizes and matches without Intl.Segmenter', async () => {
-    const res = (await handlers['search:query']!('evt', 'markdown')) as Array<{ id: string }>
+    const res = (await handlers['search:query']!('evt', {
+      query: 'markdown',
+    })) as Array<{ id: string }>
     expect(res.map((r) => r.id)).toContain('1')
   })
 
   it('matches Chinese text via the punctuation-split fallback', async () => {
-    const res = (await handlers['search:query']!('evt', '检索')) as Array<{ id: string }>
+    const res = (await handlers['search:query']!('evt', {
+      query: '检索',
+    })) as Array<{ id: string }>
     expect(res.map((r) => r.id)).toContain('1')
   })
 })

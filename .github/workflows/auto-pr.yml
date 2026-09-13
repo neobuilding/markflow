@@ -51,6 +51,15 @@ jobs:
               with:
                   # Full history so `git log main..HEAD` is accurate.
                   fetch-depth: 0
+            - uses: actions/setup-node@v7
+              with: { node-version: 22, cache: npm }
+            # The action consumes the bundled actions/create-pr/dist/index.mjs directly.
+            # We do NOT commit dist/: instead build it from the committed src right here,
+            # so the code auto-pr runs is always fresh and can never be stale.
+            - name: Build the Create / Refresh PR action
+              run: |
+                  npm ci --prefix actions/create-pr
+                  npm run build:action
             - name: Plan
               run: echo "::notice::Auto-PR triggered for branch '${{ github.ref_name }}' → will create or refresh a PR into 'main' (idempotent; re-runs are no-ops)."
             - name: Create / refresh PR

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { en, type TranslationKey } from './en'
 import { zhCN } from './zh-CN'
 
-// Shared UI translation dictionaries — pure data, validated structurally so a
+// Shared UI translation dictionaries pure data, validated structurally so a
 // missing/extra/mistyped key fails the build via both the type system and these
 // runtime assertions (the type check alone doesn't run in `vitest run` for the
 // plain-object export without an actual import).

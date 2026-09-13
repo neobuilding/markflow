@@ -2,15 +2,15 @@
 //
 // This file is intentionally OUTSIDE the unit-test glob (actions/create-pr/src/**/*.test.mjs)
 // because it spawns a real child process and reads the real repository template
-// file — i.e. it performs real filesystem I/O, which unit tests must not do.
+// file i.e. it performs real filesystem I/O, which unit tests must not do
 // Run it on demand (e.g. `node --experimental-vm-modules node_modules/vitest/vitest.mjs run e2e/integration`)
 // or via a dedicated integration CI job. It is intentionally excluded from the regular unit-test
-// (coverage) run — see the glob in vitest.config.ts — so it never runs as part of the normal suite.
+// (coverage) run see the glob in vitest.config.ts so it never runs as part of the normal suite
 //
 // cli-render.mjs is the "preview locally" entry point: it parses CLI flags,
 // reads the template (defaulting to the same path the Action uses) and the
 // optional existing body into strings, then delegates to renderTemplate. These
-// tests exercise that thin adapter against a real child process — covering both
+// tests exercise that thin adapter against a real child process covering both
 // the fresh (create) and refresh scenarios, plus the default-template-path and
 // missing-required-flag behaviors. The rendering itself is covered in
 // render-template.test.mjs; here we assert the CLI wiring around it.

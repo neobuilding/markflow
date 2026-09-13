@@ -31,4 +31,14 @@ describe('preload clipboard bridge', () => {
     const result = await clipboardApi.writeText('payload')
     expect(result).toBe('ok')
   })
+
+  it('writeImage invokes clipboard:write-image with the source path', () => {
+    clipboardApi.writeImage('/foo/bar.png')
+    expect(invoked).toEqual([{ channel: 'clipboard:write-image', arg: '/foo/bar.png' }])
+  })
+
+  it('writeImage forwards an appdoc:// source', () => {
+    clipboardApi.writeImage('appdoc://d1/im.png')
+    expect(invoked).toEqual([{ channel: 'clipboard:write-image', arg: 'appdoc://d1/im.png' }])
+  })
 })

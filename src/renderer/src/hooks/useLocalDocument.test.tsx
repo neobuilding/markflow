@@ -16,7 +16,7 @@ beforeEach(() => {
   }
 })
 
-// `strict` renders inside <StrictMode>, which remounts effects once — the only
+// `strict` renders inside <StrictMode>, which remounts effects once the only
 // way the switch effect re-runs for an UNCHANGED document id, exercising its
 // early-return branch (production runs under StrictMode, see main.tsx).
 function renderLocalDocument(
@@ -117,7 +117,7 @@ const baseDisplayTitle = 'hi.md'
 
 describe('useLocalDocument — title draft is in display form', () => {
   it('seeds the draft from the file name (with extension), not the extension-free title', () => {
-    // `title` is 'Hi' but the file is hi.md — the title bar must show `hi.md`.
+    // `title` is 'Hi' but the file is hi.md the title bar must show `hi.md`
     const { result, unmount } = renderLocalDocument(baseDoc)
     expect(result.current.localTitle).toBe(baseDisplayTitle)
     unmount()
@@ -133,6 +133,18 @@ describe('useLocalDocument — title draft is in display form', () => {
     const { result, unmount } = renderLocalDocument({ ...baseDoc, filePath: '', title: '' })
     expect(result.current.localTitle).toBe('')
     unmount()
+  })
+})
+
+describe('useLocalDocument — title refresh on external rename (bug 3b)', () => {
+  it('updates the title when only the filePath changes, even with the same updatedAt', () => {
+    const { result, setDoc } = renderLocalDocument({ ...baseDoc })
+    expect(result.current.localTitle).toBe(baseDisplayTitle)
+    // A sidebar rename is a disk move: the document id and updatedAt are unchanged, only the
+    // path differs. The earlier implementation keyed the title refresh on (id, updatedAt), so
+    // the title bar kept showing the OLD file name.
+    setDoc({ ...baseDoc, filePath: '/a/renamed.md' })
+    expect(result.current.localTitle).toBe('renamed.md')
   })
 })
 

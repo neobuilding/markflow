@@ -6,7 +6,7 @@
 // dropped) and (b) coalesce a burst of folder-changed broadcasts into a single
 // invalidation. The handler composes three pieces changed during the chokidar
 // lag fix: the activeFolder filter (isDirInFolder), the renderer-side 300ms
-// coalesce, and the React Query invalidation — none of which were exercised
+// coalesce, and the React Query invalidation none of which were exercised
 // together by the per-unit tests (utils.test.tsx covers isDirInFolder alone).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
@@ -79,7 +79,7 @@ describe('App — app:folder-changed handler (integration)', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
     expect(folderCbs).toHaveLength(1)
 
-    // Event under an unrelated folder — must NOT invalidate.
+    // Event under an unrelated folder must NOT invalidate
     folderCbs[0]({ dirPath: '/unrelated' })
     // Let any stray microtask settle so a false invalidate would surface.
     await Promise.resolve()
@@ -108,7 +108,7 @@ describe('App — app:folder-changed handler (integration)', () => {
 
     // Fire three broadcasts for the same folder well inside the 300ms window.
     for (let i = 0; i < 3; i++) folderCbs[0]({ dirPath: '/notes' })
-    // Not yet — the coalesce window has not elapsed.
+    // Not yet the coalesce window has not elapsed
     expect(invalidateSpy).not.toHaveBeenCalled()
     vi.advanceTimersByTime(350)
     expect(invalidateSpy).toHaveBeenCalledTimes(1)

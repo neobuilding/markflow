@@ -143,7 +143,7 @@ describe('MarkdownEditor — read-only/edit facets stay in sync across switches'
     checkRead('C (read-only)')
     expect(facets(container)?.content).toBe('# C content')
 
-    // Edit C — this is where the bug recurred
+    // Edit C this is where the bug recurred
     await act(async () => {
       root.render(
         <MarkdownEditor content="# C content" onChange={() => {}} editable={true} docId="c" />,

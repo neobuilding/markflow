@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useCallback } from 'react'
+import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import {
@@ -7,13 +7,41 @@ import {
   historyKeymap,
   indentWithTab,
   isolateHistory,
+  undo,
+  redo,
+  selectAll,
+  undoDepth,
+  redoDepth,
 } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
-import { searchKeymap } from '@codemirror/search'
+import { searchKeymap, search, openSearchPanel } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
-import { debounce } from '../../lib/utils'
+import {
+  Undo2,
+  Redo2,
+  Scissors,
+  Copy,
+  ClipboardPaste,
+  List,
+  Bold,
+  Italic,
+  Code,
+  Link2,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+} from 'lucide-react'
+import { debounce, formatShortcut } from '../../lib/utils'
 import { scrollSync } from '../../lib/scrollSync'
+import { useT } from '../../i18n'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '../ui/context-menu'
 
 interface MarkdownEditorProps {
   content: string
@@ -21,6 +49,7 @@ interface MarkdownEditorProps {
   autoFocus?: boolean
   editable?: boolean
   docId?: string | null
+  filePath?: string | null
 }
 
 export function MarkdownEditor({
@@ -29,6 +58,7 @@ export function MarkdownEditor({
   autoFocus,
   editable = true,
   docId,
+  filePath = null,
 }: MarkdownEditorProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -43,7 +73,7 @@ export function MarkdownEditor({
   // panes are first emptied (still the new id) and only filled once the query
   // data lands. `isDocSwitch` is true on the first of those and FALSE on the
   // second, so keying the undo-history isolation off it alone would leave the
-  // fill un-isolated — Ctrl+Z would then undo across the document boundary back
+  // fill un-isolated Ctrl+Z would then undo across the document boundary back
   // into the previous file.
   const pendingSwitchRef = useRef(false)
   // A programmatic write (document switch / external sync) is in progress: suppress the
@@ -95,7 +125,7 @@ export function MarkdownEditor({
   //   - EditorView.editable:  controls the DOM contenteditable attribute (user input only)
   // CRITICAL: both must ALWAYS be set to the SAME value in the SAME place. The original bug was that
   // they lived in separate effects, so toggling edit flipped EditorView.editable but left
-  // EditorState.readOnly locked — contenteditable='true' yet typing was hard-blocked (the exact
+  // EditorState.readOnly locked contenteditable='true' yet typing was hard-blocked (the exact
   // "toolbar says edit mode but you cannot type" symptom after switching files). Reconfiguring them
   // together makes a split state impossible.
   const readOnlyFacets = (
@@ -104,6 +134,158 @@ export function MarkdownEditor({
     EditorState.readOnly.of(!isEditable),
     EditorView.editable.of(isEditable),
   ]
+
+  // ── Right-click (context) menu: state, command snapshot & commands ──
+  // The menu is rendered inside this component so it holds the viewRef directly no
+  // forwardRef command exposure is needed
+  const { t } = useT()
+
+  type CmdState = {
+    canUndo: boolean
+    canRedo: boolean
+    hasSelection: boolean
+    docEmpty: boolean
+    linkUrl: string | null
+  }
+  const initialCmd: CmdState = {
+    canUndo: false,
+    canRedo: false,
+    hasSelection: false,
+    docEmpty: false,
+    linkUrl: null,
+  }
+  const [cmd, setCmd] = useState<CmdState>(initialCmd)
+  // CM selection cached on pointerdown (capture phase), used to restore the selection if
+  // the contextmenu event clears it (G4, / )
+  const cachedSelRef = useRef<{ from: number; to: number } | null>(null)
+
+  const cacheSelection = useCallback(() => {
+    const view = viewRef.current
+    /* v8 ignore next -- defensive: a pointerdown reaches this handler only via the mounted editor DOM, so the view is never null */
+    if (!view) return
+    const s = view.state.selection.main
+    cachedSelRef.current = { from: s.from, to: s.to }
+  }, [])
+
+  // Effective selection: if the live selection was cleared by the contextmenu but we
+  // cached a real one on pointerdown, restore the cached range so cut/copy/format act on it.
+  const getSelectionRange = (): { from: number; to: number } => {
+    const view = viewRef.current
+    /* v8 ignore next -- defensive: only called from menu item handlers, which require a mounted editor */
+    if (!view) return { from: 0, to: 0 }
+    const live = view.state.selection.main
+    const cached = cachedSelRef.current
+    if (live.empty && cached && cached.from !== cached.to) return cached
+    return { from: live.from, to: live.to }
+  }
+
+  // Detect a markdown link under the cursor so "Open Link in Browser" can enable
+  // Regex over the cursor's line is the pragmatic fallback (: " ]( URL ")
+  const linkUrlAt = (state: EditorState, pos: number): string | null => {
+    const line = state.doc.lineAt(pos)
+    const re = /\[[^\]]*\]\(([^)\s]+)\)/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(line.text))) {
+      const start = line.from + m.index
+      const end = start + m[0].length
+      if (pos >= start && pos <= end) return m[1]
+    }
+    return null
+  }
+
+  // Snapshot command availability when the menu opens
+  const snapshotCommands = (open: boolean) => {
+    if (!open) return
+    const view = viewRef.current
+    /* v8 ignore next -- defensive: the menu only opens over the mounted editor */
+    if (!view) return
+    const state = view.state
+    const sel = getSelectionRange()
+    setCmd({
+      canUndo: undoDepth(state) > 0,
+      canRedo: redoDepth(state) > 0,
+      hasSelection: sel.from !== sel.to,
+      docEmpty: state.doc.length === 0,
+      linkUrl: linkUrlAt(state, state.selection.main.head),
+    })
+  }
+
+  const doUndo = () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    undo(v)
+    v.focus()
+  }
+  const doRedo = () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    redo(v)
+    v.focus()
+  }
+  const doSelectAll = () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    selectAll(v)
+    v.focus()
+  }
+  const doCut = async () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    const { from, to } = getSelectionRange()
+    const text = v.state.sliceDoc(from, to)
+    await window.api.clipboard.writeText(text)
+    // A zero-length range is a no-op replace, so this is safe for cut-with-no-selection too.
+    v.dispatch({ changes: { from, to, insert: '' } })
+    v.focus()
+  }
+  const doCopy = async () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    const { from, to } = getSelectionRange()
+    await window.api.clipboard.writeText(v.state.sliceDoc(from, to))
+    v.focus()
+  }
+  const doPaste = async () => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    const text = await navigator.clipboard.readText()
+    const { from, to } = getSelectionRange()
+    v.dispatch({ changes: { from, to, insert: text } })
+    v.focus()
+  }
+  // Toggle a marker pair around the selection; with no selection, insert the markers with
+  // the cursor parked between them (: never insert the literal 'text' placeholder)
+  const wrap = (before: string, after: string) => {
+    const v = viewRef.current
+    /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
+    if (!v) return
+    const { from, to } = getSelectionRange()
+    const sel = v.state.sliceDoc(from, to)
+    v.dispatch({
+      changes: { from, to, insert: before + sel + after },
+      selection: { anchor: from + before.length, head: from + before.length + sel.length },
+    })
+    v.focus()
+  }
+  const openLinkInBrowser = () => {
+    // Safe: this item is disabled when cmd.linkUrl is null
+    void window.api.app.openExternal(cmd.linkUrl!)
+  }
+  const copyFilePath = () => {
+    // Safe: this item is disabled when filePath is null.
+    void window.api.clipboard.writeText(filePath as string)
+  }
+  const showInFolder = () => {
+    // Safe: this item is disabled when filePath is null. .catch swallows a failure
+    // (e.g. an externally-deleted file) so it fails gracefully
+    void Promise.resolve(window.api.app.showInFolder(filePath as string)).catch(() => {})
+  }
 
   useEffect(() => {
     // The container div is rendered unconditionally, so the ref is always attached once
@@ -119,6 +301,11 @@ export function MarkdownEditor({
         history(),
         highlightActiveLine(),
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        // In-editor find panel. The keymap above binds Mod-f to open it; the `search` extension
+        // provides both the search state and the panel UI that `openSearchPanel` reveals. An
+        // external "markdown:find" event (fired by the editor toolbar button) opens it too, so
+        // the button works without editor focus.
+        search(),
         markdown({
           base: markdownLanguage,
           codeLanguages: languages,
@@ -168,8 +355,8 @@ export function MarkdownEditor({
     scrollSync.register('editor', view.scrollDOM)
 
     // Focus on mount when already editable (e.g. a freshly opened editable doc, or a document
-    // switch that lands in edit mode). Without this, a key-remounted editor has no focus and —
-    // especially under Electron — clicking into it may fail to focus, so typing appears dead until
+    // switch that lands in edit mode). Without this, a key-remounted editor has no focus and
+    // especially under Electron clicking into it may fail to focus, so typing appears dead until
     // the window loses and regains focus. autoFocus covers the explicit "open and focus" case.
     // window.focus() first helps Electron give the renderer process OS focus (a bare view.focus()
     // fired during a programmatic remount, with no user gesture, is silently dropped otherwise).
@@ -204,8 +391,31 @@ export function MarkdownEditor({
 
     document.addEventListener('markdown:insert', handleInsert)
 
+    // Open the in-editor find panel on request from the editor toolbar button. CodeMirror's
+    // own Mod-f binding already opens it when the editor has focus; this listener covers the
+    // case where the button is clicked without editor focus.
+    const handleFind = () => {
+      const v = viewRef.current
+      /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
+      if (!v) return
+      openSearchPanel(v)
+    }
+    document.addEventListener('markdown:find', handleFind)
+
+    // Replace entry point (Ctrl+H / toolbar button). The CodeMirror search panel already
+    // includes a replace field, so we reuse the same panel as find.
+    const handleReplace = () => {
+      const v = viewRef.current
+      /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
+      if (!v) return
+      openSearchPanel(v)
+    }
+    document.addEventListener('markdown:replace', handleReplace)
+
     return () => {
       document.removeEventListener('markdown:insert', handleInsert)
+      document.removeEventListener('markdown:find', handleFind)
+      document.removeEventListener('markdown:replace', handleReplace)
       scrollSync.unregister('editor')
       view.destroy()
       viewRef.current = null
@@ -219,17 +429,17 @@ export function MarkdownEditor({
     const view = viewRef.current
     // The view is always created by the mount effect above before this effect
     // can run (it only re-runs on `editable` changes, which require a mounted
-    // editor), so `view` is never null here — defensive guard only.
+    // editor), so `view` is never null here defensive guard only
     /* v8 ignore next -- defensive: the mount effect always creates the view before this effect runs, so view is never null */
     if (!view) return
     view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(editable)) })
     // Entering edit mode: take focus so the user can type immediately without first clicking into
-    // the editor. This is the real fix for "switched to edit mode but couldn't type" — the editor
+    // the editor. This is the real fix for "switched to edit mode but couldn't type" the editor
     // was editable (facet=true) but simply had no focus, and under Electron a click didn't always
     // re-focus it. Leaving edit mode must NOT steal focus, so only focus when becoming editable.
     if (editable) {
       // Under Electron a programmatic view.focus() (fired from a store change, e.g. clicking the
-      // edit-mode button) is dropped unless the renderer already has OS focus — that's why typing
+      // edit-mode button) is dropped unless the renderer already has OS focus that's why typing
       // only worked after Alt-Tab away and back. requestFocus() focuses the content DOM directly
       // (with a few animation-frame retries) so typing works immediately when entering edit mode.
       requestFocus()
@@ -258,12 +468,12 @@ export function MarkdownEditor({
     // A document switch must always re-apply the current editable state, otherwise the editor
     // can stay stuck in the previous document's read-only/edit mode after switching files
     // (editable is a global flag that the switch itself doesn't change, so its dedicated effect
-    // may not re-run — leaving the editor out of sync with the toolbar). Reconfigure BOTH facets
+    // may not re-run leaving the editor out of sync with the toolbar). Reconfigure BOTH facets
     // together so read-only and editable can never diverge.
     if (isDocSwitch) {
       // NOTE on EditorState.readOnly: it is an advisory facet. CodeMirror's own
       // code only reads it to disable its built-in commands / input handling and
-      // to set aria-readonly — it does NOT block a programmatic view.dispatch()
+      // to set aria-readonly it does NOT block a programmatic view.dispatch
       // (verified against @codemirror/view: the only read of state.readOutside of
       // input & command paths is contentAttrs["aria-readonly"]). The content write
       // below would therefore succeed with the lock ON.
@@ -314,7 +524,7 @@ export function MarkdownEditor({
 
   // Focus the editor on a REAL user gesture (pointerdown into the editor area). This runs
   // synchronously inside the browser's user-activation context, so the browser WILL grant the
-  // webContents OS focus and dispatch a focus event — making CodeMirror's hasFocus=true and
+  // webContents OS focus and dispatch a focus event making CodeMirror's hasFocus=true and
   // keystrokes reach the editor. A programmatic focus() (e.g. from a store change / setTimeout) is
   // dropped by Windows' foreground-lock, which is exactly why typing only worked after Alt-Tab.
   const handlePointerDown = useCallback(() => {
@@ -331,11 +541,119 @@ export function MarkdownEditor({
   }, [])
 
   return (
-    <div
-      ref={containerRef}
-      onPointerDown={handlePointerDown}
-      className="h-full overflow-auto editor-content"
-      style={{ background: 'var(--color-surface)' }}
-    />
+    <ContextMenu onOpenChange={snapshotCommands}>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={containerRef}
+          onPointerDown={handlePointerDown}
+          onPointerDownCapture={cacheSelection}
+          className="h-full overflow-auto editor-content"
+          style={{ background: 'var(--color-surface)' }}
+        >
+          {/* The CodeMirror view is appended here by the mount effect. */}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          data-testid="me-undo"
+          shortcut={formatShortcut('⌘Z')}
+          disabled={!editable || !cmd.canUndo}
+          onClick={doUndo}
+        >
+          <Undo2 size={13} /> {t('ctx.undo')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-redo"
+          shortcut={formatShortcut('⌘⇧Z')}
+          disabled={!editable || !cmd.canRedo}
+          onClick={doRedo}
+        >
+          <Redo2 size={13} /> {t('ctx.redo')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-cut"
+          shortcut={formatShortcut('⌘X')}
+          disabled={!editable || !cmd.hasSelection}
+          onClick={() => void doCut()}
+        >
+          <Scissors size={13} /> {t('ctx.cut')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-copy"
+          shortcut={formatShortcut('⌘C')}
+          disabled={!cmd.hasSelection}
+          onClick={() => void doCopy()}
+        >
+          <Copy size={13} /> {t('ctx.copy')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-paste"
+          shortcut={formatShortcut('⌘V')}
+          disabled={!editable}
+          onClick={() => void doPaste()}
+        >
+          <ClipboardPaste size={13} /> {t('ctx.paste')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-select-all"
+          shortcut={formatShortcut('⌘A')}
+          disabled={cmd.docEmpty}
+          onClick={doSelectAll}
+        >
+          <List size={13} /> {t('ctx.selectAll')}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          data-testid="me-bold"
+          shortcut={formatShortcut('⌘B')}
+          disabled={!editable}
+          onClick={() => wrap('**', '**')}
+        >
+          <Bold size={13} /> {t('editor.fmt.bold')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-italic"
+          shortcut={formatShortcut('⌘I')}
+          disabled={!editable}
+          onClick={() => wrap('_', '_')}
+        >
+          <Italic size={13} /> {t('editor.fmt.italic')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-inline-code"
+          shortcut={formatShortcut('⌘E')}
+          disabled={!editable}
+          onClick={() => wrap('`', '`')}
+        >
+          <Code size={13} /> {t('editor.fmt.code')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-link"
+          shortcut={formatShortcut('⌘K')}
+          disabled={!editable}
+          onClick={() => wrap('[', '](url)')}
+        >
+          <Link2 size={13} /> {t('editor.fmt.link')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-open-link-in-browser"
+          disabled={!cmd.linkUrl}
+          onClick={openLinkInBrowser}
+        >
+          <ExternalLink size={13} /> {t('ctx.openLinkInBrowser')}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem data-testid="me-copy-path" disabled={!filePath} onClick={copyFilePath}>
+          <FileText size={13} /> {t('editor.copyFullPath')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="me-show-in-folder"
+          disabled={!filePath}
+          onClick={showInFolder}
+        >
+          <FolderOpen size={13} /> {t('editor.showInFolder')}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }

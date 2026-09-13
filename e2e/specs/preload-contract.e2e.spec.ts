@@ -2,8 +2,8 @@ import type {} from '../../src/renderer/src/vite-env.d.ts'
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 
-// Covers the Plan's §2 (preload split into api/* submodules) and the main-process
-// handler groups from §1.2.2. The refactor is a pure relocation, so the contract
+// Covers the Plan's (preload split into api/* submodules) and the main-process
+// handler groups from The refactor is a pure relocation, so the contract
 // we must guarantee is: every `window.api.*` group + method the renderer depends on
 // still exists and is callable after the preload/index.ts reassembly, and the
 // per-domain IPC handlers registered by the split main modules still respond.
@@ -21,7 +21,7 @@ test.describe('preload bridge contract (api/* split)', () => {
     await closeApp(handle)
   })
 
-  // Walk the full Api surface that the plan's §2.2 says must stay byte-identical
+  // Walk the full Api surface that the plan's says must stay byte-identical
   // to vite-env.d.ts. We assert every method is a function (exists), which is the
   // contract the refactor must preserve.
   test('every api group + method from the Api interface is exposed', async () => {
@@ -50,7 +50,7 @@ test.describe('preload bridge contract (api/* split)', () => {
       }
     })
 
-    // documents — §2.2
+    // documents
     expect(surface.documents).toEqual(
       expect.objectContaining({
         list: 'function',
@@ -69,7 +69,7 @@ test.describe('preload bridge contract (api/* split)', () => {
         clearOpenFolders: 'function',
       }),
     )
-    // export — §2.2
+    // export
     expect(surface.export).toEqual(
       expect.objectContaining({
         embedImages: 'function',
@@ -77,9 +77,9 @@ test.describe('preload bridge contract (api/* split)', () => {
         print: 'function',
       }),
     )
-    // search — §2.2
+    // search
     expect(surface.search).toEqual(expect.objectContaining({ query: 'function' }))
-    // app — §2.2 (getInitialPaths / showInFolder / setLanguage / allowQuit are the
+    // app (getInitialPaths / showInFolder / setLanguage / allowQuit are the
     // easily-omitted four called out in the plan)
     expect(surface.app).toEqual(
       expect.objectContaining({
@@ -92,14 +92,14 @@ test.describe('preload bridge contract (api/* split)', () => {
         allowQuit: 'function',
       }),
     )
-    // files — §2.2 (getPathForFile + resolvePaths)
+    // files (getPathForFile + resolvePaths)
     expect(surface.files).toEqual(
       expect.objectContaining({
         resolvePaths: 'function',
         getPathForFile: 'function',
       }),
     )
-    // dialog — §2.2 (openFolderPath + saveHtmlFile are the easily-omitted two)
+    // dialog (openFolderPath + saveHtmlFile are the easily-omitted two)
     expect(surface.dialog).toEqual(
       expect.objectContaining({
         openFiles: 'function',
@@ -110,8 +110,8 @@ test.describe('preload bridge contract (api/* split)', () => {
         confirm: 'function',
       }),
     )
-    // window — §2.2 (maximize/unmaximize/isMaximized ONLY; focus must NOT exist,
-    // per the voided §1.5 / R1)
+    // window (maximize/unmaximize/isMaximized ONLY; focus must NOT exist,
+    // per the voided / R1)
     expect(surface.window).toEqual(
       expect.objectContaining({
         maximize: 'function',
@@ -120,7 +120,7 @@ test.describe('preload bridge contract (api/* split)', () => {
       }),
     )
     expect(surface.window).not.toHaveProperty('focus')
-    // menu — §2.2
+    // menu
     expect(surface.menu).toEqual(
       expect.objectContaining({
         setEditable: 'function',
@@ -128,7 +128,7 @@ test.describe('preload bridge contract (api/* split)', () => {
         setPrinting: 'function',
       }),
     )
-    // 4 event subscriptions — §2.2 events.ts
+    // 4 event subscriptions events.ts
     expect(surface.events).toEqual({
       onMenuEvent: 'function',
       onFileChanged: 'function',
@@ -141,7 +141,7 @@ test.describe('preload bridge contract (api/* split)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // The plan §0 R1 calls out `dialog:confirm` (dialog.showMessageBox, app-modal)
+    // The plan R1 calls out `dialog:confirm` (dialog.showMessageBox, app-modal)
     // as the real fix for the editor-focus bug. It must stay wired after the
     // preload dialog group is moved to api/dialog.ts and the handler to
     // handlers/dialog.ts.
@@ -158,13 +158,13 @@ test.describe('preload bridge contract (api/* split)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // handlers/window.ts (§1.2.2 E) — these handlers reference getMainWindow()?.
+    // handlers/window.ts ( E) these handlers reference getMainWindow?
     // Verify the preload window group (api/window.ts) still drives them.
     //
     // The *native* maximize state is environment-dependent: under a real window
     // manager (a local desktop) `maximize()` flips `isMaximized()` to true and
     // `unmaximize()` back to false. But headless CI runs on a virtual display
-    // (Xvfb) with no reliable window manager — openbox does not consistently
+    // (Xvfb) with no reliable window manager openbox does not consistently
     // register as the WM there, so `_NET_WM_STATE_MAXIMIZED_*` is never set and
     // `isMaximized()` stays false even after a successful `maximize()` call.
     // That WM behavior is NOT part of the preload bridge contract, so we never
@@ -197,7 +197,7 @@ test.describe('preload bridge contract (api/* split)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // handlers/app.ts (§1.2, previously lumped into other groups) — getInitialPaths
+    // handlers/app.ts (, previously lumped into other groups) getInitialPaths
     // reads pendingInitialPaths from state.ts, getVersion from app.getVersion().
     const paths = await page.evaluate(() => window.api.app.getInitialPaths())
     expect(Array.isArray(paths)).toBe(true)
@@ -211,7 +211,7 @@ test.describe('preload bridge contract (api/* split)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // handlers/files.ts (§1.2) — depends on MD_EXTS + collectMarkdownFiles.
+    // handlers/files.ts depends on MD_EXTS + collectMarkdownFiles
     const res = await page.evaluate(() => window.api.files.resolvePaths([]))
     expect(res).toEqual(
       expect.objectContaining({
@@ -235,7 +235,7 @@ test.describe('preload bridge contract (api/* split)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // api/events.ts (§2.2) — the onIpc helper must still return an unsubscribe that
+    // api/events.ts the onIpc helper must still return an unsubscribe that
     // removes the listener. NOTE: page.evaluate cannot serialize a function return
     // value, so we assert the unsubscribe is a function AND callable entirely inside
     // the page, returning a plain boolean result.
@@ -256,9 +256,9 @@ test.describe('preload bridge contract (api/* split)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // api/files.ts (§2.2) — getPathForFile uses electron.webUtils.getPathForFile. The
+    // api/files.ts getPathForFile uses electron.webUtils.getPathForFile. The
     // refactor must keep that binding working after the preload split. A File built in
-    // memory (new File(...)) has no underlying disk path, so webUtils returns '' — the
+    // memory (new File(...)) has no underlying disk path, so webUtils returns '' the
     // contract we assert here is simply: it returns a string and never throws. (Real
     // paths only exist for files chosen via <input type=file> / drag-drop, which e2e
     // cannot synthesize; the actual path resolution is covered by file-roundtrip.spec.)
@@ -279,7 +279,7 @@ test.describe('preload bridge contract (api/* split)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // handlers/theme.ts (§1.2.2) — app:get-theme / app:set-theme moved here. Verify
+    // handlers/theme.ts app:get-theme / app:set-theme moved here. Verify
     // the round-trip: set a concrete theme and read it back.
     const before = await page.evaluate(() => window.api.app.getTheme())
     expect(['light', 'dark']).toContain(before)

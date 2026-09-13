@@ -58,7 +58,7 @@ export function registerDialogHandlers(): void {
 
   // App-modal confirm box used by the renderer to replace window.confirm. Being app-modal (not
   // OS-modal like window.confirm), Electron returns focus to the renderer after it closes, so it
-  // does not trigger the OS window-blur that window.confirm does — which is what previously left
+  // does not trigger the OS window-blur that window.confirm does which is what previously left
   // document.hasFocus() stuck false and broke typing after switching dirty files.
   ipcMain.handle(
     'dialog:confirm',

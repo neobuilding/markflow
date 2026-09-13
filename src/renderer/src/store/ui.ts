@@ -1,10 +1,17 @@
 import { create } from 'zustand'
-import type { ViewMode, ThemeMode } from '../types'
+import type { ViewMode, ThemeMode, SearchMode } from '../types'
 import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/storage'
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
 
+// Cross-component bridge for file actions requested from a different component than the
+// one that performs them . Today only `rename` is used: the sidebar's
+// "Rename" menu item (which lives in `Sidebar`) asks the editor (`EditorPane`) to enter
+// its title-edit state. M2/M3 will extend this union with `save` / `saveAs` / `reload`
+// the consumer effect already narrows on `type: 'rename'`
+export type FileAction = { type: 'rename'; id: string } | { type: 'save' | 'saveAs' | 'reload' }
+
 // Remove a memory-only draft (never saved to disk) and refresh the document list so the
-// sidebar no longer shows the orphan draft (PLAN §6.4).
+// sidebar no longer shows the orphan draft
 function deleteUnsavedDraft(id: string) {
   return window.api.documents.delete(id).finally(() => {
     queryClient.invalidateQueries({ queryKey: DOCS_KEY })
@@ -14,7 +21,7 @@ function deleteUnsavedDraft(id: string) {
 // Tell the main process to drop its recursive watcher over the opened folders: with no
 // folder open there is nothing to keep in sync, and a stale watcher would keep firing
 // events for a directory the user is no longer browsing (see model/folderWatcher.ts).
-// Best-effort and fire-and-forget — closing the workspace must never be blocked by it,
+// Best-effort and fire-and-forget closing the workspace must never be blocked by it,
 // so both a synchronous throw (preload bridge unavailable) and a rejected promise are
 // swallowed rather than escaping into the state transition.
 function clearOpenFolders() {
@@ -30,6 +37,21 @@ interface UIState {
   sidebarOpen: boolean
   toggleSidebar: () => void
   setSidebarOpen: (open: boolean) => void
+
+  // Sidebar folder filtering. OFF (the default) shows only folders that transitively hold a
+  // Markdown document; ON seeds the tree from the on-disk directory listing so folders
+  // without Markdown appear too. In-memory only: no setting is ever persisted, so the app
+  // always restarts on the clean default.
+  showAllFolders: boolean
+  setShowAllFolders: (v: boolean) => void
+  toggleShowAllFolders: () => void
+
+  // Folders created during this session. A brand-new folder is empty, so the filter above
+  // would hide it the instant it is made; these are pinned visible until the folder gains
+  // its first Markdown document (or until the app restarts).
+  recentlyCreatedFolders: ReadonlySet<string>
+  markFolderCreated: (path: string) => void
+  clearCreatedFolder: (path: string) => void
 
   // Active document
   activeDocumentId: string | null
@@ -65,6 +87,9 @@ interface UIState {
   setSearchOpen: (open: boolean) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
+  // Sidebar search mode: 'filename' matches file names only; 'content' is full-text.
+  searchMode: SearchMode
+  setSearchMode: (mode: SearchMode) => void
 
   // Theme
   theme: ThemeMode
@@ -86,11 +111,11 @@ interface UIState {
   dirty: boolean
   setDirty: (dirty: boolean) => void
 
-  // Whether a save is in progress (status bar shows "Saving…")
+  // Whether a save is in progress (status bar shows "Saving")
   saving: boolean
   setSaving: (saving: boolean) => void
 
-  // Whether printing is being prepared (status bar shows "Printing…")
+  // Whether printing is being prepared (status bar shows "Printing")
   printing: boolean
   setPrinting: (printing: boolean) => void
 
@@ -116,12 +141,31 @@ interface UIState {
   // shortcut (Cmd/Ctrl+W) won't lose the workspace).
   exporting: boolean
   setExporting: (v: boolean) => void
+
+  // Cross-component file-action bridge . Set by the sidebar's "Rename" menu to
+  // ask the editor to enter title-edit; consumed (and cleared) by EditorPane's effect.
+  pendingFileAction: FileAction | null
+  requestFileAction: (a: FileAction | null) => void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
   sidebarOpen: true,
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
+
+  showAllFolders: false,
+  setShowAllFolders: (showAllFolders) => set({ showAllFolders }),
+  toggleShowAllFolders: () => set((s) => ({ showAllFolders: !s.showAllFolders })),
+
+  recentlyCreatedFolders: new Set<string>(),
+  markFolderCreated: (path) =>
+    set((s) => ({ recentlyCreatedFolders: new Set(s.recentlyCreatedFolders).add(path) })),
+  clearCreatedFolder: (path) =>
+    set((s) => {
+      const next = new Set(s.recentlyCreatedFolders)
+      next.delete(path)
+      return { recentlyCreatedFolders: next }
+    }),
 
   activeDocumentId: null,
   // Switching documents always returns to read-only mode. This protects files from accidental
@@ -143,7 +187,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   closeDocument: () => {
     if (get().exporting || get().exportOpen) return
     // A memory-only draft that was never saved to disk has no file and only a store entry.
-    // Remove that orphan store entry on close so we don't leave a zombie draft (PLAN §6.4).
+    // Remove that orphan store entry on close so we don't leave a zombie draft
     const id = get().activeDocumentId
     if (id && get().isNewUnsaved) {
       void deleteUnsavedDraft(id)
@@ -168,6 +212,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   setSearchOpen: (open) => set({ searchOpen: open }),
   searchQuery: '',
   setSearchQuery: (q) => set({ searchQuery: q }),
+  searchMode: 'content',
+  setSearchMode: (mode) => set({ searchMode: mode }),
 
   theme: 'light',
   setTheme: (theme) => set({ theme }),
@@ -208,6 +254,9 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   exporting: false,
   setExporting: (v) => set({ exporting: v }),
+
+  pendingFileAction: null,
+  requestFileAction: (a) => set({ pendingFileAction: a }),
 
   isNewUnsaved: false,
   setIsNewUnsaved: (v) => set({ isNewUnsaved: v }),

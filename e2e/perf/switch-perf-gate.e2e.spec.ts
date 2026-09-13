@@ -2,7 +2,7 @@
 //
 // Guards the chokidar-lag root cause: the folder watcher must watch MARKDOWN
 // ONLY. Opening a folder buried under non-md build output (coverage reports,
-// dist/, release/, images, sources…) must therefore not stall the main process.
+// dist/, release/, images, sources) must therefore not stall the main process
 //
 // Measured on this repo before the fix (680 entries, only 16 of them markdown):
 // up to 8 main-process stalls of >100ms, worst ~2s, right after opening a folder.
@@ -48,7 +48,7 @@ const ROUNDS = 3
 //
 // p95 is the ONLY metric with a gap between the two states (49.7 -> 61.2), so it
 // is the primary gate and 55 sits in that gap. stallMs and maxLag OVERLAP across
-// the states (63 vs 32, and 136 vs 117) — they cannot separate fixed from broken
+// the states (63 vs 32, and 136 vs 117) they cannot separate fixed from broken
 // and are kept only as backstops against a gross freeze the p95 would smooth away.
 //
 // ⚠️ KNOWN WEAKNESS, and it is significant: the gap is ~11ms wide on top of
@@ -58,7 +58,7 @@ const ROUNDS = 3
 // flake occasionally, and do NOT trust a green run as proof the watcher filters.
 //
 // The deterministic guarantee that the watcher filters is the functional e2e
-// "only watches markdown" case — it asserts behaviour and has no timing
+// "only watches markdown" case it asserts behaviour and has no timing
 // dependence. This gate is only a backstop for the COST of watching.
 //
 // Override for ad-hoc runs:  PERF_MAX_P95=300 npx playwright test --project=electron-perf-gate
@@ -106,7 +106,7 @@ test.describe('document switch performance gate', () => {
       // Gate, in order of what each metric can actually distinguish (see the
       // threshold notes above). p95 first: it is the ONLY metric with a gap
       // between the fixed and broken states. stallMs and maxLag follow as
-      // backstops — their distributions overlap across the two states, so they
+      // backstops their distributions overlap across the two states, so they
       // only catch a gross freeze that the p95 would smooth away.
       expect(
         p95,

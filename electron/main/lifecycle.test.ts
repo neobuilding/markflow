@@ -381,7 +381,7 @@ describe('main process — before-quit safety net', () => {
     // when the user CONFIRMS, but a prompt the user DISMISSED never sends anything,
     // so the flag stayed true for the rest of the process and this safety net was
     // skipped on every later attempt as well. A renderer that died afterwards could
-    // then never be force-quit — un-exitable, the exact failure the net exists to
+    // then never be force-quit un-exitable, the exact failure the net exists to
     // prevent. quitPending is per-attempt: re-arm it and let the renderer re-report.
     h.fakeWindow.isDestroyed = () => false
     const state = await import('./state.js')
@@ -421,7 +421,7 @@ describe('main process — will-quit watcher teardown', () => {
         new Error('watcher close failed'),
       )
       await loadLifecycle()
-      // Should not throw — the catch in will-quit must swallow it so exit proceeds.
+      // Should not throw the catch in will-quit must swallow it so exit proceeds
       await expect(h.appHandlers['will-quit']({ preventDefault: vi.fn() })).resolves.toBeUndefined()
     } finally {
       vi.useFakeTimers()

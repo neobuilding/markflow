@@ -1,4 +1,4 @@
-// DIAGNOSTIC performance spec — measures how long a document switch takes.
+// DIAGNOSTIC performance spec measures how long a document switch takes
 //
 // This is NOT a pass/fail gate: it has no thresholds, because its job is to
 // answer, with numbers instead of guesses, questions a gate cannot:
@@ -8,7 +8,7 @@
 //     happen on every switch?
 //   * Are long tasks / IPC round-trips involved?
 //
-// It is excluded from `npm run e2e` (and therefore from CI) on purpose — it
+// It is excluded from `npm run e2e` (and therefore from CI) on purpose it
 // reloads the app several times and is slow by design. The regression gate that
 // DOES run in CI lives beside it in switch-perf-gate.e2e.spec.ts and shares
 // every helper through e2e/helpers/perf-fixture.ts.
@@ -49,7 +49,7 @@ test.describe('document switch latency (diagnostic)', () => {
     try {
       await installMainProbe(electronApp)
       // Arm the renderer probe for all future navigations, then reload so it is
-      // live from the app's very first instruction — no human can start a
+      // live from the app's very first instruction no human can start a
       // recording fast enough to catch this window.
       await electronApp.context().addInitScript(rendererProbe)
 

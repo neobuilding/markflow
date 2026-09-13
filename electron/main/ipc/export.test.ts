@@ -199,7 +199,7 @@ describe('export — embed-images edge cases (R7)', () => {
 
   it('keeps the original <img> when the resolved image path is a directory (readFileSync throws)', async () => {
     // A subdirectory inside the doc's directory passes the isSubdir containment check, but
-    // readFileSync on a directory throws — the TOCTOU guard returns null and keeps the original <img>.
+    // readFileSync on a directory throws the TOCTOU guard returns null and keeps the original <img>
     const dir = mkdtempSync(join(tmpdir(), 'mf-embed-'))
     const mdPath = join(dir, 'doc.md')
     writeFileSync(mdPath, '# hi')

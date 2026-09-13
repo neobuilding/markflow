@@ -124,7 +124,7 @@ describe('MarkdownPreview', () => {
     const img = container.querySelector('img') as HTMLImageElement
     fireEvent.error(img)
     // No alt attribute: getAttribute('alt') returns null, so the `?? ''` fallback and the
-    // generic (alt-less) message branch are both exercised — the text must NOT carry the
+    // generic (alt-less) message branch are both exercised the text must NOT carry the
     // ": <alt>" suffix used when alt text is present.
     const placeholder = await screen.findByText(/Image failed to load/)
     expect(placeholder.textContent).toBe('⚠ Image failed to load')
@@ -191,7 +191,7 @@ describe('MarkdownPreview', () => {
     // Fresh doc so docId differs from any previous test's lastDocIdRef.
     useUIStore.getState().setActiveDocumentId('d-recover')
     const { rerender } = render(<MarkdownPreview content="" />)
-    // Flip to non-empty content on the same doc — `isRecovering` should fire.
+    // Flip to non-empty content on the same doc `isRecovering` should fire
     rerender(<MarkdownPreview content="recovered" />)
     // Wait well under 150ms (the keystroke-debounce window). With `isRecovering`
     // the second parse lands on the 0ms timer; without it the call would only
@@ -203,7 +203,7 @@ describe('MarkdownPreview', () => {
       { timeout: 60 },
     )
     // Sanity: the parse ran with the expected docId (the active doc at the
-    // time of the rerender) — not some leftover value.
+    // time of the rerender) not some leftover value
     expect(calls.find((c) => c.content === 'recovered')?.docId).toBe('d-recover')
   })
 

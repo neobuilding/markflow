@@ -24,7 +24,8 @@ inputs:
     description: 'GH token (PAT with repo scope; GITHUB_TOKEN cannot create PRs)'
     required: true
 runs:
-  using: 'node20'
+  using: 'node24'
   # ncc emits the bundled ESM as `index.mjs` (it names the output after the
-  # entry file's extension). node20 runs .mjs directly, so we point here.
+  # entry file's extension). node24 runs .mjs directly, so we point here.
+  # Bumped from node20 once node20 entered GitHub's deprecation window.
   main: 'dist/index.mjs'

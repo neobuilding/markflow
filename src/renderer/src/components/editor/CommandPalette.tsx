@@ -1,13 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Search, X, FileText, Clock } from 'lucide-react'
+import { Search, X, FileText, Clock, Copy, Info, FolderOpen } from 'lucide-react'
 import { cn, formatDate } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import { useSearch } from '../../hooks/useSearch'
 import { useT } from '../../i18n'
+import { InputContextMenu } from '../ui/input-context-menu'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '../ui/context-menu'
 
 export function CommandPalette(): React.ReactElement | null {
-  const { searchOpen, setSearchOpen, setSearchQuery, searchQuery, setActiveDocumentId } =
-    useUIStore()
+  const {
+    searchOpen,
+    setSearchOpen,
+    setSearchQuery,
+    searchQuery,
+    searchMode,
+    setSearchMode,
+    activeFolder,
+    setActiveDocumentId,
+    setFileDetailsId,
+  } = useUIStore()
   const { data: results = [], isFetching } = useSearch()
   const { t } = useT()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -51,6 +68,10 @@ export function CommandPalette(): React.ReactElement | null {
     setSearchOpen(false)
   }
 
+  const copyText = (text: string) => {
+    void window.api.clipboard.writeText(text)
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -75,14 +96,18 @@ export function CommandPalette(): React.ReactElement | null {
         {/* Search input */}
         <div className="flex items-center px-4 py-3 border-b border-[var(--color-border)]">
           <Search size={16} className="text-[var(--color-text-tertiary)] shrink-0 mr-2" />
-          <input
-            ref={inputRef}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t('palette.placeholder')}
-            className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
-          />
+          {/* Right-click edit menu : the framework ships none */}
+          <InputContextMenu targetRef={inputRef}>
+            <input
+              ref={inputRef}
+              data-testid="search-input"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={t('palette.placeholder')}
+              className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
+            />
+          </InputContextMenu>
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
@@ -94,6 +119,42 @@ export function CommandPalette(): React.ReactElement | null {
           <kbd className="ml-2 text-xs text-[var(--color-text-tertiary)] bg-[var(--color-surface-overlay)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
             Esc
           </kbd>
+        </div>
+
+        {/* Search scope + mode: the sidebar search is scoped to the active folder and its
+            sub-folders; users can switch between file-name-only and full-text search. */}
+        <div className="flex items-center gap-2 px-4 py-1.5 border-b border-[var(--color-border)] text-xs text-[var(--color-text-tertiary)]">
+          <span data-testid="search-scope">
+            {activeFolder ? t('palette.scopeFolder') : t('palette.scopeAll')}
+          </span>
+          <div className="ml-auto flex items-center rounded border border-[var(--color-border)] overflow-hidden">
+            <button
+              type="button"
+              data-testid="search-mode-filename"
+              onClick={() => setSearchMode('filename')}
+              className={cn(
+                'px-2 py-0.5 transition-colors',
+                searchMode === 'filename'
+                  ? 'bg-[var(--color-accent-muted)] text-accent'
+                  : 'hover:text-[var(--color-text-secondary)]',
+              )}
+            >
+              {t('palette.mode.filename')}
+            </button>
+            <button
+              type="button"
+              data-testid="search-mode-content"
+              onClick={() => setSearchMode('content')}
+              className={cn(
+                'px-2 py-0.5 transition-colors border-l border-[var(--color-border)]',
+                searchMode === 'content'
+                  ? 'bg-[var(--color-accent-muted)] text-accent'
+                  : 'hover:text-[var(--color-text-secondary)]',
+              )}
+            >
+              {t('palette.mode.content')}
+            </button>
+          </div>
         </div>
 
         {/* Results */}
@@ -116,37 +177,87 @@ export function CommandPalette(): React.ReactElement | null {
           {results.length > 0 && (
             <ul className="py-1">
               {results.map((r, i) => (
-                <li
-                  key={r.id}
-                  className={cn(
-                    'flex items-start gap-3 px-4 py-2.5 cursor-pointer transition-colors',
-                    i === selectedIndex
-                      ? 'bg-[var(--color-accent-muted)]'
-                      : 'hover:bg-[var(--color-surface-overlay)]',
-                  )}
-                  onClick={() => handleSelect(r.id)}
-                  onMouseEnter={() => setSelectedIndex(i)}
-                >
-                  <FileText
-                    size={14}
-                    className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
-                      {r.title}
-                    </div>
-                    {r.snippet && (
-                      <div
-                        className="text-xs text-[var(--color-text-tertiary)] truncate mt-0.5"
-                        dangerouslySetInnerHTML={{ __html: r.snippet }}
+                // Result row menu . This is the worst case for Portal bubbling
+                // the overlay behind it closes the palette on click and the <li>
+                // itself opens the document. ContextMenuContent stops the bubble once for
+                // every item, so neither fires when a menu item is chosen.
+                <ContextMenu key={r.id}>
+                  <ContextMenuTrigger asChild>
+                    <li
+                      data-testid="search-result"
+                      className={cn(
+                        'flex items-start gap-3 px-4 py-2.5 cursor-pointer transition-colors',
+                        i === selectedIndex
+                          ? 'bg-[var(--color-accent-muted)]'
+                          : 'hover:bg-[var(--color-surface-overlay)]',
+                      )}
+                      onClick={() => handleSelect(r.id)}
+                      onMouseEnter={() => setSelectedIndex(i)}
+                    >
+                      <FileText
+                        size={14}
+                        className="mt-0.5 shrink-0 text-[var(--color-text-tertiary)]"
                       />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 text-2xs text-[var(--color-text-tertiary)] shrink-0">
-                    <Clock size={10} />
-                    {formatDate(r.updatedAt)}
-                  </div>
-                </li>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
+                          {r.title}
+                        </div>
+                        {/* Absolute on-disk path : helps tell apart documents with the same title living in different folders. Hidden for memory-only drafts */}
+                        {r.filePath && (
+                          <div className="text-2xs text-[var(--color-text-tertiary)] truncate mt-0.5">
+                            {r.filePath}
+                          </div>
+                        )}
+                        {r.snippet && (
+                          <div
+                            className="text-xs text-[var(--color-text-tertiary)] truncate mt-0.5"
+                            dangerouslySetInnerHTML={{ __html: r.snippet }}
+                          />
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 text-2xs text-[var(--color-text-tertiary)] shrink-0">
+                        <Clock size={10} />
+                        {formatDate(r.updatedAt)}
+                      </div>
+                    </li>
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <ContextMenuItem
+                      data-testid="palette-open-document"
+                      onClick={() => handleSelect(r.id)}
+                    >
+                      <FileText size={13} /> {t('ctx.openDocument')}
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      data-testid="palette-copy-title"
+                      onClick={() => copyText(r.title)}
+                    >
+                      <Copy size={13} /> {t('ctx.copyTitle')}
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      data-testid="palette-copy-result-path"
+                      disabled={!r.filePath}
+                      onClick={() => copyText(r.filePath)}
+                    >
+                      <Copy size={13} /> {t('ctx.copyResultPath')}
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      data-testid="palette-copy-folder-path"
+                      disabled={!r.folderPath}
+                      onClick={() => copyText(r.folderPath)}
+                    >
+                      <FolderOpen size={13} /> {t('ctx.copyFolderPath')}
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      data-testid="palette-details"
+                      onClick={() => setFileDetailsId(r.id)}
+                    >
+                      <Info size={13} /> {t('sidebar.details')}
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
               ))}
             </ul>
           )}

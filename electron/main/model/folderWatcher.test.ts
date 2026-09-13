@@ -5,10 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   __emitFolderEvent,
+  __emitFolderDirEvent,
   addWatchedFolder,
   markOwnWrite,
   startFolderWatching,
   stopFolderWatching,
+  pauseFolderWatching,
+  resumeFolderWatching,
   type FolderWatchHandlers,
 } from './folderWatcher'
 
@@ -83,6 +86,16 @@ describe('folderWatcher — before handlers are installed', () => {
       __emitFolderEvent('add', '/w/a.md')
       __emitFolderEvent('change', '/w/a.md')
       __emitFolderEvent('unlink', '/w/a.md')
+    }).not.toThrow()
+  })
+
+  it('drops directory events silently when no handlers are installed', () => {
+    // dispatchDir guards on a null handler set, exactly like dispatch does for files:
+    // this covers the `if (!h) return` branch that is otherwise never taken once a
+    // handler set has been installed.
+    expect(() => {
+      __emitFolderDirEvent('addDir', '/w/folder')
+      __emitFolderDirEvent('unlinkDir', '/w/folder')
     }).not.toThrow()
   })
 })
@@ -244,7 +257,7 @@ describe('folderWatcher — the ignored matcher handed to chokidar', () => {
     // Directories must be traversed or chokidar cannot recurse into them.
     expect(ignored('/w/sub', dir)).toBe(false)
     expect(ignored('/w/deep/nested', dir)).toBe(false)
-    // …but never the ones that are pure noise.
+    // but never the ones that are pure noise
     expect(ignored('/w/.git', dir)).toBe(true)
     expect(ignored('/w/node_modules', dir)).toBe(true)
     expect(ignored('/w/a/node_modules/b', dir)).toBe(true)
@@ -266,6 +279,102 @@ describe('folderWatcher — own-write suppression', () => {
     markOwnWrite('/w/mine.md')
     __emitFolderEvent('change', '/w/mine.md')
     expect(seen.changed).toEqual([])
+  })
+
+  // Regression: the sidebar tree lists FOLDERS, but only file events were ever dispatched —
+  // so a folder created or deleted outside the app left the tree stale. `dispatch` drops every
+  // non-Markdown path (and a directory never has one), hence the separate directory path.
+  describe('directory events (folder tree refresh)', () => {
+    function installDirHandlers() {
+      const dirs = { added: [] as string[], removed: [] as string[] }
+      startFolderWatching({
+        onFileAdded: () => {},
+        onFileRemoved: () => {},
+        onFileChanged: () => {},
+        onDirAdded: (p) => dirs.added.push(p),
+        onDirRemoved: (p) => dirs.removed.push(p),
+      })
+      return dirs
+    }
+
+    it('routes chokidar addDir / unlinkDir to the directory handlers', () => {
+      install()
+      addWatchedFolder(tmpDir('fw-dirs-'))
+      const dirs = installDirHandlers()
+      const w = state.instances[0]
+      w.handlers.addDir('/w/newfolder')
+      w.handlers.unlinkDir('/w/gonefolder')
+      expect(dirs).toEqual({ added: ['/w/newfolder'], removed: ['/w/gonefolder'] })
+    })
+
+    it('dispatches a directory even though it has no Markdown extension', () => {
+      install()
+      const dirs = installDirHandlers()
+      // The file dispatch would drop this path outright — that is the whole reason for a
+      // separate directory dispatch.
+      __emitFolderDirEvent('addDir', '/w/plain-folder')
+      expect(dirs.added).toEqual(['/w/plain-folder'])
+      // And it never leaks into the file handlers.
+      expect(seen.added).toEqual([])
+    })
+
+    it('is a no-op when the caller supplies no directory handlers', () => {
+      install() // file-only handler shape
+      expect(() => __emitFolderDirEvent('unlinkDir', '/w/x')).not.toThrow()
+    })
+  })
+
+  // Regression: deleting a folder that sits inside the watched tree failed on Windows with a
+  // permissions error, because chokidar holds an open handle per directory. The delete path
+  // therefore pauses the watch first — and must put it back afterwards, even on failure.
+  describe('pause / resume (folder delete)', () => {
+    it('pause closes the watcher and resume starts a fresh one', async () => {
+      install()
+      addWatchedFolder(tmpDir('fw-pause-'))
+      const first = state.instances[0]
+      await pauseFolderWatching()
+      expect(first.closed).toBe(true)
+      resumeFolderWatching()
+      expect(state.instances.length).toBe(2)
+    })
+
+    it('pause is a no-op with nothing watched, and a stray resume creates nothing', async () => {
+      install() // no folder opened → no watcher exists
+      await pauseFolderWatching()
+      const before = state.instances.length
+      resumeFolderWatching()
+      // A resume without a real pause must never create a watcher that was not there.
+      expect(state.instances.length).toBe(before)
+    })
+
+    it('a second pause is idempotent', async () => {
+      install()
+      addWatchedFolder(tmpDir('fw-pause2-'))
+      await pauseFolderWatching()
+      const afterFirst = state.instances.length
+      await pauseFolderWatching()
+      expect(state.instances.length).toBe(afterFirst)
+    })
+
+    it('resume creates nothing when a folder was added mid-pause (watcher already running)', async () => {
+      // Reset the module's pause latch: stopFolderWatching() does NOT clear `watchingPaused`,
+      // so a prior test that ended paused would otherwise leak it in and make pauseFolderWatching
+      // early-return instead of nulling the watcher.
+      resumeFolderWatching()
+      await stopFolderWatching()
+      state.instances.length = 0
+      install()
+      addWatchedFolder(tmpDir('fw-pause-mid-'))
+      await pauseFolderWatching()
+      // A folder added while paused starts a fresh watcher, so `watcher` is non-null yet
+      // `watchingPaused` is still true. resume must NOT start a second watcher — this covers
+      // the `if (watcher) return` branch of resumeFolderWatching.
+      addWatchedFolder(tmpDir('fw-pause-mid2-'))
+      resumeFolderWatching()
+      // pause closed instance #1; the mid-pause add created instance #2; resume added nothing.
+      expect(state.instances).toHaveLength(2)
+      expect(state.instances[1].closed).toBe(false)
+    })
   })
 
   it('still reports add / unlink for a file the app just wrote', () => {

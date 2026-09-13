@@ -194,7 +194,7 @@ describe('createWindow', () => {
         closeCalls++
       })
       window.createWindow()
-      // Trigger the close handler — it sends app:request-quit and arms the safety net.
+      // Trigger the close handler it sends app:request-quit and arms the safety net
       const event = { preventDefault: vi.fn() }
       events['close'](event)
       expect(h.win.webContents.send).toHaveBeenCalledWith('app:request-quit')
@@ -251,7 +251,7 @@ describe('createWindow', () => {
   it('clears a stale quitPending at the start of every close attempt so the safety net cannot be disarmed for good', async () => {
     // The bug this guards: quitPending was only ever cleared when the user
     // CONFIRMED (app:quit-allowed). After a prompt the user DISMISSED it stayed
-    // true for the rest of the process, and both safety nets test it — the close
+    // true for the rest of the process, and both safety nets test it the close
     // timer below and before-quit in lifecycle.ts. One dismissed prompt therefore
     // disabled both: if the renderer died afterwards the app could never be
     // force-quit at all (un-exitable), which is precisely what the net is for.
