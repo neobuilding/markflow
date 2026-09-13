@@ -1,6 +1,10 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import type { Document } from '../types'
+// Shared, environment-agnostic case-sensitivity rule (see docs/adr/0014-*.md). The
+// renderer keeps its own navigator-based detection (`pathCaseSensitive`) but delegates
+// the fold rule itself to this pure module so the rule is defined in exactly one place.
+import { foldName as foldNamePure, MD_EXTS } from '../../../../shared/fileUtils'
 
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs))
@@ -54,9 +58,11 @@ export function pathCaseSensitive(): boolean {
 }
 
 // Fold a name for comparisons the way VS Code folds its child keys in `getPlatformAwareName`:
-// lowercased on a case-insensitive filesystem, untouched on a case-sensitive one.
+// lowercased on a case-insensitive filesystem, untouched on a case-sensitive one. The fold
+// rule itself is delegated to the shared pure helper (see docs/adr/0014-*.md); only the
+// case-sensitivity fact is detected here (browser context → navigator, not process.platform).
 export function foldName(name: string): string {
-  return pathCaseSensitive() ? name : name.toLowerCase()
+  return foldNamePure(name, pathCaseSensitive())
 }
 
 // Render a keyboard shortcut for display, platform-aware.
@@ -84,19 +90,9 @@ export function dirName(filePath: string): string {
   return idx <= 0 ? '' : norm.slice(0, idx)
 }
 
-// Whether a directory path is `folder` itself or inside it (its subtree); case-insensitive
-// (Windows), tolerant of backslashes and a trailing separator on either argument.
-export function isDirInFolder(dirPath: string, folder: string): boolean {
-  if (!folder) return false
-  const f = folder.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
-  const d = dirPath.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
-  return d === f || d.startsWith(f + '/')
-}
-
-// Whether a file's directory is inside `folder` (including folder itself); case-insensitive (Windows)
-export function isInFolder(filePath: string, folder: string): boolean {
-  return isDirInFolder(dirName(filePath), folder)
-}
+// Path containment is now defined once in shared/fileUtils.ts (single source, shared by
+// main and renderer). Re-exported here so existing importers of utils.ts keep working.
+export { isInFolder, isDirInFolder } from '../../../../shared/fileUtils'
 
 // Return the file-name part of a path (with extension); cross-platform, normalized to forward slashes
 export function baseName(filePath: string): string {
@@ -119,8 +115,10 @@ export function joinPath(dir: string, name: string): string {
 // the file name WITH its extension the name the user actually sees in their file
 // manager. These helpers convert between the two forms.
 
-// Must stay in sync with MD_EXTS in electron/main/lib/markdown-ext.ts.
-const MD_EXT_RE = /\.(md|markdown|mdx|mdtxt|mdtext)$/i
+// Single-sourced from MD_EXTS in shared/fileUtils.ts (the renderer cannot import the
+// main-process markdown-ext.ts, which pulls in node:path). Derive the matcher so the
+// extension set lives in exactly one place.
+const MD_EXT_RE = new RegExp(`\\.(${[...MD_EXTS].map((e) => e.slice(1)).join('|')})$`, 'i')
 
 // Drop a trailing Markdown extension (`notes.md` -> `notes`, `notes.MD` -> `notes`).
 // Non-Markdown names are returned untouched, so callers need no guard.

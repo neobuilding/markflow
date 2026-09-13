@@ -6,11 +6,11 @@
 // Verifying it against a real (temporary) directory once proves the forwards are not
 // written backwards; everything built on top of it is then tested against an
 // in-memory fake. Scoped to a fresh temp dir per run, and nothing outside it is touched.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createMemoryDiskIO, nodeDiskIO } from './disk-io'
+import { createMemoryDiskIO, nodeDiskIO, isFileSystemCaseSensitive } from './disk-io'
 
 const root = mkdtempSync(join(tmpdir(), 'mf-diskio-'))
 
@@ -264,5 +264,27 @@ describe('createMemoryDiskIO', () => {
     const io = createMemoryDiskIO()
     expect(() => io.rm('/gone', { recursive: true })).toThrow(/ENOENT/)
     expect(() => io.rm('/gone', { recursive: true, force: true })).not.toThrow()
+  })
+})
+
+describe('isFileSystemCaseSensitive', () => {
+  const original = process.platform
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: original, configurable: true })
+  })
+
+  it('is true on Linux', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    expect(isFileSystemCaseSensitive()).toBe(true)
+  })
+
+  it('is false on Windows', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    expect(isFileSystemCaseSensitive()).toBe(false)
+  })
+
+  it('is false on macOS', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    expect(isFileSystemCaseSensitive()).toBe(false)
   })
 })

@@ -6,9 +6,12 @@
 // `electron` import (which md-files.ts needs for `app.isPackaged`) into
 // modules that must stay importable under the unit-test runner.
 import { extname } from 'node:path'
+import { MD_EXTS } from '../../../shared/fileUtils'
 
-// Supported Markdown extensions.
-export const MD_EXTS = new Set(['.md', '.markdown', '.mdx', '.mdtxt', '.mdtext'])
+// Supported Markdown extensions — defined ONCE in shared/fileUtils.ts so the main
+// process, the renderer and the e2e fixtures all agree. Re-exported here so existing
+// importers (md-files.ts, documents.ts, handlers/files.ts) keep working unchanged.
+export { MD_EXTS }
 
 // Whether a path points at a Markdown file, judged by its extension (case-insensitive).
 // Used by the folder watcher to filter filesystem events down to Markdown files.

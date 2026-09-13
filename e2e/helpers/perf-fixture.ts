@@ -9,10 +9,10 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { summarize, percentile, type MainSample } from './perf'
 import type { AppHandle } from './launch'
+import { MD_EXTS } from '../../shared/fileUtils'
 
-// Markdown extensions recognised by the app (mirrors MD_EXTS in
-// electron/main/lib/markdown-ext.ts).
-const MD_EXTS = new Set(['.md', '.markdown', '.mdx', '.mdtxt', '.mdtext'])
+// Markdown extensions recognised by the app. Single-sourced from shared/fileUtils.ts
+// (the app's one definition), so this fixture never drifts from the real set.
 
 // Tunables for the diagnostic spec. Kept as module-level constants so a CI gate
 // never inherits them by accident (the gate fixes its own, much smaller, inputs).

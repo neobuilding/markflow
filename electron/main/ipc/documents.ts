@@ -26,6 +26,16 @@ import {
   getDocumentByFilePath as storeGetByPath,
 } from '../model/documentStore'
 import { resolveAppdocPath } from './appdoc'
+// Case-sensitivity rule (pure) and its main-process edge detection. See
+// docs/adr/0014-*.md: the rule lives in shared/fileUtils.ts and takes the detected
+// flag as an argument so no platform check is baked into the rule itself.
+import { arePathsSame } from '../../../shared/fileUtils'
+import { isFileSystemCaseSensitive } from '../lib/disk-io'
+
+// The active platform seam, chosen at handler-registration time (see registerDocumentHandlers).
+// Module-local so every handler reads the single value the test (or the app) injected, instead of
+// reaching into `process.platform` itself. Defaults to the real OS detector.
+let activeIsFileSystemCaseSensitive: () => boolean = isFileSystemCaseSensitive
 
 let _app: App | null = null
 
@@ -490,8 +500,12 @@ export function registerDocumentHandlers(
   app: App,
   getMainWindow: () => unknown,
   io: DiskIO = nodeDiskIO,
+  isFileSystemCaseSensitiveSeam: () => boolean = isFileSystemCaseSensitive,
 ): void {
   _app = app
+  // Capture the platform seam so `isSamePath` (used by every rename guard) reads the value the
+  // caller chose, without the domain rule depending on `process.platform` directly.
+  activeIsFileSystemCaseSensitive = isFileSystemCaseSensitiveSeam
   _getMainWindow = getMainWindow as () => {
     webContents: { send: (channel: string, ...args: unknown[]) => void }
     isDestroyed?: () => boolean
@@ -884,9 +898,11 @@ export function registerDocumentHandlers(
   // VS Code's rule, mirrored here: only Linux treats paths as case-sensitive. On Windows/macOS
   // `a.md` and `A.md` are the SAME file, so a rename that only changes the case is not a move
   // onto a different file — and must not be mistaken for a collision with itself.
+  // Same file? Identical paths always are; off a case-sensitive filesystem a name
+  // that differs only in case is too. The case-sensitivity fact comes from the
+  // injectable platform seam (see docs/adr/0014-*.md), never a direct `process.platform` read.
   function isSamePath(a: string, b: string): boolean {
-    if (a === b) return true
-    return process.platform !== 'linux' && a.toLowerCase() === b.toLowerCase()
+    return arePathsSame(a, b, activeIsFileSystemCaseSensitive())
   }
 
   // Refuse a rename whose target name is already taken. POSIX `rename()` SILENTLY REPLACES the

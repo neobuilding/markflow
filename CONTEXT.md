@@ -113,6 +113,19 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   `SafeHtml` → `sanitizeHtml` (DOMPurify). Never bypassed (see `docs/adr/0002-single-sanitization-gate.md`).
 - **appdoc:// protocol** — custom scheme for in-app document image / asset rewriting.
 
+## Platform & filesystem
+
+- **case-sensitive filesystem**: a filesystem on which `Note.md` and `note.md` are two distinct files.
+  In MarkFlow (following VS Code's rule) only Linux is case-sensitive; Windows and macOS fold names
+  case-insensitively, so the two spellings name the same file. Modeled by the shared pure rule in
+  `shared/fileUtils.ts` (`arePathsSame` / `foldName` / `MD_EXTS`) and detected per process by `isFileSystemCaseSensitive`
+  (main) / `pathCaseSensitive` (renderer). See ADR-0014.
+- **platform seam**: the single injectable point at which a process detects an environment fact
+  (e.g. `isFileSystemCaseSensitive` in `electron/main/lib/disk-io.ts`, `pathCaseSensitive` in the
+  renderer) so environment-dependent rules can be unit-tested deterministically without faking
+  globals. The pure rule consumes the detected boolean rather than reading `process.platform` /
+  `navigator` itself. See ADR-0014.
+
 ## App behavior, dialogs & UI
 
 - **No persisted settings (禁止持久化任何设置项)** — no UI setting (any toggle, search mode, window or

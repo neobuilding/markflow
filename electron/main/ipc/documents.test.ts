@@ -2221,32 +2221,49 @@ describe('documents IPC — folder ops (能力 7)', () => {
     expect(existsSync(taken)).toBe(true)
   })
 
-  it('allows a rename that only changes the case of the name', async () => {
-    // `a.md` -> `A.md` is the SAME file on Windows/macOS, so the guard must not report a
-    // collision with itself (VS Code's `child !== item` rule).
+  it('allows a rename that only changes the case of the name (case-insensitive fs)', async () => {
+    // `a.md` -> `A.md` is the SAME file on a case-insensitive filesystem, so the guard must
+    // not report a collision with itself (VS Code's `child !== item` rule). The platform seam is
+    // injected as a case-INsensitive OS via `registerDocumentHandlers` — no global mutation, no
+    // module mock — so this branch is covered on any runner.
     const dir = mkdtempSync(join(tmpdir(), 'markflow-rename-case-'))
     const src = join(dir, 'a.md')
     writeFileSync(src, '# A', 'utf-8')
-    await call('documents:rename-file', src, join(dir, 'A.md'))
-    expect(existsSync(join(dir, 'A.md'))).toBe(true)
+    registerDocumentHandlers(
+      fakeIpcMain,
+      fakeApp,
+      () => fakeMainWindow,
+      undefined,
+      () => false,
+    )
+    try {
+      await call('documents:rename-file', src, join(dir, 'A.md'))
+      expect(existsSync(join(dir, 'A.md'))).toBe(true)
+    } finally {
+      // Restore the default handlers/io/seam so later tests are unaffected by this injection.
+      registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+    }
   })
 
   it('treats a case-only difference as another file on Linux', () => {
     // The in-memory adapter is always case-sensitive, so it can hold both spellings — which a
-    // Windows disk cannot. With `process.platform` pinned to Linux, `a.md` -> `A.md` is a real
+    // Windows disk cannot. With the platform seam injected as Linux, `a.md` -> `A.md` is a real
     // move onto a different file and must be refused.
     const io = createMemoryDiskIO()
     io.seed('/d/a.md', 'A')
     io.seed('/d/A.md', 'other')
-    registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow, io)
-    const original = process.platform
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    registerDocumentHandlers(
+      fakeIpcMain,
+      fakeApp,
+      () => fakeMainWindow,
+      io,
+      () => true,
+    )
     try {
       expect(() => call('documents:rename-file', '/d/a.md', '/d/A.md')).toThrow(/already exists/)
       // The very same path is still never a collision, on any platform.
       expect(() => call('documents:rename-file', '/d/a.md', '/d/a.md')).not.toThrow()
     } finally {
-      Object.defineProperty(process, 'platform', { value: original, configurable: true })
       registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
     }
   })

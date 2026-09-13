@@ -24,6 +24,16 @@ import {
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
 
+// Edge detection of the filesystem's case-sensitivity for the MAIN process.
+//
+// This is the ONE place in the main process that reads `process.platform` for the
+// case-sensitivity rule; the pure rule itself lives in `shared/fileUtils.ts` and takes
+// the result as an argument (see docs/adr/0014-*.md). The renderer has its own
+// navigator-based detection because it runs in a browser context without `process.platform`.
+export function isFileSystemCaseSensitive(): boolean {
+  return process.platform === 'linux'
+}
+
 export interface DirEntry {
   name: string
   isDirectory: () => boolean
