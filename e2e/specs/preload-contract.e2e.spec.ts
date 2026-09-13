@@ -41,6 +41,7 @@ test.describe('preload bridge contract (api/* split)', () => {
         dialog: collect(a.dialog),
         window: collect(a.window),
         menu: collect(a.menu),
+        clipboard: collect(a.clipboard),
         events: {
           onMenuEvent: typeof a.onMenuEvent,
           onFileChanged: typeof a.onFileChanged,
@@ -126,6 +127,16 @@ test.describe('preload bridge contract (api/* split)', () => {
         setEditable: 'function',
         setHasDocument: 'function',
         setPrinting: 'function',
+      }),
+    )
+    // clipboard (writeText / writeImage): the only api group this contract never
+    // collected, even though Electron 44 removed `clipboard.writeImage` in favour of the
+    // async `clipboard.write([ClipboardItem])` handler. Lock the bridge shape here so a
+    // dropped method fails loudly instead of only crashing the renderer at runtime.
+    expect(surface.clipboard).toEqual(
+      expect.objectContaining({
+        writeText: 'function',
+        writeImage: 'function',
       }),
     )
     // 4 event subscriptions events.ts
