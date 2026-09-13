@@ -5,6 +5,12 @@ import { readFileSync, copyFileSync } from 'node:fs'
 import { resolveAppdocPath } from '../ipc/appdoc'
 import { pendingInitialPaths } from '../state'
 
+// Electron 44 injects the web-standard `ClipboardItem` global into the main process
+// (it is what `clipboard.write` consumes). It is not a named export of the `electron`
+// module — its type is `Electron.ClipboardItem`, and at runtime this binding resolves
+// to the Electron-injected global.
+declare const ClipboardItem: typeof Electron.ClipboardItem
+
 export function registerAppHandlers(): void {
   // After the renderer starts, proactively pull the pending open paths accumulated at launch (CLI args, etc.)
   ipcMain.handle('app:get-initial-paths', () => {
@@ -25,27 +31,32 @@ export function registerAppHandlers(): void {
   ipcMain.handle('app:get-version', () => app.getVersion())
 
   // Write text to the system clipboard from the renderer.
-  ipcMain.handle('clipboard:write-text', (_event, text: string) => {
+  // Electron 44+: `writeText` is async (returns a Promise) and may reject, so we
+  // await it; the try/catch swallows both synchronous throws and async rejections.
+  ipcMain.handle('clipboard:write-text', async (_event, text: string) => {
     try {
-      clipboard.writeText(text)
+      await clipboard.writeText(text)
     } catch {
       // Ignore clipboard failures
     }
   })
 
-  // Copy an image to the system clipboard . `src` is a disk path or an
+  // Copy an image to the system clipboard. `src` is a disk path or an
   // `appdoc://` URL; `resolveAppdocPath` reuses the protocol handler's security layer
   // (doc lookup → containment check → exists) so an appdoc reference can never escape
-  // its document directory. Reads raw bytes and writes a native image; failures are
+  // its document directory. Reads raw bytes, builds a native image, and writes it via
+  // the W3C-style `clipboard.write([ClipboardItem])` API. Electron 44 removed
+  // `clipboard.writeImage`, so we encode the image as a PNG blob; failures are
   // swallowed so a bad path can't crash the handler.
-  ipcMain.handle('clipboard:write-image', (_event, src: string) => {
+  ipcMain.handle('clipboard:write-image', async (_event, src: string) => {
     try {
       const path = src.startsWith('appdoc://') ? resolveAppdocPath(src) : src
       if (!path) return
       const buf = readFileSync(path)
       const image = nativeImage.createFromBuffer(buf)
       if (image.isEmpty()) return
-      clipboard.writeImage(image)
+      const blob = new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' })
+      await clipboard.write([new ClipboardItem({ 'image/png': blob })])
     } catch {
       // Ignore unreadable / unsupported image paths
     }
