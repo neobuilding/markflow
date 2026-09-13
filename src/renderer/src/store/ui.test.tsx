@@ -55,6 +55,11 @@ describe('useUIStore — all setters and toggles', () => {
     expect(useUIStore.getState().searchOpen).toBe(true)
     expect(useUIStore.getState().searchQuery).toBe('q')
 
+    useUIStore.getState().setSearchMode('filename')
+    expect(useUIStore.getState().searchMode).toBe('filename')
+    useUIStore.getState().setSearchMode('content')
+    expect(useUIStore.getState().searchMode).toBe('content')
+
     useUIStore.getState().setTheme('dark')
     expect(useUIStore.getState().theme).toBe('dark')
 

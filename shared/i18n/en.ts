@@ -37,6 +37,18 @@ export const en = {
   // Shown under the inline name input when what was typed cannot be used as typed.
   'sidebar.unsupportedExt': '"{{ext}}" is not a Markdown extension — changed to .md',
   'sidebar.unsupportedName': 'Path separators are not allowed — changed to "{{name}}"',
+  // Shown live (red border, blocked Enter) when the typed name already exists next to where the
+  // new entry would land.
+  'sidebar.nameExists': '"{{name}}" already exists here',
+  // Shown after Enter on a name with no extension: nothing is written yet, ".md" is filled in and
+  // the row stays open so the user can confirm (a second Enter actually creates the file).
+  'sidebar.missingExt': 'No extension — ".md" was added. Press Enter again to create',
+  // Shown under the inline name input when the commit was rejected by the main process for a
+  // reason other than a name clash (e.g. a permission error). A clash is shown as nameExists.
+  'sidebar.createFailed': 'Could not create "{{name}}".',
+  // VS Code's "invalidFileNameError": a separator or an OS-illegal character, flagged live so the
+  // commit is never attempted (mkdir is non-recursive, so `a/b` could only fail).
+  'sidebar.invalidName': 'The name "{{name}}" is not valid as a file or folder name.',
 
   // ── Editor pane ────────────────────────────────────────────────────────
   'editor.save': 'Save',
@@ -52,6 +64,9 @@ export const en = {
   'editor.fileDetailsShortcut': 'File details ({{shortcut}})',
   'editor.export': 'Export as HTML…',
   'editor.exportShortcut': 'Export as HTML… ({{shortcut}})',
+  'editor.findShortcut': 'Find ({{shortcut}})',
+  'editor.replace': 'Replace',
+  'editor.replaceShortcut': 'Replace ({{shortcut}})',
   'editor.closeFile': 'Close file',
   'editor.renameTitle': 'Rename file',
   'editor.fileDeleted': 'Deleted on disk — save to restore it',
@@ -110,6 +125,10 @@ export const en = {
   'palette.startTyping': 'Start typing to search your documents…',
   'palette.navigate': 'navigate',
   'palette.open': 'open',
+  'palette.mode.filename': 'File name',
+  'palette.mode.content': 'Content',
+  'palette.scopeFolder': 'Current folder and its sub-folders',
+  'palette.scopeAll': 'All documents',
 
   // ── About dialog ───────────────────────────────────────────────────────
   'about.title': 'About MarkFlow',
@@ -198,6 +217,12 @@ export const en = {
   'preview.mermaidFailed': 'Mermaid render failed',
   'preview.imageFailed': 'Image failed to load',
   'preview.imageFailedAlt': 'Image failed to load: {{alt}}',
+  'preview.find': 'Find in preview',
+  'preview.findPlaceholder': 'Find in preview…',
+  'preview.findPrev': 'Previous match',
+  'preview.findNext': 'Next match',
+  'preview.findClose': 'Close find',
+  'preview.findNone': 'No match',
 
   // ── Native menu (Electron main process) ────────────────────────────────
   'menu.file': 'File',
@@ -277,10 +302,10 @@ export const en = {
   'ctx.collapse': 'Collapse',
   'ctx.expandAll': 'Expand All',
   'ctx.copyFolderPath': 'Copy Folder Path',
-  'ctx.newFileHere': 'New File in This Folder',
-  'ctx.newSubfolder': 'New Subfolder…',
+  'ctx.newFileHere': 'New File',
+  'ctx.newSubfolder': 'New Folder',
   // Current folder bar: create a folder directly under the opened folder.
-  'ctx.newFolderHere': 'New Folder Here…',
+  'ctx.newFolderHere': 'New Folder',
   'ctx.renameFolder': 'Rename Folder…',
   'ctx.deleteFolder': 'Delete Folder',
   'ctx.refresh': 'Refresh',

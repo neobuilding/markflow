@@ -40,6 +40,25 @@ export function isMac(): boolean {
   return /mac|iphone|ipad/i.test(navigator.userAgent)
 }
 
+// Whether the current platform is Windows (navigator.platform is deprecated; use userAgent)
+export function isWindows(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /win/i.test(navigator.userAgent)
+}
+
+// VS Code's rule verbatim: its diskFileSystemProvider grants `PathCaseSensitive` only when
+// `isLinux`, so Windows and macOS treat `Note.md` and `note.md` as the SAME file while Linux
+// treats them as two. A name clash therefore has to be detected case-insensitively off Linux.
+export function pathCaseSensitive(): boolean {
+  return !isMac() && !isWindows()
+}
+
+// Fold a name for comparisons the way VS Code folds its child keys in `getPlatformAwareName`:
+// lowercased on a case-insensitive filesystem, untouched on a case-sensitive one.
+export function foldName(name: string): string {
+  return pathCaseSensitive() ? name : name.toLowerCase()
+}
+
 // Render a keyboard shortcut for display, platform-aware.
 // Input is the macOS form: '⌘' = primary modifier (Command), '⇧' = Shift. On macOS
 // it is returned unchanged; on Windows/Linux '⌘' becomes 'Ctrl+' and '⇧' 'Shift+'.
@@ -262,6 +281,101 @@ export function buildFileTree(
   sortRec(root)
 
   return root.children
+}
+
+// The sidebar's MODEL is the complete picture of the active folder — every directory that
+// exists on disk plus every loaded document (see buildFileTree). What the user SEES is this
+// filtered view of it. The two are deliberately separate because "is it visible" and "does it
+// exist" are different questions: an inline name must be refused when it collides with something
+// that exists, even if the filter is currently hiding it.
+//
+// A folder survives when any of these holds:
+//   • 显示所有文件夹 is ON — the user asked to see the document-less ones;
+//   • it is pinned (created this session, see Recently-created folder) — a folder must not vanish
+//     the instant it is named;
+//   • it still has a surviving child — which is exactly "it transitively holds Markdown", plus the
+//     ancestor chain of anything kept further down (a pinned deep folder needs its parents).
+// File nodes are documents by construction, so they always survive.
+//
+// Pinned paths arrive in whatever shape the caller holds them (a folder created via a forward-slash
+// tree path on Windows, say), so the set is normalized once here rather than at every call site.
+export function filterTreeForDisplay(
+  nodes: readonly FileTreeNode[],
+  {
+    showAllFolders,
+    pinnedFolders,
+  }: { showAllFolders: boolean; pinnedFolders: ReadonlySet<string> },
+): FileTreeNode[] {
+  const normalize = (p: string): string => normalizePathSegments(p).replace(/\/$/, '').toLowerCase()
+  const pinned = new Set([...pinnedFolders].map(normalize))
+  const keep = (node: FileTreeNode): FileTreeNode | null => {
+    if (!node.isFolder) return node
+    const children = node.children
+      .map(keep)
+      .filter((child): child is FileTreeNode => child !== null)
+    const visible = showAllFolders || pinned.has(normalize(node.path)) || children.length > 0
+    return visible ? { ...node, children } : null
+  }
+  return nodes.map(keep).filter((node): node is FileTreeNode => node !== null)
+}
+
+// Where the temporary FILE create row belongs inside one parent's children: right after the last
+// subfolder and before the first file, which is the seam the folders-first sort already creates.
+// `children` is the array that is actually being rendered, so a folder the display filter is
+// hiding does not shift the row. The result is a valid splice index in [0, children.length]: a
+// parent holding no files (or nothing at all) puts the row last — the same place a brand-new
+// file lands after it is committed. A FOLDER create row uses index 0 instead (before the first
+// folder); callers decide which based on what is being created.
+export function createRowIndex(children: readonly FileTreeNode[]): number {
+  const firstFile = children.findIndex((child) => !child.isFolder)
+  return firstFile === -1 ? children.length : firstFile
+}
+
+// Normalize a path for equality checks: forward slashes only, no trailing separator, so a path the
+// OS or a previous session wrote with a trailing slash matches its canonical form.
+function canonPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
+}
+
+// Depth-first lookup of the node whose path equals `path`, or undefined. Used to find a parent's
+// children when checking for a name clash.
+export function findTreeNode(
+  nodes: readonly FileTreeNode[],
+  path: string,
+): FileTreeNode | undefined {
+  const target = canonPath(path)
+  for (const n of nodes) {
+    if (canonPath(n.path) === target) return n
+    const hit = findTreeNode(n.children, target)
+    if (hit) return hit
+  }
+  return undefined
+}
+
+// The immediate child names of `parentPath` in the COMPLETE tree (every folder + loaded document),
+// so a clash is detected against the real siblings the new entry would join — including document-less
+// subfolders the display filter hides. The root folder has no node of its own in the tree, so its
+// children are the top-level nodes, and an unknown `parentPath` falls back to those too.
+export function siblingBasenames(tree: readonly FileTreeNode[], parentPath: string): Set<string> {
+  const node = findTreeNode(tree, parentPath)
+  const siblings = node ? node.children : tree
+  return new Set(siblings.map((c) => baseName(c.path)))
+}
+
+// Characters that can never appear in a file or folder name. VS Code splits the typed name on
+// separators and validates each segment (so `a/b` may still create nested folders); ours is
+// stricter on purpose — mkdir is non-recursive now, so `a/b` could only ever fail, and a name
+// that cannot round-trip to Windows is rejected everywhere rather than per-platform.
+const INVALID_NAME_CHARS = /[\\/:*?"<>|]/
+
+// True when `name` can never be written as a file or folder name — the equivalent of VS Code's
+// "invalidFileNameError": a reserved dot name, or one carrying a separator / Windows-illegal
+// character. An empty name is the input's own concern (it cancels), so it is not "invalid" here.
+export function invalidBaseName(name: string): boolean {
+  const trimmed = name.trim()
+  if (!trimmed) return false
+  if (trimmed === '.' || trimmed === '..') return true
+  return INVALID_NAME_CHARS.test(trimmed)
 }
 
 // Re-point an `expanded` folder set when a folder is renamed: every entry equal to

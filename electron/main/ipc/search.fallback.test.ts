@@ -38,12 +38,16 @@ describe('tokenize fallback (no Intl.Segmenter)', () => {
   })
 
   it('still tokenizes and matches without Intl.Segmenter', async () => {
-    const res = (await handlers['search:query']!('evt', 'markdown')) as Array<{ id: string }>
+    const res = (await handlers['search:query']!('evt', {
+      query: 'markdown',
+    })) as Array<{ id: string }>
     expect(res.map((r) => r.id)).toContain('1')
   })
 
   it('matches Chinese text via the punctuation-split fallback', async () => {
-    const res = (await handlers['search:query']!('evt', '检索')) as Array<{ id: string }>
+    const res = (await handlers['search:query']!('evt', {
+      query: '检索',
+    })) as Array<{ id: string }>
     expect(res.map((r) => r.id)).toContain('1')
   })
 })

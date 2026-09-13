@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   FileText,
   Plus,
@@ -36,6 +36,11 @@ import {
   normalizePathSegments,
   stripMarkdownExt,
   markdownExtOf,
+  filterTreeForDisplay,
+  createRowIndex,
+  siblingBasenames,
+  invalidBaseName,
+  foldName,
   type FileTreeNode,
 } from '../../lib/utils'
 import { splitMemoryOnlyDocs, memoryOnlyLeaf } from '../../lib/sidebarDrafts'
@@ -78,6 +83,16 @@ import type { Document } from '../../types'
 type FolderEdit = { mode: 'create'; parentPath: string } | { mode: 'rename'; targetPath: string }
 type FileEdit =
   { mode: 'create'; parentPath: string } | { mode: 'rename'; docId: string; filePath: string }
+
+// Validates a name typed into an inline input: returns an error message when the (resolved) name
+// already exists among the siblings the new entry would join, else null. `selfBasename` excludes the
+// entry being renamed so its own current name is never reported as a clash.
+type NameValidator = (
+  kind: 'file' | 'folder',
+  parentPath: string,
+  selfBasename: string | null,
+  raw: string,
+) => string | null
 
 // Turns what the user typed into the file name that will actually be used, or REFUSES it and
 // hands back the `.md` spelling to show in the input instead (see submitFileName for the rules).
@@ -174,37 +189,25 @@ export function Sidebar(): React.ReactElement | null {
     [activeFolder, allDocs],
   )
 
-  // Directories that exist on disk below the active folder. A tree built from documents
-  // alone has no node for a folder that holds no Markdown file, so this list is what makes
-  // empty folders representable at all — which is exactly why it is used as a seed only
-  // when the user asks for it, or for a folder they just created.
+  // Directories that exist on disk below the active folder. They always go INTO the model, not
+  // only when the user asks to see them: the inline create/rename rows have to tell "this name is
+  // taken" apart from "this name is merely hidden right now", and only the model knows the
+  // difference. What is on screen is decided afterwards, by the filter below.
   const { data: folderDirs = [] } = useFolderDirs(activeFolder)
 
-  // The seed handed to buildFileTree:
-  //   • "Show All Folders" ON → every on-disk folder, empty ones included.
-  //   • OFF (default)         → nothing, so the tree comes from documents alone and only
-  //                             folders that transitively hold Markdown exist as nodes.
-  //   • in between            → a folder the user just created is pinned in even while
-  //                             empty; otherwise naming a new folder would look like it did
-  //                             nothing, because the filter would drop it straight back out.
-  // buildFileTree walks a seeded path segment by segment, so seeding a deep folder also
-  // creates the ancestors needed to reach it.
-  const seededFolders = useMemo(() => {
-    if (showAllFolders) return folderDirs
-    const pinned = new Set(
-      [...recentlyCreatedFolders].map((p) =>
-        normalizePathSegments(p).replace(/\/$/, '').toLowerCase(),
-      ),
-    )
-    return folderDirs.filter((d) =>
-      pinned.has(normalizePathSegments(d).replace(/\/$/, '').toLowerCase()),
-    )
-  }, [showAllFolders, folderDirs, recentlyCreatedFolders])
+  // The complete model: every on-disk folder (empty ones included) + every loaded document.
+  const fullTree = useMemo(
+    () => (activeFolder ? buildFileTree(folderDocs, activeFolder, folderDirs) : []),
+    [folderDocs, activeFolder, folderDirs],
+  )
 
-  // Build the current folder's documents into a nested "folder + file" tree, supporting subfolders
+  // What the sidebar shows: the model with the document-less folders filtered out, unless
+  // 显示所有文件夹 is ON or the folder is pinned. Folders created this session ARE the pins
+  // (`recentlyCreatedFolders`): an empty folder is filtered out by default, so without them
+  // naming a new folder would look like it did nothing.
   const tree = useMemo(
-    () => (activeFolder ? buildFileTree(folderDocs, activeFolder, seededFolders) : []),
-    [folderDocs, activeFolder, seededFolders],
+    () => filterTreeForDisplay(fullTree, { showAllFolders, pinnedFolders: recentlyCreatedFolders }),
+    [fullTree, showAllFolders, recentlyCreatedFolders],
   )
 
   // A pinned folder stops being "new" as soon as it holds Markdown: the per-document walk
@@ -323,6 +326,11 @@ export function Sidebar(): React.ReactElement | null {
   // Note shown under the inline file-name input when a commit was refused, so the user can see
   // WHY the name changed instead of only seeing that it did.
   const [fileHint, setFileHint] = useState<{ text: string } | null>(null)
+  // Mirror of fileHint for the FOLDER name input: shown when a folder create/rename commit
+  // was refused by the main process (name clash or permission error). Kept separate from
+  // fileHint because a file refusal and a folder refusal can be pending at the same time
+  // (e.g. a new-folder row is open while a file row is also mid-edit).
+  const [folderHint, setFolderHint] = useState<{ text: string } | null>(null)
   // "New File in This Folder": open the SAME inline name row the tree-area "New File" uses,
   // so creating inside a subfolder behaves exactly like creating at the root — the user types
   // the name instead of being handed an auto-named "Untitled". (The file itself is still a real
@@ -357,6 +365,8 @@ export function Sidebar(): React.ReactElement | null {
 
   const startFolderEdit = useCallback((edit: FolderEdit) => {
     setFolderEdit(edit)
+    // A stale refusal from a previous attempt must not linger into the fresh edit.
+    setFolderHint(null)
     // A new subfolder does not exist yet, so its parent has to be expanded for the
     // temporary input row to be visible.
     if (edit.mode === 'create') {
@@ -364,7 +374,10 @@ export function Sidebar(): React.ReactElement | null {
     }
   }, [])
 
-  const cancelFolderEdit = useCallback(() => setFolderEdit(null), [])
+  const cancelFolderEdit = useCallback(() => {
+    setFolderEdit(null)
+    setFolderHint(null)
+  }, [])
 
   // Inline rename of a document: flips its row into an <input> and names it in place, then
   // moves the file on disk directly. Deliberately decoupled from edit mode — renaming is a
@@ -388,6 +401,9 @@ export function Sidebar(): React.ReactElement | null {
     async (name: string) => {
       /* v8 ignore next -- defensive: the inline input only renders while folderEdit is set */
       if (!folderEdit) return
+      // Clear any prior refusal so a fresh commit starts clean; the catch below re-sets it
+      // only if this attempt is also rejected.
+      setFolderHint(null)
       try {
         if (folderEdit.mode === 'create') {
           const target = joinPath(folderEdit.parentPath, name)
@@ -426,12 +442,55 @@ export function Sidebar(): React.ReactElement | null {
         }
         setFolderEdit(null)
       } catch (e) {
-        // A name clash or a permission error rejects the mutation: keep the inline input
-        // open so the user can pick another name instead of losing what they typed.
-        console.error('Folder operation failed', e)
+        // A name clash (EEXIST) or any other failure rejects the mutation. Keep the inline
+        // input open so the user can pick another name instead of losing what they typed, and
+        // say WHY under the input: same-name is the common case (surfaced with the live-check
+        // wording), everything else a generic "could not create" note.
+        // A local structural type, not `NodeJS.ErrnoException`: the renderer is built with the web
+        // tsconfig, which has no @types/node, so the NodeJS namespace does not exist here.
+        const code = (e as { code?: string })?.code
+        setFolderHint({
+          text:
+            code === 'EEXIST'
+              ? t('sidebar.nameExists', { name })
+              : t('sidebar.createFailed', { name }),
+        })
       }
     },
-    [folderEdit, createFolderMut, renameFolderMut, markFolderCreated, clearCreatedFolder],
+    [folderEdit, createFolderMut, renameFolderMut, markFolderCreated, clearCreatedFolder, t],
+  )
+
+  // Live same-name check for the inline name inputs: does the (resolved) name the user is typing
+  // already exist next to where the new entry would land? Drives a red border + blocked Enter so the
+  // commit is never left to the main process to reject. This is the ONLY check that runs live — the
+  // extension / separator rules validate on Enter, because they are this app's own stricter rules and
+  // would fire spuriously mid-typing (e.g. `a.m` on the way to `a.md`). `selfBasename` excludes the
+  // entry being renamed so its own current name never reports a clash.
+  const nameExists = useCallback(
+    (
+      kind: 'file' | 'folder',
+      parentPath: string,
+      selfBasename: string | null,
+      raw: string,
+    ): string | null => {
+      const name = kind === 'file' ? resolveTypedFileName(raw).name : raw.trim()
+      if (!name) return null
+      // FOLDERS also get VS Code's "invalid name" rule live: a name carrying a separator or an
+      // OS-illegal character can never be written (mkdir is non-recursive, so `a/b` could only
+      // fail), so flag it as it is typed rather than letting the commit fail with a generic
+      // "could not create". Files keep their extension/separator rules on Enter by design.
+      if (kind === 'folder' && invalidBaseName(name)) {
+        return t('sidebar.invalidName', { name })
+      }
+      const sibs = siblingBasenames(fullTree, parentPath)
+      // VS Code compares case-insensitively on Windows/macOS (see foldName), so `Note.md` clashes
+      // with `note.md` there. The self-exclusion has to fold the same way, otherwise renaming an
+      // entry to another spelling of its own name would report a clash with itself.
+      const taken = new Set([...sibs].map(foldName))
+      if (selfBasename) taken.delete(foldName(selfBasename))
+      return taken.has(foldName(name)) ? t('sidebar.nameExists', { name }) : null
+    },
+    [fullTree, t],
   )
 
   // "New File" from the background menu: name it in place, then write a real Markdown file
@@ -469,6 +528,13 @@ export function Sidebar(): React.ReactElement | null {
         })
         return resolved.refused
       }
+      // No extension: the user is still mid-name, so fill ".md", say why, and hold the commit.
+      // A second Enter (or typing an extension) proceeds. We never refuse a bare stem — that would
+      // fire on every name on its way to a typed extension, which is exactly the churn we avoid.
+      if (!markdownExtOf(trimmed)) {
+        setFileHint({ text: t('sidebar.missingExt', { name: resolved.name }) })
+        return resolved.name
+      }
       const fileName = resolved.name
       try {
         if (fileEdit.mode === 'create') {
@@ -492,9 +558,17 @@ export function Sidebar(): React.ReactElement | null {
           setFocusPath(newPath)
         }
       } catch (e) {
-        // A name clash or a permission error rejects the mutation: keep the inline input
-        // open so the user can pick another name instead of losing what they typed.
-        console.error('File operation failed', e)
+        // A name clash (EEXIST) or any other failure rejects the mutation. Keep the inline
+        // input open (see submitFolderName) and say why under it.
+        // A local structural type, not `NodeJS.ErrnoException`: the renderer is built with the web
+        // tsconfig, which has no @types/node, so the NodeJS namespace does not exist here.
+        const code = (e as { code?: string })?.code
+        setFileHint({
+          text:
+            code === 'EEXIST'
+              ? t('sidebar.nameExists', { name: resolved.name })
+              : t('sidebar.createFailed', { name: resolved.name }),
+        })
       }
       return undefined
     },
@@ -638,6 +712,35 @@ export function Sidebar(): React.ReactElement | null {
     (folderEdit?.mode === 'create' && folderEdit.parentPath === activeFolder) ||
     (fileEdit?.mode === 'create' && fileEdit.parentPath === activeFolder)
 
+  // A new FOLDER is inserted at the front of its level (before the first folder); a new FILE keeps
+  // the folder/file seam (after the last folder, before the first file). Two independent slots so
+  // both can be open at once — folder row on top, file row at the seam. See createRowIndex.
+  const folderCreatingRoot = folderEdit?.mode === 'create' && folderEdit.parentPath === activeFolder
+  const fileCreatingRoot = fileEdit?.mode === 'create' && fileEdit.parentPath === activeFolder
+  const rootFolderCreateIndex = folderCreatingRoot ? 0 : tree.length
+  const rootFileCreateIndex = fileCreatingRoot ? createRowIndex(tree) : tree.length
+
+  const rootFolderCreateRows = folderCreatingRoot ? (
+    <CreateRow
+      kind="folder"
+      depth={null}
+      hint={folderHint}
+      onSubmit={submitFolderName}
+      onCancel={cancelFolderEdit}
+      validate={(raw) => nameExists('folder', activeFolder, null, raw)}
+    />
+  ) : null
+  const rootFileCreateRows = fileCreatingRoot ? (
+    <CreateRow
+      kind="file"
+      depth={null}
+      hint={fileHint}
+      onSubmit={submitFileName}
+      onCancel={cancelFileEdit}
+      validate={(raw) => nameExists('file', activeFolder, null, raw)}
+    />
+  ) : null
+
   return (
     <aside
       className="relative flex flex-col h-full border-r border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 animate-slide-in-left"
@@ -779,8 +882,17 @@ export function Sidebar(): React.ReactElement | null {
                   initial={folderName}
                   size="folder"
                   placeholder={t('sidebar.folderNamePlaceholder')}
+                  hint={folderHint}
                   onSubmit={submitFolderName}
                   onCancel={cancelFolderEdit}
+                  validate={(raw) =>
+                    nameExists(
+                      'folder',
+                      dirName(folderEdit.targetPath),
+                      baseName(folderEdit.targetPath),
+                      raw,
+                    )
+                  }
                 />
               ) : (
                 <span
@@ -922,94 +1034,59 @@ export function Sidebar(): React.ReactElement | null {
                           onDeleteFolder={handleDeleteFolder}
                           fileEdit={fileEdit}
                           fileNameHint={fileHint}
+                          folderHint={folderHint}
                           onStartFileRename={startFileRename}
                           onSubmitFileName={submitFileName}
                           onCancelFileEdit={cancelFileEdit}
+                          nameExists={nameExists}
                         />
                       ))}
                     </ul>
                   </>
                 )}
-                {/* Naming a folder / file directly under the current folder: the current folder
-                itself has no tree row, so its temporary input row lives here — outside the
-                tree list, so it still appears when the folder holds nothing yet. */}
-                {rootCreatePending && (
+                {/* The tree list. The current folder itself has no row, so a row naming an entry
+                created directly under it is rendered here too — at the folder/file seam, next to
+                the siblings it is about to join. The list renders whenever there is either a real
+                row to show or a temporary one pending, so naming something inside an empty folder
+                cannot look like the menu item did nothing. */}
+                {(tree.length > 0 || rootCreatePending) && (
                   <ul className="py-1">
-                    {folderEdit?.mode === 'create' && folderEdit.parentPath === activeFolder && (
-                      <li className="group">
-                        <div
-                          data-testid="folder-create-row"
-                          className="flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium text-[var(--color-text-tertiary)]"
-                          style={{ paddingLeft: 24 }}
-                        >
-                          <Folder
-                            size={13}
-                            className="shrink-0 text-[var(--color-text-tertiary)]"
-                          />
-                          <FolderNameInput
-                            initial=""
-                            size="folder"
-                            placeholder={t('sidebar.folderNamePlaceholder')}
-                            onSubmit={submitFolderName}
-                            onCancel={cancelFolderEdit}
-                          />
-                        </div>
-                      </li>
-                    )}
-                    {/* Naming a new Markdown file directly under the current folder. */}
-                    {fileEdit?.mode === 'create' && fileEdit.parentPath === activeFolder && (
-                      <li className="group">
-                        <div
-                          data-testid="file-create-row"
-                          className="flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium text-[var(--color-text-tertiary)]"
-                          style={{ paddingLeft: 24 }}
-                        >
-                          <FileText
-                            size={13}
-                            className="shrink-0 text-[var(--color-text-tertiary)]"
-                          />
-                          <FolderNameInput
-                            initial=""
-                            hint={fileHint}
-                            placeholder={t('sidebar.fileNamePlaceholder')}
-                            onSubmit={submitFileName}
-                            onCancel={() => setFileEdit(null)}
-                          />
-                        </div>
-                      </li>
-                    )}
-                  </ul>
-                )}
-                {tree.length > 0 && (
-                  <ul className="py-1">
-                    {tree.map((node) => (
-                      <TreeRow
-                        key={node.path}
-                        node={node}
-                        depth={0}
-                        activeId={activeDocumentId}
-                        onSelectDoc={handleSelectDoc}
-                        onDeleteDoc={handleDeleteDoc}
-                        onDetailsDoc={handleDetailsDoc}
-                        onEnterFolder={handleEnterFolder}
-                        expanded={expanded}
-                        onToggleExpand={toggleExpand}
-                        onExpandAll={expandAll}
-                        onCopyFolderPath={copyText}
-                        onShowInFolder={revealInFolder}
-                        onNewDocHere={createDocInFolder}
-                        folderEdit={folderEdit}
-                        onStartFolderEdit={startFolderEdit}
-                        onSubmitFolderName={submitFolderName}
-                        onCancelFolderEdit={cancelFolderEdit}
-                        onDeleteFolder={handleDeleteFolder}
-                        fileEdit={fileEdit}
-                        fileNameHint={fileHint}
-                        onStartFileRename={startFileRename}
-                        onSubmitFileName={submitFileName}
-                        onCancelFileEdit={cancelFileEdit}
-                      />
+                    {tree.map((node, i) => (
+                      <Fragment key={node.path}>
+                        {i === rootFolderCreateIndex ? rootFolderCreateRows : null}
+                        {i === rootFileCreateIndex ? rootFileCreateRows : null}
+                        <TreeRow
+                          node={node}
+                          depth={0}
+                          activeId={activeDocumentId}
+                          onSelectDoc={handleSelectDoc}
+                          onDeleteDoc={handleDeleteDoc}
+                          onDetailsDoc={handleDetailsDoc}
+                          onEnterFolder={handleEnterFolder}
+                          expanded={expanded}
+                          onToggleExpand={toggleExpand}
+                          onExpandAll={expandAll}
+                          onCopyFolderPath={copyText}
+                          onShowInFolder={revealInFolder}
+                          onNewDocHere={createDocInFolder}
+                          folderEdit={folderEdit}
+                          onStartFolderEdit={startFolderEdit}
+                          onSubmitFolderName={submitFolderName}
+                          onCancelFolderEdit={cancelFolderEdit}
+                          onDeleteFolder={handleDeleteFolder}
+                          fileEdit={fileEdit}
+                          fileNameHint={fileHint}
+                          folderHint={folderHint}
+                          onStartFileRename={startFileRename}
+                          onSubmitFileName={submitFileName}
+                          onCancelFileEdit={cancelFileEdit}
+                          nameExists={nameExists}
+                        />
+                      </Fragment>
                     ))}
+                    {/* When there is nothing for the splice index to land between, append at the end. */}
+                    {rootFolderCreateIndex === tree.length ? rootFolderCreateRows : null}
+                    {rootFileCreateIndex === tree.length ? rootFileCreateRows : null}
                   </ul>
                 )}
               </>
@@ -1216,6 +1293,9 @@ interface DocItemProps {
   onCancelRename: () => void
   // Note shown under the inline rename input when the typed name was refused.
   renameHint?: { text: string } | null
+  // Live same-name validator for the inline rename input (self-aware, so the file's own name
+  // never reports a clash).
+  nameExists: NameValidator
   depth?: number
 }
 
@@ -1354,6 +1434,7 @@ function DocItem({
   onSubmitRename,
   onCancelRename,
   renameHint,
+  nameExists,
   depth = 0,
 }: DocItemProps) {
   const { t } = useT()
@@ -1378,6 +1459,9 @@ function DocItem({
             placeholder={t('sidebar.fileNamePlaceholder')}
             onSubmit={onSubmitRename}
             onCancel={onCancelRename}
+            validate={(raw) =>
+              nameExists('file', dirName(doc.filePath), baseName(doc.filePath), raw)
+            }
           />
         </div>
       </li>
@@ -1538,6 +1622,11 @@ interface TreeRowProps {
   onStartFileRename: (doc: Document) => void
   onSubmitFileName: (name: string) => void
   onCancelFileEdit: () => void
+  // Live same-name validator for the inline name inputs (kind / parent / self-aware).
+  nameExists: NameValidator
+  // Note shown under the inline FOLDER name input when a commit was refused by the main
+  // process (name clash / permission error) — mirrors fileNameHint for folders.
+  folderHint: { text: string } | null
 }
 
 // The temporary <input> used to name a folder in place (①): Enter submits
@@ -1553,6 +1642,7 @@ function FolderNameInput({
   onSubmit,
   onCancel,
   hint,
+  validate,
   size = 'file',
 }: {
   initial: string
@@ -1566,15 +1656,18 @@ function FolderNameInput({
   // A one-line note under the input explaining why a commit was refused (e.g. an extension the
   // app cannot open). Wrapped in an object so every refusal is a NEW value and re-shows it.
   hint?: { text: string } | null
+  // Live validation (same-name only): returns an error message, or null. On a clash the border
+  // turns red, the message shows, and Enter is blocked until the name is unique.
+  validate: (raw: string) => string | null
 }) {
   const [value, setValue] = useState(initial)
+  const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  // The context menu that opened this input restores focus to its trigger as it closes. If the
-  // input grabbed focus synchronously (autoFocus) it would be blurred by that restore and — once
-  // blur-cancel is armed — instantly cancel itself. Focusing inside an effect (which runs after the
-  // click handler and Radix's synchronous focus restore have settled) means the spurious blur has
-  // already passed before the input ever holds focus, so only a genuine later blur cancels.
-  const blurArmed = useRef(false)
+  // Losing focus has no consequence: this row is closed by Enter (commit) or Escape (cancel), and
+  // by nothing else. An earlier version cancelled on blur, which threw away a half-typed name the
+  // moment the user clicked anywhere else — typically a name that was merely still waiting for its
+  // extension. Being stricter than VS Code about names is exactly why a stray click must not be
+  // able to destroy one.
   // The note is transient: it explains the LAST refusal and must get out of the way as soon as
   // the user types again, so it is hidden locally — the parent need not be involved. Visibility is
   // derived from `hint` plus a local "dismissed" flag; the flag resets whenever a *fresh* refusal
@@ -1609,12 +1702,9 @@ function FolderNameInput({
       }
     }
     grab()
-    // Armed from mount, exactly as before: blur-cancel only ever reacts to a real blur away
-    // from a focused input, so it must not depend on whether the grab above succeeded. The
-    // retry is about *taking* focus, never about suppressing cancellation.
-    blurArmed.current = true
     return () => cancelAnimationFrame(frame)
   }, [])
+  const message = error ?? (hint && hintVisible ? hint.text : null)
   return (
     <div className="flex-1 min-w-0">
       <input
@@ -1625,10 +1715,8 @@ function FolderNameInput({
         onFocus={(e) => e.target.select()}
         onChange={(e) => {
           setValue(e.target.value)
+          setError(validate(e.target.value))
           setHintVisible(false)
-        }}
-        onBlur={() => {
-          if (blurArmed.current) onCancel()
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
@@ -1641,25 +1729,98 @@ function FolderNameInput({
               onCancel()
               return
             }
+            // Live same-name check blocks the commit; the row stays open and the error stays shown.
+            const err = validate(name)
+            if (err) {
+              setError(err)
+              return
+            }
             void Promise.resolve(onSubmit(name)).then((corrected) => {
               if (typeof corrected === 'string') setValue(corrected)
             })
           }
         }}
         className={cn(
-          'w-full min-w-0 bg-[var(--color-bg)] border border-accent rounded px-1 py-0.5 outline-none',
+          'w-full min-w-0 bg-[var(--color-bg)] rounded px-1 py-0.5 outline-none',
+          error ? 'border border-red-500' : 'border border-accent',
           size === 'folder' ? 'text-base' : 'text-xs',
         )}
       />
-      {hint && hintVisible ? (
+      {message ? (
         <span
           data-testid="file-name-hint"
-          className="mt-0.5 block text-[10px] leading-tight text-[var(--color-text-tertiary)]"
+          className={cn(
+            'mt-0.5 block text-[10px] leading-tight',
+            error ? 'text-red-500' : 'text-[var(--color-text-tertiary)]',
+          )}
         >
-          {hint.text}
+          {message}
         </span>
       ) : null}
     </div>
+  )
+}
+
+// The temporary row that names a folder / file that does not exist yet. All four places it
+// appears — at the root of the tree or inside a subfolder, for a folder or for a file — differ
+// only in the kind being created, the nesting level, and which note is showing, so they share one
+// component: four copies of this markup would be four chances for the entry points to drift apart.
+//
+// `depth === null` means the row sits at the ROOT of the tree, where the current folder itself has
+// no row. Root rows are one level shallower in every visual respect: lighter text, no depth
+// indent, and no chevron column — there is no parent row whose folder icon to line up with.
+function CreateRow({
+  kind,
+  depth,
+  hint,
+  onSubmit,
+  onCancel,
+  validate,
+}: {
+  kind: 'folder' | 'file'
+  depth: number | null
+  hint?: { text: string } | null
+  onSubmit: (name: string) => Promise<string | void> | void
+  onCancel: () => void
+  validate: (raw: string) => string | null
+}) {
+  const { t } = useT()
+  const nested = depth !== null
+  const Icon = kind === 'folder' ? Folder : FileText
+  // The root and nested FILE rows keep distinct testids on purpose: both menus drive the same
+  // flow, and tests have to be able to tell which entry point opened the row. The two folder rows
+  // share one testid because nothing distinguishes them for the user.
+  const testId =
+    kind === 'folder' ? 'folder-create-row' : nested ? 'sub-file-create-row' : 'file-create-row'
+  return (
+    <li className="group">
+      <div
+        data-testid={testId}
+        className={cn(
+          'flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium',
+          nested ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-tertiary)]',
+        )}
+        style={{ paddingLeft: depth === null ? 24 : depth * 12 + 24 }}
+      >
+        {nested && (
+          <ChevronRight size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
+        )}
+        <Icon size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
+        <FolderNameInput
+          initial=""
+          size={kind}
+          hint={hint}
+          placeholder={
+            kind === 'folder'
+              ? t('sidebar.folderNamePlaceholder')
+              : t('sidebar.fileNamePlaceholder')
+          }
+          onSubmit={onSubmit}
+          onCancel={onCancel}
+          validate={validate}
+        />
+      </div>
+    </li>
   )
 }
 
@@ -1686,6 +1847,8 @@ function TreeRow({
   fileEdit,
   fileNameHint,
   onStartFileRename,
+  nameExists,
+  folderHint,
   onSubmitFileName,
   onCancelFileEdit,
 }: TreeRowProps) {
@@ -1693,6 +1856,36 @@ function TreeRow({
   const open = expanded.has(node.path)
   if (node.isFolder) {
     const renaming = folderEdit?.mode === 'rename' && folderEdit.targetPath === node.path
+    // A folder create row goes to the front of this level; a file create row keeps the seam
+    // (after the last folder, before the first file). Two independent slots so both can be open at
+    // once. `parentPath` points at this node, so only its own children list shows them.
+    const folderCreatingHere = folderEdit?.mode === 'create' && folderEdit.parentPath === node.path
+    const fileCreatingHere = fileEdit?.mode === 'create' && fileEdit.parentPath === node.path
+    const folderCreateBoundary = folderCreatingHere ? 0 : node.children.length
+    const fileCreateBoundary = fileCreatingHere
+      ? createRowIndex(node.children)
+      : node.children.length
+
+    const folderCreateRows = folderCreatingHere ? (
+      <CreateRow
+        kind="folder"
+        depth={depth}
+        hint={folderHint}
+        onSubmit={onSubmitFolderName}
+        onCancel={onCancelFolderEdit}
+        validate={(raw) => nameExists('folder', node.path, null, raw)}
+      />
+    ) : null
+    const fileCreateRows = fileCreatingHere ? (
+      <CreateRow
+        kind="file"
+        depth={depth}
+        hint={fileNameHint}
+        onSubmit={onSubmitFileName}
+        onCancel={onCancelFileEdit}
+        validate={(raw) => nameExists('file', node.path, null, raw)}
+      />
+    ) : null
     return (
       <li className="group">
         <ContextMenu>
@@ -1721,8 +1914,12 @@ function TreeRow({
                   initial={node.name}
                   size="folder"
                   placeholder={t('sidebar.folderNamePlaceholder')}
+                  hint={folderHint}
                   onSubmit={onSubmitFolderName}
                   onCancel={onCancelFolderEdit}
+                  validate={(raw) =>
+                    nameExists('folder', dirName(node.path), baseName(node.path), raw)
+                  }
                 />
               </div>
             ) : (
@@ -1815,19 +2012,19 @@ function TreeRow({
               <FolderOpen size={13} /> {t('editor.showInFolder')}
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem
-              data-testid="side-new-doc-here"
-              onClick={() => onNewDocHere?.(node.path)}
-            >
-              <Plus size={13} /> {t('ctx.newFileHere')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            {/* the three write operations live here too (not only in P1). They were deferred to M3 because (createFolder/renameFolder/deleteFolder) had to land first. New subfolder enters inline create mode; rename enters inline rename mode; delete moves the folder to the trash behind a confirmation */}
+            {/* New Subfolder then New File Here share one section, with New File Here AFTER New
+                Subfolder — matching the blank-area menu (New Folder then New File). */}
             <ContextMenuItem
               data-testid="side-new-subfolder"
               onClick={() => onStartFolderEdit({ mode: 'create', parentPath: node.path })}
             >
               <FolderPlus size={13} /> {t('ctx.newSubfolder')}
+            </ContextMenuItem>
+            <ContextMenuItem
+              data-testid="side-new-doc-here"
+              onClick={() => onNewDocHere?.(node.path)}
+            >
+              <Plus size={13} /> {t('ctx.newFileHere')}
             </ContextMenuItem>
             <ContextMenuItem
               data-testid="side-rename-folder"
@@ -1847,75 +2044,45 @@ function TreeRow({
         </ContextMenu>
         {open && (
           <ul>
-            {/* while a new subfolder is being named, render a temporary input row as the FIRST child so the user types the name right where the folder will appear. `parentPath` points at this node, so only its children list shows the row */}
-            {folderEdit?.mode === 'create' && folderEdit.parentPath === node.path && (
-              <li className="group">
-                <div
-                  data-testid="folder-create-row"
-                  className="flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium text-[var(--color-text-secondary)]"
-                  style={{ paddingLeft: depth * 12 + 24 }}
-                >
-                  <ChevronRight size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
-                  <Folder size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
-                  <FolderNameInput
-                    initial=""
-                    size="folder"
-                    placeholder={t('sidebar.folderNamePlaceholder')}
-                    onSubmit={onSubmitFolderName}
-                    onCancel={onCancelFolderEdit}
-                  />
-                </div>
-              </li>
-            )}
-            {/* The same temporary row for a new Markdown file inside THIS subfolder. Distinct
-                testid from the root "file-create-row": both menus can drive it, and tests must
-                be able to tell the two entry points apart. */}
-            {fileEdit?.mode === 'create' && fileEdit.parentPath === node.path && (
-              <li className="group">
-                <div
-                  data-testid="sub-file-create-row"
-                  className="flex items-center gap-1.5 w-full px-3 py-1.5 text-base font-medium text-[var(--color-text-secondary)]"
-                  style={{ paddingLeft: depth * 12 + 24 }}
-                >
-                  <FileText size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
-                  <FolderNameInput
-                    initial=""
-                    hint={fileNameHint}
-                    placeholder={t('sidebar.fileNamePlaceholder')}
-                    onSubmit={onSubmitFileName}
-                    onCancel={onCancelFileEdit}
-                  />
-                </div>
-              </li>
-            )}
-            {node.children.map((child) => (
-              <TreeRow
-                key={child.path}
-                node={child}
-                depth={depth + 1}
-                activeId={activeId}
-                onSelectDoc={onSelectDoc}
-                onDeleteDoc={onDeleteDoc}
-                onDetailsDoc={onDetailsDoc}
-                onEnterFolder={onEnterFolder}
-                expanded={expanded}
-                onToggleExpand={onToggleExpand}
-                onExpandAll={onExpandAll}
-                onCopyFolderPath={onCopyFolderPath}
-                onShowInFolder={onShowInFolder}
-                onNewDocHere={onNewDocHere}
-                folderEdit={folderEdit}
-                onStartFolderEdit={onStartFolderEdit}
-                onSubmitFolderName={onSubmitFolderName}
-                onCancelFolderEdit={onCancelFolderEdit}
-                onDeleteFolder={onDeleteFolder}
-                fileEdit={fileEdit}
-                fileNameHint={fileNameHint}
-                onStartFileRename={onStartFileRename}
-                onSubmitFileName={onSubmitFileName}
-                onCancelFileEdit={onCancelFileEdit}
-              />
+            {node.children.map((child, i) => (
+              <Fragment key={child.path}>
+                {i === folderCreateBoundary ? folderCreateRows : null}
+                {i === fileCreateBoundary ? fileCreateRows : null}
+                <TreeRow
+                  node={child}
+                  depth={depth + 1}
+                  activeId={activeId}
+                  onSelectDoc={onSelectDoc}
+                  onDeleteDoc={onDeleteDoc}
+                  onDetailsDoc={onDetailsDoc}
+                  onEnterFolder={onEnterFolder}
+                  expanded={expanded}
+                  onToggleExpand={onToggleExpand}
+                  onExpandAll={onExpandAll}
+                  onCopyFolderPath={onCopyFolderPath}
+                  onShowInFolder={onShowInFolder}
+                  onNewDocHere={onNewDocHere}
+                  folderEdit={folderEdit}
+                  onStartFolderEdit={onStartFolderEdit}
+                  onSubmitFolderName={onSubmitFolderName}
+                  onCancelFolderEdit={onCancelFolderEdit}
+                  onDeleteFolder={onDeleteFolder}
+                  fileEdit={fileEdit}
+                  fileNameHint={fileNameHint}
+                  onStartFileRename={onStartFileRename}
+                  onSubmitFileName={onSubmitFileName}
+                  onCancelFileEdit={onCancelFileEdit}
+                  // The recursive call has to forward these too: a nested folder renders its own
+                  // create/rename rows through THIS component, so without them a deeper folder's
+                  // inputs would have no clash validator and no refusal note to show.
+                  nameExists={nameExists}
+                  folderHint={folderHint}
+                />
+              </Fragment>
             ))}
+            {/* When there is nothing for the splice index to land between, append at the end. */}
+            {folderCreateBoundary === node.children.length ? folderCreateRows : null}
+            {fileCreateBoundary === node.children.length ? fileCreateRows : null}
           </ul>
         )}
       </li>
@@ -1937,6 +2104,7 @@ function TreeRow({
       onSubmitRename={onSubmitFileName}
       onCancelRename={onCancelFileEdit}
       renameHint={fileNameHint}
+      nameExists={nameExists}
       onSelect={() => onSelectDoc(doc)}
       onDelete={() => void onDeleteDoc(doc)}
       onDetails={() => onDetailsDoc(doc)}

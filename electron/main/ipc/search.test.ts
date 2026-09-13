@@ -27,8 +27,13 @@ function doc(p: Partial<Document> & { id: string; title: string; content: string
   }
 }
 
-function query(q: string) {
-  return handlers['search:query'](null, q) as Awaited<ReturnType<(typeof handlers)['search:query']>>
+function query(
+  q: string,
+  opts: { scopeFolder?: string | null; mode?: 'filename' | 'content' } = {},
+): Awaited<ReturnType<(typeof handlers)['search:query']>> {
+  return handlers['search:query'](null, { query: q, ...opts }) as Awaited<
+    ReturnType<(typeof handlers)['search:query']>
+  >
 }
 
 beforeEach(() => {
@@ -104,6 +109,36 @@ describe('search:query', () => {
     // Searching a path fragment must surface it even though neither title nor
     // content contains the term (no 'notes' in title/content here).
     const res = (await query('notes')) as Array<{ id: string }>
+    expect(res.map((r) => r.id)).toContain('4')
+  })
+
+  it('scopes results to the given folder and its sub-folders', async () => {
+    // doc4 lives under work/2026/notes; docs 1-3 have no folder. Scoping to
+    // 'work/2026' must surface only doc4 (and only when the term is in it).
+    const inScope = (await query('Weekly', { scopeFolder: 'work/2026' })) as Array<{ id: string }>
+    expect(inScope.map((r) => r.id)).toEqual(['4'])
+    // A term that exists only in doc1 must not appear when scoped away from it.
+    const outOfScope = (await query('markdown', { scopeFolder: 'work/2026' })) as Array<{
+      id: string
+    }>
+    expect(outOfScope).toHaveLength(0)
+  })
+
+  it('returns the whole workspace when scopeFolder is null', async () => {
+    const res = (await query('markdown', { scopeFolder: null })) as Array<{ id: string }>
+    expect(res.map((r) => r.id)).toContain('1')
+  })
+
+  it('filename mode matches only document titles, not body text', async () => {
+    // 'markdown' appears in doc1's body but not its title; in filename mode it must miss.
+    const byContent = (await query('markdown', { mode: 'content' })) as Array<{ id: string }>
+    expect(byContent.map((r) => r.id)).toContain('1')
+    const byName = (await query('markdown', { mode: 'filename' })) as Array<{ id: string }>
+    expect(byName.map((r) => r.id)).not.toContain('1')
+  })
+
+  it('filename mode still surfaces a document whose title holds the term', async () => {
+    const res = (await query('Meeting', { mode: 'filename' })) as Array<{ id: string }>
     expect(res.map((r) => r.id)).toContain('4')
   })
 

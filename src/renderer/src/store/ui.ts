@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ViewMode, ThemeMode } from '../types'
+import type { ViewMode, ThemeMode, SearchMode } from '../types'
 import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/storage'
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
 
@@ -87,6 +87,9 @@ interface UIState {
   setSearchOpen: (open: boolean) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
+  // Sidebar search mode: 'filename' matches file names only; 'content' is full-text.
+  searchMode: SearchMode
+  setSearchMode: (mode: SearchMode) => void
 
   // Theme
   theme: ThemeMode
@@ -209,6 +212,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   setSearchOpen: (open) => set({ searchOpen: open }),
   searchQuery: '',
   setSearchQuery: (q) => set({ searchQuery: q }),
+  searchMode: 'content',
+  setSearchMode: (mode) => set({ searchMode: mode }),
 
   theme: 'light',
   setTheme: (theme) => set({ theme }),

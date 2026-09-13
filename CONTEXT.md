@@ -28,9 +28,13 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   breadcrumb** rename still goes through Edit mode, unchanged.)
 - **File names & extensions** — the inline name input shows the **full file name including the extension**,
   and the typed extension is the one that lands on disk: a supported Markdown extension (`.md` / `.markdown`
-  / `.mdx` / `.mdtxt` / `.mdtext`) is used as typed; a name with no extension gets `.md` appended; anything
-  else (e.g. `.txt`) is **refused** — nothing is written and the `.md` spelling is offered back in the
-  input. Path separators are refused too (folded to `-`) so a rename cannot escape the folder.
+  / `.mdx` / `.mdtxt` / `.mdtext`) is used as typed; a name with **no extension** gets `.md` appended but the
+  commit is **held** until a second Enter; anything else (e.g. `.txt`) is **refused** — nothing is written
+  and the `.md` spelling is offered back in the input. Path separators are refused too (folded to `-`) so a
+  rename cannot escape the folder. A name that **already exists** is likewise refused: flagged live (red
+  border, Enter blocked) and rejected by the main process with `EEXIST` instead of being renumbered to `-1`
+  or silently overwritten — and the comparison is case-insensitive off Linux. See
+  `docs/adr/0011-file-name-and-extension-rules.md`.
 - **Manual save** — no auto-save. **Save** (`Ctrl/Cmd+S`), **Save As…** (`Ctrl/Cmd+Shift+S`), and
   **Reload from Disk** (`Ctrl/Cmd+Shift+R`).
 - **Split-pane / preview mode** — view modes: edit, preview, or split (editor + live preview side by side
@@ -80,6 +84,27 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **Markdown dual-write** — Markdown files are written to disk; there is no separate index file.
 - **Full-text search** — minisearch-powered, instant results with highlighted snippets.
 
+## Search & find
+
+- **Find widget (就地查找条)** — an in-place find UI that overlays the content it searches; never a layout
+  row. Owned by the **editor** (find + replace) and the **preview** (find only). Carries the
+  **match-case (`Aa`)**, **whole-word (`ab`)**, **regex (`.*`)** and **preserve-case (`AB`)** toggles.
+  _Avoid_: "search panel" when you mean this.
+- **Search panel (搜索面板)** — the cross-document search surface that lists matching documents. It
+  navigates between documents rather than overlaying one.
+  _Avoid_: "find bar" when you mean this.
+- **Content mode (正文模式)** — the search mode that matches a document's `title`, `content` and
+  `folderPath`.
+- **Filename mode (文件名模式)** — the search mode that matches the **file name** only; by default the
+  path and the extension are ignored.
+- **File name (文件名)** — `basename(filePath)`, **including** the extension (e.g. `notes.md`).
+- **Document title (`title`)** — the document's derived, **extension-less** file name (e.g. `notes`); what
+  the sidebar shows. _Avoid_: using "file name" to mean `title`.
+- **Glob pattern (通配符)** — a file-name pattern in VS Code's glob syntax (`/`, `*`, `?`, `**`, `{}`,
+  `[]`, `[!]`). In **filename mode** a query containing a glob metacharacter switches from plain file-name
+  matching to glob matching; a pattern without `/` matches the file name at any depth, one with `/` matches
+  the path relative to the open folder.
+
 ## Rendering & security
 
 - **Markdown pipeline** — `src/renderer/src/lib/markdownPipeline.ts` + `sanitize.ts`, producing sanitized
@@ -90,6 +115,10 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 
 ## App behavior, dialogs & UI
 
+- **No persisted settings (禁止持久化任何设置项)** — no UI setting (any toggle, search mode, window or
+  layout state) is written to disk or `localStorage`; every launch starts from clean defaults. The one
+  pre-existing exception in the codebase is the UI language. New toggles must **never** be persisted.
+  See `docs/adr/0010-sidebar-folder-filter-toggle.md`.
 - **dialog:confirm (app-modal)** — the only sanctioned way to prompt for unsaved-change discard and similar
   yes/no questions. It is a `dialog:confirm` IPC backed by `dialog.showMessageBox` (an app-modal dialog that
   returns focus to the window on close). Native `window.confirm` is **forbidden** for these prompts: it fires

@@ -142,17 +142,33 @@ export function createMemoryDiskIO(): MemoryDiskIO {
       const c = canon(path)
       return files.has(c) || dirs.has(c)
     },
-    mkdir(path) {
-      // Mirror `fs.mkdirSync(recursive: true)`: create every ancestor, not just the leaf.
+    mkdir(path, options) {
       const norm = canon(path).replace(/[\\/]+$/, '')
-      const segs = norm.split(/[\\/]/)
-      let cur = segs[0]
-      dirs.add(cur)
-      for (let i = 1; i < segs.length; i++) {
-        // `canon` has already normalised every separator to `\`, so the join is `\`.
-        cur += '\\' + segs[i]
+      // Default to recursive (create every ancestor) so callers that omit `options` keep
+      // behaving as before. Only an EXPLICIT `{ recursive: false }` demands a non-recursive
+      // create that rejects when the leaf already exists (EEXIST) or a parent is missing
+      // (ENOENT) — exactly what `documents:create-folder` wants, so a name clash surfaces to
+      // the renderer instead of being swallowed.
+      if (options?.recursive !== false) {
+        // Mirror `fs.mkdirSync(recursive: true)`: create every ancestor, not just the leaf,
+        // and never throw if the leaf already exists.
+        const segs = norm.split(/[\\/]/)
+        let cur = segs[0]
         dirs.add(cur)
+        for (let i = 1; i < segs.length; i++) {
+          // `canon` has already normalised every separator to `\`, so the join is `\`.
+          cur += '\\' + segs[i]
+          dirs.add(cur)
+        }
+        return
       }
+      // Non-recursive: the parent must exist and the leaf must be free.
+      const segs = norm.split(/[\\/]/)
+      const parent = segs.slice(0, -1).join('\\')
+      // The root ('') is always present, so a top-level create never ENOENTs on it.
+      if (parent !== '' && !dirs.has(parent)) fail('ENOENT', parent)
+      if (dirs.has(norm) || files.has(norm)) fail('EEXIST', norm)
+      dirs.add(norm)
     },
     rename(oldPath, newPath) {
       // Windows' fs treats `/` and `\` as one separator, so a request may use a

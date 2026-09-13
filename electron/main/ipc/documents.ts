@@ -599,26 +599,13 @@ export function registerDocumentHandlers(
         : getDefaultDocsDir(io)
       io.mkdir(baseDir, { recursive: true })
 
-      // Create a unique filename atomically: open with O_EXCL ('wx') and retry with an
-      // incrementing suffix until we win a free name, avoiding an exists/write TOCTOU.
+      // Create the file atomically with O_EXCL ('wx'): it must NOT already exist. A name
+      // clash is a user-facing error (the sidebar already blocks the commit live, so this
+      // only catches a race), not something to silently rename away — appending `-N` would
+      // create a file the user never asked for (VS Code refuses the name instead).
       const safeTitle = title.replace(/[/\\:*?"<>|]/g, '-')
-      let fd: number
-      let filePath: string
-      let counter = 0
-      while (true) {
-        const candidate = counter === 0 ? `${safeTitle}${ext}` : `${safeTitle}-${counter}${ext}`
-        filePath = join(baseDir, candidate)
-        try {
-          fd = io.openExclusive(filePath)
-          break
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
-            counter++
-            continue
-          }
-          throw e
-        }
-      }
+      const filePath = join(baseDir, `${safeTitle}${ext}`)
+      const fd = io.openExclusive(filePath)
       try {
         io.writeToFd(fd, content)
       } finally {
@@ -663,6 +650,31 @@ export function registerDocumentHandlers(
       const newContent = updates.content ?? existing.content
       const wordCount = countWords(newContent)
 
+      // Resolve a title change into a real rename BEFORE writing anything. A taken name is
+      // refused outright: silently appending `-N` (as this used to do) moved the file to a name
+      // the user never chose. Refusing up front also means a refusal leaves nothing written
+      // behind — the content write below is skipped rather than landing under the old name.
+      let renameTarget: string | null = null
+      if (newTitle && newTitle !== existing.title && existing.filePath) {
+        const dir = dirname(existing.filePath)
+        const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
+        const ext = extname(existing.filePath).toLowerCase() || '.md'
+        const target = join(dir, `${safeTitle}${ext}`)
+        // Compare against the file's own path so saving the SAME title (or a caller passing the
+        // display form `notes.md`) never counts as a collision with itself.
+        if (target !== existing.filePath) {
+          if (io.exists(target)) {
+            // EEXIST is the standard code for "the name is taken"; the renderer's save-failure
+            // path surfaces the message, so no extra plumbing is needed here.
+            throw Object.assign(
+              new Error(`A file named "${basename(target)}" already exists here.`),
+              { code: 'EEXIST' },
+            )
+          }
+          renameTarget = target
+        }
+      }
+
       // Write to file (suppress the "file changed" notification that this write would otherwise trigger)
       // Write back in the document's original metadata encoding to preserve byte-level fidelity (R5).
       // A memory-only draft (file_path === '') has no file yet; the first Save is always routed to
@@ -677,29 +689,9 @@ export function registerDocumentHandlers(
 
       // Rename file if title changed
       let newFilePath = existing.filePath
-      // Compare the NORMALIZED title, not the raw one. The renderer sends the
-      // extension-free name, but a caller that still passes the display form
-      // (`notes.md`) would otherwise differ from `existing.title` (`notes`) on
-      // every save and walk into the rename branch for nothing — the `-N` probe
-      // below only survives that because of its own `target !== existing.filePath`
-      // check. `newTitle &&` keeps an empty title from renaming to a bare extension.
-      if (newTitle && newTitle !== existing.title && existing.filePath) {
-        const dir = dirname(existing.filePath)
-        const safeTitle = newTitle.replace(/[/\\:*?"<>|]/g, '-')
-        const ext = extname(existing.filePath).toLowerCase() || '.md'
-        // Pick a free target name: the title-based name, or `<title>-N<ext>` if already taken by
-        // a *different* file. (renameSync replaces the target atomically on both Windows and POSIX,
-        // so we probe existence explicitly to avoid clobbering an unrelated file.)
-        let target = join(dir, `${safeTitle}${ext}`)
-        let counter = 0
-        while (target !== existing.filePath && io.exists(target)) {
-          counter++
-          target = join(dir, `${safeTitle}-${counter}${ext}`)
-        }
-        if (target !== existing.filePath) {
-          io.rename(existing.filePath, target)
-        }
-        newFilePath = target
+      if (renameTarget) {
+        io.rename(existing.filePath, renameTarget)
+        newFilePath = renameTarget
       }
 
       return storeUpdate(id, {
@@ -867,10 +859,13 @@ export function registerDocumentHandlers(
     }
   })
 
-  // Create a folder on disk and start watching it so files dropped into it show up
-  // recursive: true so nested paths are created too.
+  // Create a folder on disk and start watching it so files dropped into it show up.
+  // Non-recursive on purpose: `mkdir` must reject with EEXIST (not silently swallow it
+  // the way `recursive: true` would) when the name already exists, so the sidebar's
+  // create row can surface the clash. The parent always exists in our flows, so we never
+  // need mkdir to create ancestors.
   ipcMain.handle('documents:create-folder', (_event, folderPath: string) => {
-    io.mkdir(folderPath, { recursive: true })
+    io.mkdir(folderPath, { recursive: false })
     addWatchedFolder(folderPath)
   })
 
@@ -886,7 +881,29 @@ export function registerDocumentHandlers(
   // tolerates the old one ceasing to exist. Tracked documents are re-pointed proactively,
   // otherwise the rename reaches the store as unrelated unlink/add pairs and the sidebar
   // shows the old folder (struck-through "missing") beside a duplicate of the new one.
+  // VS Code's rule, mirrored here: only Linux treats paths as case-sensitive. On Windows/macOS
+  // `a.md` and `A.md` are the SAME file, so a rename that only changes the case is not a move
+  // onto a different file — and must not be mistaken for a collision with itself.
+  function isSamePath(a: string, b: string): boolean {
+    if (a === b) return true
+    return process.platform !== 'linux' && a.toLowerCase() === b.toLowerCase()
+  }
+
+  // Refuse a rename whose target name is already taken. POSIX `rename()` SILENTLY REPLACES the
+  // target (Windows already errors), so without this guard a collision is silent data loss —
+  // the same "refuse, never silently clobber or renumber" rule create/update already follow.
+  // The renderer's live check normally prevents it; this is the backstop for a race.
+  function guardRenameTarget(io: DiskIO, oldPath: string, newPath: string): void {
+    if (isSamePath(oldPath, newPath)) return
+    if (!io.exists(newPath)) return
+    throw Object.assign(
+      new Error(`A file or folder named "${basename(newPath)}" already exists here.`),
+      { code: 'EEXIST' },
+    )
+  }
+
   ipcMain.handle('documents:rename-folder', (_event, oldPath: string, newPath: string) => {
+    guardRenameTarget(io, oldPath, newPath)
     io.rename(oldPath, newPath)
     addWatchedFolder(newPath)
     rePointFolderRecords(oldPath, newPath)
@@ -899,6 +916,7 @@ export function registerDocumentHandlers(
   // document under the new name with no stale duplicate. Renaming is a direct on-disk move,
   // independent of any open editor / edit mode, so it persists immediately.
   ipcMain.handle('documents:rename-file', (_event, oldPath: string, newPath: string) => {
+    guardRenameTarget(io, oldPath, newPath)
     io.rename(oldPath, newPath)
     rePointFileRecord(oldPath, newPath)
     rememberRename('file', oldPath, newPath)

@@ -144,6 +144,26 @@ describe('createMemoryDiskIO', () => {
     expect(entries.find((e) => e.name === 'sub')?.isDirectory()).toBe(true)
   })
 
+  it('mkdir without recursion rejects EEXIST on an existing leaf and ENOENT on a missing parent', () => {
+    const io = createMemoryDiskIO()
+    io.mkdir('/docs', { recursive: true })
+    // An existing leaf must surface (mirrors fs.mkdirSync non-recursive), not be swallowed.
+    expect(() => io.mkdir('/docs', { recursive: false })).toThrow(/EEXIST/)
+    // A missing parent must surface too, instead of silently creating ancestors.
+    expect(() => io.mkdir('/absent/sub', { recursive: false })).toThrow(/ENOENT/)
+    // A free leaf under an existing parent succeeds.
+    expect(() => io.mkdir('/docs/sub', { recursive: false })).not.toThrow()
+    expect(io.exists('/docs/sub')).toBe(true)
+  })
+
+  it('mkdir without recursion rejects EEXIST when a FILE already holds the name', () => {
+    const io = createMemoryDiskIO()
+    io.mkdir('/docs', { recursive: true })
+    io.writeFile('/docs/note.md', Buffer.from('hi'))
+    // A name collision with a file (not just a directory) must also be refused.
+    expect(() => io.mkdir('/docs/note.md', { recursive: false })).toThrow(/EEXIST/)
+  })
+
   it('stat reports size and rejects a missing path', () => {
     const io = createMemoryDiskIO()
     io.seed('/a.md', '12345')

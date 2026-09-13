@@ -29,3 +29,14 @@ export interface SearchResult {
 
 export type ViewMode = 'edit' | 'preview' | 'split'
 export type ThemeMode = 'light' | 'dark' | 'system'
+
+// Sidebar search mode: 'filename' matches file names only; 'content' is the
+// full-text search across title, body and folder path.
+export type SearchMode = 'filename' | 'content'
+
+// Options for the search IPC: scope to a folder (and its sub-folders) and choose
+// the search mode.
+export interface SearchOptions {
+  scopeFolder?: string | null
+  mode?: SearchMode
+}

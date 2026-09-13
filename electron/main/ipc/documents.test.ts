@@ -359,20 +359,24 @@ describe('documents IPC — create (memory-only)', () => {
     expect(readFileSync(row.filePath, 'utf-8')).toBe('# Real')
   })
 
-  it('retries with a -N suffix when the target filename already exists (EEXIST collision)', async () => {
+  it('rejects with EEXIST when the target filename already exists (no silent -N rename)', () => {
     // The create handler writes into <docsRoot>/MarkFlow, so pre-create the would-be target there
-    // to force openSync('wx') to fail with EEXIST and the retry loop to pick `ColTest-1.md`.
+    // to force openSync('wx') to fail with EEXIST. The handler is synchronous, so the clash
+    // surfaces as a thrown EEXIST (it must refuse rather than auto-rename with `-N`).
     const markFlowDir = join(stableDocsRoot, 'MarkFlow')
     mkdirSync(markFlowDir, { recursive: true })
     const target = join(markFlowDir, 'ColTest.md')
     writeFileSync(target, 'preexisting')
-    const row = await call('documents:create', {
-      title: 'ColTest',
-      content: '# ColTest',
-      memoryOnly: false,
-    })
-    expect(row.filePath).toBe(join(markFlowDir, 'ColTest-1.md'))
-    expect(readFileSync(row.filePath, 'utf-8')).toBe('# ColTest')
+    expect(() =>
+      call('documents:create', {
+        title: 'ColTest',
+        content: '# ColTest',
+        memoryOnly: false,
+      }),
+    ).toThrow(/EEXIST/)
+    // The original file is untouched and no -N variant was written.
+    expect(readFileSync(target, 'utf-8')).toBe('preexisting')
+    expect(existsSync(join(markFlowDir, 'ColTest-1.md'))).toBe(false)
   })
 
   it('first Save As of a memory-only draft writes the file and stores its path (no writeFileSync(""))', async () => {
@@ -427,9 +431,10 @@ describe('documents IPC — update', () => {
     expect(readFileSync(updated.filePath, 'utf-8')).toBe('x')
   })
 
-  it('retries the rename with a -N suffix when the new filename is already taken (EEXIST)', async () => {
+  it('refuses a title change whose target filename is already taken (no -N fallback)', async () => {
     // docB owns RenTarget.md on disk. Updating docA's title to 'RenTarget' collides, so the
-    // rename path retries and lands on RenTarget-1.md.
+    // handler must refuse outright instead of silently moving the file to a RenTarget-1.md the
+    // user never asked for. The handler is synchronous, so the refusal is a thrown EEXIST.
     const docA = await call('documents:create', {
       title: 'RenameCollideA',
       content: 'a',
@@ -440,9 +445,20 @@ describe('documents IPC — update', () => {
       content: 'b',
       memoryOnly: false,
     })
-    const updated = await call('documents:update', docA.id, { title: 'RenTarget' })
-    expect(updated.filePath).toBe(join(stableDocsRoot, 'MarkFlow', 'RenTarget-1.md'))
-    expect(readFileSync(updated.filePath, 'utf-8')).toBe('a')
+    // The handler is synchronous, so the refusal surfaces as a thrown error carrying the standard
+    // EEXIST code (callers can classify it) plus a message the save-failure path can show.
+    let thrown: unknown
+    try {
+      call('documents:update', docA.id, { title: 'RenTarget' })
+    } catch (e) {
+      thrown = e
+    }
+    expect((thrown as NodeJS.ErrnoException)?.code).toBe('EEXIST')
+    expect((thrown as Error)?.message).toContain('already exists')
+    // Nothing moved and nothing was renumbered: the colliding file still holds docB's content.
+    const target = join(stableDocsRoot, 'MarkFlow', 'RenTarget.md')
+    expect(readFileSync(target, 'utf-8')).toBe('b')
+    expect(existsSync(join(stableDocsRoot, 'MarkFlow', 'RenTarget-1.md'))).toBe(false)
   })
 
   it('strips a Markdown extension from the incoming title so a rename does not double it', async () => {
@@ -1953,6 +1969,21 @@ describe('documents IPC — folder ops (能力 7)', () => {
     await call('documents:create-folder', p)
     expect(existsSync(p)).toBe(true)
   })
+  it('create-folder rejects with EEXIST when the folder already exists', () => {
+    // Drive this through the in-memory DiskIO: the node:fs mock drops mkdirSync's options, so
+    // the recursive:false refusal cannot be observed via the mocked real adapter. Seed the folder,
+    // then the handler must refuse it with EEXIST instead of silently swallowing it.
+    const io = createMemoryDiskIO()
+    const p = join(stableDocsRoot, `dup-${Date.now()}`)
+    io.mkdir(p, { recursive: true })
+    registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow, io)
+    try {
+      expect(() => call('documents:create-folder', p)).toThrow(/EEXIST/)
+    } finally {
+      // Restore the default (real-filesystem) registration for the remaining cases.
+      registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+    }
+  })
   it('rename-folder moves the directory', async () => {
     const a = join(stableDocsRoot, `mv-a-${Date.now()}`)
     const b = join(stableDocsRoot, `mv-b-${Date.now()}`)
@@ -2151,6 +2182,73 @@ describe('documents IPC — folder ops (能力 7)', () => {
     // backslashes. A '/' here would mean the `'\\'` branch was not taken.
     expect(docs.get('bs-doc')?.filePath).toBe(newP)
     docs.delete('bs-doc')
+  })
+
+  // POSIX `rename()` silently REPLACES an existing target, so a collision has to be refused
+  // here — otherwise a lost race is silent data loss. Windows already errored; now both agree.
+  it('refuses a rename whose target name is already taken (no silent overwrite)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-rename-clash-'))
+    const src = join(dir, 'a.md')
+    const taken = join(dir, 'b.md')
+    writeFileSync(src, '# A', 'utf-8')
+    writeFileSync(taken, '# B', 'utf-8')
+    let thrown: unknown
+    try {
+      await call('documents:rename-file', src, taken)
+    } catch (e) {
+      thrown = e
+    }
+    expect((thrown as NodeJS.ErrnoException)?.code).toBe('EEXIST')
+    // Neither file is lost: an unguarded rename would have replaced `taken` with `src`.
+    expect(readFileSync(src, 'utf-8')).toBe('# A')
+    expect(readFileSync(taken, 'utf-8')).toBe('# B')
+  })
+
+  it('refuses a folder rename whose target name is already taken', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-renamefolder-clash-'))
+    const src = join(dir, 'sub')
+    const taken = join(dir, 'other')
+    mkdirSync(src)
+    mkdirSync(taken)
+    let thrown: unknown
+    try {
+      await call('documents:rename-folder', src, taken)
+    } catch (e) {
+      thrown = e
+    }
+    expect((thrown as NodeJS.ErrnoException)?.code).toBe('EEXIST')
+    expect(existsSync(src)).toBe(true)
+    expect(existsSync(taken)).toBe(true)
+  })
+
+  it('allows a rename that only changes the case of the name', async () => {
+    // `a.md` -> `A.md` is the SAME file on Windows/macOS, so the guard must not report a
+    // collision with itself (VS Code's `child !== item` rule).
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-rename-case-'))
+    const src = join(dir, 'a.md')
+    writeFileSync(src, '# A', 'utf-8')
+    await call('documents:rename-file', src, join(dir, 'A.md'))
+    expect(existsSync(join(dir, 'A.md'))).toBe(true)
+  })
+
+  it('treats a case-only difference as another file on Linux', () => {
+    // The in-memory adapter is always case-sensitive, so it can hold both spellings — which a
+    // Windows disk cannot. With `process.platform` pinned to Linux, `a.md` -> `A.md` is a real
+    // move onto a different file and must be refused.
+    const io = createMemoryDiskIO()
+    io.seed('/d/a.md', 'A')
+    io.seed('/d/A.md', 'other')
+    registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow, io)
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      expect(() => call('documents:rename-file', '/d/a.md', '/d/A.md')).toThrow(/already exists/)
+      // The very same path is still never a collision, on any platform.
+      expect(() => call('documents:rename-file', '/d/a.md', '/d/a.md')).not.toThrow()
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+      registerDocumentHandlers(fakeIpcMain, fakeApp, () => fakeMainWindow)
+    }
   })
 
   // ── undo-rename (single slot) ─────────────────────────────────────────

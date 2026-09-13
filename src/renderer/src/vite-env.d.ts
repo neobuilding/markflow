@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { Document, SearchResult, ThemeMode } from './types'
+import type { Document, SearchResult, ThemeMode, SearchOptions } from './types'
 
 // Status information of a file on disk (size / creation time / modification time)
 export interface FileStat {
@@ -85,7 +85,7 @@ export interface Api {
     print: (html: string) => Promise<void>
   }
   search: {
-    query: (q: string) => Promise<SearchResult[]>
+    query: (q: string, opts?: SearchOptions) => Promise<SearchResult[]>
   }
   app: {
     getTheme: () => Promise<ThemeMode>

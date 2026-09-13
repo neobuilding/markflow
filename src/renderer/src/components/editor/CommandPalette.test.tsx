@@ -187,9 +187,43 @@ describe('CommandPalette', () => {
     expect(useUIStore.getState().activeDocumentId).toBeNull()
     expect(useUIStore.getState().searchOpen).toBe(true)
   })
-})
 
-// ── : right-click menu on a search result row ───────────────────────
+  it('switches to file-name search mode from the toggle', async () => {
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('a')
+    useUIStore.getState().setSearchMode('content')
+    render(<CommandPalette />)
+    fireEvent.click(await screen.findByTestId('search-mode-filename'))
+    expect(useUIStore.getState().searchMode).toBe('filename')
+  })
+
+  it('switches back to content search mode from the toggle', async () => {
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('a')
+    useUIStore.getState().setSearchMode('filename')
+    render(<CommandPalette />)
+    fireEvent.click(await screen.findByTestId('search-mode-content'))
+    expect(useUIStore.getState().searchMode).toBe('content')
+  })
+
+  it('shows the current-folder scope label when a folder is active', async () => {
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('a')
+    useUIStore.getState().setActiveFolder('/my/folder')
+    render(<CommandPalette />)
+    expect(await screen.findByTestId('search-scope')).toHaveTextContent(
+      'Current folder and its sub-folders',
+    )
+  })
+
+  it('shows the all-documents scope label when no folder is active', async () => {
+    useUIStore.getState().setSearchOpen(true)
+    useUIStore.getState().setSearchQuery('a')
+    useUIStore.getState().setActiveFolder(null)
+    render(<CommandPalette />)
+    expect(await screen.findByTestId('search-scope')).toHaveTextContent('All documents')
+  })
+})
 describe('CommandPalette — result row context menu (PLAN §9)', () => {
   const writeText = vi.fn()
 

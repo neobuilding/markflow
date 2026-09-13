@@ -15,7 +15,7 @@ import {
 } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
-import { searchKeymap } from '@codemirror/search'
+import { searchKeymap, search, openSearchPanel } from '@codemirror/search'
 import { autocompletion } from '@codemirror/autocomplete'
 import {
   Undo2,
@@ -301,6 +301,11 @@ export function MarkdownEditor({
         history(),
         highlightActiveLine(),
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
+        // In-editor find panel. The keymap above binds Mod-f to open it; the `search` extension
+        // provides both the search state and the panel UI that `openSearchPanel` reveals. An
+        // external "markdown:find" event (fired by the editor toolbar button) opens it too, so
+        // the button works without editor focus.
+        search(),
         markdown({
           base: markdownLanguage,
           codeLanguages: languages,
@@ -386,8 +391,31 @@ export function MarkdownEditor({
 
     document.addEventListener('markdown:insert', handleInsert)
 
+    // Open the in-editor find panel on request from the editor toolbar button. CodeMirror's
+    // own Mod-f binding already opens it when the editor has focus; this listener covers the
+    // case where the button is clicked without editor focus.
+    const handleFind = () => {
+      const v = viewRef.current
+      /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
+      if (!v) return
+      openSearchPanel(v)
+    }
+    document.addEventListener('markdown:find', handleFind)
+
+    // Replace entry point (Ctrl+H / toolbar button). The CodeMirror search panel already
+    // includes a replace field, so we reuse the same panel as find.
+    const handleReplace = () => {
+      const v = viewRef.current
+      /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
+      if (!v) return
+      openSearchPanel(v)
+    }
+    document.addEventListener('markdown:replace', handleReplace)
+
     return () => {
       document.removeEventListener('markdown:insert', handleInsert)
+      document.removeEventListener('markdown:find', handleFind)
+      document.removeEventListener('markdown:replace', handleReplace)
       scrollSync.unregister('editor')
       view.destroy()
       viewRef.current = null

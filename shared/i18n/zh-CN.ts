@@ -32,6 +32,14 @@ export const zhCN: Record<TranslationKey, string> = {
   'app.renameUndoBlocked': '无法撤销改名——原名称已被占用，或文件已被移动。',
   'sidebar.unsupportedExt': '不支持 {{ext}} 扩展名，已改为 .md',
   'sidebar.unsupportedName': '不能包含路径分隔符，已改为 {{name}}',
+  // 实时显示（红色边框、回车被拦截）：当输入的名称与即将放入位置的既有条目重名时。
+  'sidebar.nameExists': '“{{name}}” 已存在',
+  // 在没有扩展名的名称上按回车后显示：尚未写入任何文件，已补上 “.md”，行保持打开以便确认（再次回车才真正创建）。
+  'sidebar.missingExt': '未填写扩展名 —— 已补上 “.md”，再次按回车创建',
+  // 当提交被主进程以“非重名”的原因拒绝时（如权限错误）显示在该行下方；重名显示为 nameExists。
+  'sidebar.createFailed': '无法创建 “{{name}}”。',
+  // 对应 VS Code 的 invalidFileNameError：含分隔符或操作系统非法字符，实时拦截，不让它走到提交。
+  'sidebar.invalidName': '“{{name}}” 不是合法的文件或文件夹名。',
   'details.unsaved': '未保存（仅存在于内存中）',
 
   // ── Editor pane ────────────────────────────────────────────────────────
@@ -48,6 +56,9 @@ export const zhCN: Record<TranslationKey, string> = {
   'editor.fileDetailsShortcut': '文件详情 ({{shortcut}})',
   'editor.export': '导出为 HTML…',
   'editor.exportShortcut': '导出为 HTML… ({{shortcut}})',
+  'editor.findShortcut': '查找 ({{shortcut}})',
+  'editor.replace': '替换',
+  'editor.replaceShortcut': '替换 ({{shortcut}})',
   'editor.closeFile': '关闭文件',
   'editor.renameTitle': '重命名文件',
   'editor.fileDeleted': '文件已在磁盘上删除 —— 保存即可恢复',
@@ -104,6 +115,10 @@ export const zhCN: Record<TranslationKey, string> = {
   'palette.startTyping': '开始输入以搜索你的文档…',
   'palette.navigate': '导航',
   'palette.open': '打开',
+  'palette.mode.filename': '文件名',
+  'palette.mode.content': '正文',
+  'palette.scopeFolder': '当前文件夹及其子文件夹',
+  'palette.scopeAll': '全部文档',
 
   // ── About dialog ───────────────────────────────────────────────────────
   'about.title': '关于 MarkFlow',
@@ -185,6 +200,12 @@ export const zhCN: Record<TranslationKey, string> = {
   'preview.mermaidFailed': 'Mermaid 渲染失败',
   'preview.imageFailed': '图片加载失败',
   'preview.imageFailedAlt': '图片加载失败：{{alt}}',
+  'preview.find': '在预览中查找',
+  'preview.findPlaceholder': '在预览中查找…',
+  'preview.findPrev': '上一个匹配',
+  'preview.findNext': '下一个匹配',
+  'preview.findClose': '关闭查找',
+  'preview.findNone': '无匹配',
 
   // ── Native menu (Electron main process) ────────────────────────────────
   'menu.file': '文件',
@@ -264,10 +285,10 @@ export const zhCN: Record<TranslationKey, string> = {
   'ctx.collapse': '折叠',
   'ctx.expandAll': '全部展开',
   'ctx.copyFolderPath': '复制文件夹路径',
-  'ctx.newFileHere': '在此文件夹中新建文件',
-  'ctx.newSubfolder': '新建子文件夹…',
+  'ctx.newFileHere': '新建文件',
+  'ctx.newSubfolder': '新建文件夹',
 
-  'ctx.newFolderHere': '在此新建文件夹…',
+  'ctx.newFolderHere': '新建文件夹',
   'ctx.renameFolder': '重命名文件夹…',
   'ctx.deleteFolder': '删除文件夹',
   'ctx.refresh': '刷新',

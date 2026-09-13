@@ -101,7 +101,8 @@ describe('FileDetailsDialog', () => {
     await screen.findByText('Hello')
     fireEvent.click(screen.getByRole('button', { name: /copy path/i }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('/tmp/hello.md'))
-    expect(screen.getByText('Copied')).toBeInTheDocument()
+    // The "Copied" toast renders on a later tick after the clipboard write resolves.
+    await waitFor(() => expect(screen.getByText('Copied')).toBeInTheDocument())
   })
 
   it('shows placeholders when the file stat is missing', async () => {

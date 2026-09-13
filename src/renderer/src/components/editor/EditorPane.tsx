@@ -16,6 +16,7 @@ import {
   PanelLeft,
   X,
   FolderOpen,
+  Replace,
   Search,
   Plus,
   Save,
@@ -44,6 +45,7 @@ import {
 } from '../../hooks/useDocuments'
 import { MarkdownEditor } from './MarkdownEditor'
 import { MarkdownPreview } from '../preview/MarkdownPreview'
+import { PreviewFindBar } from '../preview/PreviewFindBar'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
@@ -85,6 +87,7 @@ export function EditorPane(): React.ReactElement {
     clearExternalChange,
   } = useUIStore()
   const { t } = useT()
+  const previewContentRef = useRef<HTMLDivElement>(null)
   const { data: doc, isLoading } = useDocument(activeDocumentId)
   const updateMut = useUpdateDocument()
   const saveAsMut = useSaveDocumentAs()
@@ -271,6 +274,21 @@ export function EditorPane(): React.ReactElement {
       rmReload()
     }
   }, [handleSave, handleSaveAs, handleReload])
+
+  // Global Ctrl/Cmd+H opens the editor's find-and-replace panel. The CodeMirror search
+  // panel already includes a replace field, so the same panel serves both Ctrl+F and Ctrl+H.
+  // Listening on window (not the CodeMirror keymap) means it works without editor focus;
+  // CodeMirror has no Mod-h binding, so the event always reaches this listener.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h') {
+        e.preventDefault()
+        document.dispatchEvent(new CustomEvent('markdown:replace'))
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   // Receive the "file changed on disk" event sent from the main process.
   // The watcher itself lives entirely in the main process (chokidar over the
@@ -562,6 +580,44 @@ export function EditorPane(): React.ReactElement {
               {t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧E') })}
             </TooltipContent>
           </Tooltip>
+
+          {viewMode !== 'preview' && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => document.dispatchEvent(new CustomEvent('markdown:find'))}
+                  data-testid="editor-find-btn"
+                  aria-label={t('editor.findShortcut', { shortcut: formatShortcut('⌘F') })}
+                >
+                  <Search size={13} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t('editor.findShortcut', { shortcut: formatShortcut('⌘F') })}
+              </TooltipContent>
+            </Tooltip>
+          )}
+
+          {viewMode !== 'preview' && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => document.dispatchEvent(new CustomEvent('markdown:replace'))}
+                  data-testid="editor-replace-btn"
+                  aria-label={t('editor.replaceShortcut', { shortcut: formatShortcut('⌘H') })}
+                >
+                  <Replace size={13} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {t('editor.replaceShortcut', { shortcut: formatShortcut('⌘H') })}
+              </TooltipContent>
+            </Tooltip>
+          )}
 
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
         </>
@@ -1085,8 +1141,13 @@ export function EditorPane(): React.ReactElement {
 
         {/* Preview: shown in preview / split; hidden in edit mode but still mounted so the single
             export-HTML data source stays ready (R7) */}
-        <div className={viewMode === 'edit' ? 'hidden' : 'flex-1 min-w-0 overflow-hidden'}>
-          <MarkdownPreview content={editorContent} doc={doc} />
+        <div className={viewMode === 'edit' ? 'hidden' : 'relative flex-1 min-w-0 overflow-hidden'}>
+          {/* The content container is separate from the find bar so the bar's own labels are
+              never matched by the in-preview search. */}
+          <div ref={previewContentRef} className="h-full w-full">
+            <MarkdownPreview content={editorContent} doc={doc} />
+          </div>
+          <PreviewFindBar containerRef={previewContentRef} />
         </div>
 
         {/* Switch overlay: an OPAQUE cover over both panes while the document is in flight. This replaces the old `if (isLoading)` early return, which unmounted this whole subtree and destroyed the CodeMirror view. The panes stay mounted (their content is '' see editorContent), so when the document lands only a content swap happens, not a rebuild */}

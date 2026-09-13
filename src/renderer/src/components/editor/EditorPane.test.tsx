@@ -411,3 +411,44 @@ describe('EditorPane split-divider context menu (PLAN §10)', () => {
     expect(useUIStore.getState().viewMode).toBe('preview')
   })
 })
+
+describe('EditorPane in-pane find (Ctrl+F)', () => {
+  it('opens the editor find panel from the toolbar find button', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    // Wait for the CodeMirror editor to mount.
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    fireEvent.click(screen.getByTestId('editor-find-btn'))
+    // The markdown:find event opens CodeMirror's search panel.
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+  })
+
+  it('hides the find button in pure preview mode', async () => {
+    useUIStore.getState().setViewMode('preview')
+    mount()
+    expect(screen.queryByTestId('editor-find-btn')).toBeNull()
+  })
+
+  it('opens the replace panel from the toolbar replace button', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    fireEvent.click(screen.getByTestId('editor-replace-btn'))
+    // The markdown:replace event opens the same CodeMirror search panel (which includes a replace field).
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+  })
+
+  it('opens the replace panel on Ctrl+H', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    fireEvent.keyDown(window, { key: 'h', ctrlKey: true })
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+  })
+
+  it('hides the replace button in pure preview mode', async () => {
+    useUIStore.getState().setViewMode('preview')
+    mount()
+    expect(screen.queryByTestId('editor-replace-btn')).toBeNull()
+  })
+})

@@ -540,13 +540,43 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await expect(page.getByTestId('doc-item').filter({ hasText: 'beta.md' })).toHaveCount(0)
   })
 
+  // The bare-name rule is not create-only: renaming to a stem with no extension is completed and
+  // HELD (never silently committed), so a second Enter is what actually moves the file.
+  test('sidebar: renaming to a bare name fills ".md" and holds until a second Enter', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-renamestem-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    await page.getByTestId('doc-item').filter({ hasText: 'alpha' }).click({ button: 'right' })
+    await page.getByTestId('side-rename').click()
+    const input = page.getByTestId('folder-name-input')
+    await expect(input).toHaveValue('alpha.md')
+    await input.fill('alpha2')
+    await input.press('Enter')
+    // Held: the row stays open showing the completed name, and nothing has moved on disk.
+    await expect(input).toHaveValue('alpha2.md')
+    await expect(page.getByTestId('file-rename-row')).toBeVisible()
+    await page.waitForTimeout(500)
+    expect(existsSync(join(dir, 'alpha2.md'))).toBe(false)
+    // The second Enter commits the rename.
+    await input.press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'alpha2.md')), { timeout: 15000 }).toBe(true)
+    await expect.poll(() => existsSync(join(dir, 'alpha.md')), { timeout: 15000 }).toBe(false)
+  })
+
   // New File (inline): the extension the user types is the one that lands on disk — `.md` is
-  // only filled in when they typed none at all.
+  // only filled in when they typed none at all. The row is also pinned into the tree list at the
+  // folder/file seam, which is asserted here (unit tests cover the seam in more detail).
   test('new file (inline) uses the Markdown extension the user typed, not a forced .md', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-newfile-'))
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    // A subfolder that holds Markdown, so the tree has a folder row for the new row to sit after.
+    // It stays collapsed, so the doc-item count the open helper asserts is still 1.
+    mkdirSync(join(dir, 'sub'), { recursive: true })
+    writeFileSync(join(dir, 'sub', 'b.md'), '# B\n', 'utf-8')
     await openFolder(page, dir, 1)
     // Right-click empty tree space -> New File -> name it with an explicit extension.
     await page
@@ -555,6 +585,14 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await page.getByTestId('side-bg-new-file').click()
     const createRow = page.getByTestId('file-create-row')
     await expect(createRow).toBeVisible()
+    // After the last subfolder, before the first file — never at the top of the sidebar (which is
+    // where it used to be, in a list of its own). Compared by testid to stay host-independent.
+    const order = await page
+      .locator(
+        '[data-testid="folder-row"], [data-testid="doc-item"], [data-testid="file-create-row"]',
+      )
+      .evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')))
+    expect(order).toEqual(['folder-row', 'file-create-row', 'doc-item'])
     await createRow.locator('input').fill('notes.markdown')
     await createRow.locator('input').press('Enter')
     await expect.poll(() => existsSync(join(dir, 'notes.markdown')), { timeout: 15000 }).toBe(true)
@@ -642,6 +680,11 @@ test.describe('M3 write-operation menus (supplement)', () => {
     const createRow = page.getByTestId('file-create-row')
     await expect(createRow).toBeVisible()
     await createRow.locator('input').fill('hello')
+    // A bare stem is treated as a name still being typed: the first Enter only fills in ".md"
+    // and HOLDS the commit (nothing is written yet), so the row must show the completed name.
+    await createRow.locator('input').press('Enter')
+    await expect(createRow.locator('input')).toHaveValue('hello.md')
+    // The second Enter is what actually writes the file.
     await createRow.locator('input').press('Enter')
     await expect.poll(() => existsSync(join(dir, 'hello.md')), { timeout: 15000 }).toBe(true)
   })
@@ -664,6 +707,9 @@ test.describe('M3 write-operation menus (supplement)', () => {
     const row = page.getByTestId('sub-file-create-row')
     await expect(row).toBeVisible()
     await row.locator('input').fill('note')
+    // Same two-step commit as the empty-state case: the first Enter fills in ".md" and holds.
+    await row.locator('input').press('Enter')
+    await expect(row.locator('input')).toHaveValue('note.md')
     await row.locator('input').press('Enter')
     // A real file — and inside the SUBFOLDER, not at the folder root.
     await expect.poll(() => existsSync(join(dir, 'sub', 'note.md')), { timeout: 15000 }).toBe(true)
@@ -777,5 +823,82 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await input.press('Enter')
     await expect.poll(() => existsSync(join(dir, 'notes.md')), { timeout: 15000 }).toBe(true)
     expect(existsSync(join(dir, 'notes.txt'))).toBe(false)
+  })
+
+  // Duplicate names are refused up front: the row flags the clash live and Enter does nothing.
+  // Critically the app must NOT invent an `alpha-1.md` behind the user's back — that is what the
+  // main process used to do with its `-N` retry.
+  test('sidebar: a duplicate file name is flagged live and Enter is refused (no -N fallback)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-dupefile-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    await page
+      .getByTestId('sidebar-tree-area')
+      .click({ button: 'right', position: { x: 80, y: 200 } })
+    await page.getByTestId('side-bg-new-file').click()
+    const input = page.getByTestId('file-create-row').locator('input')
+    await input.fill('alpha')
+    // Flagged before any commit: the red border is the live same-name check, not a post-hoc error.
+    await expect(input).toHaveClass(/border-red-500/)
+    await input.press('Enter')
+    // Refused: the row stays open and nothing lands on disk.
+    await expect(page.getByTestId('file-create-row')).toBeVisible()
+    await page.waitForTimeout(500)
+    expect(existsSync(join(dir, 'alpha-1.md'))).toBe(false)
+    // A unique name clears the flag and commits in one Enter (it carries an extension).
+    await input.fill('alpha2.md')
+    await input.press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'alpha2.md')), { timeout: 15000 }).toBe(true)
+  })
+
+  test('sidebar: a duplicate folder name is refused without inventing a -N variant', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-dupefolder-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    // An existing subfolder holding Markdown, so its row is rendered and can be clashed with.
+    mkdirSync(join(dir, 'sub'), { recursive: true })
+    writeFileSync(join(dir, 'sub', 'b.md'), '# B\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    await page
+      .getByTestId('sidebar-tree-area')
+      .click({ button: 'right', position: { x: 80, y: 200 } })
+    await page.getByTestId('side-bg-new-folder').click()
+    const input = page.getByTestId('folder-create-row').locator('input')
+    await input.fill('sub')
+    await expect(input).toHaveClass(/border-red-500/)
+    await input.press('Enter')
+    await expect(page.getByTestId('folder-create-row')).toBeVisible()
+    await page.waitForTimeout(500)
+    // Neither a silent success (the old recursive mkdir) nor a -N fallback.
+    expect(existsSync(join(dir, 'sub-1'))).toBe(false)
+    await input.fill('sub2')
+    await input.press('Enter')
+    await expect.poll(() => existsSync(join(dir, 'sub2')), { timeout: 15000 }).toBe(true)
+  })
+
+  // VS Code's "invalid name" rule: a name carrying a separator can never be written (mkdir is
+  // non-recursive now), so it is refused as it is typed instead of failing the commit.
+  test('sidebar: a folder name with a separator is flagged live and refused', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkdtempSync(join(tmpdir(), 'markflow-badname-'))
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+    await page
+      .getByTestId('sidebar-tree-area')
+      .click({ button: 'right', position: { x: 80, y: 200 } })
+    await page.getByTestId('side-bg-new-folder').click()
+    const input = page.getByTestId('folder-create-row').locator('input')
+    await input.fill('a/b')
+    await expect(input).toHaveClass(/border-red-500/)
+    await input.press('Enter')
+    await expect(page.getByTestId('folder-create-row')).toBeVisible()
+    await page.waitForTimeout(500)
+    // Neither a nested `a/b` pair nor a sanitized `a-b` is invented behind the user's back.
+    expect(existsSync(join(dir, 'a'))).toBe(false)
+    expect(existsSync(join(dir, 'a-b'))).toBe(false)
   })
 })

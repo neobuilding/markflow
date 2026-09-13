@@ -7,7 +7,7 @@ import { Sidebar } from './Sidebar'
 import { useUIStore } from '../../store/ui'
 import type { Document } from '../../types'
 
-import '../../i18n'
+import { t } from '../../i18n'
 
 let allDocs: Document[] = [
   {
@@ -54,6 +54,19 @@ const undoRenameMock = vi.fn(async (): Promise<{ ok: boolean; reason: string }> 
 // Directories reported by the main process for the active folder; set per test so the
 // tree can be exercised with folders that hold no document.
 let folderDirs: string[] = []
+
+// Platform seam: name comparison is case-insensitive off Linux (VS Code's rule), so the tests
+// below pin the platform instead of inheriting whatever host happens to run them.
+const WINDOWS_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+const LINUX_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+function setUserAgent(ua: string) {
+  Object.defineProperty(navigator, 'userAgent', { value: ua, configurable: true })
+}
+function restoreUserAgent() {
+  delete (navigator as unknown as { userAgent?: string }).userAgent
+}
 
 vi.mock('../../hooks/useDocuments', () => ({
   useDocuments: () => ({ data: allDocs, isLoading: false }),
@@ -221,6 +234,35 @@ describe('Sidebar', () => {
     fireEvent.change(input, { target: { value: 'Fresh' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(createFolderMock).toHaveBeenCalledWith('/docs/Fresh'))
+  })
+
+  it('shows the name-clash note when the main process refuses a duplicate folder (EEXIST)', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    createFolderMock.mockRejectedValueOnce(Object.assign(new Error('EEXIST'), { code: 'EEXIST' }))
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    fireEvent.click(await screen.findByTestId('side-new-folder-here'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'BrandNew' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    const hint = await screen.findByTestId('file-name-hint')
+    expect(hint.textContent).toBe(t('sidebar.nameExists', { name: 'BrandNew' }))
+    // The row stays open: the refusal keeps the typed name instead of discarding it.
+    expect(screen.queryByTestId('folder-name-input')).not.toBeNull()
+  })
+
+  it('shows a generic note when folder creation fails for a non-clash reason', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    createFolderMock.mockRejectedValueOnce(Object.assign(new Error('EPERM'), { code: 'EPERM' }))
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+    fireEvent.click(await screen.findByTestId('side-new-folder-here'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'BrandNew' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    const hint = await screen.findByTestId('file-name-hint')
+    expect(hint.textContent).toBe(t('sidebar.createFailed', { name: 'BrandNew' }))
+    expect(screen.queryByTestId('folder-name-input')).not.toBeNull()
   })
 
   it('creates a new document via the new button', async () => {
@@ -1211,6 +1253,15 @@ describe('Sidebar — folder row context menu (PLAN §5.4)', () => {
     await waitFor(() => expect(createFolderMock).toHaveBeenCalled())
   })
 
+  it('orders the folder-row menu New Subfolder before New File (same section)', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    const sub = await screen.findByTestId('side-new-subfolder')
+    const file = await screen.findByTestId('side-new-doc-here')
+    // New File Here must come AFTER New Subfolder, in the same section, matching the blank-area menu.
+    expect(sub.compareDocumentPosition(file) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('renames a folder via the inline-edit menu item (能力 7)', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
@@ -1262,13 +1313,30 @@ describe('Sidebar — folder row context menu (PLAN §5.4)', () => {
     await waitFor(() => expect(createFolderMock).not.toHaveBeenCalled())
   })
 
-  it('cancels the inline folder rename on blur', async () => {
+  it('keeps the inline rename open when it loses focus', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-rename-folder'))
     const input = await screen.findByTestId('folder-name-input')
     fireEvent.blur(input)
-    await waitFor(() => expect(screen.queryByTestId('folder-name-input')).toBeNull())
+    // Only Enter commits and only Escape cancels: a stray click must never lose the typed name.
+    expect(screen.getByTestId('folder-name-input')).toBeInTheDocument()
+    expect(renameFolderMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps a half-typed file name when the row loses focus', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    // The user is midway through the name — the extension has not been typed yet.
+    fireEvent.change(input, { target: { value: 'notes' } })
+    fireEvent.blur(input)
+    // Nothing is created and nothing is discarded: the row is still there with the name in it.
+    expect(screen.getByTestId('file-create-row')).toBeInTheDocument()
+    expect(input).toHaveValue('notes')
+    expect(createMock).not.toHaveBeenCalled()
   })
 
   it('surfaces a failed folder create without crashing (能力 7)', async () => {
@@ -1529,6 +1597,165 @@ describe('Sidebar — folder high-order items (PLAN §6.2 coverage)', () => {
   })
 })
 
+// Where the temporary create row lands. The row is pinned into the SAME list as the real rows, at
+// the folder/file seam, so these are the tests that would catch a regression back to "at the top
+// of the sidebar".
+describe('Sidebar — create row placement (folder / file boundary)', () => {
+  const d = (over: Partial<Document>): Document => ({
+    id: 'x',
+    title: 'Untitled',
+    folderPath: '',
+    content: '',
+    filePath: '',
+    encoding: 'utf-8',
+    encodingConfidence: 1,
+    createdAt: 0,
+    updatedAt: 0,
+    wordCount: 0,
+    ...over,
+  })
+
+  const seed = (docs: Document[]) => {
+    allDocs.length = 0
+    allDocs.push(...docs)
+  }
+
+  // Every row the tree area shows, in DOM order: a real row by its path, a temporary create row by
+  // its testid (it has no path yet — and a memory-only draft has an empty one).
+  const rowSequence = (): string[] =>
+    Array.from(
+      document.querySelectorAll(
+        '[data-testid="folder-row"], [data-testid="doc-item"], [data-testid="folder-create-row"], [data-testid="file-create-row"], [data-testid="sub-file-create-row"]',
+      ),
+    ).map((el) => el.getAttribute('data-path') || el.getAttribute('data-testid') || '')
+
+  it('puts the root create row after the last subfolder and before the first file', async () => {
+    seed([
+      d({ id: 'a', folderPath: '/docs', filePath: '/docs/a.md' }),
+      d({ id: 'z', folderPath: '/docs', filePath: '/docs/z.md' }),
+      d({ id: 'sub', folderPath: '/docs/sub', filePath: '/docs/sub/x.md' }),
+    ])
+    folderDirs = ['/docs/sub']
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    expect(rowSequence()).toEqual(['/docs/sub', 'file-create-row', '/docs/a.md', '/docs/z.md'])
+  })
+
+  it('puts the root folder create row at the front, before the first folder', async () => {
+    seed([
+      d({ id: 'a', folderPath: '/docs', filePath: '/docs/a.md' }),
+      d({ id: 'z', folderPath: '/docs', filePath: '/docs/z.md' }),
+      d({ id: 'sub', folderPath: '/docs/sub', filePath: '/docs/sub/x.md' }),
+    ])
+    folderDirs = ['/docs/sub']
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
+    // A new folder leads the level (before '/docs/sub'), not after it (the old behaviour).
+    expect(rowSequence()).toEqual(['folder-create-row', '/docs/sub', '/docs/a.md', '/docs/z.md'])
+  })
+
+  it('puts a nested folder create row at the front of that subfolder', async () => {
+    seed([
+      d({ id: 'a', folderPath: '/docs', filePath: '/docs/a.md' }),
+      d({ id: 'one', folderPath: '/docs/sub', filePath: '/docs/sub/one.md' }),
+      d({ id: 'two', folderPath: '/docs/sub/inner', filePath: '/docs/sub/inner/two.md' }),
+    ])
+    folderDirs = ['/docs/sub', '/docs/sub/inner']
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('side-new-subfolder'))
+    // The new subfolder opens at the front of 'sub' (before 'sub/inner'), inside 'sub'.
+    const seq = rowSequence()
+    expect(seq.indexOf('folder-create-row')).toBeLessThan(seq.indexOf('/docs/sub/inner'))
+  })
+
+  it('puts it first when there is no subfolder, and keeps it below the unsaved drafts group', async () => {
+    seed([
+      d({ id: 'a', folderPath: '/docs', filePath: '/docs/a.md' }),
+      d({ id: 'draft', title: 'Untitled', folderPath: '', filePath: '' }),
+    ])
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    // The draft keeps its own group above the tree; with no folder in the way the new row leads it.
+    expect(rowSequence()).toEqual(['doc-item', 'file-create-row', '/docs/a.md'])
+  })
+
+  it('still renders the row when the current folder is completely empty', async () => {
+    seed([])
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    await userEvent.click(screen.getByTestId('empty-create-btn'))
+    // Regression: the tree list used to be rendered only when it had rows of its own, which made
+    // the row vanish inside an empty folder and the menu item look broken.
+    expect(await screen.findByTestId('file-create-row')).toBeInTheDocument()
+    expect(rowSequence()).toEqual(['file-create-row'])
+  })
+
+  it('puts a nested create row at the same seam inside that subfolder', async () => {
+    seed([
+      d({ id: 'a', folderPath: '/docs', filePath: '/docs/a.md' }),
+      d({ id: 'one', folderPath: '/docs/sub', filePath: '/docs/sub/one.md' }),
+      d({ id: 'two', folderPath: '/docs/sub/inner', filePath: '/docs/sub/inner/two.md' }),
+    ])
+    folderDirs = ['/docs/sub', '/docs/sub/inner']
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    // 'sub' holds a subfolder and a file, so the row has to land between them — and it opens
+    // inside 'sub' without expanding it by hand.
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('side-new-doc-here'))
+    expect(rowSequence()).toEqual([
+      '/docs/sub',
+      '/docs/sub/inner',
+      'sub-file-create-row',
+      '/docs/sub/one.md',
+      '/docs/a.md',
+    ])
+  })
+
+  it('keeps a folder row and a file row side by side when both are being created', async () => {
+    seed([
+      d({ id: 'a', folderPath: '/docs', filePath: '/docs/a.md' }),
+      d({ id: 'sub', folderPath: '/docs/sub', filePath: '/docs/sub/x.md' }),
+    ])
+    folderDirs = ['/docs/sub']
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    // The two are independent slots: the folder row leads the level, the file row keeps the seam
+    // (after the last folder, before the first file), so both can be open at once.
+    expect(rowSequence()).toEqual([
+      'folder-create-row',
+      '/docs/sub',
+      'file-create-row',
+      '/docs/a.md',
+    ])
+  })
+
+  it('is the only child of a subfolder that holds nothing at all', async () => {
+    seed([d({ id: 'a', folderPath: '/docs', filePath: '/docs/a.md' })])
+    // A folder with no Markdown only reaches the tree when the user asks to see all folders.
+    folderDirs = ['/docs/empty']
+    useUIStore.getState().setShowAllFolders(true)
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('side-new-subfolder'))
+    // Nothing precedes it inside the folder, so the temporary row is that list's whole content.
+    expect(rowSequence()).toEqual(['/docs/empty', 'folder-create-row', '/docs/a.md'])
+  })
+})
+
 describe('Sidebar — folder filtering & tree-area menu', () => {
   const docA = (): Document => ({
     id: 'a',
@@ -1636,7 +1863,7 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     row.focus()
     fireEvent.keyDown(row, { key: 'F2' })
     const input = await screen.findByTestId('folder-name-input')
-    fireEvent.change(input, { target: { value: 'renamed' } })
+    fireEvent.change(input, { target: { value: 'renamed.md' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(renameFileMock).toHaveBeenCalled())
     // Let the real rAF loop exhaust its 10 retries, so the fallback branch executes.
@@ -1666,13 +1893,19 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     await waitFor(() => expect(useUIStore.getState().showAllFolders).toBe(true))
   })
 
-  it('creates a Markdown file in place from the background menu', async () => {
+  it('fills ".md" on a bare name and waits for a second Enter to create', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
     fireEvent.click(await screen.findByTestId('side-bg-new-file'))
     const row = await screen.findByTestId('file-create-row')
     const input = within(row).getByTestId('folder-name-input')
     fireEvent.change(input, { target: { value: 'notes' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    // First Enter refuses a name with no extension: it fills ".md" and explains, but writes nothing.
+    await waitFor(() => expect(input).toHaveValue('notes.md'))
+    expect(await within(row).findByTestId('file-name-hint')).toHaveTextContent('.md')
+    expect(createMock).not.toHaveBeenCalled()
+    // A second Enter (now with an extension) creates the file.
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() =>
       expect(createMock).toHaveBeenCalledWith(
@@ -1684,6 +1917,224 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
         }),
       ),
     )
+  })
+
+  it('fills ".md" on a bare name during a RENAME too, and holds the commit', async () => {
+    mount()
+    const item = screen.getByTestId('doc-item')
+    item.focus()
+    fireEvent.keyDown(item, { key: 'F2' })
+    const input = await screen.findByTestId('folder-name-input')
+    // The bare-name rule is not create-only: renaming to a stem with no extension also has to be
+    // completed before it is committed, and must say why instead of silently dropping the ".md".
+    fireEvent.change(input, { target: { value: 'a2' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(input).toHaveValue('a2.md'))
+    const row = screen.getByTestId('file-rename-row')
+    expect(await within(row).findByTestId('file-name-hint')).toHaveTextContent('.md')
+    expect(renameFileMock).not.toHaveBeenCalled()
+    // A second Enter commits the rename.
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(renameFileMock).toHaveBeenCalled())
+  })
+
+  it('shows a note when the main process refuses the new file (EEXIST)', async () => {
+    createMock.mockRejectedValueOnce(Object.assign(new Error('EEXIST'), { code: 'EEXIST' }))
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'brandnew.md' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    const hint = await within(row).findByTestId('file-name-hint')
+    expect(hint.textContent).toBe(t('sidebar.nameExists', { name: 'brandnew.md' }))
+    // The row stays open rather than losing what the user typed.
+    expect(screen.queryByTestId('file-create-row')).not.toBeNull()
+  })
+
+  it('blocks a duplicate file name live (red border) and refuses Enter', async () => {
+    allDocs.push({
+      ...docA(),
+      id: 'n',
+      title: 'notes',
+      filePath: '/docs/notes.md',
+      folderPath: '/docs',
+    })
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+    const row = await screen.findByTestId('file-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    // An empty name is never a clash.
+    fireEvent.change(input, { target: { value: '' } })
+    expect(within(row).queryByTestId('file-name-hint')).toBeNull()
+    fireEvent.change(input, { target: { value: 'notes' } })
+    // "notes" resolves to "notes.md", which already exists here — flagged live, before any commit.
+    const hint = await within(row).findByTestId('file-name-hint')
+    expect(hint).toHaveTextContent('already exists')
+    expect(input.className).toContain('border-red-500')
+    // Enter is refused until the name is unique.
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(createMock).not.toHaveBeenCalled()
+    // Fixing the name (with an extension) clears the error and commits.
+    fireEvent.change(input, { target: { value: 'notes2.md' } })
+    expect(within(row).queryByTestId('file-name-hint')).toBeNull()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'notes2' })),
+    )
+  })
+
+  it('blocks a duplicate folder name live too', async () => {
+    allDocs.push({
+      ...docA(),
+      id: 'n',
+      title: 'notes',
+      filePath: '/docs/notes.md',
+      folderPath: '/docs',
+    })
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
+    const row = await screen.findByTestId('folder-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    // A folder "notes.md" would sit next to the existing file "notes.md".
+    fireEvent.change(input, { target: { value: 'notes.md' } })
+    const hint = await within(row).findByTestId('file-name-hint')
+    expect(hint).toHaveTextContent('already exists')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(createFolderMock).not.toHaveBeenCalled()
+  })
+
+  it('flags a folder name carrying a separator live (VS Code-style invalid-name rule)', async () => {
+    mount()
+    fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+    fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
+    const row = await screen.findByTestId('folder-create-row')
+    const input = within(row).getByTestId('folder-name-input')
+    // `a/b` could never be created (mkdir is non-recursive now), so it is refused as it is typed
+    // instead of failing the commit with a generic "could not create".
+    fireEvent.change(input, { target: { value: 'a/b' } })
+    const hint = await within(row).findByTestId('file-name-hint')
+    expect(hint.textContent).toBe(t('sidebar.invalidName', { name: 'a/b' }))
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(createFolderMock).not.toHaveBeenCalled()
+    // An ordinary name clears the flag again.
+    fireEvent.change(input, { target: { value: 'plain' } })
+    expect(within(row).queryByTestId('file-name-hint')).toBeNull()
+  })
+
+  it('flags a name differing only in case on a case-insensitive platform (VS Code rule)', async () => {
+    // On Windows/macOS `Notes.md` IS `notes.md`, so the clash must be caught live rather than
+    // left for the main process to reject after the commit.
+    setUserAgent(WINDOWS_UA)
+    try {
+      allDocs.push({
+        ...docA(),
+        id: 'n',
+        title: 'notes',
+        filePath: '/docs/notes.md',
+        folderPath: '/docs',
+      })
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+      fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+      const row = await screen.findByTestId('file-create-row')
+      const input = within(row).getByTestId('folder-name-input')
+      fireEvent.change(input, { target: { value: 'Notes' } })
+      const hint = await within(row).findByTestId('file-name-hint')
+      expect(hint).toHaveTextContent('already exists')
+      fireEvent.keyDown(input, { key: 'Enter' })
+      expect(createMock).not.toHaveBeenCalled()
+    } finally {
+      restoreUserAgent()
+    }
+  })
+
+  it('lets a rename keep its own name in a different case on a case-insensitive platform', async () => {
+    // `a.md` -> `A.md` is the same file there: the self-exclusion has to fold case too, or the
+    // rename would report a clash with itself.
+    setUserAgent(WINDOWS_UA)
+    try {
+      mount()
+      const item = screen.getByTestId('doc-item')
+      item.focus()
+      fireEvent.keyDown(item, { key: 'F2' })
+      const input = await screen.findByTestId('folder-name-input')
+      fireEvent.change(input, { target: { value: 'A.md' } })
+      expect(
+        within(screen.getByTestId('file-rename-row')).queryByTestId('file-name-hint'),
+      ).toBeNull()
+    } finally {
+      restoreUserAgent()
+    }
+  })
+
+  it('accepts a case-only difference on a case-sensitive platform (Linux)', async () => {
+    setUserAgent(LINUX_UA)
+    try {
+      allDocs.push({
+        ...docA(),
+        id: 'n',
+        title: 'notes',
+        filePath: '/docs/notes.md',
+        folderPath: '/docs',
+      })
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
+      fireEvent.click(await screen.findByTestId('side-bg-new-file'))
+      const row = await screen.findByTestId('file-create-row')
+      const input = within(row).getByTestId('folder-name-input')
+      // On Linux these are two different files, so nothing must be flagged.
+      fireEvent.change(input, { target: { value: 'Notes' } })
+      await waitFor(() => expect(within(row).queryByTestId('file-name-hint')).toBeNull())
+      fireEvent.keyDown(input, { key: 'Enter' })
+      // The bare stem is completed first, so wait for the row to show it before committing.
+      await waitFor(() => expect(input).toHaveValue('Notes.md'))
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await waitFor(() =>
+        expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Notes' })),
+      )
+    } finally {
+      restoreUserAgent()
+    }
+  })
+
+  it('validates a name inside a NESTED folder (the recursive TreeRow keeps its validator)', async () => {
+    // A folder at depth ≥ 1 renders through the RECURSIVE <TreeRow>, which has to forward the
+    // clash validator down: without it the rename input has no `nameExists` and throws the moment
+    // it validates a keystroke.
+    allDocs.push(
+      { ...docA(), id: 'x', folderPath: '/docs/sub/inner', filePath: '/docs/sub/inner/x.md' },
+      { ...docA(), id: 'y', folderPath: '/docs/sub/other', filePath: '/docs/sub/other/y.md' },
+    )
+    mount()
+    // Expand 'sub' so both nested folders — and the recursive rows that render them — exist.
+    await userEvent.click(await screen.findByText('sub'))
+    const inner = (await screen.findAllByTestId('folder-row')).find((row) =>
+      row.textContent?.includes('inner'),
+    )
+    fireEvent.contextMenu(inner!)
+    fireEvent.click(await screen.findByTestId('side-rename-folder'))
+    const input = await screen.findByTestId('folder-name-input')
+    // 'other' is 'inner's sibling under '/docs/sub', so renaming onto it must be flagged live.
+    fireEvent.change(input, { target: { value: 'other' } })
+    const hint = await screen.findByTestId('file-name-hint')
+    expect(hint).toHaveTextContent('already exists')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(renameFolderMock).not.toHaveBeenCalled()
+  })
+
+  it('does not flag a file rename that keeps its own name', async () => {
+    mount()
+    const item = screen.getByTestId('doc-item')
+    item.focus()
+    fireEvent.keyDown(item, { key: 'F2' })
+    const input = await screen.findByTestId('folder-name-input')
+    // Renaming "a.md" to "a" resolves to "a.md", its own current name — must not be a clash.
+    fireEvent.change(input, { target: { value: 'a' } })
+    expect(within(screen.getByTestId('file-rename-row')).queryByTestId('file-name-hint')).toBeNull()
   })
 
   it('strips a typed extension so the file never becomes notes.md.md', async () => {
@@ -1838,7 +2289,7 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     fireEvent.click(await screen.findByTestId('side-bg-new-file'))
     const row = await screen.findByTestId('file-create-row')
     const input = within(row).getByTestId('folder-name-input')
-    fireEvent.change(input, { target: { value: 'notes' } })
+    fireEvent.change(input, { target: { value: 'notes.md' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(createMock).toHaveBeenCalled())
     // The input stays open, so what the user typed is not lost.

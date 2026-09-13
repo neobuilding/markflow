@@ -19,6 +19,9 @@ export function CommandPalette(): React.ReactElement | null {
     setSearchOpen,
     setSearchQuery,
     searchQuery,
+    searchMode,
+    setSearchMode,
+    activeFolder,
     setActiveDocumentId,
     setFileDetailsId,
   } = useUIStore()
@@ -116,6 +119,42 @@ export function CommandPalette(): React.ReactElement | null {
           <kbd className="ml-2 text-xs text-[var(--color-text-tertiary)] bg-[var(--color-surface-overlay)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
             Esc
           </kbd>
+        </div>
+
+        {/* Search scope + mode: the sidebar search is scoped to the active folder and its
+            sub-folders; users can switch between file-name-only and full-text search. */}
+        <div className="flex items-center gap-2 px-4 py-1.5 border-b border-[var(--color-border)] text-xs text-[var(--color-text-tertiary)]">
+          <span data-testid="search-scope">
+            {activeFolder ? t('palette.scopeFolder') : t('palette.scopeAll')}
+          </span>
+          <div className="ml-auto flex items-center rounded border border-[var(--color-border)] overflow-hidden">
+            <button
+              type="button"
+              data-testid="search-mode-filename"
+              onClick={() => setSearchMode('filename')}
+              className={cn(
+                'px-2 py-0.5 transition-colors',
+                searchMode === 'filename'
+                  ? 'bg-[var(--color-accent-muted)] text-accent'
+                  : 'hover:text-[var(--color-text-secondary)]',
+              )}
+            >
+              {t('palette.mode.filename')}
+            </button>
+            <button
+              type="button"
+              data-testid="search-mode-content"
+              onClick={() => setSearchMode('content')}
+              className={cn(
+                'px-2 py-0.5 transition-colors border-l border-[var(--color-border)]',
+                searchMode === 'content'
+                  ? 'bg-[var(--color-accent-muted)] text-accent'
+                  : 'hover:text-[var(--color-text-secondary)]',
+              )}
+            >
+              {t('palette.mode.content')}
+            </button>
+          </div>
         </div>
 
         {/* Results */}

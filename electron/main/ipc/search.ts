@@ -1,6 +1,10 @@
 import type { IpcMain } from 'electron'
 import MiniSearch from 'minisearch'
-import { getAllDocuments } from '../model/documentStore'
+import { getAllDocuments, listDocuments } from '../model/documentStore'
+
+// Search mode: 'filename' indexes only the document title (file name); 'content'
+// indexes title + body + folder path (the original full-text behaviour).
+export type SearchMode = 'filename' | 'content'
 
 // ─── Search index (minisearch) ───────────────────────────────────────────────
 // minisearch is a pure-JS inverted index. We rebuild it from the in-memory store
@@ -49,19 +53,21 @@ function tokenize(text: string): string[] {
   return out
 }
 
-function buildIndex() {
-  const docs = getAllDocuments()
+function buildIndex(
+  docs: Array<{ id: string; title: string; folderPath: string; content: string }>,
+  fields: string[],
+) {
   const mini = new MiniSearch<{
     id: string
     title: string
     folderPath: string
     content: string
   }>({
-    // `folderPath` is also indexed (Q2): searching a path fragment (e.g. a subfolder
-    // name or a file extension) surfaces the matching documents, enabling Ctrl+P-style
-    // file/path lookup. `title` already covers the bare file name, so this mainly adds
-    // directory-hierarchy and extension matching.
-    fields: ['title', 'content', 'folderPath'],
+    // `folderPath` is indexed in 'content' mode (Q2): searching a path fragment
+    // (e.g. a subfolder name or a file extension) surfaces matching documents, enabling
+    // Ctrl+P-style file/path lookup. In 'filename' mode only `title` is indexed so the
+    // query is matched against file names only.
+    fields,
     storeFields: ['title', 'folderPath'],
     tokenize,
     processTerm: (t) => t.toLowerCase(),
@@ -108,28 +114,51 @@ export function makeSnippet(content: string, terms: string[], maxLen = 120): str
 }
 
 export function registerSearchHandlers(ipcMainInstance: IpcMain): void {
-  ipcMainInstance.handle('search:query', (_event, query: string) => {
-    const q = (query ?? '').trim()
-    if (!q) return []
-    const mini = buildIndex()
-    const results = mini.search(q, {
-      fuzzy: 0.2,
-      prefix: true,
-      boost: { title: 2, folderPath: 1.5 },
-    })
-    return results.map((r) => {
-      const doc = getAllDocuments().find((d) => d.id === r.id)
-      const content = doc?.content ?? ''
-      const terms = (r.terms as string[]) ?? []
-      return {
-        id: r.id as string,
-        title: (r.title as string) ?? '',
-        folderPath: (r.folderPath as string) ?? '',
-        filePath: doc?.filePath ?? '',
-        snippet: makeSnippet(content, terms),
-        score: r.score,
-        updatedAt: doc?.updatedAt ?? 0,
-      }
-    })
-  })
+  ipcMainInstance.handle(
+    'search:query',
+    (_event, params: { query?: string; scopeFolder?: string | null; mode?: SearchMode }) => {
+      const q = (params?.query ?? '').trim()
+      if (!q) return []
+      // Scope: when a folder is supplied, restrict to its markdown documents (the folder
+      // itself plus every descendant sub-folder) via listDocuments' isInFolder filter.
+      // A null/empty scope searches the whole workspace, which keeps the global Ctrl+K
+      // behaviour intact when no folder is active.
+      const scoped = params?.scopeFolder ? listDocuments(params.scopeFolder) : getAllDocuments()
+      // Mode: 'filename' indexes only titles; 'content' (default) indexes title + body
+      // + folder path for full-text search.
+      const mode: SearchMode = params?.mode === 'filename' ? 'filename' : 'content'
+      const fields = mode === 'filename' ? ['title'] : ['title', 'content', 'folderPath']
+      const boost: { [fieldName: string]: number } =
+        mode === 'filename' ? { title: 2 } : { title: 2, folderPath: 1.5 }
+      const byId = new Map(scoped.map((d) => [d.id, d]))
+      const mini = buildIndex(
+        scoped.map((d) => ({
+          id: d.id,
+          title: d.title,
+          folderPath: d.folderPath,
+          content: d.content,
+        })),
+        fields,
+      )
+      const results = mini.search(q, {
+        fuzzy: 0.2,
+        prefix: true,
+        boost,
+      })
+      return results.map((r) => {
+        const doc = byId.get(r.id as string)
+        const content = doc?.content ?? ''
+        const terms = (r.terms as string[]) ?? []
+        return {
+          id: r.id as string,
+          title: (r.title as string) ?? '',
+          folderPath: (r.folderPath as string) ?? '',
+          filePath: doc?.filePath ?? '',
+          snippet: makeSnippet(content, terms),
+          score: r.score,
+          updatedAt: doc?.updatedAt ?? 0,
+        }
+      })
+    },
+  )
 }
