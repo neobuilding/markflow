@@ -162,6 +162,18 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **i18n** — internationalization with locale detection/storage, decomposed into `storage.ts` + `useT.ts`
   (no circular dependency with the UI store; see `docs/adr/0003-main-process-entry-decomposition.md`).
 
+## Build & output
+
+- **Bundler output** — the intermediate artifacts produced by the bundler (Vite + `vite-plugin-electron`) before packaging; everything lands under one `dist/` root: `dist/renderer/` (web UI) and `dist/electron/` (main process `index.js` + `preload.cjs`). _Avoid_: treating anything under `dist/` as the product. See `docs/adr/0015-build-output-layout-and-bundle.md`.
+- **Packaged output** — the final, shippable application produced by electron-builder (`electron-builder.json5`); it lives in `release/` (e.g. `release/win-unpacked/MarkFlow.exe`). This is "the product", distinct from the `dist/` bundler output; the `afterAllArtifactBuild` hook prints its location when packaging finishes.
+- **`asar`** — Electron's archive format bundling the app payload into one read-only file (`resources/app.asar`). Enabled by default in electron-builder (`asar: true`); `compression: 'maximum'` is a separate root-level option that compresses the _packaged archive_ (zip/dmg/AppImage), not the asar.
+- **Lazy-load (dynamic import)** — loading a module on first use via `import()` instead of a top-level `import`. Used for `mermaid` (renderer first paint) and `franc` (export path).
+- **Vendor chunk** — a build chunk holding third-party `node_modules` code, named `vendor-<pkg>` by the policy in `scripts/vendor-chunks.ts`. Splitting per package (plus a few grouped families such as mermaid and the CodeMirror/lezer editor stack) keeps each chunk independently cacheable and under the build's `chunkSizeWarningLimit`.
+- **Synchronous render constraint** — markdown-it's `highlight` callback and the `texmath` engine call `highlight.js` / `katex` synchronously during `md.render()`, so lazy-loading those two requires rewriting the render pipeline. They stay eager — and are still `modulepreload`ed, because `parseClient.ts` statically imports the pipeline as its main-thread fallback for when the Worker fails. See `docs/adr/0015-build-output-layout-and-bundle.md`.
+- **Font formats** — `.woff2` is the modern, smallest web font format supported by Electron/Chromium. KaTeX also ships `.woff` / `.ttf` for legacy browsers; `scripts/prune-fonts.ts` prunes those because KaTeX's CSS lists `.woff2` first, so the legacy copies are never requested.
+- **Fully bundled** — both the main process (`dist/electron/index.js`, no bare `require()` except Node builtins) and the renderer are self-contained Vite outputs, so the packaged app ships **no `node_modules`** (`electron-builder.json5` excludes them). Consequence: a dependency that is _read at runtime_ instead of being bundled works in dev and fails only in the packaged build — sign off dependency changes by running `npm run dist` and launching `release/win-unpacked/MarkFlow.exe`. See `docs/adr/0015-build-output-layout-and-bundle.md`.
+- **Electron runtime floor** — the ~180 MB Chromium + Node payload every Electron app carries regardless of app-code size. The dominant component of `MarkFlow.exe`; it cannot be reduced without changing frameworks (e.g. Tauri). Measured: 367 MB for Electron 44 (`electron.exe` alone is 235 MB).
+
 ## Repo conventions
 
 - **Create-PR Action** — in-repo GitHub Action (`actions/create-pr`) that idempotently creates/refreshes PRs;

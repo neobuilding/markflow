@@ -44,7 +44,7 @@ export async function buildStandaloneHtml(opts: {
   const css = opts.theme === 'dark' ? githubDarkCss : githubCss
   // resolveExportLang always resolves to a non-empty BCP 47 tag (frontmatter → content detection → 'en'),
   // so no further fallback is needed here.
-  const lang = resolveExportLang(getExportContent())
+  const lang = await resolveExportLang(getExportContent())
   return `<!doctype html>
 <html lang="${lang}" data-theme="${opts.theme}" data-color-mode="${opts.theme}">
 <head>

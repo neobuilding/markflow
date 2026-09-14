@@ -37,7 +37,7 @@ async function waitForServer(url: string, timeoutMs: number): Promise<void> {
 }
 
 async function waitForMainEntry(timeoutMs: number): Promise<void> {
-  const entry = join(PROJECT_ROOT, 'dist-electron', 'index.js')
+  const entry = join(PROJECT_ROOT, 'dist', 'electron', 'index.js')
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     try {

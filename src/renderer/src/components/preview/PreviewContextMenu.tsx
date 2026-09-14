@@ -34,6 +34,19 @@ import {
 type TargetKind =
   'generic' | 'link' | 'code' | 'table' | 'heading' | 'task' | 'image' | 'formula' | 'mermaid'
 
+// Undo the encodeURIComponent the preview applies when it bakes the diagram source
+// onto the wrapper (see MarkdownPreview.tsx: the source must be URI-encoded to survive
+// sanitization). Falls back to the raw attribute, so a stray `%` in legacy content can
+// never throw while the menu is opening.
+function decodeMermaidSource(raw: string | null): string {
+  if (!raw) return ''
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
+}
+
 interface PreviewContextMenuProps {
   doc: Document | null | undefined
   children: React.ReactNode
@@ -123,7 +136,7 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
       // The rendered wrapper carries the raw mermaid source () and the
       // SVG markup inside it exactly what "Copy diagram source" / "Save diagram" need
       setKind('mermaid')
-      setMermaidSrc(mermaidEl.getAttribute('data-mermaid-source') ?? '')
+      setMermaidSrc(decodeMermaidSource(mermaidEl.getAttribute('data-mermaid-source')))
       setMermaidSvg(mermaidEl.innerHTML)
     } else if (katexEl) {
       // KaTeX renders the TeX source into <annotation encoding="application/x-tex">.

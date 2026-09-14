@@ -11,9 +11,9 @@ node_modules/
 .npm/
 
 # Build outputs
+# dist/ holds every bundler artifact: dist/renderer (web UI) + dist/electron
+# (main process + preload). release/ holds the packaged app (electron-builder).
 dist/
-dist-electron/
-out/
 release/
 build/
 

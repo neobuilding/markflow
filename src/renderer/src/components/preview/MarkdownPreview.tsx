@@ -10,33 +10,54 @@ import { setExportHtml, setExportContent } from '../../lib/exportStore'
 import { useT } from '../../i18n'
 import { PreviewContextMenu } from './PreviewContextMenu'
 import type { Document } from '../../types'
-import mermaid from 'mermaid'
+// Mermaid is heavy (~2.5 MB) and only needed when a document actually contains a
+// diagram, so it is dynamically imported on first use instead of being bundled into
+// the initial preview chunk. The module is cached after the first load.
+interface MermaidApi {
+  initialize: (config: unknown) => void
+  render: (id: string, code: string) => Promise<{ svg: string }>
+}
+let mermaidReady: Promise<MermaidApi> | null = null
 
-let mermaidInitialized = false
-function ensureMermaid(): void {
-  if (!mermaidInitialized) {
-    mermaid.initialize({ securityLevel: 'strict', startOnLoad: false, htmlLabels: false })
-    mermaidInitialized = true
+function getMermaid(): Promise<MermaidApi> {
+  if (!mermaidReady) {
+    mermaidReady = import('mermaid')
+      .then((m) => {
+        const mod = m.default as unknown as MermaidApi
+        mod.initialize({ securityLevel: 'strict', startOnLoad: false, htmlLabels: false })
+        return mod
+      })
+      // If the dynamic import rejects (corrupt/missing chunk), clear the cached
+      // promise so the NEXT render retries instead of permanently rejecting for
+      // the whole session.
+      /* v8 ignore start -- defensive: the import-failure path isn't exercised under jsdom (mermaid is bundled) */
+      .catch((err) => {
+        mermaidReady = null
+        throw err
+      })
+    /* v8 ignore stop */
   }
+  return mermaidReady
 }
 
-// Escape a mermaid source string so it is safe to embed in a double-quoted HTML attribute
-// (). Mermaid source frequently contains < > " ' that would otherwise break
-// the `data-mermaid-source` attribute the preview writes for the "Copy diagram source" menu.
-function escapeAttr(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
+// Encode a mermaid source so it survives BOTH the HTML parser and DOMPurify.
+//
+// HTML-escaping is NOT enough: the parser decodes entities BEFORE DOMPurify inspects
+// the attribute, so `&gt;` is already a literal `>` by then — and DOMPurify drops an
+// attribute whose value contains `-->` (locked in by sanitize.test.ts). Mermaid
+// flowcharts are full of `A-->B`, so escaping silently removed the attribute and left
+// "Copy diagram source" permanently greyed out in the real app. URI-encoding keeps the
+// decoded value free of `<`, `>`, `&` and `"`, so the attribute always survives.
+// The reader decodes it again (see PreviewContextMenu.tsx).
 
 // Module-level serial queue: mermaid has internal global state (shared id / temp DOM),
 // so concurrent renders would corrupt diagrams / throw. All renders are queued.
 let mermaidChain: Promise<unknown> = Promise.resolve()
 function renderMermaidSvg(id: string, code: string): Promise<{ svg: string }> {
-  const task = mermaidChain.then(() => mermaid.render(id, code.trim()))
+  const task = mermaidChain.then(async () => {
+    const mermaid = await getMermaid()
+    return mermaid.render(id, code.trim())
+  })
   /* v8 ignore next -- defensive: the mermaid render error path isn't exercised under jsdom, but it keeps the serial queue alive */
   mermaidChain = task.catch(() => undefined) // Keep the chain alive on failure so later renders aren't blocked.
   return task as Promise<{ svg: string }>
@@ -106,7 +127,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           // done once later by SafeHtml.
           let html = res.html
           if (res.mermaid.length > 0) {
-            ensureMermaid()
+            await getMermaid()
             const svgs: string[] = []
             // Slot → raw mermaid source, so the rendered wrapper can carry it as
             // `data-mermaid-source` for the "Copy diagram source" menu ()
@@ -136,7 +157,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
               /* v8 ignore next */
               const svg = svgs[slot] ?? ''
               const src = sources.get(slot)
-              const attr = src ? ` data-mermaid-source="${escapeAttr(src)}"` : ''
+              const attr = src ? ` data-mermaid-source="${encodeURIComponent(src)}"` : ''
               return `<div data-mermaid-slot="${slot}"${attr}>${svg}</div>`
             })
           }

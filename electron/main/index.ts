@@ -76,7 +76,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 // In production, app.getAppPath() returns the path to the extracted asar
-// (e.g. "D:\...\app.asar"), so joining dist-electron/dist/renderer works.
+// (e.g. "D:\...\app.asar"), so joining dist/electron (main) and dist/renderer works.
 // In dev, we rely on Vite's VITE_DEV_SERVER_URL. (MAIN_DIST / RENDERER_DIST /
 // VITE_DEV_SERVER_URL now live in ./lib/app-paths.ts.)
 process.env['APP_ROOT'] = join(app.getAppPath(), '..')

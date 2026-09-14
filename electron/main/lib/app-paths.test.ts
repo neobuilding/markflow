@@ -23,7 +23,7 @@ describe('app-paths — runtime path constants', () => {
 
   it('derives MAIN_DIST / RENDERER_DIST from app.getAppPath()', async () => {
     const { MAIN_DIST, RENDERER_DIST } = await loadAppPathsWithEnv(undefined)
-    expect(MAIN_DIST).toBe(join(h.appPath, 'dist-electron'))
+    expect(MAIN_DIST).toBe(join(h.appPath, 'dist', 'electron'))
     expect(RENDERER_DIST).toBe(join(h.appPath, 'dist', 'renderer'))
   })
 

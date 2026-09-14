@@ -3,14 +3,14 @@
 //
 // These tests launch the REAL Electron application and drive its actual
 // renderer via Playwright, exercising the full stack:
-//   main process (dist-electron) ↔ preload ↔ React renderer.
+//   main process (dist/electron) ↔ preload ↔ React renderer.
 //
 // Run mode: DEV. The shared launch helper (e2e/helpers/launch.ts) starts a
 // Vite dev server (renders the real React app over http://localhost:5174) and
 // launches Electron with VITE_DEV_SERVER_URL set, so the main process loads
 // the renderer from the dev server. This avoids the file:// blank-screen
 // problem that occurs when launching the built main entry directly (where
-// app.getAppPath() resolves to dist-electron/ and the renderer path is wrong).
+// app.getAppPath() resolves to dist/electron/ and the renderer path is wrong).
 //
 // Run:
 //   npm run e2e   # auto-starts Vite + Electron, runs e2e specs

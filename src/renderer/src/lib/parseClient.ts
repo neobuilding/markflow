@@ -2,7 +2,9 @@
 // main thread on failure (reusing the same markdownPipeline, producing the same
 // { html, mermaid } shape).
 import * as comlink from 'comlink'
-import { render, type RenderResult } from '../lib/markdownPipeline'
+// Type-only on purpose: a VALUE import here would put `markdownPipeline` into the
+// renderer's STATIC import graph (see fallbackParse below).
+import type { RenderResult } from '../lib/markdownPipeline'
 
 interface ParseApi {
   parse(content: string, docId: string | null): Promise<RenderResult>
@@ -24,7 +26,14 @@ function getApi(): comlink.Remote<ParseApi> {
   return api!
 }
 
+// Loaded ON DEMAND, never eagerly: `markdownPipeline` pulls in `katex` (~546 kB) and
+// `highlight.js` (~921 kB). A static import here put both into the renderer's static
+// graph, so Vite emitted them as `modulepreload` links in index.html and they were
+// downloaded on first paint even though the normal path never executes them (the Worker
+// owns its own copy of the pipeline). The fallback only runs when the Worker is
+// unavailable, so paying a dynamic import there is strictly better.
 async function fallbackParse(content: string, docId: string | null): Promise<RenderResult> {
+  const { render } = await import('../lib/markdownPipeline')
   return render(content, docId)
 }
 

@@ -47,7 +47,7 @@ export async function launchApp(): Promise<AppHandle> {
     // the runner does not grant sudo for. This flag is ONLY used by the e2e path
     // (npm run e2e); production builds go through electron-builder and are unaffected.
     args: [
-      join(PROJECT_ROOT, 'dist-electron', 'index.js'),
+      join(PROJECT_ROOT, 'dist', 'electron', 'index.js'),
       `--user-data-dir=${userDataDir}`,
       '--no-sandbox',
     ],

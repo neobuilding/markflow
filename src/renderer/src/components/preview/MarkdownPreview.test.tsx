@@ -67,6 +67,26 @@ describe('MarkdownPreview', () => {
     expect(screen.queryByText('hello preview')).toBeNull()
   })
 
+  // The preview writes the diagram source onto the wrapper; "Copy diagram source" reads
+  // it back from the DOM. Nothing else asserted it was actually EMITTED AND SURVIVED
+  // sanitization (PreviewContextMenu.test.tsx hand-writes the attribute into its
+  // fixture), so the old HTML-escaping was silently stripped by DOMPurify — the diagram
+  // rendered while the menu item stayed permanently greyed out. It must be URI-encoded,
+  // because a decoded `-->` (i.e. every `A-->B`) makes DOMPurify drop the attribute.
+  it('bakes the diagram source onto the wrapper, URI-encoded, as data-mermaid-source', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<div data-mermaid-slot="0"></div>',
+      mermaid: [{ hash: 'h1', code: 'graph TD;A-->B', slot: 0 }],
+    }))
+    const { container } = render(<MarkdownPreview content="```mermaid\ngraph TD;A-->B\n```" />)
+    await waitFor(() => expect(container.querySelector('[data-mermaid-slot="0"] svg')).toBeTruthy())
+    const attr = container
+      .querySelector('[data-mermaid-slot="0"]')
+      ?.getAttribute('data-mermaid-source')
+    expect(attr).toBeTruthy()
+    expect(decodeURIComponent(attr as string)).toBe('graph TD;A-->B')
+  })
+
   it('falls back to a skeleton when mermaid rendering fails', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       html: '<div data-mermaid-slot="0"></div>',

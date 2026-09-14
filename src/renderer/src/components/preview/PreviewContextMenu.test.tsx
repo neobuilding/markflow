@@ -540,6 +540,25 @@ describe('PreviewContextMenu', () => {
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('graph TD;A-->B')
   })
 
+  it('mermaid: decodes the URI-encoded source the preview bakes onto the wrapper', async () => {
+    // MarkdownPreview URI-encodes the source so it survives sanitization; the menu
+    // must decode it again so the user gets the real diagram text.
+    mountCustom(
+      `<div data-mermaid-slot="0" data-mermaid-source="${encodeURIComponent('graph TD;A-->B')}"><svg>chart</svg></div>`,
+    )
+    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-copy-diagram-source'))
+    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('graph TD;A-->B')
+  })
+
+  it('mermaid: falls back to the raw attribute when the source is not decodable', async () => {
+    // A stray `%` (legacy/unencoded content) must not throw while the menu opens.
+    mountCustom('<div data-mermaid-slot="0" data-mermaid-source="100%"><svg>chart</svg></div>')
+    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-copy-diagram-source'))
+    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('100%')
+  })
+
   it('mermaid: copies the SVG markup (能力 5 图表)', async () => {
     mountCustom(
       '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
