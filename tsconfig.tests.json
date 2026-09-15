@@ -21,6 +21,7 @@
     "electron/preload/**/*.ts",
     "shared/**/*.ts",
     "scripts/**/*.mjs",
+    "scripts/**/*.ts",
     "test-setup.ts",
     "e2e/**/*.ts"
   ]

@@ -38,6 +38,8 @@ export default defineConfig({
       'electron/main/**/*.test.ts',
       'electron/preload/**/*.test.ts',
       'shared/**/*.test.ts',
+      'scripts/**/*.test.ts',
+      'scripts/**/*.test.mjs',
       'actions/create-pr/src/**/*.test.mjs',
     ],
     // Report coverage for the ENTIRE project (every source file), not only the files

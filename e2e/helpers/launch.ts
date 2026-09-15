@@ -26,6 +26,77 @@ export interface AppHandle {
   userDataDir: string
 }
 
+/**
+ * A single native confirm-box invocation as seen at the `electron.dialog.showMessageBox`
+ * boundary. This is exactly what the OS would render, so it is the faithful thing to
+ * assert on for "文案/按钮" (copy / buttons).
+ */
+export interface ConfirmCall {
+  /** Dialog body copy (e.g. the unsaved-changes message). */
+  message: string
+  /** Optional secondary copy. */
+  detail?: string
+  /** The buttons array the OS would render, e.g. ['Keep editing', 'Discard']. */
+  buttons?: string[]
+  /** Index of the default-focused button. */
+  defaultId?: number
+  /** Index of the Esc/cancel button. */
+  cancelId?: number
+  /** Dialog type, e.g. 'question'. */
+  type?: string
+  /** The canned answer the spy auto-picked (1 = ok/Discard, 0 = cancel/Keep). */
+  response: number
+}
+
+/**
+ * Spy on the main-process native `electron.dialog.showMessageBox` so e2e tests can BOTH
+ * assert the confirm box's copy/buttons AND auto-answer it.
+ *
+ * Playwright cannot click native OS dialog buttons, so the production `dialog:confirm`
+ * handler (electron/main/handlers/dialog.ts) would otherwise block the quit until the
+ * 15s closeApp timeout. Instead of stubbing the IPC handler with a fixed boolean, this
+ * replaces `dialog.showMessageBox` with a recorder that:
+ *   - captures the exact options the production code would pass to the OS box
+ *     (message, buttons array, defaultId, cancelId, type);
+ *   - returns a canned `response` (default 1 = Discard) so the app quits gracefully.
+ *
+ * The production `dialog:confirm` handler is left UNTOUCHED and still runs, so the real
+ * dirty-quit flow (tryCloseWorkspace → app:quit-pending → discard → closeWorkspace +
+ * allowQuit) is fully exercised; only the native button render is skipped, which
+ * Playwright cannot reach anyway.
+ */
+export async function installConfirmSpy(
+  handle: AppHandle,
+  opts: { defaultResponse?: 0 | 1 } = {},
+): Promise<void> {
+  const defaultResponse = opts.defaultResponse ?? 1
+  await handle.electronApp.evaluate((electron, defaultResponse) => {
+    const dialog = (electron as any).dialog
+    const g = globalThis as any
+    g.__mf_confirm_calls = g.__mf_confirm_calls ?? []
+    // Replace the native box with a recorder + auto-answer. We deliberately do NOT call
+    // the real showMessageBox: it would open an OS modal Playwright cannot click, which
+    // would block until the 15s closeApp timeout + force-kill.
+    dialog.showMessageBox = async (o: any) => {
+      g.__mf_confirm_calls.push({
+        message: o?.message,
+        detail: o?.detail,
+        buttons: o?.buttons,
+        defaultId: o?.defaultId,
+        cancelId: o?.cancelId,
+        type: o?.type,
+        response: defaultResponse,
+      })
+      return { response: defaultResponse, checkboxChecked: false }
+    }
+  }, defaultResponse)
+}
+
+/** Read the native confirm invocations recorded by installConfirmSpy. */
+export async function getConfirmCalls(handle: AppHandle): Promise<ConfirmCall[]> {
+  return handle.electronApp.evaluate(() => (globalThis as any).__mf_confirm_calls ?? [], undefined)
+}
+
 /** Launch a fresh Electron instance against the shared Vite dev server. */
 export async function launchApp(): Promise<AppHandle> {
   // Prefer the env var (inherited from globalSetup); fall back to the marker file.
@@ -47,7 +118,7 @@ export async function launchApp(): Promise<AppHandle> {
     // the runner does not grant sudo for. This flag is ONLY used by the e2e path
     // (npm run e2e); production builds go through electron-builder and are unaffected.
     args: [
-      join(PROJECT_ROOT, 'dist-electron', 'index.js'),
+      join(PROJECT_ROOT, 'dist', 'electron', 'index.js'),
       `--user-data-dir=${userDataDir}`,
       '--no-sandbox',
     ],
@@ -101,6 +172,14 @@ export async function forceEnglish(page: Page): Promise<void> {
  * not have fired yet, etc.), force-kills the Electron process so no zombie
  * window ever remains after a run. Failures are surfaced as a warning rather
  * than silently swallowed, so a flaky close is visible without failing the test.
+ *
+ * Before closing, the unsaved-changes confirm (a native electron.dialog.showMessageBox
+ * handled in the MAIN process via the `dialog:confirm` IPC) is auto-answered as
+ * Discard in the main process see the inline note below. Playwright cannot click
+ * native OS dialog buttons, so a dirty workspace would otherwise block the graceful
+ * quit until CLOSE_TIMEOUT_MS and force-kill the tree (noisy + ~15s slower per dirty
+ * test, and it skips the real graceful-quit + folder-watcher teardown). Auto-answering
+ * still drives the REAL quit flow and only bypasses the native button render.
  */
 export async function closeApp(handle: AppHandle): Promise<void> {
   const CLOSE_TIMEOUT_MS = 15_000
@@ -115,6 +194,26 @@ export async function closeApp(handle: AppHandle): Promise<void> {
   } catch {
     /* app already exited nothing to clean up */
     return
+  }
+  // Auto-answer the app's unsaved-changes confirm as Discard BEFORE the graceful
+  // close, so a dirty workspace quits cleanly instead of hanging on the native
+  // dialog until the 15s timeout. The confirm is a native electron.dialog.showMessageBox
+  // (electron/main/handlers/dialog.ts) invoked from the renderer over the `dialog:confirm`
+  // IPC; Playwright cannot click native OS dialog buttons, so we spy `showMessageBox`
+  // (installConfirmSpy) to record + auto-answer. This is the same mechanism
+  // e2e/specs/quit-unsaved-regression.e2e.spec.ts uses (there answering `false` to keep
+  // editing); here we answer `1` (Discard).
+  //
+  // Crucially this does NOT bypass the dirty scenario: tryCloseWorkspace() still takes
+  // its dirty branch, sends app:quit-pending (disarming the 5s safety net), and after the
+  // (auto-answered) discard calls closeWorkspace() + allowQuit() so the app exits gracefully
+  // and `will-quit` tears down the folder watcher. Only the native button render is skipped,
+  // which Playwright cannot reach anyway. The 15s timeout + force-kill below remain the
+  // ultimate fallback for a genuinely unresponsive app.
+  try {
+    await installConfirmSpy(handle, { defaultResponse: 1 })
+  } catch {
+    /* app already gone; the close path below tolerates it */
   }
   // Similarly, electronApp.close() may throw synchronously on an already-closed
   // app; treat that as success (graceful close is already done).
@@ -157,7 +256,10 @@ export async function closeApp(handle: AppHandle): Promise<void> {
  * Kill a process AND all its descendants. On Windows, SIGKILL from Node only
  * terminates the target PID, leaving child processes (Electron's GPU/renderer/
  * utility children) orphaned. `taskkill /T /F` walks the tree and kills them all.
- * On POSIX, fall back to a simple SIGKILL (process groups are usually clean there).
+ * On POSIX the SAME orphaning happens (children reparent to init), so we kill the
+ * direct children first via `pkill -P` (exists on macOS and Linux) and then SIGKILL
+ * the main PID. Order matters: kill children BEFORE the main, else they reparent and
+ * `-P` no longer matches them. `pkill` missing is a no-op; we still SIGKILL the main.
  */
 function killProcessTree(pid?: number): void {
   if (!pid) return
@@ -170,6 +272,15 @@ function killProcessTree(pid?: number): void {
         windowsHide: true,
       })
     } else {
+      // Kill direct children (zygote/gpu/utility) FIRST, then the main PID, so the
+      // children don't get reparented to init before we can target them by parent.
+      // When the zygote dies, its renderer children exit too this one-level walk plus
+      // the cascade mirrors Windows `taskkill /T` (transitive tree kill).
+      try {
+        spawnSync('pkill', ['-9', '-P', String(pid)], { stdio: 'ignore' })
+      } catch {
+        /* pkill unavailable (unexpected on macOS/Linux) */
+      }
       try {
         process.kill(pid, 'SIGKILL')
       } catch {

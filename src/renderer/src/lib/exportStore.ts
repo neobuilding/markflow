@@ -15,7 +15,8 @@ export function getExportHtml(): string {
 
 // Source for the exported HTML's <html lang>: cache the raw markdown (including
 // frontmatter) string reference and compute it once at export/print time via
-// resolveExportLang, so franc is not run repeatedly during preview parsing
+// resolveExportLang (now async; lazy-loads franc only when exporting), so franc is
+// not run — or even imported — during preview parsing
 // (it is only needed for export).
 let currentMarkdown = ''
 

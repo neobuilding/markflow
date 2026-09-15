@@ -4,6 +4,8 @@ import electron from 'vite-plugin-electron/simple'
 import { fileURLToPath } from 'node:url'
 import { relative } from 'node:path'
 import checker from 'vite-plugin-checker'
+import { pruneKaTeXFallbacks } from './scripts/prune-fonts.ts'
+import { vendorChunkFor } from './scripts/vendor-chunks.ts'
 
 // ROOT CAUSE FIX: Clear ELECTRON_RUN_AS_NODE so Electron runs in full mode
 // (not as pure Node.js). This env var disables Electron's module interception,
@@ -52,6 +54,8 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    // Drop KaTeX's redundant .ttf/.woff fallbacks from the renderer bundle (build only).
+    pruneKaTeXFallbacks(),
     // Live type-checking feedback during dev/build (does NOT fail the build;
     // the hard gate lives in the `quality` script's `typecheck` step).
     checker({ typescript: { tsconfigPath: 'tsconfig.web.json' } }),
@@ -60,6 +64,12 @@ export default defineConfig({
         entry: 'electron/main/index.ts',
         vite: {
           build: {
+            // Output the electron main process under dist/electron (alongside the
+            // renderer build in dist/renderer), so every bundler artifact lives under
+            // one dist/ root and the packaged app stays in release/.
+            outDir: 'dist/electron',
+            // main + preload share this dir; never let one build wipe the other's output.
+            emptyOutDir: false,
             rollupOptions: {
               output: {
                 entryFileNames: 'index.js',
@@ -72,6 +82,8 @@ export default defineConfig({
         input: 'electron/preload/index.ts',
         vite: {
           build: {
+            outDir: 'dist/electron',
+            emptyOutDir: false,
             rollupOptions: {
               output: {
                 // Force CommonJS output. Under "type": "module" in package.json,
@@ -113,7 +125,7 @@ export default defineConfig({
       // src/renderer/src/main.tsx) and `shared/` (i18n), plus a few root config
       // files. Everything else — user data folders the app can edit/delete
       // (examples, docs, docs.local, notes, …), build/test output (coverage,
-      // dist-electron, release, out) and standalone Node tooling (actions, scripts,
+      // dist/electron, release, out) and standalone Node tooling (actions, scripts,
       // e2e) — must NOT be watched. If Vite's chokidar holds a directory handle on a
       // watched folder, shell.trashItem's recycle rename on Windows is blocked and the
       // OS raises the "needs admin permission" elevation prompt; the app's own
@@ -147,27 +159,18 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist/renderer',
-    // Split heavy vendors into their own chunks. Without this, a single bundled
-    // chunk (notably mermaid/katex) exceeds Vite's default 500 KB warning limit
-    // and emits a "chunk size" warning on every build. Isolating vendors keeps
-    // the app code chunk small and makes cache invalidation granular.
-    //
-    // The largest chunks are inherently big diagram/editor libraries, not a
-    // regression from this branch: mermaid (~2.4 MB) and its transitive d3
-    // dependency (~2.8 MB in `vendor`), plus CodeMirror (~1.6 MB). We raise the
-    // warning limit above those known sizes so the build stays warning-free
-    // while the chunks remain split for caching.
+    // Split third-party libraries into their own chunks so the app-code chunk stays
+    // small and cache invalidation is granular. The actual policy lives in
+    // scripts/vendor-chunks.ts (vendorChunkFor): a few families (mermaid, katex, the
+    // CodeMirror/lezer editor stack, the radix-ui/tanstack UI stack, d3) get grouped
+    // chunks, and EVERY other node_modules package gets its OWN chunk. This stops any
+    // catch-all `vendor` chunk from aggregating enough modules to exceed
+    // chunkSizeWarningLimit (3000 kB), so the build is warning-free — verified by the
+    // build (no "larger than 3000 kB" warning) and by scripts/vendor-chunks.test.ts.
     chunkSizeWarningLimit: 3000,
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined
-          if (id.includes('mermaid')) return 'vendor-mermaid'
-          if (id.includes('katex') || id.includes('mathjax')) return 'vendor-katex'
-          if (id.includes('codemirror') || id.includes('@lezer')) return 'vendor-editor'
-          if (id.includes('@radix-ui') || id.includes('@tanstack')) return 'vendor-ui'
-          return 'vendor'
-        },
+        manualChunks: vendorChunkFor,
       },
     },
   },

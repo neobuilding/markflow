@@ -200,7 +200,7 @@ jobs:
 
     # ── E2E: drive the REAL Electron app via Playwright (after `quality`, parallel with ut) ──
     # global-setup.ts starts a shared Vite dev server and waits for
-    # dist-electron/index.js (globalSetup + launch.ts consume it), so the
+    # dist/electron/index.js (globalSetup + launch.ts consume it), so the
     # main process must be built first. Electron runs headful, so a virtual
     # display (xvfb) is required on headless Linux runners. This job is a separate
     # runner from `ut` (it needs its own `npm ci` + one `npm run build`), which is
@@ -223,7 +223,7 @@ jobs:
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
             # The main process must be built before e2e (global-setup waits for
-            # dist-electron/index.js). This build is local to the e2e runner.
+            # dist/electron/index.js). This build is local to the e2e runner.
             - name: Build main process (e2e)
               run: |
                   echo "::group::npm run build (e2e runner)"

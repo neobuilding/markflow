@@ -56,80 +56,80 @@ describe('extractFrontmatterLang', () => {
 })
 
 describe('detectContentLang — real franc (script detection)', () => {
-  it('detects Chinese as zh-CN', () => {
-    expect(detectContentLang(ZH)).toBe('zh-CN')
+  it('detects Chinese as zh-CN', async () => {
+    expect(await detectContentLang(ZH)).toBe('zh-CN')
   })
 
-  it('detects Japanese as ja', () => {
-    expect(detectContentLang(JA)).toBe('ja')
+  it('detects Japanese as ja', async () => {
+    expect(await detectContentLang(JA)).toBe('ja')
   })
 
-  it('detects Korean as ko', () => {
-    expect(detectContentLang(KO)).toBe('ko')
+  it('detects Korean as ko', async () => {
+    expect(await detectContentLang(KO)).toBe('ko')
   })
 
-  it('detects English as en', () => {
-    expect(detectContentLang(EN)).toBe('en')
+  it('detects English as en', async () => {
+    expect(await detectContentLang(EN)).toBe('en')
   })
 
-  it('falls back to en for empty content', () => {
-    expect(detectContentLang('')).toBe('en')
+  it('falls back to en for empty content', async () => {
+    expect(await detectContentLang('')).toBe('en')
   })
 
-  it('does not let an English code block bias a Chinese document toward English', () => {
+  it('does not let an English code block bias a Chinese document toward English', async () => {
     const doc = `${ZH}\n\n\`\`\`js\nconst sum = (a, b) => a + b;\nfunction render() { return items.map(i => i.name); }\n\`\`\``
-    expect(detectContentLang(doc)).toBe('zh-CN')
+    expect(await detectContentLang(doc)).toBe('zh-CN')
   })
 
-  it('treats code-only content as en rather than misdetecting English', () => {
-    expect(detectContentLang('```js\nconst a = 1;\n```')).toBe('en')
+  it('treats code-only content as en rather than misdetecting English', async () => {
+    expect(await detectContentLang('```js\nconst a = 1;\n```')).toBe('en')
   })
 
-  it('strips HTML tags before detection', () => {
-    expect(detectContentLang(`<div>${JA}</div>`)).toBe('ja')
+  it('strips HTML tags before detection', async () => {
+    expect(await detectContentLang(`<div>${JA}</div>`)).toBe('ja')
   })
 })
 
 describe('detectContentLang — deterministic ISO3 -> BCP47 mapping', () => {
-  it('maps cmn -> zh-CN', () => {
+  it('maps cmn -> zh-CN', async () => {
     vi.mocked(franc).mockReturnValue('cmn')
-    expect(detectContentLang('anything')).toBe('zh-CN')
+    expect(await detectContentLang('anything')).toBe('zh-CN')
   })
 
-  it('maps jpn -> ja', () => {
+  it('maps jpn -> ja', async () => {
     vi.mocked(franc).mockReturnValue('jpn')
-    expect(detectContentLang('anything')).toBe('ja')
+    expect(await detectContentLang('anything')).toBe('ja')
   })
 
-  it('maps kor -> ko', () => {
+  it('maps kor -> ko', async () => {
     vi.mocked(franc).mockReturnValue('kor')
-    expect(detectContentLang('anything')).toBe('ko')
+    expect(await detectContentLang('anything')).toBe('ko')
   })
 
-  it('maps eng -> en', () => {
+  it('maps eng -> en', async () => {
     vi.mocked(franc).mockReturnValue('eng')
-    expect(detectContentLang('anything')).toBe('en')
+    expect(await detectContentLang('anything')).toBe('en')
   })
 
-  it('falls back to en for undetermined/unmapped codes', () => {
+  it('falls back to en for undetermined/unmapped codes', async () => {
     vi.mocked(franc).mockReturnValue('und')
-    expect(detectContentLang('x')).toBe('en')
+    expect(await detectContentLang('x')).toBe('en')
     vi.mocked(franc).mockReturnValue('fra')
-    expect(detectContentLang('x')).toBe('en')
+    expect(await detectContentLang('x')).toBe('en')
   })
 })
 
 describe('resolveExportLang', () => {
-  it('prefers frontmatter lang over content detection', () => {
+  it('prefers frontmatter lang over content detection', async () => {
     // Body is clearly Chinese, but an explicit lang: ko must win.
-    expect(resolveExportLang(`---\nlang: ko\n---\n\n${ZH}`)).toBe('ko')
+    expect(await resolveExportLang(`---\nlang: ko\n---\n\n${ZH}`)).toBe('ko')
   })
 
-  it('falls back to content detection when there is no frontmatter', () => {
-    expect(resolveExportLang(JA)).toBe('ja')
+  it('falls back to content detection when there is no frontmatter', async () => {
+    expect(await resolveExportLang(JA)).toBe('ja')
   })
 
-  it('defaults to en when nothing is detectable', () => {
-    expect(resolveExportLang('```js\nconst x = 1;\n```')).toBe('en')
+  it('defaults to en when nothing is detectable', async () => {
+    expect(await resolveExportLang('```js\nconst x = 1;\n```')).toBe('en')
   })
 })

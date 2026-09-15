@@ -16,7 +16,6 @@
   "ignores": [
     "**/node_modules/**",
     "**/dist/**",
-    "**/dist-electron/**",
     "**/release/**",
     "**/docs.local/**",
     "**/test-results/**",

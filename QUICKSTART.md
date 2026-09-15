@@ -45,7 +45,7 @@ npm run e2e             # 端到端：用 Playwright 驱动真实的 Electron �
 ```
 
 - **单元测试**（`npm run test:coverage`）在 jsdom 下运行，不会触发 Electron 构建，速度快、无需显示服务。
-- **端到端测试**（`npm run e2e`）会启动真实的 Electron 应用：`e2e/global-setup.ts` 启动共享的 Vite dev server 并等待 `dist-electron/index.js` 编译完成，因此需先 `npm run build`；每个 spec 再各自启动一个 Electron 实例。在无显示的 Linux（如 CI）上需借助虚拟显示运行：
+- **端到端测试**（`npm run e2e`）会启动真实的 Electron 应用：`e2e/global-setup.ts` 启动共享的 Vite dev server 并等待 `dist/electron/index.js` 编译完成，因此需先 `npm run build`；每个 spec 再各自启动一个 Electron 实例。在无显示的 Linux（如 CI）上需借助虚拟显示运行：
 
   ```bash
   xvfb-run --auto-servernum -- npm run e2e

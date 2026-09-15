@@ -5,6 +5,13 @@
     buildResources: 'resources',
     output: 'release',
   },
+  // Print where the packaged app landed, once all artifacts are built.
+  afterAllArtifactBuild: './scripts/after-all-artifact-build.mjs',
+  // `asar` is a boolean in electron-builder 26 (AsarOptions only accepts `ordering` /
+  // `smartUnpack`); it defaults to true, so app sources are packed into app.asar already.
+  // Maximum compression applies to the packaged archive (zip/dmg/AppImage), shrinking the
+  // shipped artifact. No native modules are bundled, so no asarUnpack is needed.
+  compression: 'maximum',
   fileAssociations: [
     { ext: 'md', name: 'Markdown Document', role: 'Editor' },
     { ext: 'markdown', name: 'Markdown Document', role: 'Editor' },
@@ -13,15 +20,23 @@
     { ext: 'mdtext', name: 'Markdown Document', role: 'Editor' },
   ],
   files: [
-    'dist-electron/**/*',
+    'dist/electron/**/*',
     'dist/renderer/**/*',
     '!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,caches,lock}',
     '!.eslintrc.{js,yml,yaml}',
     '!.prettier*',
     '!.editorconfig',
     '!*.{spec,test}.{js,ts}',
+    '!**/*.map',
     '!**/{.DS_Store,Thumbs.db,desktop.ini}',
-    '!**/node_modules/.bin',
+    // Both builds are FULLY BUNDLED by Vite: `dist/electron/index.js` (main + preload)
+    // has no bare `require()` except Node builtins, and the renderer is a self-contained
+    // set of chunks. Shipping `node_modules` too was 91.8 MB of pure duplication
+    // (mermaid 41 MB, cytoscape-fcose 9 MB, elkjs 8 MB, highlight.js 5 MB, …) — see
+    // ADR-0015. Only drop this exclusion if something ever needs a runtime dependency
+    // again; verify by launching `release/win-unpacked/MarkFlow.exe`.
+    '!node_modules',
+    '!node_modules/**/*',
   ],
   mac: {
     entitlementsInherit: 'resources/entitlements.mac.plist',

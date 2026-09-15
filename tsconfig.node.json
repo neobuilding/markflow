@@ -11,7 +11,7 @@
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "outDir": "out",
+    "outDir": "./node_modules/.cache/tsnode",
     "paths": {
       "@main/*": ["./electron/main/*"],
       "@/*": ["./src/renderer/src/*"]

@@ -212,7 +212,7 @@ npm run e2e             # End-to-end: drives the REAL Electron app via Playwrigh
 - **Unit tests** (`npm run test:coverage`) use Vitest in jsdom and do **not** trigger the Electron
   build, so they run fast and need no display server.
 - **E2E tests** (`npm run e2e`) launch the real Electron app. `e2e/global-setup.ts` starts a shared
-  Vite dev server and waits for `dist-electron/index.js`, so the main process must be built first
+  Vite dev server and waits for `dist/electron/index.js`, so the main process must be built first
   (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you must
   run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e`.
 - **Performance**: `npm run e2e` runs two Playwright projects — `electron-app` (functional) and
