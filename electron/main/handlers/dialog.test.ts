@@ -5,6 +5,13 @@ const h = vi.hoisted(() => ({
   open: { canceled: false, filePaths: ['/a.md'] },
   save: { canceled: false, filePath: '/out.md' as string | undefined },
   confirm: { response: 1 },
+  calls: [] as any[],
+  // Record every native-box invocation so tests can assert the buttons/defaultId/cancelId
+  // the production code builds from the IPC opts (the contract the e2e spy also checks).
+  showMessageBox: vi.fn(async (o: any) => {
+    ;(h.calls as any[]).push(o)
+    return (h as any).confirm
+  }),
 }))
 vi.mock('electron', () => ({
   ipcMain: {
@@ -15,7 +22,7 @@ vi.mock('electron', () => ({
   dialog: {
     showOpenDialog: vi.fn(async () => h.open),
     showSaveDialog: vi.fn(async () => h.save),
-    showMessageBox: vi.fn(async () => h.confirm),
+    showMessageBox: h.showMessageBox,
   },
 }))
 vi.mock('../lib/md-files', () => ({
@@ -28,6 +35,7 @@ import { registerDialogHandlers } from './dialog'
 describe('dialog handlers', () => {
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k]
+    h.calls.length = 0
     registerDialogHandlers()
   })
 
@@ -68,6 +76,34 @@ describe('dialog handlers', () => {
     expect(await handlers['dialog:confirm'](null, { message: 'Sure?' })).toBe(true)
     h.confirm = { response: 0 }
     expect(await handlers['dialog:confirm'](null, { message: 'Sure?' })).toBe(false)
+  })
+
+  it('confirm maps okText/cancelText to a [cancel, ok] buttons array with defaults', async () => {
+    h.confirm = { response: 1 }
+    h.calls.length = 0
+    await handlers['dialog:confirm'](null, {
+      message: 'You have unsaved changes. Discard them and close the workspace?',
+      detail: 'Some detail',
+      okText: 'Discard',
+      cancelText: 'Keep editing',
+    })
+    expect(h.calls[0]).toMatchObject({
+      type: 'question',
+      message: 'You have unsaved changes. Discard them and close the workspace?',
+      detail: 'Some detail',
+      // Production contract: buttons = [cancelText, okText], default=ok (1), cancel=Keep (0).
+      buttons: ['Keep editing', 'Discard'],
+      defaultId: 1,
+      cancelId: 0,
+    })
+  })
+
+  it('confirm falls back to [Cancel, OK] when no labels are provided', async () => {
+    h.calls.length = 0
+    await handlers['dialog:confirm'](null, { message: 'Sure?' })
+    expect(h.calls[0].buttons).toEqual(['Cancel', 'OK'])
+    expect(h.calls[0].defaultId).toBe(1)
+    expect(h.calls[0].cancelId).toBe(0)
   })
 
   it('save-html returns the html path or null', async () => {

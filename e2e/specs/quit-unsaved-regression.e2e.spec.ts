@@ -1,6 +1,13 @@
 import type {} from '../../src/renderer/src/vite-env.d.ts'
 import { test, expect } from '@playwright/test'
-import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import {
+  launchApp,
+  waitForAppReady,
+  closeApp,
+  installConfirmSpy,
+  getConfirmCalls,
+  AppHandle,
+} from '../helpers/launch'
 
 // Regression coverage for the "dirty-confirm force-quit" bug:
 //
@@ -20,8 +27,11 @@ import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/laun
 // Each test launches its own app instance because they assert on process
 // liveness/exit, which is incompatible with a shared beforeEach app instance.
 test.describe('quit flow — unsaved-changes regression', () => {
-  // Stub the native `dialog:confirm` handler so it resolves immediately (false =
-  // "keep editing") instead of showing an OS modal that would block the test.
+  // Spy the native `dialog:confirm` so it records + auto-answers immediately (0 =
+  // "keep editing") instead of showing an OS modal that would block the test, while
+  // leaving the production `dialog:confirm` handler running so the real dirty-quit flow
+  // is still exercised. (installConfirmSpy replaces electron.dialog.showMessageBox; the
+  // production handler calls it and gets our canned answer.)
   //
   // `app:quit-pending` (renderer→main) is only OBSERVED here, with an extra
   // listener that counts it. It deliberately does NOT replace the production
@@ -30,17 +40,14 @@ test.describe('quit flow — unsaved-changes regression', () => {
   // (removeAllListeners) used to make this spec pass no matter what the safety
   // net it claims to test was never armed, so deleting the fix entirely would
   // still have shown green.
-  async function stubConfirmAndTrackPending(handle: AppHandle): Promise<void> {
+  async function spyConfirmAndTrackPending(handle: AppHandle): Promise<void> {
+    // Record + auto-answer Keep (0) so the app stays alive while the confirm is "open".
+    await installConfirmSpy(handle, { defaultResponse: 0 })
+    // Count the app:quit-pending IPCs with a non-replacing extra listener.
     await handle.electronApp.evaluate((electron) => {
       const { ipcMain } = electron
       const g = globalThis as unknown as { __mf_pending?: number }
       g.__mf_pending = 0
-      try {
-        ipcMain.removeHandler('dialog:confirm')
-      } catch {
-        /* not registered yet */
-      }
-      ipcMain.handle('dialog:confirm', async () => false)
       ipcMain.on('app:quit-pending', () => {
         const cur = (globalThis as unknown as { __mf_pending?: number }).__mf_pending ?? 0
         ;(globalThis as unknown as { __mf_pending?: number }).__mf_pending = cur + 1
@@ -77,7 +84,7 @@ test.describe('quit flow — unsaved-changes regression', () => {
       const { page } = handle
       await waitForAppReady(page)
 
-      await stubConfirmAndTrackPending(handle)
+      await spyConfirmAndTrackPending(handle)
 
       // Mark the workspace dirty via the dev-only __uiStore handle. This is the
       // exact branch in tryCloseWorkspace() that opens the confirm box.
@@ -116,6 +123,17 @@ test.describe('quit flow — unsaved-changes regression', () => {
         return w.__uiStore?.getState().dirty ?? false
       })
       expect(stillDirty).toBe(true)
+
+      // The native confirm must have been offered with the correct unsaved copy and the
+      // [Keep editing, Discard] buttons (the spy answered Keep → app stayed alive above).
+      const calls = await getConfirmCalls(handle)
+      expect(calls.length).toBeGreaterThanOrEqual(1)
+      expect(calls[0].message).toBe(
+        'You have unsaved changes. Discard them and close the workspace?',
+      )
+      expect(calls[0].buttons).toEqual(['Keep editing', 'Discard'])
+      expect(calls[0].defaultId).toBe(1)
+      expect(calls[0].cancelId).toBe(0)
     } finally {
       await closeApp(handle)
     }
