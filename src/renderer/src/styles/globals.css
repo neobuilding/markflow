@@ -76,6 +76,14 @@
 html,
 body {
   height: 100%;
+  /* Desktop shell: every scrollable region (editor pane, preview pane, dialogs) owns its
+     own `overflow`, so the ROOT must never scroll. If it can, anything that TRANSIENTLY
+     overflows flips a top-level scrollbar on for a frame — the root loses the scrollbar's
+     width and the WHOLE shell (both panes' scrollbars, the toolbar, everything) visibly
+     jolts sideways. The real offender: mermaid appends its temporary bake container
+     (`<div id="d<id>">`) straight to document.body while rendering a diagram, so every
+     keystroke in a document with diagrams jolted once. See Plan 01 §10. */
+  overflow: hidden;
   font-size: 16px;
   font-family: var(--font-sans);
   background-color: var(--color-bg);
@@ -106,6 +114,12 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-tertiary);
 }
+
+/* (removed) A reserved scrollbar gutter was tried as a fix for the sideways jolt. It was
+   NOT the cause of that symptom and it permanently reserved ~10px, so it was reverted.
+   It does address a real but DIFFERENT, milder wobble: when a document grows past exactly
+   one screen, the preview's own scrollbar appears and narrows the `w-full` article by the
+   scrollbar width, re-wrapping every block once. Kept out deliberately; see Plan 01 §10. */
 
 /* Titlebar drag region */
 .titlebar-drag {

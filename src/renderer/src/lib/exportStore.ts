@@ -3,13 +3,19 @@
 // parsing; export reads it directly, reusing the same sanitized, Mermaid/KaTeX-
 // injected HTML so the output is WYSIWYG and we don't re-implement render logic
 // for export (R7).
-let current = ''
+//
+// The stored value is typed `SanitizedHtml`, so the brand survives the round-trip:
+// whatever export / stage-2 rich-text copy reads back is provably the output of the
+// single sanitization gate (Plan 01 §5.5 contract #2).
+import { sanitizeHtml, type SanitizedHtml } from './sanitize'
 
-export function setExportHtml(html: string): void {
+let current: SanitizedHtml = sanitizeHtml('')
+
+export function setExportHtml(html: SanitizedHtml): void {
   current = html
 }
 
-export function getExportHtml(): string {
+export function getExportHtml(): SanitizedHtml {
   return current
 }
 

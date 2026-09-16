@@ -136,10 +136,23 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
             // generic menu, which has no copy-source item).
             const sources = new Map(res.mermaid.map((m) => [m.slot, m.code]))
             for (const m of res.mermaid) {
-              const id = `mermaid-${m.hash}-${Math.random().toString(36).slice(2)}`
+              // Two ids, on purpose:
+              //  - `renderId` is RANDOM and only ever handed to mermaid: the preview DOM
+              //    already contains the previously baked <svg id="…">, and mermaid looks
+              //    nodes up by id, so a reusable id could make it latch onto the stale
+              //    diagram. Random keeps mermaid's own temp DOM collision-free.
+              //  - `stableId` is what we actually INJECT: mermaid bakes the id into the
+              //    svg element id, every <style> selector, the node ids and the <filter>
+              //    ids, so a random id makes the SVG differ on every keystroke — morphdom
+              //    then never hits its "subtree unchanged → skip" fast path and the whole
+              //    diagram is torn down and rebuilt while typing. Normalising the baked
+              //    markup to a deterministic id (hash + slot, unique within a document)
+              //    makes an unchanged diagram byte-identical across re-parses.
+              const renderId = `mermaid-${m.hash}-${Math.random().toString(36).slice(2)}`
+              const stableId = `mermaid-${m.hash}-${m.slot}`
               try {
-                const out = await renderMermaidSvg(id, m.code)
-                svgs[m.slot] = out.svg
+                const out = await renderMermaidSvg(renderId, m.code)
+                svgs[m.slot] = out.svg.split(renderId).join(stableId)
               } catch {
                 sources.delete(m.slot)
                 svgs[m.slot] =

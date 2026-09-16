@@ -25,6 +25,34 @@ describe('sanitizeHtml — XSS stripping', () => {
   })
 })
 
+describe('sanitizeHtml — URI scheme whitelist (appdoc://)', () => {
+  // The pipeline rewrites relative images to appdoc://<docId>/<rel>. DOMPurify's default
+  // ALLOWED_URI_REGEXP does not know that scheme and SILENTLY drops the src, which left
+  // every local image in the preview as a src-less <img> (and export with no image at all).
+  it('keeps an appdoc:// image src (the app’s own asset scheme)', () => {
+    const out = sanitizeHtml('<img src="appdoc://doc-1/img/pic.png" alt="pic">')
+    expect(out).toContain('src="appdoc://doc-1/img/pic.png"')
+    expect(out).toContain('alt="pic"')
+  })
+
+  it('keeps the ordinary schemes (https / http / data / relative / mailto)', () => {
+    expect(sanitizeHtml('<img src="https://x/y.png">')).toContain('src="https://x/y.png"')
+    expect(sanitizeHtml('<img src="http://x/y.png">')).toContain('src="http://x/y.png"')
+    expect(sanitizeHtml('<img src="data:image/png;base64,AA">')).toContain(
+      'src="data:image/png;base64,AA"',
+    )
+    expect(sanitizeHtml('<img src="pic.png">')).toContain('src="pic.png"')
+    expect(sanitizeHtml('<a href="mailto:a@b.c">m</a>')).toContain('href="mailto:a@b.c"')
+  })
+
+  it('still strips javascript: and unknown custom schemes', () => {
+    // Only `appdoc:` was added to the whitelist — every other exotic scheme must stay out.
+    expect(sanitizeHtml('<a href="javascript:alert(1)">x</a>')).not.toContain('javascript:')
+    expect(sanitizeHtml('<img src="foo://evil/p.png">')).not.toContain('foo://')
+    expect(sanitizeHtml('<img src="appdock://evil/p.png">')).not.toContain('appdock://')
+  })
+})
+
 describe('sanitizeHtml — style whitelist (BUG-5)', () => {
   it('strips style on non-allowed elements (div/p/a/pre)', () => {
     const out = sanitizeHtml(

@@ -35,6 +35,23 @@ describe('patchPreviewContent — incremental DOM patch (R4)', () => {
     expect(root.querySelector('p')).toBe(first)
   })
 
+  it('reuses the same <img> element across identical patches — the image is not reloaded', () => {
+    // Plan 01 §5.4 deleted `scrollSync.realign()` on the premise that incremental patching
+    // stops images from being torn down and re-fetched on every keystroke. This locks that
+    // premise at the unit level: the SAME <img> node instance must survive a re-patch with
+    // identical markup, otherwise the browser re-requests the source (and the height jumps
+    // the old realign() used to paper over).
+    const root = document.createElement('div')
+    patchPreviewContent(root, sanitizeHtml('<p>text</p><img src="a.png" alt="a">'))
+    const img = root.querySelector('img')!
+    expect(img).toBeTruthy()
+    patchPreviewContent(root, sanitizeHtml('<p>text</p><img src="a.png" alt="a">'))
+    expect(root.querySelector('img')).toBe(img)
+    // Still the live node inside the preview root, with its src intact.
+    expect(img.parentNode).toBe(root)
+    expect(img.getAttribute('src')).toBe('a.png')
+  })
+
   it('is a no-op (no throw) when the root is null', () => {
     expect(() =>
       patchPreviewContent(null as unknown as HTMLElement, sanitizeHtml('<p>x</p>')),

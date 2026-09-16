@@ -101,6 +101,46 @@ describe('MarkdownPreview', () => {
     expect(wrapper?.getAttribute('data-line')).toBe('0')
   })
 
+  // N4: mermaid bakes the id it is given into the SVG (root id, <style> selectors, node
+  // ids, filter ids). A random id therefore makes the diagram markup differ on EVERY
+  // re-parse, so morphdom can never take its "subtree unchanged -> skip" fast path and the
+  // diagram is rebuilt while typing. We render with a random id (mermaid needs a
+  // collision-free one) but normalise the baked markup to a deterministic id.
+  it('bakes mermaid with a deterministic svg id, not the random render id (N4)', async () => {
+    const renderIds: string[] = []
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<div data-mermaid-slot="0" data-line="0"></div>',
+      mermaid: [{ hash: 'h1', code: 'graph TD;A-->B', slot: 0 }],
+    }))
+    const mermaidApi = (await import('mermaid')).default as unknown as {
+      render: ReturnType<typeof vi.fn>
+    }
+    // Mimic real mermaid: the id passed to render() is echoed into the SVG markup.
+    mermaidApi.render.mockImplementation(async (id: string) => {
+      renderIds.push(id)
+      return { svg: `<svg id="${id}"><use href="#${id}-flowchart-A-1"/></svg>` }
+    })
+    try {
+      const { container } = render(<MarkdownPreview content="```mermaid\ngraph TD;A-->B\n```" />)
+      await waitFor(() =>
+        expect(container.querySelector('[data-mermaid-slot="0"] svg')).toBeTruthy(),
+      )
+      const svg = container.querySelector('[data-mermaid-slot="0"] svg') as SVGElement
+      // mermaid still gets a random (collision-free) id…
+      expect(renderIds[0]).toMatch(/^mermaid-h1-[a-z0-9]+$/)
+      // …but what lands in the DOM is stable: hash + slot.
+      expect(svg.id).toBe('mermaid-h1-0')
+      expect(svg.querySelector('use')?.getAttribute('href')).toBe('#mermaid-h1-0-flowchart-A-1')
+      // Nothing of the random token survives anywhere in the baked markup (it would also
+      // appear in <style> selectors / filter ids in a real diagram).
+      expect(svg.outerHTML).not.toContain(renderIds[0]!)
+    } finally {
+      mermaidApi.render.mockImplementation(async (_id: string, _code: string) => ({
+        svg: '<svg>mermaid</svg>',
+      }))
+    }
+  })
+
   it('falls back to a skeleton when mermaid rendering fails', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       html: '<div data-mermaid-slot="0" data-line="0"></div>',

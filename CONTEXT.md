@@ -109,9 +109,16 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 
 - **Markdown pipeline** — `src/renderer/src/lib/markdownPipeline.ts` + `sanitize.ts`, producing sanitized
   HTML from GFM + KaTeX + Mermaid + GitHub Alerts + custom containers.
-- **SafeHtml / single sanitization gate** — the sole XSS boundary: rendered HTML passes through
-  `SafeHtml` → `sanitizeHtml` (DOMPurify). Never bypassed (see `docs/adr/0002-single-sanitization-gate.md`).
-- **appdoc:// protocol** — custom scheme for in-app document image / asset rewriting.
+- **single sanitization gate（单点净化门）** — the sole XSS boundary: `sanitizeHtml()` (DOMPurify) is the only
+  producer of the branded `SanitizedHtml` type, and `patchPreviewContent()` (`previewRender.ts`) is the only
+  DOM write entry that accepts it — an unsanitized string cannot compile. Never bypassed
+  (see `docs/adr/0002-single-sanitization-gate.md`).
+- **internal markers（内部标记）** — attributes the pipeline injects for its own bookkeeping; must be stripped
+  when content leaves the app (rich-text copy): `data-line` (source-line mapping), `data-mermaid-slot`,
+  `data-mermaid-source` (URI-encoded diagram source), `data-lang` (fence language), `data-baked` (runtime-
+  mutated node, e.g. the image-error placeholder).
+- **appdoc:// protocol** — custom scheme for in-app document image / asset rewriting. The sanitize gate
+  explicitly whitelists it (`ALLOWED_URI_REGEXP`), otherwise DOMPurify would strip the `src`.
 
 ## Platform & filesystem
 
