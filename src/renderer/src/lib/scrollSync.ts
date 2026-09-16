@@ -20,9 +20,6 @@ class ScrollSyncController {
   private syncedPane: PaneId | null = null
   private clearTimer: ReturnType<typeof setTimeout> | null = null
   private rafId: number | null = null
-  // The pane that most recently acted as the "scroll source": after async image
-  // loads change the preview height, the other side is re-aligned from this.
-  private lastSource: PaneId = 'editor'
 
   register(id: PaneId, el: HTMLElement): void {
     if (this.elements[id]) this.unregister(id)
@@ -94,21 +91,8 @@ class ScrollSyncController {
     // the 80ms dead zone.
     if (this.syncedPane !== null) this.clearLock()
 
-    // Record the scroll source for this turn (used by realign after image onload).
-    this.lastSource = id
     const destId: PaneId = id === 'editor' ? 'preview' : 'editor'
     this.scheduleSync(() => this.sync(id, destId))
-  }
-
-  // After async image loads change the preview/editor height, recompute the other
-  // side's ratio from the last scroll source to fix half-screen misalignment caused
-  // by height jumps (Final Design addendum)
-  public realign(): void {
-    if (!this.lastSource) return
-    const dest: PaneId = this.lastSource === 'editor' ? 'preview' : 'editor'
-    if (!this.elements[this.lastSource] || !this.elements[dest]) return
-    const src = this.lastSource
-    this.scheduleSync(() => this.sync(src, dest))
   }
 
   private armClear(): void {

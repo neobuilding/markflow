@@ -3,6 +3,15 @@
 // impossible at the code level to dangerouslySetInnerHTML an unsanitized string.
 import DOMPurify from 'dompurify'
 
+// Branded type: a `string` that has ALREADY passed through `sanitizeHtml`. Because the
+// brand is a private `unique symbol`, the ONLY way to produce a `SanitizedHtml` is to call
+// `sanitizeHtml()` — so any value of this type is guaranteed sanitized. This makes
+// "dangerouslySetInnerHTML without sanitizing" a compile error at every call site, replacing
+// the old runtime-only `SafeHtml` gate with a type-level guarantee (single point of
+// sanitization, exactly once — R5 / D-C).
+declare const __sanitized: unique symbol
+export type SanitizedHtml = string & { readonly [__sanitized]: true }
+
 // Only allow style on code/span/math elements and all SVG-namespace elements (to
 // prevent BUG-5 recurrence): DOMPurify keeps style by default, and if allowed
 // everywhere a malicious embedded HTML could use style for CSS exfiltration
@@ -26,8 +35,8 @@ DOMPurify.addHook('uponSanitizeAttribute', (_node, attr) => {
   if (attr.attrName.toLowerCase().startsWith('on')) attr.keepAttr = false
 })
 
-export function sanitizeHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
+export function sanitizeHtml(html: string): SanitizedHtml {
+  const out = DOMPurify.sanitize(html, {
     // mermaid placeholder attribute; other data-* are allowed by DOMPurify's
     // default ALLOW_DATA_ATTR.
     ADD_ATTR: ['data-mermaid-slot', 'data-mermaid-source'],
@@ -41,4 +50,5 @@ export function sanitizeHtml(html: string): string {
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'foreignObject', 'form', 'button'],
     FORBID_ATTR: ['action', 'formaction'],
   })
+  return out as SanitizedHtml
 }

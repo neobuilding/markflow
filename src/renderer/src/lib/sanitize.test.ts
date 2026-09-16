@@ -177,3 +177,41 @@ describe('sanitizeHtml — integration with markdownPipeline', () => {
     expect(out).toContain('katex-display')
   })
 })
+
+describe('sanitizeHtml — SanitizedHtml brand (R5 / D-C)', () => {
+  it('returns a string carrying the sanitized (XSS-stripped) content', () => {
+    const clean = sanitizeHtml('<p>ok</p><script>alert(1)</script>')
+    expect(typeof clean).toBe('string')
+    expect(clean).toContain('<p>ok</p>')
+    expect(clean).not.toContain('<script')
+  })
+
+  it('is assignable to a plain string (SanitizedHtml is a string subtype)', () => {
+    const clean = sanitizeHtml('<p>ok</p>')
+    const asString: string = clean
+    expect(asString).toContain('<p>ok</p>')
+  })
+
+  it('cannot be constructed from an arbitrary string at the type level', () => {
+    // Runtime counterpart of the compile-time guarantee: only sanitizeHtml may mint a
+    // SanitizedHtml. We assert the value is hardening-applied, so the single write entry
+    // (patchPreviewContent) can trust it blindly.
+    const raw = '<img src=x onerror="evil()">'
+    const clean = sanitizeHtml(raw)
+    expect(clean).not.toContain('onerror')
+    expect(clean).toBe(sanitizeHtml(raw))
+  })
+})
+
+describe('sanitizeHtml — R6 data-line survives sanitization', () => {
+  it('keeps the data-line source-mapping attribute on blocks (data-* allowed by default)', () => {
+    // R6 is only real if DOMPurify lets `data-line` through: the preview DOM, the export HTML
+    // and the stage-2 rich-text-copy all read the attribute off the SANITIZED string.
+    const out = sanitizeHtml(
+      '<h1 data-line="0">T</h1><p data-line="2">b</p><pre data-line="4"><code>x</code></pre>',
+    )
+    expect(out).toContain('data-line="0"')
+    expect(out).toContain('data-line="2"')
+    expect(out).toContain('data-line="4"')
+  })
+})

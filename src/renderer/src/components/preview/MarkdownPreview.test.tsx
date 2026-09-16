@@ -19,7 +19,7 @@ vi.mock('../../lib/exportStore', () => ({
   setExportContent: () => {},
 }))
 vi.mock('../../lib/scrollSync', () => ({
-  scrollSync: { register: () => {}, unregister: () => {}, realign: () => {} },
+  scrollSync: { register: () => {}, unregister: () => {} },
 }))
 vi.mock('mermaid', () => ({
   default: {
@@ -42,6 +42,15 @@ describe('MarkdownPreview', () => {
     await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())
   })
 
+  it('injects parsed content directly into the <article> — no wrapper div (P8)', async () => {
+    const { container } = render(<MarkdownPreview content="# title" />)
+    await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())
+    const article = container.querySelector('article.markdown-preview') as HTMLElement
+    // P8: the parsed <p> is the article's OWN child — the old SafeHtml wrapper <div> is gone,
+    // so rich-text copy reads the content root directly (Plan 01 §5.5 contract #1).
+    expect(article.firstElementChild?.tagName).toBe('P')
+  })
+
   it('shows the loading hint while nothing has been parsed', async () => {
     // delay the parse so the loading branch is observable
     ;(globalThis as any).__parseMarkdown = vi.fn(() => new Promise<RenderResult>(() => {}))
@@ -59,7 +68,9 @@ describe('MarkdownPreview', () => {
 
   it('bakes mermaid diagrams into the rendered HTML', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
-      html: '<div data-mermaid-slot="0"></div>',
+      // Real pipeline output for a top-level mermaid fence carries data-line (R6) —
+      // the baking step must tolerate it (regression guard for the placeholder regex).
+      html: '<div data-mermaid-slot="0" data-line="0"></div>',
       mermaid: [{ hash: 'h1', code: 'graph TD;A-->B', slot: 0 }],
     }))
     render(<MarkdownPreview content="```mermaid\ngraph TD;A-->B\n```" />)
@@ -75,21 +86,24 @@ describe('MarkdownPreview', () => {
   // because a decoded `-->` (i.e. every `A-->B`) makes DOMPurify drop the attribute.
   it('bakes the diagram source onto the wrapper, URI-encoded, as data-mermaid-source', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
-      html: '<div data-mermaid-slot="0"></div>',
+      // Includes the pipeline's R6 `data-line` (as a real top-level mermaid fence does) so
+      // this test also guards that baking tolerates + preserves extra placeholder attrs.
+      html: '<div data-mermaid-slot="0" data-line="0"></div>',
       mermaid: [{ hash: 'h1', code: 'graph TD;A-->B', slot: 0 }],
     }))
     const { container } = render(<MarkdownPreview content="```mermaid\ngraph TD;A-->B\n```" />)
     await waitFor(() => expect(container.querySelector('[data-mermaid-slot="0"] svg')).toBeTruthy())
-    const attr = container
-      .querySelector('[data-mermaid-slot="0"]')
-      ?.getAttribute('data-mermaid-source')
+    const wrapper = container.querySelector('[data-mermaid-slot="0"]')
+    const attr = wrapper?.getAttribute('data-mermaid-source')
     expect(attr).toBeTruthy()
     expect(decodeURIComponent(attr as string)).toBe('graph TD;A-->B')
+    // The placeholder's data-line is preserved on the baked wrapper (source mapping survives).
+    expect(wrapper?.getAttribute('data-line')).toBe('0')
   })
 
   it('falls back to a skeleton when mermaid rendering fails', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
-      html: '<div data-mermaid-slot="0"></div>',
+      html: '<div data-mermaid-slot="0" data-line="0"></div>',
       mermaid: [{ hash: 'h1', code: 'bad', slot: 0 }],
     }))
     const mermaid = (await import('mermaid')).default as unknown as {
@@ -150,7 +164,10 @@ describe('MarkdownPreview', () => {
     expect(placeholder.textContent).toBe('⚠ Image failed to load')
   })
 
-  it('realigns scroll on image load without throwing', async () => {
+  it('does not attach a scroll-compensation listener (no realign after image load)', async () => {
+    // Plan 01 §5.4: the per-keystroke DOM rebuild (and the height jumps it caused) are gone,
+    // so there is no `load`-time realign to exercise. Firing `load` on the rendered image must
+    // be a harmless no-op that does not throw.
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       html: '<img src="ok.png">',
       mermaid: [],
@@ -158,10 +175,7 @@ describe('MarkdownPreview', () => {
     const { container } = render(<MarkdownPreview content="x" />)
     await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
     const img = container.querySelector('img') as HTMLImageElement
-    fireEvent.load(img)
-    // onLoad is debounced 150ms; just ensure the listener runs without throwing.
-    await new Promise((r) => setTimeout(r, 200))
-    expect(img).toBeTruthy()
+    expect(() => fireEvent.load(img)).not.toThrow()
   })
 
   it('discards a stale parse result after a document switch', async () => {

@@ -84,14 +84,6 @@ describe('scrollSync — bidirectional ratio mapping', () => {
     expect(preview.scrollTop).toBe(2000 - 200)
   })
 
-  it('realign re-projects the last source pane ratio', () => {
-    editor.scrollTop = 450
-    editor.dispatchEvent(new Event('scroll'))
-    preview.scrollHeight = 4000 // height jumped (image load)
-    scrollSync.realign()
-    expect(preview.scrollTop).toBeCloseTo(0.5 * (4000 - 200), 0)
-  })
-
   it('does nothing when a pane is missing during sync', () => {
     scrollSync.unregister('preview')
     editor.scrollTop = 450
