@@ -231,6 +231,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.togglePreview': '切换预览',
   'menu.toggleDevTools': '切换开发者工具',
   'menu.about': '关于 MarkFlow',
+  'menu.selectAll': '全选',
   'menu.dlgOpenFile': '打开 Markdown 文件',
   'menu.dlgOpenFolder': '打开文件夹（批量导入 .md 文件）',
   'menu.filterMarkdown': 'Markdown',
@@ -251,29 +252,12 @@ export const zhCN: Record<TranslationKey, string> = {
   'ctx.openLink': '打开链接',
   'ctx.copyLink': '复制链接地址',
 
-  'ctx.copyCode': '复制代码',
-  'ctx.copyCodeBlock': '复制为代码块',
-  'ctx.copyLang': '复制语言名',
-
   'ctx.copyImage': '复制图片',
   'ctx.saveImageAs': '图片另存为…',
   'ctx.copyImageSrc': '复制图片地址',
-  'ctx.copyImageAlt': '复制替代文本',
 
-  'ctx.copyTable': '复制表格',
-  'ctx.copyTableTsv': '复制表格（可粘贴到 Excel）',
-
-  'ctx.copyTaskText': '复制任务文字',
-
-  'ctx.copyFormula': '复制公式（渲染后的文本）',
-  'ctx.copyFormulaSource': '复制 TeX 源码',
   // Mermaid
-  'ctx.copyDiagramSource': '复制图表源码',
   'ctx.copySvg': '复制为 SVG',
-  'ctx.saveSvgAs': '图表另存为 SVG…',
-
-  'ctx.copyHeading': '复制标题文字',
-  'ctx.copyAnchorId': '复制锚点 ID',
 
   'ctx.openDocument': '打开',
   'ctx.copyFileName': '复制文件名',

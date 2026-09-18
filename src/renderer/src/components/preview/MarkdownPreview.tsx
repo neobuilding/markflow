@@ -7,6 +7,7 @@ import { sanitizeHtml, type SanitizedHtml } from '../../lib/sanitize'
 import { patchPreviewContent, DATA_BAKED } from '../../lib/previewRender'
 import { setExportHtml, setExportContent } from '../../lib/exportStore'
 import { useT } from '../../i18n'
+import { consumePendingCopy, buildPreviewCopyPayload } from '../../lib/previewCopy'
 import { PreviewContextMenu } from './PreviewContextMenu'
 import type { Document } from '../../types'
 // Mermaid is heavy (~2.5 MB) and only needed when a document actually contains a
@@ -293,6 +294,40 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           ref={previewRef}
           tabIndex={0}
           className="markdown-preview prose dark:prose-invert max-w-none px-6 py-6 w-full"
+          // Rich-text copy (Plan 02 §4.3): a single writer shared by the keyboard (native
+          // Ctrl+C dispatches this event) and the menu (requestRichCopy fires execCommand).
+          // Writing here lets the browser pack text/plain + text/html; we only preventDefault
+          // after a successful setData so a failure falls back to the native copy instead of
+          // leaving an empty clipboard.
+          onKeyDown={(e) => {
+            // Ctrl/Cmd+A must scope the selection to THIS article. The native-menu
+            // accelerator normally intercepts Ctrl+A before the renderer sees it (it is
+            // routed back via menu:select-all → selectAllRouter), but if the keydown ever
+            // reaches the article directly (e.g. a future menu change drops the
+            // accelerator), the browser default would select the WHOLE document — both
+            // panes — which is exactly the bug this guard prevents. Idempotent with the
+            // router path: both produce the same article-scoped selection.
+            if (
+              (e.ctrlKey || e.metaKey) &&
+              !e.shiftKey &&
+              !e.altKey &&
+              e.key.toLowerCase() === 'a'
+            ) {
+              e.preventDefault()
+              window.getSelection()?.selectAllChildren(e.currentTarget)
+            }
+          }}
+          onCopy={(e) => {
+            const article = e.currentTarget
+            const payload = consumePendingCopy() ?? buildPreviewCopyPayload(article)
+            try {
+              e.clipboardData?.setData('text/plain', payload.text)
+              e.clipboardData?.setData('text/html', payload.html)
+              e.preventDefault()
+            } catch {
+              /* setData failed: leave the default copy in place */
+            }
+          }}
         />
       </PreviewContextMenu>
       {loading && (

@@ -27,6 +27,7 @@ export type MenuEvent =
   | 'export-html'
   | 'print'
   | 'language'
+  | 'select-all'
 
 // Electron preload bridge exposed on window.api
 export interface Api {
@@ -130,6 +131,7 @@ export interface Api {
   clipboard: {
     writeText: (text: string) => Promise<void>
     writeImage: (src: string) => Promise<void>
+    writeSvg: (svg: string) => Promise<void>
   }
   onMenuEvent: (event: MenuEvent, callback: (data?: string | string[]) => void) => () => void
   onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => () => void

@@ -109,6 +109,76 @@ test.describe('context menus (PLAN §3/§4/§5)', () => {
     await expect(page.getByTestId('preview-view-editor')).toBeVisible()
   })
 
+  // Plan 02 §4.3 mechanism guard. The menu's "Copy" fires `document.execCommand('copy')` and
+  // relies on the resulting `copy` event reaching the preview <article>'s handler (which writes
+  // the CLEAN payload: internal attrs stripped, images inlined). That is NOT self-evident: the
+  // Radix menu content lives in a PORTAL under document.body, so if focus sat on the menu item the
+  // event could be dispatched OUTSIDE #root/<article> and React's delegated onCopy would never
+  // run — silently falling back to the browser's "dirty" native copy (R6/R3 broken, images not
+  // inlined). jsdom cannot catch that (no execCommand), so the mechanism is pinned here with a REAL
+  // Chromium copy event plus a read-back of the real system clipboard. Empirically the event DOES
+  // reach the article (probe below) — this test is the regression guard that keeps it that way.
+  test('preview: menu Copy reaches the preview copy handler and lands a clean payload (R3/R6)', async () => {
+    const { page, electronApp } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, '# Title\n\n```js\nconst x = 1\n```\n')
+    await page.getByTestId('view-preview').click()
+    const article = page.locator('.markdown-preview')
+    await expect(article).toBeVisible()
+    // Record where every `copy` event lands (capture phase sees it regardless of target).
+    await page.evaluate(() => {
+      const w = window as any
+      w.__copyProbe = { count: 0, inArticle: false }
+      document.addEventListener(
+        'copy',
+        (e) => {
+          const t = e.target as HTMLElement | null
+          w.__copyProbe.count += 1
+          w.__copyProbe.inArticle = !!t?.closest?.('article.markdown-preview')
+        },
+        true,
+      )
+    })
+    // Right-click the code block → generic variant (pre → not image / link / mermaid).
+    await article.locator('pre').first().click({ button: 'right' })
+    await page.getByTestId('preview-copy').click()
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__copyProbe.count))
+      .toBeGreaterThan(0)
+    // The event must have reached the article, otherwise our clean writer is bypassed.
+    expect(await page.evaluate(() => (window as any).__copyProbe.inArticle)).toBe(true)
+    // …and the REAL system clipboard (read back from the main process) must hold the clean
+    // payload: the code text is present, and none of the pipeline's internal markers leaked.
+    // Electron 44 replaced `readHTML()` with `read()` + `ClipboardItem.getType(mime)`.
+    await expect
+      .poll(async () => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+      .toContain('const x = 1')
+    const clip = await electronApp.evaluate(async ({ clipboard }) => {
+      const items = await clipboard.read()
+      const item = items[0]
+      let html = ''
+      if (item && item.types.includes('text/html')) {
+        const blob = (await item.getType('text/html')) as Blob
+        html = await blob.text()
+      }
+      return { html, text: await clipboard.readText(), types: item ? item.types : [] }
+    })
+    // Both halves must be present (the browser packed text/plain + text/html from setData).
+    expect(clip.types).toContain('text/html')
+    // The html keeps the semantic structure; the code text is split by hljs <span>s, so match
+    // the tag + a token rather than a contiguous source line.
+    expect(clip.html).toContain('<pre')
+    expect(clip.html).toContain('const')
+    expect(clip.text).toContain('const x = 1')
+    // R6: no internal marker survived into the pasted HTML.
+    expect(clip.html).not.toContain('data-lang')
+    expect(clip.html).not.toContain('data-line')
+    expect(clip.html).not.toContain('data-mermaid')
+    expect(clip.html).not.toContain('data-baked')
+    // markdown-it-anchor's heading tabindex must be stripped too.
+    expect(clip.html).not.toContain('tabindex')
+  })
+
   test('preview: right-clicking a link shows open/copy-link/copy/select-all (PLAN §4)', async () => {
     const { page } = handle
     await waitForAppReady(page)

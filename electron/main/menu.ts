@@ -191,7 +191,18 @@ export function setupMenu(): void {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
-        { role: 'selectAll' },
+        // NOT `{ role: 'selectAll' }`: that role runs a NATIVE webContents-wide select-all,
+        // which (a) ignores CodeMirror (the editor ends up with a bogus clamped selection
+        // instead of "select the whole document") and (b) spans BOTH panes when the caret
+        // sits in the preview. The accelerator is intercepted before the renderer sees the
+        // keydown, so the renderer cannot fix this itself — route through IPC instead and
+        // let the renderer's selectAllRouter pick the focused pane (see selectAllRouter.ts).
+        {
+          id: 'select-all',
+          label: menuT('menu.selectAll'),
+          accelerator: 'CmdOrCtrl+A',
+          click: () => getMainWindow()?.webContents.send('menu:select-all'),
+        },
       ],
     },
     {

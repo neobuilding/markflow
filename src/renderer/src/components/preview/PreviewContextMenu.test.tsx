@@ -1,9 +1,17 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { createRef } from 'react'
 import { PreviewContextMenu } from './PreviewContextMenu'
 import { useUIStore } from '../../store/ui'
 import type { Document } from '../../types'
+import * as previewCopy from '../../lib/previewCopy'
+import {
+  buildPreviewCopyPayload,
+  stripInternalAttrs,
+  consumePendingCopy,
+} from '../../lib/previewCopy'
+import { setExportHtml } from '../../lib/exportStore'
+import { sanitizeHtml } from '../../lib/sanitize'
 import '../../i18n'
 
 const docWithPath: Document = {
@@ -19,19 +27,39 @@ const docWithPath: Document = {
   wordCount: 3,
 }
 
+// Spy on the rich-copy primitives so the menu wiring can be asserted without relying on
+// jsdom's non-functional execCommand('copy') / Image rasterization.
 beforeEach(() => {
   useUIStore.getState().setViewMode('split')
   useUIStore.getState().setExportOpen(false)
   useUIStore.getState().requestFileAction(null)
+  // Reset the canonical export HTML so buildPreviewCopyPayload's whole-article branch is
+  // deterministic (it prefers getExportHtml() over article.innerHTML, contract #2).
+  setExportHtml(sanitizeHtml(''))
+  vi.spyOn(previewCopy, 'requestRichCopy').mockImplementation(() => Promise.resolve())
+  vi.spyOn(previewCopy, 'svgToPngDataUrl').mockResolvedValue('data:image/png;base64,TESTPNG')
   ;(window as unknown as { api: unknown }).api = {
-    clipboard: { writeText: vi.fn(), writeImage: vi.fn() },
+    clipboard: { writeText: vi.fn(), writeImage: vi.fn(), writeSvg: vi.fn() },
     app: { openExternal: vi.fn(), showInFolder: vi.fn(), copyFile: vi.fn() },
-    export: { print: vi.fn(), write: vi.fn() },
-    dialog: { confirm: vi.fn(async () => true), saveFile: vi.fn(async () => '/out.svg') },
+    export: {
+      print: vi.fn(),
+      write: vi.fn(),
+      // No <img> in these fixtures, so embedImages is never exercised by the menu copy;
+      // return the html unchanged if it ever is.
+      embedImages: vi.fn(async (h: string) => h),
+    },
+    dialog: {
+      confirm: vi.fn(async () => true),
+      saveFile: vi.fn(async (name?: string) => '/tmp/' + (name ?? 'out')),
+    },
     documents: {
       resolveAppdoc: vi.fn(async (s: string) => (s.startsWith('appdoc://') ? '/resolved/' + s : s)),
     },
   }
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 function mount(doc: Document | null | undefined) {
@@ -39,11 +67,9 @@ function mount(doc: Document | null | undefined) {
   return render(
     <PreviewContextMenu doc={doc} previewRef={ref}>
       <article className="markdown-preview" ref={ref}>
+        <h1 data-line="0">Title</h1>
         <p>hello world</p>
         <a href="https://example.com/page">link</a>
-        <pre>
-          <code>const a = 1;</code>
-        </pre>
       </article>
     </PreviewContextMenu>,
   )
@@ -53,42 +79,128 @@ function article() {
   return document.querySelector('.markdown-preview') as HTMLElement
 }
 
-describe('PreviewContextMenu', () => {
-  it('generic: copy uses the current selection when present', async () => {
-    mount(docWithPath)
-    fireEvent.contextMenu(article())
-    window.getSelection()!.selectAllChildren(article())
-    fireEvent.click(await screen.findByTestId('preview-copy'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith(article().textContent)
+// ── Rich-text copy payload builder (Plan 02 §4.1 / §4.2 / §4.5) ─────────────────────────
+describe('buildPreviewCopyPayload', () => {
+  // jsdom's Selection is unreliable (selectAllChildren / anchorNode), so drive the
+  // in-preview check through an explicit fake selection — the unit under test is
+  // buildPreviewCopyPayload, not the browser's selection engine.
+  function mockSelection(anchorNode: Node | null, collapsed = false) {
+    const range = {
+      cloneContents: () => {
+        const f = document.createDocumentFragment()
+        const p = document.createElement('p')
+        p.textContent = 'Only me'
+        f.appendChild(p)
+        return f
+      },
+      toString: () => 'Only me',
+    } as unknown as Range
+    const sel = {
+      isCollapsed: collapsed,
+      rangeCount: collapsed ? 0 : 1,
+      anchorNode,
+      getRangeAt: () => range,
+      toString: () => 'Only me',
+    } as unknown as Selection
+    return vi.spyOn(window, 'getSelection').mockReturnValue(sel)
+  }
+
+  it('whole-article copy (no in-preview selection) keeps semantic structure and strips internal attrs (R6)', () => {
+    mockSelection(null, true)
+    const el = document.createElement('div')
+    el.innerHTML =
+      '<h1 data-line="0">T</h1><table data-line="2"><tr><td>a</td></tr></table>' +
+      '<div data-mermaid-slot="0" data-mermaid-source="x"><svg>g</svg></div>'
+    const { html } = buildPreviewCopyPayload(el)
+    expect(html).toContain('<h1')
+    expect(html).toContain('<table')
+    expect(html).toContain('<svg')
+    expect(html).not.toContain('data-line')
+    expect(html).not.toContain('data-mermaid-source')
+    expect(html).not.toContain('data-mermaid-slot')
+    expect(html).not.toContain('data-baked')
   })
 
-  it('generic: copy falls back to article text when nothing is selected', async () => {
-    mount(docWithPath)
-    fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('preview-copy'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith(article().textContent)
-  })
-
-  it('generic: copy writes empty string when there is no text and no selection', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={null} previewRef={ref}>
-        <article className="markdown-preview" ref={ref} />
-      </PreviewContextMenu>,
+  it('whole-article copy prefers the canonical export HTML and strips data-lang (contract #2)', () => {
+    mockSelection(null, true)
+    // The canonical HTML (Phase 1 §5.5) carries data-line / data-lang / data-baked; the stale
+    // live innerHTML must be ignored in favour of it.
+    setExportHtml(
+      sanitizeHtml('<pre data-line="0" data-lang="ts" data-baked="1"><code>x</code></pre>'),
     )
-    fireEvent.contextMenu(article())
-    fireEvent.click(await screen.findByTestId('preview-copy'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('')
+    const el = document.createElement('div')
+    el.innerHTML = '<pre data-line="999"><code>STALE</code></pre>'
+    const { html, text } = buildPreviewCopyPayload(el)
+    expect(html).toBe('<pre><code>x</code></pre>')
+    expect(html).not.toContain('data-lang')
+    expect(html).not.toContain('data-line')
+    expect(html).not.toContain('data-baked')
+    expect(text).toBe('x')
   })
 
-  it('generic: select all selects the article content', async () => {
+  it('selection inside the preview is copied as a fragment, not the whole article', () => {
+    const el = document.createElement('div')
+    el.innerHTML = '<h1 id="h">Only me</h1><p id="p">other</p>'
+    mockSelection(el.querySelector('#h')!)
+    const { html, text } = buildPreviewCopyPayload(el)
+    expect(html).toBe('<p>Only me</p>')
+    expect(html).not.toContain('other')
+    expect(text).toBe('Only me')
+  })
+
+  it('a selection anchored outside the preview falls back to the whole preview (cross-pane guard)', () => {
+    const el = document.createElement('div')
+    el.innerHTML = '<h1 id="h">Preview content</h1>'
+    const editor = document.createElement('div')
+    editor.innerHTML = '<p id="e">Editor text</p>'
+    document.body.appendChild(editor)
+    mockSelection(editor.querySelector('#e')!)
+    try {
+      const { html } = buildPreviewCopyPayload(el)
+      expect(html).toContain('Preview content')
+      expect(html).not.toContain('Editor text')
+    } finally {
+      document.body.removeChild(editor)
+    }
+  })
+})
+
+describe('stripInternalAttrs', () => {
+  it('removes every internal marker (data-* pipeline attrs + anchor tabindex)', () => {
+    const out = stripInternalAttrs(
+      '<h1 id="keep-me" tabindex="-1">H</h1>' +
+        '<p data-line="1" data-baked="1">x</p>' +
+        '<pre data-lang="ts"><code>y</code></pre>' +
+        '<div data-mermaid-slot="0" data-mermaid-source="z"></div>',
+    )
+    expect(out).not.toContain('data-line')
+    expect(out).not.toContain('data-lang')
+    expect(out).not.toContain('data-baked')
+    expect(out).not.toContain('data-mermaid-slot')
+    expect(out).not.toContain('data-mermaid-source')
+    // markdown-it-anchor puts tabindex="-1" on every heading; it must not be pasted.
+    expect(out).not.toContain('tabindex')
+    // …but the heading's anchor id is meaningful and is kept.
+    expect(out).toContain('id="keep-me"')
+  })
+})
+
+describe('PreviewContextMenu — generic', () => {
+  it('Copy delegates to requestRichCopy (rich-text, Plan 02 §4.3)', async () => {
+    mount(docWithPath)
+    fireEvent.contextMenu(article())
+    fireEvent.click(await screen.findByTestId('preview-copy'))
+    expect(previewCopy.requestRichCopy).toHaveBeenCalled()
+  })
+
+  it('select all selects the article content', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
     fireEvent.click(await screen.findByTestId('preview-select-all'))
     expect(window.getSelection()!.toString()).toContain('hello world')
   })
 
-  it('generic: view checkboxes toggle viewMode', async () => {
+  it('view checkboxes toggle viewMode', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
     fireEvent.click(await screen.findByTestId('preview-view-editor'))
@@ -101,21 +213,21 @@ describe('PreviewContextMenu', () => {
     expect(useUIStore.getState().viewMode).toBe('preview')
   })
 
-  it('generic: print calls export.print with the stashed html', async () => {
+  it('print calls export.print with the stashed html', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
     fireEvent.click(await screen.findByTestId('preview-print'))
     expect(window.api.export.print).toHaveBeenCalled()
   })
 
-  it('generic: export opens the export dialog', async () => {
+  it('export opens the export dialog', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
     fireEvent.click(await screen.findByTestId('preview-export-html'))
     expect(useUIStore.getState().exportOpen).toBe(true)
   })
 
-  it('generic: copy path and show in folder use doc.filePath', async () => {
+  it('copy path and show in folder use doc.filePath', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
     fireEvent.click(await screen.findByTestId('preview-copy-path'))
@@ -125,7 +237,7 @@ describe('PreviewContextMenu', () => {
     expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs/a.md')
   })
 
-  it('generic: copy path and show in folder are disabled without a filePath (draft)', () => {
+  it('copy path and show in folder are disabled without a filePath (draft)', () => {
     mount(null)
     fireEvent.contextMenu(article())
     const copyPath = screen.getByTestId('preview-copy-path')
@@ -134,17 +246,22 @@ describe('PreviewContextMenu', () => {
     expect(showInFolder).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('generic: show in folder swallows a failure gracefully', async () => {
-    ;(window.api.app.showInFolder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error('boom'),
+  it('does not throw and does not copy when there is no preview ref', async () => {
+    render(
+      <PreviewContextMenu doc={docWithPath}>
+        <article className="markdown-preview">
+          <p>hello world</p>
+        </article>
+      </PreviewContextMenu>,
     )
-    mount(docWithPath)
-    fireEvent.contextMenu(article())
-    await fireEvent.click(await screen.findByTestId('preview-show-in-folder'))
-    expect(window.api.app.showInFolder).toHaveBeenCalled()
+    fireEvent.contextMenu(screen.getByText('hello world'))
+    fireEvent.click(await screen.findByTestId('preview-copy'))
+    expect(previewCopy.requestRichCopy).not.toHaveBeenCalled()
   })
+})
 
-  it('link: opens and copies the link address', async () => {
+describe('PreviewContextMenu — link', () => {
+  it('opens and copies the link address', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(screen.getByText('link'))
     fireEvent.click(await screen.findByTestId('preview-open-link'))
@@ -154,327 +271,81 @@ describe('PreviewContextMenu', () => {
     expect(window.api.clipboard.writeText).toHaveBeenCalledWith('https://example.com/page')
   })
 
-  it('link: also offers copy and select-all (PLAN §4)', async () => {
+  it('also offers copy and select-all', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(screen.getByText('link'))
-    // The link variant must carry the same copy / select-all as the generic one.
     expect(await screen.findByTestId('preview-copy')).toBeInTheDocument()
     const selectAll = await screen.findByTestId('preview-select-all')
     fireEvent.click(selectAll)
     expect(window.getSelection()!.toString()).toContain('hello world')
   })
+})
 
-  it('code: copies the code block text', async () => {
-    mount(docWithPath)
-    fireEvent.contextMenu(screen.getByText('const a = 1;'))
-    fireEvent.click(await screen.findByTestId('preview-copy-code'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('const a = 1;')
-  })
+function mountCustom(innerHtml: string, doc: Document | null = docWithPath) {
+  const ref = createRef<HTMLDivElement>()
+  return render(
+    <PreviewContextMenu doc={doc} previewRef={ref}>
+      <article
+        className="markdown-preview"
+        ref={ref}
+        dangerouslySetInnerHTML={{ __html: innerHtml }}
+      />
+    </PreviewContextMenu>,
+  )
+}
 
-  it('code: copies empty text when the pre has no code child', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <pre />
-        </article>
-      </PreviewContextMenu>,
-    )
-    const pre = document.querySelector('.markdown-preview pre') as HTMLElement
-    fireEvent.contextMenu(pre)
-    await fireEvent.click(await screen.findByTestId('preview-copy-code'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('')
-  })
-
-  it('code: copies as a fenced block, keeping the language (能力 4)', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <pre>
-            <code data-lang="js">const a = 1;</code>
-          </pre>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('const a = 1;'))
-    await fireEvent.click(await screen.findByTestId('preview-copy-code-block'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('```js\nconst a = 1;\n```')
-  })
-
-  it('code: copies as a fenced block without a language when none was declared', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <pre>
-            <code>const a = 1;</code>
-          </pre>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('const a = 1;'))
-    await fireEvent.click(await screen.findByTestId('preview-copy-code-block'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('```\nconst a = 1;\n```')
-  })
-
-  it('code: copies the language name only when the block declares one (能力 4)', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <pre>
-            <code data-lang="ts">let a = 1;</code>
-          </pre>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('let a = 1;'))
-    await fireEvent.click(await screen.findByTestId('preview-copy-lang'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('ts')
-  })
-
-  it('code: does not generate the language item when there is no data-lang', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <pre>
-            <code>plain</code>
-          </pre>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('plain'))
-    expect(await screen.findByTestId('preview-copy-code')).toBeInTheDocument()
-    expect(screen.queryByTestId('preview-copy-lang')).toBeNull()
-  })
-
-  it('table: copies as a Markdown pipe table', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <table>
-            <thead>
-              <tr>
-                <th>a</th>
-                <th>b</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>1</td>
-                <td>2</td>
-              </tr>
-            </tbody>
-          </table>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('a'))
-    await fireEvent.click(await screen.findByTestId('preview-copy-table'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith(
-      '| a | b |\n| --- | --- |\n| 1 | 2 |',
-    )
-  })
-
-  it('table: copies as TSV for spreadsheets', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <table>
-            <tr>
-              <td>a</td>
-              <td>b</td>
-            </tr>
-          </table>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('a'))
-    await fireEvent.click(await screen.findByTestId('preview-copy-table-tsv'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('a\tb')
-  })
-
-  it('table: an empty table copies an empty string', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <table data-testid="empty-table" />
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByTestId('empty-table'))
-    await fireEvent.click(await screen.findByTestId('preview-copy-table'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('')
-  })
-
-  it('heading: copies the heading text and its anchor id', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <h1 id="section-one">Section One</h1>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('Section One'))
-    await fireEvent.click(await screen.findByTestId('preview-copy-heading'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('Section One')
-    fireEvent.contextMenu(screen.getByText('Section One'))
-    await fireEvent.click(await screen.findByTestId('preview-copy-anchor-id'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('section-one')
-  })
-
-  it('heading: greys out the anchor-id item when the heading has no id', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <h2>No Id Here</h2>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('No Id Here'))
-    expect(await screen.findByTestId('preview-copy-anchor-id')).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    )
-  })
-
-  it('task: copies the task text without the checkbox', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <ul>
-            <li>
-              <input type="checkbox" disabled /> buy milk
-            </li>
-          </ul>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText(/buy milk/))
-    await fireEvent.click(await screen.findByTestId('preview-copy-task-text'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('buy milk')
-  })
-
-  it('a plain list item (no checkbox) falls back to the generic menu', async () => {
-    const ref = createRef<HTMLDivElement>()
-    render(
-      <PreviewContextMenu doc={docWithPath} previewRef={ref}>
-        <article className="markdown-preview" ref={ref}>
-          <ul>
-            <li>plain bullet</li>
-          </ul>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('plain bullet'))
-    expect(await screen.findByTestId('preview-copy-path')).toBeInTheDocument()
-    expect(screen.queryByTestId('preview-copy-task-text')).toBeNull()
-  })
-
-  it('copies an empty string when there is no preview ref (PLAN §4 defensive)', async () => {
-    // No previewRef: the capture handler still produces a valid menu, and copy falls back
-    // to the empty string instead of throwing on a null article.
-    render(
-      <PreviewContextMenu doc={docWithPath}>
-        <article className="markdown-preview">
-          <p>hello world</p>
-        </article>
-      </PreviewContextMenu>,
-    )
-    fireEvent.contextMenu(screen.getByText('hello world'))
-    await fireEvent.click(await screen.findByTestId('preview-copy'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('')
-  })
-
-  function mountCustom(innerHtml: string, doc: Document | null = docWithPath) {
-    const ref = createRef<HTMLDivElement>()
-    return render(
-      <PreviewContextMenu doc={doc} previewRef={ref}>
-        <article
-          className="markdown-preview"
-          ref={ref}
-          dangerouslySetInnerHTML={{ __html: innerHtml }}
-        />
-      </PreviewContextMenu>,
-    )
-  }
-
-  it('image: copies the image to the clipboard (能力 2)', async () => {
+describe('PreviewContextMenu — image (bitmap)', () => {
+  it('copies the image to the clipboard', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
     fireEvent.click(await screen.findByTestId('preview-copy-image'))
     expect(window.api.clipboard.writeImage).toHaveBeenCalledWith('/img.png')
   })
 
-  it('image: copies the on-disk address for a plain path (能力 3)', async () => {
+  it('menu Copy inlines images via export.embedImages (R1: paste shows real pictures)', async () => {
+    // Use the real requestRichCopy (not the beforeEach spy) so the image-inlining path
+    // actually executes and calls export.embedImages.
+    vi.spyOn(previewCopy, 'requestRichCopy').mockRestore()
+    mountCustom('<img src="/img.png" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    fireEvent.click(await screen.findByTestId('preview-copy'))
+    expect(window.api.export.embedImages).toHaveBeenCalled()
+  })
+
+  it('copies the on-disk address for a plain path', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
     fireEvent.click(await screen.findByTestId('preview-copy-image-address'))
     await waitFor(() => expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/img.png'))
-    // A plain (non-appdoc) path is copied as-is; resolveAppdoc is only used for appdoc:// refs.
     expect(window.api.documents.resolveAppdoc).not.toHaveBeenCalled()
   })
 
-  it('image: shows the file in its folder (能力 3)', async () => {
+  it('resolves an appdoc:// address before copying', async () => {
+    mountCustom('<img src="appdoc://d1/im.png" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    fireEvent.click(await screen.findByTestId('preview-copy-image-address'))
+    await waitFor(() =>
+      expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/resolved/appdoc://d1/im.png'),
+    )
+  })
+
+  it('shows the file in its folder', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
     fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
     await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/img.png'))
   })
 
-  it('image: resolves an appdoc:// address before copying (能力 3)', async () => {
-    mountCustom('<img src="appdoc://d1/im.png" />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-copy-image-address'))
-    await waitFor(() => {
-      expect(window.api.documents.resolveAppdoc).toHaveBeenCalledWith('appdoc://d1/im.png')
-      expect(window.api.clipboard.writeText).toHaveBeenCalledWith('/resolved/appdoc://d1/im.png')
-    })
-  })
-
-  it('image: resolves an appdoc:// address before showing in folder (能力 3)', async () => {
-    mountCustom('<img src="appdoc://d1/im.png" />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
-    await waitFor(() =>
-      expect(window.api.app.showInFolder).toHaveBeenCalledWith('/resolved/appdoc://d1/im.png'),
-    )
-  })
-
-  it('image: saves the image as a chosen file (能力 2 另存为)', async () => {
+  it('saves the image as a chosen file', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
     fireEvent.click(await screen.findByTestId('preview-save-image-as'))
     await waitFor(() =>
-      expect(window.api.app.copyFile).toHaveBeenCalledWith('/img.png', '/out.svg'),
+      expect(window.api.app.copyFile).toHaveBeenCalledWith('/img.png', '/tmp/img.png'),
     )
   })
 
-  it('image: copies the alt text', async () => {
-    mountCustom('<img src="/img.png" alt="a chart" />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-copy-image-alt'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('a chart')
-  })
-
-  it('image: greys out the alt-text item when the image has no alt', async () => {
-    mountCustom('<img src="/img.png" />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    expect(await screen.findByTestId('preview-copy-image-alt')).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    )
-  })
-
-  it('image: greys out "show in folder" for a remote image', async () => {
+  it('greys out "show in folder" for a remote image', async () => {
     mountCustom('<img src="https://example.com/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
     expect(await screen.findByTestId('preview-show-image-in-folder')).toHaveAttribute(
@@ -483,179 +354,246 @@ describe('PreviewContextMenu', () => {
     )
   })
 
-  // Realistic KaTeX output (`output: 'htmlAndMathml'`): the visible glyphs live in
-  // `.katex-html`, while the TeX source sits in a hidden <annotation> inside
-  // `.katex-mathml` so "copy formula" must drop the MathML subtree to get the text
-  const katexHtml =
-    '<span class="katex">' +
-    '<span class="katex-mathml"><math><semantics>' +
-    '<annotation encoding="application/x-tex">x^2</annotation>' +
-    '</semantics></math></span>' +
-    '<span class="katex-html" aria-hidden="true">x<sup>2</sup></span>' +
-    '</span>'
-
-  it('formula: copies the TeX source (能力 5 公式)', async () => {
-    mountCustom(katexHtml)
-    fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-copy-formula-latex'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('x^2')
-  })
-
-  it('formula: copies the RENDERED text, not the TeX source', async () => {
-    mountCustom(katexHtml)
-    fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-copy-formula'))
-    // The MathML subtree carrying the source is stripped first, so only the glyphs remain.
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('x2')
-  })
-
-  it('formula: falls back to the whole katex text when KaTeX emitted no MathML', async () => {
-    mountCustom(
-      '<span class="katex"><annotation encoding="application/x-tex">x^2</annotation></span>',
-    )
-    fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-copy-formula'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('x^2')
-  })
-
-  it('formula: greys out the copy items when there is no source', async () => {
-    mountCustom('<span class="katex"></span>')
-    fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
-    expect(await screen.findByTestId('preview-copy-formula')).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    )
-    expect(screen.getByTestId('preview-copy-formula-latex')).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    )
-  })
-
-  it('mermaid: copies the diagram source (能力 5 图表)', async () => {
-    mountCustom(
-      '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
-    )
-    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-copy-diagram-source'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('graph TD;A-->B')
-  })
-
-  it('mermaid: decodes the URI-encoded source the preview bakes onto the wrapper', async () => {
-    // MarkdownPreview URI-encodes the source so it survives sanitization; the menu
-    // must decode it again so the user gets the real diagram text.
-    mountCustom(
-      `<div data-mermaid-slot="0" data-mermaid-source="${encodeURIComponent('graph TD;A-->B')}"><svg>chart</svg></div>`,
-    )
-    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-copy-diagram-source'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('graph TD;A-->B')
-  })
-
-  it('mermaid: falls back to the raw attribute when the source is not decodable', async () => {
-    // A stray `%` (legacy/unencoded content) must not throw while the menu opens.
-    mountCustom('<div data-mermaid-slot="0" data-mermaid-source="100%"><svg>chart</svg></div>')
-    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-copy-diagram-source'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('100%')
-  })
-
-  it('mermaid: copies the SVG markup (能力 5 图表)', async () => {
-    mountCustom(
-      '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
-    )
-    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-copy-svg'))
-    expect(window.api.clipboard.writeText).toHaveBeenCalledWith('<svg>chart</svg>')
-  })
-
-  it('mermaid: saves the SVG to a chosen file (能力 5 图表另存为)', async () => {
-    mountCustom(
-      '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
-    )
-    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-save-svg-as'))
-    await waitFor(() =>
-      expect(window.api.export.write).toHaveBeenCalledWith('/out.svg', '<svg>chart</svg>'),
-    )
-  })
-
-  it('mermaid: greys out items when there is no source / svg', async () => {
-    mountCustom('<div data-mermaid-slot="0"></div>')
-    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    expect(await screen.findByTestId('preview-copy-diagram-source')).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    )
-    expect(screen.getByTestId('preview-copy-svg')).toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByTestId('preview-save-svg-as')).toHaveAttribute('aria-disabled', 'true')
-  })
-
-  it('image without a src copies an empty string to the clipboard', async () => {
-    mountCustom('<img />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-copy-image'))
-    expect(window.api.clipboard.writeImage).toHaveBeenCalledWith('')
-  })
-
-  it('image: copies the raw appdoc:// src when resolution yields nothing', async () => {
-    vi.mocked(window.api.documents.resolveAppdoc).mockResolvedValueOnce(null)
-    mountCustom('<img src="appdoc://d1/im.png" />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-copy-image-address'))
-    await waitFor(() =>
-      expect(window.api.clipboard.writeText).toHaveBeenCalledWith('appdoc://d1/im.png'),
-    )
-  })
-
-  it('image: does not open the folder when an appdoc:// src resolves to nothing', async () => {
-    vi.mocked(window.api.documents.resolveAppdoc).mockResolvedValueOnce(null)
-    mountCustom('<img src="appdoc://d1/im.png" />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
-    await waitFor(() => expect(window.api.app.showInFolder).not.toHaveBeenCalled())
-  })
-
-  it('image: saves an image with a fallback name when the src has none', async () => {
-    vi.mocked(window.api.dialog.saveFile).mockResolvedValueOnce('/out.png')
-    mountCustom('<img />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
-    await waitFor(() => expect(window.api.app.copyFile).toHaveBeenCalledWith('', '/out.png'))
-  })
-
-  it('image: does not save when the save dialog is cancelled', async () => {
-    vi.mocked(window.api.dialog.saveFile).mockResolvedValueOnce(null)
+  it('offers copy + select-all (rich-text) on the image variant', async () => {
     mountCustom('<img src="/img.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
-    await waitFor(() => expect(window.api.app.copyFile).not.toHaveBeenCalled())
+    expect(await screen.findByTestId('preview-copy')).toBeInTheDocument()
+    expect(screen.getByTestId('preview-select-all')).toBeInTheDocument()
   })
 
-  it('mermaid: does nothing when the SVG save dialog is cancelled (能力 5 图表另存为)', async () => {
-    vi.mocked(window.api.dialog.saveFile).mockResolvedValueOnce(null)
-    mountCustom(
-      '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"><svg>chart</svg></div>',
-    )
-    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
-    fireEvent.click(await screen.findByTestId('preview-save-svg-as'))
-    await waitFor(() => expect(window.api.export.write).not.toHaveBeenCalled())
-  })
-
-  it('image: swallows a showInFolder rejection for a plain path (能力 3)', async () => {
-    vi.mocked(window.api.app.showInFolder).mockRejectedValueOnce(new Error('nope'))
-    mountCustom('<img src="/img.png" />')
-    fireEvent.contextMenu(screen.getByRole('img'))
-    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
-    await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/img.png'))
-  })
-
-  it('image: swallows a showInFolder rejection for an appdoc path (能力 3)', async () => {
-    vi.mocked(window.api.app.showInFolder).mockRejectedValueOnce(new Error('nope'))
+  it('shows an appdoc:// image in its folder via the resolved on-disk path', async () => {
     mountCustom('<img src="appdoc://d1/im.png" />')
     fireEvent.contextMenu(screen.getByRole('img'))
     fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
     await waitFor(() =>
       expect(window.api.app.showInFolder).toHaveBeenCalledWith('/resolved/appdoc://d1/im.png'),
     )
+  })
+
+  it('does nothing when the appdoc:// image cannot be resolved', async () => {
+    vi.mocked(window.api.documents.resolveAppdoc).mockResolvedValueOnce(null as unknown as string)
+    mountCustom('<img src="appdoc://d1/missing.png" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    fireEvent.click(await screen.findByTestId('preview-show-image-in-folder'))
+    await waitFor(() => expect(window.api.documents.resolveAppdoc).toHaveBeenCalled())
+    expect(window.api.app.showInFolder).not.toHaveBeenCalled()
+  })
+
+  it('falls back to "image" when the bitmap src has no filename', async () => {
+    mountCustom('<img src="https://example.com/" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
+    await waitFor(() =>
+      expect(window.api.app.copyFile).toHaveBeenCalledWith('https://example.com/', '/tmp/image'),
+    )
+  })
+
+  it('does nothing when the save dialog is cancelled (bitmap)', async () => {
+    vi.mocked(window.api.dialog.saveFile).mockResolvedValueOnce(null as unknown as string)
+    mountCustom('<img src="/img.png" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
+    await waitFor(() => expect(window.api.dialog.saveFile).toHaveBeenCalled())
+    expect(window.api.app.copyFile).not.toHaveBeenCalled()
+  })
+
+  it('greys out "show in folder" for an image with an empty src', async () => {
+    mountCustom('<img src="" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    expect(await screen.findByTestId('preview-show-image-in-folder')).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+  })
+
+  it('handles an image element with no src attribute (null src → empty string)', async () => {
+    mountCustom('<img />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    // The capture handler's `img.getAttribute('src') ?? ''` null branch is exercised here;
+    // the menu still opens for the image variant.
+    expect(await screen.findByTestId('preview-copy-image')).toBeInTheDocument()
+  })
+
+  it('copies the raw appdoc:// address when resolution fails (copyImageAddress fallback)', async () => {
+    vi.mocked(window.api.documents.resolveAppdoc).mockResolvedValueOnce(null as unknown as string)
+    mountCustom('<img src="appdoc://d1/im.png" />')
+    fireEvent.contextMenu(screen.getByRole('img'))
+    fireEvent.click(await screen.findByTestId('preview-copy-image-address'))
+    // `resolved || imgSrc` takes the right operand when resolveAppdoc yields nothing.
+    await waitFor(() =>
+      expect(window.api.clipboard.writeText).toHaveBeenCalledWith('appdoc://d1/im.png'),
+    )
+  })
+})
+
+describe('PreviewContextMenu — image (mermaid SVG)', () => {
+  const svg = '<svg>chart</svg>'
+  const wrapper = `<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B">${svg}</div>`
+
+  it('Copy Image rasterizes the SVG to a PNG data URL and copies it', async () => {
+    mountCustom(wrapper)
+    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-copy-image'))
+    await waitFor(() =>
+      expect(window.api.clipboard.writeImage).toHaveBeenCalledWith('data:image/png;base64,TESTPNG'),
+    )
+  })
+
+  it('Copy SVG writes the vector markup', async () => {
+    mountCustom(wrapper)
+    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-copy-svg'))
+    expect(window.api.clipboard.writeSvg).toHaveBeenCalledWith(svg)
+  })
+
+  it('Save Image as writes the SVG to a .svg file', async () => {
+    mountCustom(wrapper)
+    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
+    await waitFor(() =>
+      expect(window.api.export.write).toHaveBeenCalledWith('/tmp/diagram.svg', svg),
+    )
+  })
+
+  it('does NOT offer address / show-in-folder for a vector image (D4)', async () => {
+    mountCustom(wrapper)
+    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
+    expect(await screen.findByTestId('preview-copy-svg')).toBeInTheDocument()
+    expect(screen.queryByTestId('preview-copy-image-address')).toBeNull()
+    expect(screen.queryByTestId('preview-show-image-in-folder')).toBeNull()
+    // Rich-text copy + select-all still present.
+    expect(screen.getByTestId('preview-copy')).toBeInTheDocument()
+  })
+
+  it('handles a mermaid slot that rendered no <svg> (empty vector fallback)', async () => {
+    // A wrapper carrying the slot marker but no baked SVG: `svgEl` is null, so `mermaidSvg`
+    // falls back to the wrapper's innerHTML (here empty) and the vector items are disabled.
+    mountCustom('<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"></div>')
+    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
+    expect(await screen.findByTestId('preview-copy-svg')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('preview-save-image-as')).toHaveAttribute('aria-disabled', 'true')
+    // Copy Image still rasterizes via the mocked svgToPngDataUrl.
+    fireEvent.click(screen.getByTestId('preview-copy-image'))
+    await waitFor(() =>
+      expect(window.api.clipboard.writeImage).toHaveBeenCalledWith('data:image/png;base64,TESTPNG'),
+    )
+  })
+
+  it('does nothing when the save dialog is cancelled (svg)', async () => {
+    vi.mocked(window.api.dialog.saveFile).mockResolvedValueOnce(null as unknown as string)
+    mountCustom(wrapper)
+    fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-save-image-as'))
+    await waitFor(() => expect(window.api.dialog.saveFile).toHaveBeenCalled())
+    expect(window.api.export.write).not.toHaveBeenCalled()
+  })
+})
+
+describe('PreviewContextMenu — requestRichCopy execCommand path', () => {
+  // jsdom lacks a working `document.execCommand`, so the menu's `requestRichCopy` guard
+  // (`if (typeof document.execCommand === 'function')`) normally skips the native copy.
+  // These tests install a stand-in to exercise both the firing and the throwing branches.
+  const setExec = (fn: unknown) => {
+    ;(document as unknown as { execCommand: unknown }).execCommand = fn
+  }
+  const getExec = () => (document as unknown as { execCommand?: unknown }).execCommand
+
+  it('fires a native execCommand("copy") when the DOM supports it', async () => {
+    vi.spyOn(previewCopy, 'requestRichCopy').mockRestore()
+    const exec = vi.fn()
+    const orig = getExec()
+    setExec(exec)
+    try {
+      mountCustom('<img src="/img.png" />')
+      fireEvent.contextMenu(screen.getByRole('img'))
+      fireEvent.click(await screen.findByTestId('preview-copy'))
+      await waitFor(() => expect(exec).toHaveBeenCalledWith('copy'))
+      // An image-bearing copy still inlines via embedImages.
+      expect(window.api.export.embedImages).toHaveBeenCalled()
+    } finally {
+      setExec(orig)
+    }
+  })
+
+  it('never crashes when execCommand throws (swallowed by the guard)', async () => {
+    vi.spyOn(previewCopy, 'requestRichCopy').mockRestore()
+    const exec = vi.fn(() => {
+      throw new Error('blocked')
+    })
+    const orig = getExec()
+    setExec(exec)
+    try {
+      mountCustom('<img src="/img.png" />')
+      fireEvent.contextMenu(screen.getByRole('img'))
+      fireEvent.click(await screen.findByTestId('preview-copy'))
+      // The pending payload is cleared even when execCommand throws, so a later copy
+      // can't leak a stale payload.
+      await waitFor(() => expect(consumePendingCopy()).toBeNull())
+    } finally {
+      setExec(orig)
+    }
+  })
+})
+
+describe('previewCopy — requestRichCopy branch coverage', () => {
+  const setExec = (fn: unknown) => {
+    ;(document as unknown as { execCommand: unknown }).execCommand = fn
+  }
+  const getExec = () => (document as unknown as { execCommand?: unknown }).execCommand
+
+  // The outer beforeEach installs a mocked requestRichCopy; restore the real one so these
+  // tests can drive its branches directly (deterministic — no fire-and-forget races).
+  beforeEach(() => {
+    vi.spyOn(previewCopy, 'requestRichCopy').mockRestore()
+  })
+
+  it('stripInternalAttrs returns an empty payload unchanged and strips markers otherwise', () => {
+    expect(stripInternalAttrs('')).toBe('')
+    expect(stripInternalAttrs('<h1 data-line="0">T</h1><p data-baked="1">x</p>')).toBe(
+      '<h1>T</h1><p>x</p>',
+    )
+  })
+
+  it('does not inline images for a text-only copy (no <img> in the payload)', async () => {
+    const exec = vi.fn()
+    const orig = getExec()
+    setExec(exec)
+    try {
+      mountCustom('<p>just text</p>')
+      await previewCopy.requestRichCopy(article())
+      expect(window.api.export.embedImages).not.toHaveBeenCalled()
+      expect(exec).toHaveBeenCalledWith('copy')
+    } finally {
+      setExec(orig)
+    }
+  })
+
+  it('skips the native copy when execCommand is unavailable', async () => {
+    const orig = getExec()
+    setExec(undefined)
+    try {
+      mountCustom('<img src="/img.png" />')
+      await previewCopy.requestRichCopy(article())
+      expect(window.api.export.embedImages).toHaveBeenCalled()
+    } finally {
+      setExec(orig)
+    }
+  })
+
+  it('preserves an in-preview selection and does not re-select the whole article', async () => {
+    const orig = getExec()
+    setExec(vi.fn())
+    try {
+      mountCustom('<p>hello world</p>')
+      const sel = window.getSelection()!
+      sel.removeAllRanges()
+      const range = document.createRange()
+      range.selectNodeContents(article())
+      sel.addRange(range)
+      await previewCopy.requestRichCopy(article())
+      expect(window.getSelection()!.rangeCount).toBe(1)
+    } finally {
+      setExec(orig)
+    }
   })
 })

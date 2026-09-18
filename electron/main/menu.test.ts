@@ -123,6 +123,28 @@ describe('native menu', () => {
     expect(menuItems['reload']?.enabled).toBe(false)
   })
 
+  // The old `{ role: 'selectAll' }` ran a NATIVE webContents-wide select-all: it ignored
+  // CodeMirror (bogus clamped editor selection) and swept both panes when the caret sat in
+  // the preview. The item must instead route through IPC so the renderer's selectAllRouter
+  // can pick the focused pane.
+  it('routes select-all through IPC (menu:select-all), not the native role', () => {
+    setWindow()
+    menu.setupMenu()
+    menu.registerMenuHandlers()
+    expect(menuItems['select-all']).toBeDefined()
+    h.openFilesSent.length = 0
+    for (const c of [...allClicks]) {
+      if (c) {
+        try {
+          c()
+        } catch {
+          /* ignore async dialog clicks */
+        }
+      }
+    }
+    expect(h.openFilesSent).toContainEqual(['menu:select-all'])
+  })
+
   it('registers the renderer state-sync IPC handlers', () => {
     menu.registerMenuHandlers()
     expect(typeof ipcHandlers['menu:set-editable']).toBe('function')

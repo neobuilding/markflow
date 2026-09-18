@@ -129,7 +129,7 @@ test.describe('preload bridge contract (api/* split)', () => {
         setPrinting: 'function',
       }),
     )
-    // clipboard (writeText / writeImage): the only api group this contract never
+    // clipboard (writeText / writeImage / writeSvg): the only api group this contract never
     // collected, even though Electron 44 removed `clipboard.writeImage` in favour of the
     // async `clipboard.write([ClipboardItem])` handler. Lock the bridge shape here so a
     // dropped method fails loudly instead of only crashing the renderer at runtime.
@@ -137,6 +137,7 @@ test.describe('preload bridge contract (api/* split)', () => {
       expect.objectContaining({
         writeText: 'function',
         writeImage: 'function',
+        writeSvg: 'function',
       }),
     )
     // 4 event subscriptions events.ts
@@ -240,6 +241,41 @@ test.describe('preload bridge contract (api/* split)', () => {
     // api/search.ts, so confirm the bridge still routes to the handler.
     const results = await page.evaluate(() => window.api.search.query('anything'))
     expect(Array.isArray(results)).toBe(true)
+  })
+
+  test('clipboard:writeSvg and writeImage accept a data: URL (Plan 02 §4.4)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    // writeSvg is callable and resolves without throwing (the real clipboard vector write is
+    // validated manually in Word / a vector editor, per the plan's risk register).
+    const svgOk = await page.evaluate(async () => {
+      try {
+        await window.api.clipboard.writeSvg('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>')
+        return true
+      } catch {
+        return false
+      }
+    })
+    expect(svgOk).toBe(true)
+
+    // writeImage must accept a `data:` URL (the rasterized mermaid PNG produced on the
+    // renderer) without throwing — this path was added alongside the SVG "Copy Image" item.
+    const pngOk = await page.evaluate(async () => {
+      const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+      let bin = ''
+      bytes.forEach((b) => {
+        bin += String.fromCharCode(b)
+      })
+      const dataUrl = `data:image/png;base64,${btoa(bin)}`
+      try {
+        await window.api.clipboard.writeImage(dataUrl)
+        return true
+      } catch {
+        return false
+      }
+    })
+    expect(pngOk).toBe(true)
   })
 
   test('onMenuEvent subscription returns a callable unsubscribe function', async () => {

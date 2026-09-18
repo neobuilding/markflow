@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 import { MarkdownPreview } from './MarkdownPreview'
 import { useUIStore } from '../../store/ui'
+import { setExportHtml } from '../../lib/exportStore'
+import { sanitizeHtml } from '../../lib/sanitize'
 import type { RenderResult } from '../../lib/markdownPipeline'
 
 import '../../i18n'
@@ -14,10 +16,17 @@ const parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
 vi.mock('../../lib/parseClient', () => ({
   parseMarkdown: (...a: unknown[]) => (globalThis as any).__parseMarkdown(...a),
 }))
-vi.mock('../../lib/exportStore', () => ({
-  setExportHtml: () => {},
-  setExportContent: () => {},
-}))
+vi.mock('../../lib/exportStore', () => {
+  let html = ''
+  return {
+    setExportHtml: (h: string) => {
+      html = h
+    },
+    getExportHtml: () => html,
+    setExportContent: () => {},
+    getExportContent: () => '',
+  }
+})
 vi.mock('../../lib/scrollSync', () => ({
   scrollSync: { register: () => {}, unregister: () => {} },
 }))
@@ -174,6 +183,57 @@ describe('MarkdownPreview', () => {
     await waitFor(() => expect(throwing).toHaveBeenCalled())
     // No exception escapes; the preview simply stops loading.
     expect(screen.queryByText('hello preview')).toBeNull()
+  })
+
+  // Ctrl+A inside the preview must be SCOPED to the article: the browser default selects
+  // the whole document (both panes). The app-menu accelerator normally intercepts Ctrl+A
+  // before the renderer sees it (menu:select-all → selectAllRouter), so this keydown is the
+  // defence-in-depth path; both produce the same article-scoped selection.
+  it('scopes Ctrl+A to the preview article instead of the whole document', async () => {
+    const { container } = render(<MarkdownPreview content="# title" />)
+    await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())
+    const article = container.querySelector('article.markdown-preview') as HTMLElement
+    // cancelable:true is required — preventDefault() is a no-op on a non-cancelable event.
+    const evt = new KeyboardEvent('keydown', {
+      key: 'a',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    fireEvent(article, evt)
+    // preventDefault proves we took over: the browser's document-wide select-all is skipped.
+    expect(evt.defaultPrevented).toBe(true)
+  })
+
+  it('takes over Ctrl+A for the meta (Cmd) modifier too', async () => {
+    const { container } = render(<MarkdownPreview content="# title" />)
+    await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())
+    const article = container.querySelector('article.markdown-preview') as HTMLElement
+    const evt = new KeyboardEvent('keydown', {
+      key: 'a',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    fireEvent(article, evt)
+    expect(evt.defaultPrevented).toBe(true)
+  })
+
+  it('leaves every other key combination to the browser', async () => {
+    const { container } = render(<MarkdownPreview content="# title" />)
+    await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())
+    const article = container.querySelector('article.markdown-preview') as HTMLElement
+    // 'a' without a modifier, Ctrl+other key, and Ctrl+Shift+A / Ctrl+Alt+A all fall through.
+    for (const init of [
+      { key: 'a' },
+      { key: 'b', ctrlKey: true },
+      { key: 'a', ctrlKey: true, shiftKey: true },
+      { key: 'a', ctrlKey: true, altKey: true },
+    ]) {
+      const evt = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true })
+      fireEvent(article, evt)
+      expect(evt.defaultPrevented).toBe(false)
+    }
   })
 
   it('replaces a broken image with a placeholder', async () => {
@@ -335,5 +395,28 @@ describe('MarkdownPreview', () => {
     fireEvent.error(img)
     const placeholders = screen.queryAllByText(/Image failed to load: pic/i)
     expect(placeholders).toHaveLength(1)
+  })
+
+  it('attaches an onCopy writer that emits text/plain + text/html with internal attrs stripped (Plan 02 §4.3)', async () => {
+    const { container } = render(<MarkdownPreview content={'hello preview'} />)
+    const article = container.querySelector('article') as HTMLElement
+    expect(article).toBeTruthy()
+    // Wait for the async markdown parse + morphdom patch to populate the article.
+    await waitFor(() => expect(article.innerHTML).toContain('hello preview'))
+    // Drive the canonical export HTML (Phase 1 §5.5 contract #2) with the pipeline's internal
+    // markers so we assert the copy payload strips them (R6) before writing. The whole-article
+    // path reads this canonical HTML, not the live innerHTML.
+    setExportHtml(
+      sanitizeHtml(
+        '<h1 tabindex="-1" data-line="0" data-mermaid-source="secret">Title</h1>' +
+          '<pre data-lang="ts" data-baked="1"><code>body</code></pre>',
+      ),
+    )
+    const setData = vi.fn()
+    const evt = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(evt, 'clipboardData', { value: { setData } })
+    article.dispatchEvent(evt)
+    expect(setData).toHaveBeenCalledWith('text/plain', 'Titlebody')
+    expect(setData).toHaveBeenCalledWith('text/html', '<h1>Title</h1><pre><code>body</code></pre>')
   })
 })
