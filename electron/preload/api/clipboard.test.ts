@@ -41,4 +41,9 @@ describe('preload clipboard bridge', () => {
     clipboardApi.writeImage('appdoc://d1/im.png')
     expect(invoked).toEqual([{ channel: 'clipboard:write-image', arg: 'appdoc://d1/im.png' }])
   })
+
+  it('writeSvg invokes clipboard:write-svg with the svg markup', () => {
+    clipboardApi.writeSvg('<svg>chart</svg>')
+    expect(invoked).toEqual([{ channel: 'clipboard:write-svg', arg: '<svg>chart</svg>' }])
+  })
 })

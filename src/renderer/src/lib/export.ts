@@ -30,7 +30,12 @@ export async function buildStandaloneHtml(opts: {
   theme: 'light' | 'dark'
   embedImages: boolean
 }): Promise<string> {
-  let body = getExportHtml()
+  // Deliberately widened to `string`: the value coming out of the store is branded
+  // `SanitizedHtml`, but the transforms below (base64 inlining / appdoc→relative
+  // rewriting) produce a NEW string that no longer carries that guarantee — and this
+  // body is written to disk / handed to the print IPC, never injected into the
+  // preview DOM, so it must not be laundered back into `SanitizedHtml`.
+  let body: string = getExportHtml()
   if (opts.embedImages) {
     // Inline images as base64 into a single file (works offline); on failure keep the original src.
     body = await window.api.export.embedImages(body)

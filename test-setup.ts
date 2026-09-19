@@ -67,3 +67,14 @@ if (typeof Element !== 'undefined') {
     Element.prototype.scrollIntoView = () => {}
   }
 }
+
+// The suite creates real temp dirs under %TEMP% (folder-watcher / open-folder / document
+// / export fixtures). Vitest never cleans %TEMP%, so reclaim every path allocated through
+// mkTestDir() when each test file finishes. Registering the hook in this setup file means
+// it runs for every suite without editing each one, and it only removes dirs the suite
+// itself recorded (no scan of %TEMP%, so it can never touch another process's data).
+// NOTE: a process-level `exit` handler is unreliable under Vitest's worker/thread pool, so
+// we use Vitest's own `afterAll` hook, which is guaranteed to fire per test file.
+import { afterAll } from 'vitest'
+import { cleanupTestDirs } from './electron/main/test-support/tmp'
+afterAll(() => cleanupTestDirs())

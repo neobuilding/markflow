@@ -248,6 +248,7 @@ export const en = {
   'menu.togglePreview': 'Toggle Preview',
   'menu.toggleDevTools': 'Toggle Developer Tools',
   'menu.about': 'About MarkFlow',
+  'menu.selectAll': 'Select All',
   'menu.dlgOpenFile': 'Open Markdown File',
   'menu.dlgOpenFolder': 'Open Folder (batch import .md files)',
   'menu.filterMarkdown': 'Markdown',
@@ -267,30 +268,12 @@ export const en = {
   // Preview link
   'ctx.openLink': 'Open Link',
   'ctx.copyLink': 'Copy Link Address',
-  // Preview code block
-  'ctx.copyCode': 'Copy Code',
-  'ctx.copyCodeBlock': 'Copy as Fenced Block',
-  'ctx.copyLang': 'Copy Language',
   // Preview image
   'ctx.copyImage': 'Copy Image',
   'ctx.saveImageAs': 'Save Image As…',
   'ctx.copyImageSrc': 'Copy Image Address',
-  'ctx.copyImageAlt': 'Copy Alt Text',
-  // Preview table
-  'ctx.copyTable': 'Copy Table',
-  'ctx.copyTableTsv': 'Copy Table for Spreadsheet',
-  // Preview task
-  'ctx.copyTaskText': 'Copy Task Text',
-  // Preview formula
-  'ctx.copyFormula': 'Copy Formula as Text',
-  'ctx.copyFormulaSource': 'Copy TeX Source',
   // Preview diagram (mermaid)
-  'ctx.copyDiagramSource': 'Copy Diagram Source',
   'ctx.copySvg': 'Copy as SVG',
-  'ctx.saveSvgAs': 'Save Diagram As SVG…',
-  // Preview heading
-  'ctx.copyHeading': 'Copy Heading Text',
-  'ctx.copyAnchorId': 'Copy Anchor ID',
   // Sidebar document item
   'ctx.openDocument': 'Open',
   'ctx.copyFileName': 'Copy File Name',

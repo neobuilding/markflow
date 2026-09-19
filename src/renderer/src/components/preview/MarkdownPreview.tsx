@@ -2,12 +2,12 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useUIStore } from '../../store/ui'
 import { parseMarkdown } from '../../lib/parseClient'
 import type { RenderResult } from '../../lib/markdownPipeline'
-import { SafeHtml } from '../SafeHtml'
 import { scrollSync } from '../../lib/scrollSync'
-import { debounce } from '../../lib/utils'
-import { sanitizeHtml } from '../../lib/sanitize'
+import { sanitizeHtml, type SanitizedHtml } from '../../lib/sanitize'
+import { patchPreviewContent, DATA_BAKED } from '../../lib/previewRender'
 import { setExportHtml, setExportContent } from '../../lib/exportStore'
 import { useT } from '../../i18n'
+import { consumePendingCopy, buildPreviewCopyPayload } from '../../lib/previewCopy'
 import { PreviewContextMenu } from './PreviewContextMenu'
 import type { Document } from '../../types'
 // Mermaid is heavy (~2.5 MB) and only needed when a document actually contains a
@@ -73,14 +73,14 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
   const scrollRef = useRef<HTMLDivElement>(null)
   const renderToken = useRef(0)
   const lastDocIdRef = useRef<string | null | undefined>(undefined)
-  const [renderedHtml, setRenderedHtml] = useState('')
+  const [sanitizedHtml, setSanitizedHtml] = useState<SanitizedHtml>(sanitizeHtml(''))
   const [loading, setLoading] = useState(true)
   // docId comes from the global store and is passed to the Worker via comlink for appdoc: image rewriting.
   const docId = useUIStore((s) => s.activeDocumentId)
   // Tracks whether the preview has rendered at least once, so the parse effect can decide whether to
-  // parse immediately (first paint) without reading `renderedHtml` reactively (which would make it a
+  // parse immediately (first paint) without reading `sanitizedHtml` reactively (which would make it a
   // dependency and cause a re-parse loop). This ref gates the "parse immediately on first paint"
-  // path instead of checking `renderedHtml === ''` reactively.
+  // path instead of checking `sanitizedHtml === ''` reactively.
   const hasContentRef = useRef(false)
   // The content seen on the previous render. Used to detect "recovering from an
   // empty pane" see `isRecovering` below
@@ -114,7 +114,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
 
     // On document switch: clear old content immediately and show Loading to avoid stale content.
     if (isDocSwitch) {
-      setRenderedHtml('')
+      setSanitizedHtml(sanitizeHtml(''))
       setLoading(true)
     }
 
@@ -123,8 +123,9 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
         .then(async (res: RenderResult) => {
           if (cancelled || token !== renderToken.current) return
           // Bake mermaid before injection: replace placeholder <div data-mermaid-slot="{i}"> with
-          // the raw SVG, producing the full HTML string containing mermaid SVGs; sanitization is
-          // done once later by SafeHtml.
+          // the raw SVG, producing the full HTML string containing mermaid SVGs. Sanitization is
+          // performed ONCE below (single point, see §5.2) and the result is shared by the preview
+          // DOM patch and the export cache.
           let html = res.html
           if (res.mermaid.length > 0) {
             await getMermaid()
@@ -136,10 +137,23 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
             // generic menu, which has no copy-source item).
             const sources = new Map(res.mermaid.map((m) => [m.slot, m.code]))
             for (const m of res.mermaid) {
-              const id = `mermaid-${m.hash}-${Math.random().toString(36).slice(2)}`
+              // Two ids, on purpose:
+              //  - `renderId` is RANDOM and only ever handed to mermaid: the preview DOM
+              //    already contains the previously baked <svg id="…">, and mermaid looks
+              //    nodes up by id, so a reusable id could make it latch onto the stale
+              //    diagram. Random keeps mermaid's own temp DOM collision-free.
+              //  - `stableId` is what we actually INJECT: mermaid bakes the id into the
+              //    svg element id, every <style> selector, the node ids and the <filter>
+              //    ids, so a random id makes the SVG differ on every keystroke — morphdom
+              //    then never hits its "subtree unchanged → skip" fast path and the whole
+              //    diagram is torn down and rebuilt while typing. Normalising the baked
+              //    markup to a deterministic id (hash + slot, unique within a document)
+              //    makes an unchanged diagram byte-identical across re-parses.
+              const renderId = `mermaid-${m.hash}-${Math.random().toString(36).slice(2)}`
+              const stableId = `mermaid-${m.hash}-${m.slot}`
               try {
-                const out = await renderMermaidSvg(id, m.code)
-                svgs[m.slot] = out.svg
+                const out = await renderMermaidSvg(renderId, m.code)
+                svgs[m.slot] = out.svg.split(renderId).join(stableId)
               } catch {
                 sources.delete(m.slot)
                 svgs[m.slot] =
@@ -149,31 +163,41 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
             // Replace each placeholder with a wrapper that KEEPS the container (the SVG is
             // injected inside it), so the `data-mermaid-source` attribute survives. The
             // original plan wrote the source on the placeholder div, but the old replace
-            // discarded the whole div keeping the wrapper fixes that
-            html = html.replace(/<div data-mermaid-slot="(\d+)"><\/div>/g, (_m, i) => {
-              const slot = Number(i)
-              // `svgs[slot]` is always populated by the render loop above (every mermaid
-              // slot is rendered into `svgs`), so the fallback is purely defensive.
-              /* v8 ignore next */
-              const svg = svgs[slot] ?? ''
-              const src = sources.get(slot)
-              const attr = src ? ` data-mermaid-source="${encodeURIComponent(src)}"` : ''
-              return `<div data-mermaid-slot="${slot}"${attr}>${svg}</div>`
-            })
+            // discarded the whole div keeping the wrapper fixes that.
+            // The match must tolerate EXTRA attributes, not assume the exact
+            // `<div data-mermaid-slot="N"></div>` shape: the pipeline also tags the
+            // placeholder with `data-line` (R6), and any such extras are preserved on the
+            // baked wrapper so its source mapping survives the swap.
+            html = html.replace(
+              /<div data-mermaid-slot="(\d+)"([^>]*)><\/div>/g,
+              (_m, i, extra: string) => {
+                const slot = Number(i)
+                // `svgs[slot]` is always populated by the render loop above (every mermaid
+                // slot is rendered into `svgs`), so the fallback is purely defensive.
+                /* v8 ignore next */
+                const svg = svgs[slot] ?? ''
+                const src = sources.get(slot)
+                const attr = src ? ` data-mermaid-source="${encodeURIComponent(src)}"` : ''
+                return `<div data-mermaid-slot="${slot}"${extra}${attr}>${svg}</div>`
+              },
+            )
           }
           /* v8 ignore next -- defensive: guards a stale/aborted render; the cancelled/token-mismatch returns aren't exercised under jsdom's synchronous render */
           if (cancelled || token !== renderToken.current) return
-          // Stash the "sanitized" preview HTML as the single source of truth for export (R7 single source).
-          // SafeHtml sanitizes again on render (idempotent), keeping the single-point semantics.
-          setExportHtml(sanitizeHtml(html))
+          // Single sanitization gate (D-C / R5): the only place un-sanitized HTML is turned into
+          // `SanitizedHtml`. The branded return type then forces every downstream consumer to use
+          // this exact value — it is reused for BOTH the preview DOM patch and the export cache,
+          // so preview and export are guaranteed to be the same source (R7).
+          const clean = sanitizeHtml(html)
+          setExportHtml(clean)
           // Stash the raw markdown (frontmatter intact) so export/print can resolve <html lang> on demand.
           setExportContent(content)
-          setRenderedHtml(html)
+          setSanitizedHtml(clean)
           hasContentRef.current = true
           setLoading(false)
-          // Fallback: after parsing completes (large images may be ready now or soon), realign once
-          // to fix the half-screen offset caused by image height jumps (Final Design )
-          requestAnimationFrame(() => scrollSync.realign())
+          // Note: no scrollSync.realign() — images are no longer reloaded on every keystroke
+          // (the DOM is incrementally patched, not rebuilt), so the preview height is stable and
+          // the ratio-based sync needs no height-jump compensation (Plan 01 §5.4).
         })
         .catch((err) => {
           /* v8 ignore next -- defensive: same stale/aborted-render guard as the success path; not exercised under jsdom */
@@ -194,9 +218,11 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
   }, [content, docId])
 
   // Container-level error delegation: downgrade failed images to a placeholder (covers all <img>
-  // inside the injected HTML). Also attach a load delegate (capture phase, needed to catch <img>
-  // load) so that after an image is ready and the preview height changes, a debounced realign
-  // keeps scroll in sync, fixing the half-screen offset from height jumps (W5-D).
+  // inside the injected HTML). Attached ONCE to the <article> container: because the preview is
+  // now patched incrementally (not rebuilt) the <article> node itself is stable across renders,
+  // so a single capture-phase listener survives every content update. (The old `load`-time
+  // realign that compensated for image height jumps is gone — images are no longer reloaded on
+  // each keystroke, so the height is stable; see Plan 01 §5.4.)
   useEffect(() => {
     const container = previewRef.current
     // The ref is attached to the <article> rendered below, so it is always populated once
@@ -213,6 +239,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
       img.dataset.fallbackApplied = '1'
       const placeholder = document.createElement('span')
       placeholder.className = 'img-error-placeholder'
+      placeholder.setAttribute(DATA_BAKED, '1')
       const alt = img.getAttribute('alt') ?? ''
       placeholder.textContent = alt
         ? `⚠ ${tRef.current('preview.imageFailedAlt', { alt })}`
@@ -222,14 +249,24 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
         'border-radius:6px;color:var(--color-text-tertiary);font-size:12px;background:var(--color-surface-overlay);'
       img.replaceWith(placeholder)
     }
-    const onLoad = debounce(() => scrollSync.realign(), 150)
     container.addEventListener('error', onErr, true)
-    container.addEventListener('load', onLoad, true)
     return () => {
       container.removeEventListener('error', onErr, true)
-      container.removeEventListener('load', onLoad, true)
     }
-  }, [renderedHtml])
+  }, [])
+
+  // Incremental DOM patch (R4): morph the <article> into the latest sanitized HTML
+  // whenever it changes, instead of rebuilding the whole subtree. `sanitizedHtml` is the
+  // single sanitized source produced by the parse effect above; the branded type guarantees
+  // it has already passed through `sanitizeHtml` (no second sanitization, no wrapper).
+  useEffect(() => {
+    const el = previewRef.current
+    // The ref is attached to the <article> rendered below, so it is always populated once
+    // this effect runs; the guard only narrows its nullable type for TypeScript.
+    /* v8 ignore next -- defensive: the ref is attached to the rendered <article>, so it is always populated when this effect runs */
+    if (!el) return
+    patchPreviewContent(el, sanitizedHtml)
+  }, [sanitizedHtml])
 
   // Register with the scroll-sync controller (preview side).
   useEffect(() => {
@@ -249,18 +286,55 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
       style={{ background: 'var(--color-surface)' }}
     >
       <PreviewContextMenu doc={doc} previewRef={previewRef}>
+        {/* The <article> is the patch root: MarkdownPreview writes its children via
+            patchPreviewContent (morphdom), so it must NOT have React-managed children here —
+            only the loading overlay (below) is React-controlled, and it lives OUTSIDE the
+            article so the two never fight over the same DOM subtree (P8: no extra wrapper). */}
         <article
           ref={previewRef}
           tabIndex={0}
           className="markdown-preview prose dark:prose-invert max-w-none px-6 py-6 w-full"
-        >
-          {loading && renderedHtml === '' ? (
-            <div className="text-[var(--color-text-tertiary)] text-sm">{t('editor.loading')}</div>
-          ) : (
-            <SafeHtml html={renderedHtml} />
-          )}
-        </article>
+          // Rich-text copy (Plan 02 §4.3): a single writer shared by the keyboard (native
+          // Ctrl+C dispatches this event) and the menu (requestRichCopy fires execCommand).
+          // Writing here lets the browser pack text/plain + text/html; we only preventDefault
+          // after a successful setData so a failure falls back to the native copy instead of
+          // leaving an empty clipboard.
+          onKeyDown={(e) => {
+            // Ctrl/Cmd+A must scope the selection to THIS article. The native-menu
+            // accelerator normally intercepts Ctrl+A before the renderer sees it (it is
+            // routed back via menu:select-all → selectAllRouter), but if the keydown ever
+            // reaches the article directly (e.g. a future menu change drops the
+            // accelerator), the browser default would select the WHOLE document — both
+            // panes — which is exactly the bug this guard prevents. Idempotent with the
+            // router path: both produce the same article-scoped selection.
+            if (
+              (e.ctrlKey || e.metaKey) &&
+              !e.shiftKey &&
+              !e.altKey &&
+              e.key.toLowerCase() === 'a'
+            ) {
+              e.preventDefault()
+              window.getSelection()?.selectAllChildren(e.currentTarget)
+            }
+          }}
+          onCopy={(e) => {
+            const article = e.currentTarget
+            const payload = consumePendingCopy() ?? buildPreviewCopyPayload(article)
+            try {
+              e.clipboardData?.setData('text/plain', payload.text)
+              e.clipboardData?.setData('text/html', payload.html)
+              e.preventDefault()
+            } catch {
+              /* setData failed: leave the default copy in place */
+            }
+          }}
+        />
       </PreviewContextMenu>
+      {loading && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center text-[var(--color-text-tertiary)] text-sm">
+          {t('editor.loading')}
+        </div>
+      )}
     </div>
   )
 }

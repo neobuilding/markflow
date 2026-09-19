@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { exportDocument, resolveTheme } from './export'
 import { setExportHtml, setExportContent } from './exportStore'
+import { sanitizeHtml } from './sanitize'
+
+// The export cache is typed `SanitizedHtml`, so fixtures must go through the real gate
+// exactly like the preview does — that is the point of the brand (Plan 01 §5.5).
+const clean = (html: string) => sanitizeHtml(html)
 
 describe('resolveTheme', () => {
   it('returns explicit light/dark choices regardless of uiTheme', () => {
@@ -25,12 +30,12 @@ describe('resolveTheme', () => {
 
 describe('export — buildStandaloneHtml (R7)', () => {
   beforeEach(() => {
-    setExportHtml('')
+    setExportHtml(clean(''))
     setExportContent('')
   })
 
   it('resolves <html lang> from frontmatter at export time (computed on demand, not pre-baked in preview)', async () => {
-    setExportHtml('<h1>안녕하세요</h1>')
+    setExportHtml(clean('<h1>안녕하세요</h1>'))
     setExportContent('---\nlang: ko\n---\n\n# 안녕하세요')
     let captured = ''
     ;(window as unknown as { api: unknown }).api = {
@@ -46,7 +51,7 @@ describe('export — buildStandaloneHtml (R7)', () => {
   })
 
   it('detects CJK content at export time when no frontmatter lang is given', async () => {
-    setExportHtml('<h1>你好</h1>')
+    setExportHtml(clean('<h1>你好</h1>'))
     setExportContent('# 你好世界\n\n这是中文内容。')
     let captured = ''
     ;(window as unknown as { api: unknown }).api = {
@@ -62,7 +67,7 @@ describe('export — buildStandaloneHtml (R7)', () => {
   })
 
   it('falls back to lang="en" when content is empty', async () => {
-    setExportHtml('<p>x</p>')
+    setExportHtml(clean('<p>x</p>'))
     setExportContent('')
     let captured = ''
     ;(window as unknown as { api: unknown }).api = {
@@ -78,7 +83,7 @@ describe('export — buildStandaloneHtml (R7)', () => {
   })
 
   it('non-inline: injects github-markdown/katex CSS and meta charset=utf-8, rewrites appdoc:// to a relative path', async () => {
-    setExportHtml('<h1>title</h1><img src="appdoc://doc1/a.png">')
+    setExportHtml(clean('<h1>title</h1><img src="appdoc://doc1/a.png">'))
     let captured = ''
     ;(window as unknown as { api: unknown }).api = {
       export: {
@@ -99,7 +104,7 @@ describe('export — buildStandaloneHtml (R7)', () => {
   })
 
   it('dark theme selects github-markdown-dark.css', async () => {
-    setExportHtml('<p>x</p>')
+    setExportHtml(clean('<p>x</p>'))
     let captured = ''
     ;(window as unknown as { api: unknown }).api = {
       export: {
@@ -114,7 +119,7 @@ describe('export — buildStandaloneHtml (R7)', () => {
   })
 
   it('inline images: calls embedImages to inline as base64', async () => {
-    setExportHtml('<img src="appdoc://doc1/a.png">')
+    setExportHtml(clean('<img src="appdoc://doc1/a.png">'))
     const embed = vi.fn(async (h: string) =>
       h.replace('appdoc://doc1/a.png', 'data:image/png;base64,XYZ'),
     )

@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 // Mermaid is dynamically imported on first use (`getMermaid()` in MarkdownPreview.tsx)
 // so the ~2.5 MB library stays out of the initial chunk. Unit tests can't prove that
@@ -15,7 +15,7 @@ test.describe('mermaid preview', () => {
 
   test.beforeEach(async () => {
     handle = await launchApp()
-    scratch = mkdtempSync(join(tmpdir(), 'markflow-e2e-'))
+    scratch = mkTempDir('markflow-e2e-')
   })
 
   test.afterEach(async () => {

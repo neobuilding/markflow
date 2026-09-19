@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { registerExportHandlers, mapPrintFailureReason } from './export'
-import { writeFileSync, mkdtempSync, readFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { mkTestDir } from '../test-support/tmp'
 
 // The export handler now reads document file paths from the in-memory store singleton.
 // Mock that module's getDocumentById so the test controls which file_path a doc id resolves to.
@@ -59,7 +60,7 @@ describe('export — embed-images (R7)', () => {
   })
 
   it('appdoc:// inlined as base64 data URL (file_path fetched via store mock)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-embed-'))
+    const dir = mkTestDir('mf-embed-')
     const imgPath = join(dir, 'a.png')
     writeFileSync(imgPath, PNG)
     const mdPath = join(dir, 'doc.md')
@@ -74,14 +75,14 @@ describe('export — embed-images (R7)', () => {
 
 describe('export — write (R7)', () => {
   it('writes HTML to disk', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-write-'))
+    const dir = mkTestDir('mf-write-')
     const p = join(dir, 'o.html')
     await handlers['export:write'](null, p, '<p>hi</p>')
     expect(readFileSync(p, 'utf-8')).toBe('<p>hi</p>')
   })
 
   it('overwrites an existing file when overwrite=true', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-write-'))
+    const dir = mkTestDir('mf-write-')
     const p = join(dir, 'o.html')
     writeFileSync(p, '<p>old</p>')
     await handlers['export:write'](null, p, '<p>new</p>', true)
@@ -89,7 +90,7 @@ describe('export — write (R7)', () => {
   })
 
   it('refuses to overwrite an existing file when overwrite=false (throws FILE_EXISTS)', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-write-'))
+    const dir = mkTestDir('mf-write-')
     const p = join(dir, 'o.html')
     writeFileSync(p, '<p>old</p>')
     expect(() => handlers['export:write'](null, p, '<p>new</p>', false)).toThrow('FILE_EXISTS')
@@ -173,11 +174,11 @@ describe('export — embed-images edge cases (R7)', () => {
   })
 
   it('keeps the original <img> when the resolved image path escapes the document directory', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-embed-'))
+    const dir = mkTestDir('mf-embed-')
     const mdPath = join(dir, 'doc.md')
     writeFileSync(mdPath, '# hi')
     // Create a real image file OUTSIDE the doc's directory (a different temp dir).
-    const siblingDir = mkdtempSync(join(tmpdir(), 'mf-embed-sibling-'))
+    const siblingDir = mkTestDir('mf-embed-sibling-')
     writeFileSync(join(siblingDir, 'escape.png'), PNG)
     hoist.imgDocPath = mdPath
     // The appdoc URL encodes an ABSOLUTE path to that outside file as the relPath.
@@ -200,7 +201,7 @@ describe('export — embed-images edge cases (R7)', () => {
   it('keeps the original <img> when the resolved image path is a directory (readFileSync throws)', async () => {
     // A subdirectory inside the doc's directory passes the isSubdir containment check, but
     // readFileSync on a directory throws the TOCTOU guard returns null and keeps the original <img>
-    const dir = mkdtempSync(join(tmpdir(), 'mf-embed-'))
+    const dir = mkTestDir('mf-embed-')
     const mdPath = join(dir, 'doc.md')
     writeFileSync(mdPath, '# hi')
     const subDir = join(dir, 'sub')
@@ -265,7 +266,7 @@ describe('export — embed-images edge cases (R7)', () => {
   })
 
   it('inlines an appdoc image with an unknown extension using the octet-stream fallback mime', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-embed-'))
+    const dir = mkTestDir('mf-embed-')
     const mdPath = join(dir, 'doc.md')
     writeFileSync(mdPath, '# hi')
     // a file whose extension is not in APPDOC_MIME -> `?? 'application/octet-stream'`

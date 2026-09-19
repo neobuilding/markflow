@@ -192,7 +192,14 @@ export const useUIStore = create<UIState>((set, get) => ({
     if (id && get().isNewUnsaved) {
       void deleteUnsavedDraft(id)
     }
-    set({ activeDocumentId: null, editable: false, isNewUnsaved: false })
+    // Closing a document DISCARDS its unsaved edits, so the global `dirty` flag has to go
+    // with it. It used to survive the close: every "discard?" path only called
+    // closeDocument()/closeWorkspace() (App close-file menu, editor close button, quit),
+    // so after discarding once, the NEXT dirty check (switching documents in the sidebar,
+    // dropping a file onto the window, quitting) prompted "unsaved changes" AGAIN for
+    // edits the user had already chosen to throw away. Clearing it here covers every
+    // caller at once instead of patching each confirm site.
+    set({ activeDocumentId: null, editable: false, isNewUnsaved: false, dirty: false })
   },
 
   closeWorkspace: () => {
@@ -202,7 +209,13 @@ export const useUIStore = create<UIState>((set, get) => ({
       void deleteUnsavedDraft(id)
     }
     clearOpenFolders()
-    set({ activeDocumentId: null, activeFolder: null, editable: false, isNewUnsaved: false })
+    set({
+      activeDocumentId: null,
+      activeFolder: null,
+      editable: false,
+      isNewUnsaved: false,
+      dirty: false,
+    })
   },
 
   viewMode: 'split',

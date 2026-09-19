@@ -1,8 +1,8 @@
-import { test, expect, type Page } from '@playwright/test'
-import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { expect, test, type Page } from '@playwright/test'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { AppHandle, closeApp, launchApp, waitForAppReady } from '../helpers/launch'
+import { mkTempDir } from '../helpers/temp'
 
 // Long enough for franc's statistical detector to be confident.
 const ZH =
@@ -13,7 +13,7 @@ test.describe('save and export', () => {
   let scratch: string
   test.beforeEach(async () => {
     handle = await launchApp()
-    scratch = mkdtempSync(join(tmpdir(), 'markflow-e2e-'))
+    scratch = mkTempDir('markflow-e2e-')
   })
   test.afterEach(async () => {
     await closeApp(handle)
@@ -40,7 +40,9 @@ test.describe('save and export', () => {
     const id = await latestDocId(page)
     expect(id).toBeTruthy()
 
-    const outPath = join(tmpdir(), `markflow-e2e-${Date.now()}.md`)
+    // Write into the test's own tracked scratch dir, not the temp root: this file is
+    // e2e-owned garbage and goes away with the scratch dir, leaving no stray files.
+    const outPath = join(scratch, 'save-as.md')
     const savedPath = await page.evaluate(
       (args) => {
         const w = window as any
@@ -64,7 +66,8 @@ test.describe('save and export', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    const outPath = join(tmpdir(), `markflow-e2e-export-${Date.now()}.html`)
+    // Same ownership rule as above: keep the artifact inside the tracked scratch dir.
+    const outPath = join(scratch, 'export-target.html')
     await page.evaluate((targetPath) => {
       const w = window as any
       const html =

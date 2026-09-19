@@ -1,8 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { mkTestDir } from '../test-support/tmp'
 import {
   __emitFolderEvent,
   __emitFolderDirEvent,
@@ -56,7 +55,7 @@ vi.mock('chokidar', () => ({
 }))
 
 function tmpDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix))
+  return mkTestDir(prefix)
 }
 
 let seen: { added: string[]; removed: string[]; changed: string[] }

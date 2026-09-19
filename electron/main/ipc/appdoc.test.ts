@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { mkTestDir } from '../test-support/tmp'
 
 const { getDocumentById, protocolHandle } = vi.hoisted(() => ({
   getDocumentById: vi.fn(),
@@ -12,7 +12,7 @@ vi.mock('electron', () => ({ protocol: { handle: protocolHandle } }))
 
 import { resolveAppdocPath, registerAppDocProtocol } from './appdoc'
 
-const dir = mkdtempSync(join(tmpdir(), 'mf-appdoc-'))
+const dir = mkTestDir('mf-appdoc-')
 beforeAll(() => {
   writeFileSync(join(dir, 'im.png'), 'PNG')
   // leave 'missing.png' absent on purpose

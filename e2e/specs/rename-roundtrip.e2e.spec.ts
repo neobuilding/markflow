@@ -5,9 +5,9 @@
 // and findRenamedDocument folding an external rename back into the SAME record.
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync, renameSync, existsSync, readFileSync } from 'node:fs'
+import { writeFileSync, renameSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 test.describe('rename round-trip keeps the document and workspace open', () => {
   let handle: AppHandle
@@ -98,7 +98,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
   test('in-app rename a.md -> b.md -> a.md (TODO-4 repro steps)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const scratch = mkdtempSync(join(tmpdir(), 'markflow-e2e-rename1-'))
+    const scratch = mkTempDir('markflow-e2e-rename1-')
     const file = join(scratch, 'a.md')
     writeFileSync(file, '# Hello\n\nbody', 'utf-8')
 
@@ -156,7 +156,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
   test('fast back-to-back rename round-trip with no settle pause', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const scratch = mkdtempSync(join(tmpdir(), 'markflow-e2e-rename2-'))
+    const scratch = mkTempDir('markflow-e2e-rename2-')
     const file = join(scratch, 'a.md')
     writeFileSync(file, '# Hello\n\nbody', 'utf-8')
 
@@ -179,7 +179,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
   test('external rename (Explorer-style) to a new name and back keeps the same record', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const scratch = mkdtempSync(join(tmpdir(), 'markflow-e2e-rename3-'))
+    const scratch = mkTempDir('markflow-e2e-rename3-')
     const fileA = join(scratch, 'a.md')
     writeFileSync(fileA, '# Hello\n\nbody', 'utf-8')
 

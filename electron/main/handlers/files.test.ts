@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { mkTestDir } from '../test-support/tmp'
 
 const handlers: Record<string, (...a: unknown[]) => unknown> = {}
 vi.mock('electron', () => ({
@@ -18,11 +18,8 @@ describe('files handlers', () => {
   let root: string
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k]
-    root = mkdtempSync(join(tmpdir(), 'mf-files-'))
+    root = mkTestDir('mf-files-')
     registerFilesHandlers()
-  })
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true })
   })
 
   it('returns [] for no paths', () => {

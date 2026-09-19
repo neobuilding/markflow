@@ -114,17 +114,34 @@ md.use(texmath, {
 // markdown-it always provides a built-in fence rule, so no fallback is needed.
 const defaultFence = md.renderer.rules.fence!
 
+// R6 (D-G, extended): the core `source_line` ruler (below) adds `data-line` via
+// `token.attrJoin`, but the fence renderer emits its output as a RAW STRING and the
+// `highlight` option short-circuits markdown-it's token-attribute rendering, so that
+// ruler never reaches a `<pre>` or a mermaid placeholder. To keep the plan's
+// "every top-level block carries data-line" guarantee (§5.1 / Step 1 checklist) we inject
+// it here for level-0 code & mermaid blocks. Non-top-level fences (nested inside a
+// container / blockquote) are deliberately skipped so the attribute count stays minimal
+// and nested structure is never double-tagged.
+function fenceDataLineAttr(token: { level: number; map: number[] | null }): string {
+  return token.level === 0 && token.map ? ` data-line="${token.map[0]}"` : ''
+}
+
 md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   const token = tokens[idx]
   const info = token.info ? token.info.trim().split(/\s+/)[0] : ''
+  const lineAttr = fenceDataLineAttr(token)
   if (info === 'mermaid') {
     const code = token.content
     const slots = (env as { mermaid: MermaidSlot[] }).mermaid
     const slot = slots.length
     slots.push({ slot, code, hash: hashCode(code) })
-    return `<div data-mermaid-slot="${slot}"></div>\n`
+    return `<div data-mermaid-slot="${slot}"${lineAttr}></div>\n`
   }
-  return defaultFence(tokens, idx, options, env, self)
+  const out = defaultFence(tokens, idx, options, env, self)
+  // Inject data-line into the opening `<pre>` tag for top-level code blocks. defaultFence
+  // returns either the `highlight` string (`<pre class="hljs">…`) or a `<pre><code>` built
+  // via renderToken — in both cases the opening `<pre>` is the first (and only) `<pre`.
+  return lineAttr ? out.replace(/<pre\b/, `<pre${lineAttr}`) : out
 }
 
 // ─── Rewrite relative images to appdoc://<docId>/<relativePath> (leave external/data/already-appdoc: alone) ───
@@ -162,6 +179,24 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
   }
   return defaultImage(tokens, idx, options, env, self)
 }
+
+// ─── Source-line mapping (R6): tag every TOP-LEVEL block with a `data-line` attribute
+//   carrying its 0-based source line. This gives scroll-sync / "jump to source" / stage-2
+//   rich-text-copy a precise, stable mapping instead of the old ratio heuristics.
+//   Only `level === 0` tokens have a `map` (their [startLine, endLine] in the source),
+//   and we deliberately skip deeper tokens so the attribute count stays minimal and the
+//   nested structure is never double-tagged. The ruler is pushed AFTER all `md.use(...)`
+//   plugins, so heading ids (from markdown-it-anchor's own core rule) are already present
+//   by the time we add `data-line` — they never collide.
+md.core.ruler.push('source_line', (state) => {
+  for (const token of state.tokens) {
+    // v8 ignore next -- defensive guard: every real top-level block token carries a
+    // `map`; no fixture produces a level-0 token without one, so this branch is
+    // unreachable in tests but required to avoid a TypeError on malformed input.
+    if (token.level !== 0 || !token.map) continue
+    token.attrJoin('data-line', String(token.map[0]))
+  }
+})
 
 // Parse entry: return the whole HTML (with mermaid placeholders) + the mermaid source array.
 export function render(content: string, docId: string | null): RenderResult {

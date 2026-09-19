@@ -103,7 +103,7 @@ export function createWindow(): void {
     win.loadURL(pathToFileURL(indexPath).href)
   }
 
-  // After upgrading Electron (30 → 43), the old userData (redirected to %TEMP%/markflow)
+  // After upgrading Electron (30 → 43), the old userData (now %TEMP%/markflow-<pid>)
   // may retain a non-100% zoom level that shrinks the whole UI (including all margins).
   // Reset the zoom to the default level after each load so the leftover zoom can't affect layout.
   win.webContents.on('did-finish-load', () => {

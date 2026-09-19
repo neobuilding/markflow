@@ -8,9 +8,9 @@
 import { test, expect, type Page } from '@playwright/test'
 import type { ElectronApplication } from 'playwright'
 import { launchApp, waitForAppReady, closeApp, type AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 async function installConfirmSpy(
   electronApp: ElectronApplication,
@@ -68,7 +68,7 @@ test.describe('delete watched folder (admin-permission regression)', () => {
       await d.accept()
     })
 
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-delfolder-'))
+    const dir = mkTempDir('markflow-delfolder-')
     mkdirSync(join(dir, 'aa'), { recursive: true })
     writeFileSync(join(dir, 'aa', 'note.md'), '# hi\n')
     writeFileSync(join(dir, 'root.md'), '# root\n')

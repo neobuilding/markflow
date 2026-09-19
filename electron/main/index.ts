@@ -38,18 +38,30 @@ import {
 
 // ─── Redirect runtime data directory to the system temp folder ──────────────
 // By default Electron / Chromium write caches, Local Storage, lock files, etc. into
-// AppData\Roaming\<app>, polluting the user directory. Here we redirect userData to
-// %TEMP%/markflow so all framework runtime data lands in the temp directory and is
-// cleaned up automatically with the system, satisfying the "no business-data persistence"
-// privacy requirement.
+// AppData\Roaming\<app>, polluting the user directory. Here we redirect userData into the
+// system temp directory instead, so no framework runtime data ever lands in the user's home.
+// (Windows never reclaims %TEMP% by itself, so the app removes its own directory on exit —
+// see lib/temp-cleanup.ts — which is what actually satisfies the "no persistence" requirement.)
 //
-// In e2e mode, skip this redirect: each e2e spec passes its own --user-data-dir via
-// launchApp (see e2e/helpers/launch.ts) for test isolation, and overriding it here
-// would make every spec share %TEMP%/markflow, defeating that isolation and causing
-// Chromium singleton-lock contention between concurrent instances.
-if (process.env.MARKFLOW_E2E !== '1') {
+// Each instance gets a directory of its OWN: %TEMP%/markflow-<pid>. What lands there was
+// measured for a real run — ~1.8 MB / 35 files, exclusively Chromium runtime data (Code Cache,
+// GPUCache, DawnGraphiteCache, DawnWebGPUCache, Shared Dictionary, Local Storage/leveldb,
+// Network/Trust Tokens, DIPS) and no business data. The shareable-looking parts are not
+// shareable: Local Storage/leveldb ships its own single-writer LOCK and the cache index files
+// differ between instances, so two processes in one profile would corrupt each other.
+// Giving every instance a private directory makes ownership structural instead of something
+// we must prove at runtime, which is what lets several instances run side by side.
+//
+// This costs nothing in persistence: the app already removes its whole profile when it quits
+// (that is the point of this design), so every launch starts from a clean slate anyway.
+//
+// A caller-supplied `--user-data-dir` still wins — Chromium's own switch, honored by every real
+// launcher (including the e2e harness, which passes a fresh directory per spec). Recognizing it
+// is honest input handling; no test-only environment variable is involved.
+const hasExplicitUserDataDir = app.commandLine.hasSwitch('user-data-dir')
+if (!hasExplicitUserDataDir) {
   try {
-    app.setPath('userData', join(tmpdir(), 'markflow'))
+    app.setPath('userData', join(tmpdir(), `markflow-${process.pid}`))
   } catch {
     // If setting fails (rare), fall back to the default path
   }
@@ -98,8 +110,17 @@ pendingInitialPaths.push(...extractArgvPaths(process.argv))
 setupLifecycle()
 
 // ─── Single instance + file/protocol open handling ───────────────
-// Only one instance may run (when used as the .md handler, reopening focuses the existing window).
-// Dev does NOT grab the lock (the original behavior), so a second `npm run dev` works.
+// Only one PACKAGED instance may run: reopening a .md file focuses the existing window instead
+// of starting a second copy of the app (see `second-instance` below).
+//
+// Dev deliberately does NOT grab the lock, so a second `npm run dev` still opens as before —
+// that is an intended workflow, not an oversight. It is only safe now because every instance
+// owns a private user-data-dir: previously two dev instances wrote into the SAME %TEMP%/markflow
+// (and a starting instance deleted its leftovers, wiping a live instance's profile).
+//
+// Note what the lock is NOT for: it no longer doubles as the ownership proof for cleanup.
+// Ownership comes from the directory itself, so cleanup cannot touch another instance's data
+// whether the lock is held or not.
 const shouldStart = app.isPackaged ? app.requestSingleInstanceLock() : true
 
 // macOS: triggered when a file is dropped on the Dock icon or opened via "Open With" in Finder
@@ -130,6 +151,9 @@ if (!shouldStart) {
   // Another instance is already running; quit this one (the existing instance handles the open request)
   app.quit()
 } else {
+  // No startup sweep: every instance owns a directory nobody else can be using (see above), so
+  // there is nothing here to reclaim without risking another instance's data. Each instance
+  // cleans up after itself on exit (see lib/temp-cleanup.ts) — that is the whole contract.
   app.whenReady().then(async () => {
     if (process.platform === 'win32') {
       app.setAppUserModelId(app.isPackaged ? 'com.mark-flow.app' : process.execPath)

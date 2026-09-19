@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { mkTestDir } from '../test-support/tmp'
 
 // Expose a mutable flag so each test can flip app.isPackaged before importing the
 // module under test (mirrors the hoisted-fake pattern used by lifecycle.test.ts).
@@ -32,10 +32,7 @@ describe('md-files — MD_EXTS', () => {
 describe('md-files — collectMarkdownFiles', () => {
   let root: string
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'mf-md-'))
-  })
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true })
+    root = mkTestDir('mf-md-')
   })
 
   it('recursively collects markdown files and skips hidden dirs + node_modules', async () => {
@@ -85,75 +82,59 @@ describe('md-files — extractArgvPaths', () => {
     h.isPackaged = false
     const { extractArgvPaths } = await loadMdFiles()
     // In dev, argv is never treated as document paths regardless of what is passed.
-    const tmp = mkdtempSync(join(tmpdir(), 'mf-argv-dev-'))
-    try {
-      const md = join(tmp, 'doc.md')
-      writeFileSync(md, '# d')
-      expect(extractArgvPaths([md, '/usr/bin/electron', '-flag', 'file:///x'])).toEqual([])
-    } finally {
-      rmSync(tmp, { recursive: true, force: true })
-    }
+    const tmp = mkTestDir('mf-argv-dev-')
+    const md = join(tmp, 'doc.md')
+    writeFileSync(md, '# d')
+    expect(extractArgvPaths([md, '/usr/bin/electron', '-flag', 'file:///x'])).toEqual([])
   })
 
   it('filters by extension and skips flags / urls / scripts in packaged mode', async () => {
     h.isPackaged = true
     const { extractArgvPaths } = await loadMdFiles()
-    const tmp = mkdtempSync(join(tmpdir(), 'mf-argv2-'))
-    try {
-      const md = join(tmp, 'doc.md')
-      writeFileSync(md, '# d')
-      const other = join(tmp, 'note.txt')
-      writeFileSync(other, 'x')
-      // Mix a real .md file with items that must be filtered out: an Electron flag,
-      // a .js script, a file:// URL, and a non-markdown file.
-      const out = extractArgvPaths([
-        md,
-        other,
-        '-flag',
-        'script.js',
-        'file:///x',
-        '/usr/bin/electron',
-      ])
-      expect(out).toEqual([md])
-    } finally {
-      rmSync(tmp, { recursive: true, force: true })
-    }
+    const tmp = mkTestDir('mf-argv2-')
+    const md = join(tmp, 'doc.md')
+    writeFileSync(md, '# d')
+    const other = join(tmp, 'note.txt')
+    writeFileSync(other, 'x')
+    // Mix a real .md file with items that must be filtered out: an Electron flag,
+    // a .js script, a file:// URL, and a non-markdown file.
+    const out = extractArgvPaths([
+      md,
+      other,
+      '-flag',
+      'script.js',
+      'file:///x',
+      '/usr/bin/electron',
+    ])
+    expect(out).toEqual([md])
   })
 
   it('keeps existing files/dirs, drops unreadable args', async () => {
     h.isPackaged = true
     const { extractArgvPaths } = await loadMdFiles()
-    const tmp = mkdtempSync(join(tmpdir(), 'mf-argv-'))
-    try {
-      const f = join(tmp, 'real.md')
-      writeFileSync(f, '# r')
-      const dir = join(tmp, 'realdir')
-      mkdirSync(dir, { recursive: true })
-      const out = extractArgvPaths([f, dir, join(tmp, 'ghost.md')])
-      expect(out).toContain(f)
-      expect(out).toContain(dir)
-      expect(out.some((p) => p.includes('ghost.md'))).toBe(false)
-    } finally {
-      rmSync(tmp, { recursive: true, force: true })
-    }
+    const tmp = mkTestDir('mf-argv-')
+    const f = join(tmp, 'real.md')
+    writeFileSync(f, '# r')
+    const dir = join(tmp, 'realdir')
+    mkdirSync(dir, { recursive: true })
+    const out = extractArgvPaths([f, dir, join(tmp, 'ghost.md')])
+    expect(out).toContain(f)
+    expect(out).toContain(dir)
+    expect(out.some((p) => p.includes('ghost.md'))).toBe(false)
   })
 
   it('skips existent files whose name has no markdown extension (no-dot branch)', async () => {
     h.isPackaged = true
     const { extractArgvPaths } = await loadMdFiles()
-    const tmp = mkdtempSync(join(tmpdir(), 'mf-argv-nodot-'))
-    try {
-      // A plain file with no dot: arg.lastIndexOf('.') === -1, so the derived ext
-      // is the whole name and is not in MD_EXTS -> skipped even though it exists.
-      const plain = join(tmp, 'LICENSE')
-      writeFileSync(plain, 'MIT')
-      // A matching markdown file should still be picked up.
-      const md = join(tmp, 'doc.md')
-      writeFileSync(md, '# d')
-      const out = extractArgvPaths([plain, md])
-      expect(out).toEqual([md])
-    } finally {
-      rmSync(tmp, { recursive: true, force: true })
-    }
+    const tmp = mkTestDir('mf-argv-nodot-')
+    // A plain file with no dot: arg.lastIndexOf('.') === -1, so the derived ext
+    // is the whole name and is not in MD_EXTS -> skipped even though it exists.
+    const plain = join(tmp, 'LICENSE')
+    writeFileSync(plain, 'MIT')
+    // A matching markdown file should still be picked up.
+    const md = join(tmp, 'doc.md')
+    writeFileSync(md, '# d')
+    const out = extractArgvPaths([plain, md])
+    expect(out).toEqual([md])
   })
 })

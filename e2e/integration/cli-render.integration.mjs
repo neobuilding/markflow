@@ -14,11 +14,11 @@
 // the fresh (create) and refresh scenarios, plus the default-template-path and
 // missing-required-flag behaviors. The rendering itself is covered in
 // render-template.test.mjs; here we assert the CLI wiring around it.
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
 import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { writeFileSync, mkdtempSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -34,7 +34,18 @@ function runCli(args, cwd = REPO_ROOT) {
   })
 }
 
+// This spec owns every temp dir it allocates, so it reclaims them itself rather
+// than leaving them for whoever cleans %TEMP%.
+const tempDirs = []
+
 describe('cli-render — local preview CLI (integration)', () => {
+  afterAll(() => {
+    for (const d of tempDirs) {
+      rmSync(d, { recursive: true, force: true })
+    }
+    tempDirs.length = 0
+  })
+
   it('exits 1 when --head is missing', async () => {
     const { code, stderr } = await runCli(['--no-git'])
     expect(code).toBe(1)
@@ -84,6 +95,7 @@ describe('cli-render — local preview CLI (integration)', () => {
     ].join('\n')
 
     const dir = mkdtempSync(join(tmpdir(), 'cli-render-'))
+    tempDirs.push(dir)
     const existingPath = join(dir, 'existing.md')
     writeFileSync(existingPath, existing, 'utf8')
 

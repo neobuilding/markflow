@@ -119,7 +119,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       //
       // e2e does NOT use that auto-started instance: every spec launches its OWN
       // isolated Electron via launchApp() (Playwright _electron.launch with a
-      // per-test user-data-dir + MARKFLOW_E2E=1). So suppressing the auto-startup
+      // per-test user-data-dir, which the app honors). So suppressing the auto-startup
       // loses nothing the tests rely on, and removes the race entirely.
       //
       // ELECTRON_STARTUP_PREVENT is the official escape hatch (read at the top of

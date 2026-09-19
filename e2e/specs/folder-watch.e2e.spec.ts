@@ -19,9 +19,9 @@
 // asserting immediately.
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 test.describe('folder-watch refresh (chokidar → sidebar)', () => {
   let handle: AppHandle
@@ -29,7 +29,7 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
 
   test.beforeEach(async () => {
     handle = await launchApp()
-    scratch = mkdtempSync(join(tmpdir(), 'markflow-fw-e2e-'))
+    scratch = mkTempDir('markflow-fw-e2e-')
   })
   test.afterEach(async () => {
     await closeApp(handle)

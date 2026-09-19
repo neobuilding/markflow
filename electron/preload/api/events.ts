@@ -17,7 +17,8 @@ export const onMenuEvent = (
     | 'about'
     | 'export-html'
     | 'print'
-    | 'language',
+    | 'language'
+    | 'select-all',
   callback: (data?: string | string[]) => void,
 ) => onIpc(`menu:${event}`, callback)
 

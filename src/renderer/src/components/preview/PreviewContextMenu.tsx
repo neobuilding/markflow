@@ -3,6 +3,7 @@ import { useUIStore } from '../../store/ui'
 import { useT } from '../../i18n'
 import type { Document } from '../../types'
 import { getExportHtml } from '../../lib/exportStore'
+import { requestRichCopy, svgToPngDataUrl } from '../../lib/previewCopy'
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -18,74 +19,24 @@ import {
   FolderOpen,
   Printer,
   FileOutput,
-  Code2,
-  FileText,
-  Table,
-  Heading,
-  CheckSquare,
   Image as ImageIcon,
   Save,
   FileImage,
+  FileText,
 } from 'lucide-react'
 
-// Right-click menu for the preview surface . The variant is detected from the
-// element under the cursor at open time: a link, a code block, a table, a heading, a task
-// list item, an image, a formula, a diagram, or the generic article.
-type TargetKind =
-  'generic' | 'link' | 'code' | 'table' | 'heading' | 'task' | 'image' | 'formula' | 'mermaid'
-
-// Undo the encodeURIComponent the preview applies when it bakes the diagram source
-// onto the wrapper (see MarkdownPreview.tsx: the source must be URI-encoded to survive
-// sanitization). Falls back to the raw attribute, so a stray `%` in legacy content can
-// never throw while the menu is opening.
-function decodeMermaidSource(raw: string | null): string {
-  if (!raw) return ''
-  try {
-    return decodeURIComponent(raw)
-  } catch {
-    return raw
-  }
-}
+// Right-click menu for the preview surface. The kind is detected from the element under the
+// cursor at open time: a link, an image (bitmap or mermaid SVG), or the generic article.
+// Plan 02 (D3): the old per-object "copy source / copy X" items are gone — a single rich-text
+// "Copy" now covers headings, code, tables, lists and formulas, so the menu stays small.
+type TargetKind = 'generic' | 'link' | 'image'
 
 interface PreviewContextMenuProps {
   doc: Document | null | undefined
   children: React.ReactNode
   // Ref to the preview <article> so copy/select can read its text directly instead
-  // of querying the DOM by class . Optional for flexibility in tests
+  // of querying the DOM by class. Optional for flexibility in tests
   previewRef?: React.RefObject<HTMLDivElement | null>
-}
-
-// ── Pure extraction helpers (module scope: they only read the DOM, never React state) ──
-
-function cellText(cell: Element): string {
-  // Element.textContent is typed `string | null` but is never null for a real element
-  // (both jsdom and Chromium return '' for an empty one).
-  /* v8 ignore next -- Element.textContent is typed nullable but is never null for real elements */
-  return (cell.textContent ?? '').trim()
-}
-
-function tableRows(table: Element): string[][] {
-  return Array.from(table.querySelectorAll('tr')).map((tr) =>
-    Array.from(tr.querySelectorAll('th,td')).map(cellText),
-  )
-}
-
-// Markdown pipe table: the first row is the header (GFM has no header-less table), with a
-// `---` delimiter row underneath it.
-function tableToMarkdown(table: Element): string {
-  const rows = tableRows(table)
-  if (rows.length === 0) return ''
-  const line = (cells: string[]) => `| ${cells.join(' | ')} |`
-  const [header, ...body] = rows
-  return [line(header), line(header.map(() => '---')), ...body.map(line)].join('\n')
-}
-
-// TSV: tabs separate the cells, so pasting into Excel / WPS / Numbers splits into columns.
-// Chosen over CSV because cell text often contains commas
-function tableToTsv(table: Element): string {
-  return tableRows(table)
-    .map((row) => row.join('\t'))
-    .join('\n')
 }
 
 export function PreviewContextMenu({ doc, children, previewRef }: PreviewContextMenuProps) {
@@ -94,24 +45,10 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
   const setViewMode = useUIStore((s) => s.setViewMode)
   const [kind, setKind] = useState<TargetKind>('generic')
   const [linkHref, setLinkHref] = useState('')
-  const [codeText, setCodeText] = useState('')
-  const [codeLang, setCodeLang] = useState('')
-  const [tableMarkdown, setTableMarkdown] = useState('')
-  const [tableTsv, setTableTsv] = useState('')
-  const [headingText, setHeadingText] = useState('')
-  const [headingId, setHeadingId] = useState('')
-  const [taskText, setTaskText] = useState('')
-  // Preview P2 variants ( / / / )
+  // Bitmap image state (kind === 'image' && !isSvg)
   const [imgSrc, setImgSrc] = useState('')
-  // Alt text of the right-clicked image. Kept as a raw string so an image without alt
-  // greys the item out instead of copying an empty string.
-  const [imgAlt, setImgAlt] = useState('')
-  // Formula TeX source (KaTeX <annotation encoding="application/x-tex">). jsdom cannot
-  // render KaTeX (DOMPurify drops the annotation), so this branch is only exercised by e2e.
-  const [formulaSrc, setFormulaSrc] = useState('')
-  // The formula as rendered (the visible glyphs), as opposed to its TeX source.
-  const [formulaText, setFormulaText] = useState('')
-  const [mermaidSrc, setMermaidSrc] = useState('')
+  // Mermaid / vector image state (kind === 'image' && isSvg)
+  const [isSvg, setIsSvg] = useState(false)
   const [mermaidSvg, setMermaidSvg] = useState('')
 
   // Capture-phase handler: classify the context target before the menu opens.
@@ -119,70 +56,33 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
     const target = e.target as HTMLElement
     const img = target.closest('img')
     const mermaidEl = target.closest('[data-mermaid-slot]')
-    const katexEl = target.closest('.katex')
     const href = target.closest('a')?.getAttribute('href')
-    const pre = target.closest('pre')
-    const table = target.closest('table')
-    const heading = target.closest('h1,h2,h3,h4,h5,h6')
-    // A GFM task item is an <li> whose descendant is a disabled checkbox; the checkbox
-    // itself carries no text, so the item's textContent is exactly the task text.
-    const li = target.closest('li')
-    const taskItem = li && li.querySelector('input[type="checkbox"]') ? li : null
     if (img) {
       setKind('image')
+      setIsSvg(false)
       setImgSrc(img.getAttribute('src') ?? '')
-      setImgAlt(img.getAttribute('alt') ?? '')
     } else if (mermaidEl) {
-      // The rendered wrapper carries the raw mermaid source () and the
-      // SVG markup inside it exactly what "Copy diagram source" / "Save diagram" need
-      setKind('mermaid')
-      setMermaidSrc(decodeMermaidSource(mermaidEl.getAttribute('data-mermaid-source')))
-      setMermaidSvg(mermaidEl.innerHTML)
-    } else if (katexEl) {
-      // KaTeX renders the TeX source into <annotation encoding="application/x-tex">.
-      // jsdom drops it through the real pipeline, but a unit test can inject the node
-      // directly, so this branch is still covered
-      const ann = katexEl.querySelector('annotation[encoding="application/x-tex"]')
-      setKind('formula')
-      setFormulaSrc(ann?.textContent ?? '')
-      // KaTeX renders the visible glyphs into `.katex-html` and the (hidden) MathML
-      // which carries the TeX source in <annotation> into `.katex-mathml`. Reading
-      // `.katex.textContent` would mix both, so the MathML subtree is dropped first.
-      const clone = katexEl.cloneNode(true) as HTMLElement
-      clone.querySelectorAll('.katex-mathml').forEach((n) => n.remove())
-      /* v8 ignore next -- Element.textContent is typed nullable but is never null for real elements */
-      setFormulaText((clone.textContent ?? '').trim())
+      // A rendered mermaid diagram: the wrapper carries the SVG markup inside; treat it as a
+      // vector image so the menu offers rasterized "Copy Image" + vector "Copy SVG" (D4).
+      const svgEl = mermaidEl.querySelector('svg')
+      setKind('image')
+      setIsSvg(true)
+      setMermaidSvg(svgEl ? svgEl.outerHTML : mermaidEl.innerHTML)
     } else if (href) {
       setKind('link')
       setLinkHref(href)
-    } else if (pre) {
-      const code = pre.querySelector('code')
-      setKind('code')
-      setCodeText(code?.textContent ?? '')
-      setCodeLang(code?.getAttribute('data-lang') ?? '')
-    } else if (table) {
-      setKind('table')
-      setTableMarkdown(tableToMarkdown(table))
-      setTableTsv(tableToTsv(table))
-    } else if (heading) {
-      setKind('heading')
-      setHeadingId(heading.id)
-      /* v8 ignore next -- Element.textContent is typed nullable but is never null for real elements */
-      setHeadingText(heading.textContent ?? '')
-    } else if (taskItem) {
-      setKind('task')
-      /* v8 ignore next -- Element.textContent is typed nullable but is never null for real elements */
-      setTaskText((taskItem.textContent ?? '').trim())
     } else {
       setKind('generic')
     }
   }
 
-  const copySelectionOrAll = () => {
-    const article = previewRef?.current ?? null
-    const sel = window.getSelection()?.toString()
-    const text = sel || article?.textContent || ''
-    void window.api.clipboard.writeText(text)
+  // Rich-text copy (Plan 02): drives the article's `copy` event via requestRichCopy, which
+  // builds a clean { text, html } payload and writes it as text/plain + text/html. Selection
+  // priority, whole-article fallback and cross-pane guard all live in previewCopy.ts so the
+  // keyboard Ctrl+C and this menu item produce identical output (R3).
+  const copyPreview = () => {
+    const el = previewRef?.current
+    if (el) void requestRichCopy(el)
   }
   const selectAllPreview = () => {
     const article = previewRef?.current
@@ -193,11 +93,28 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
   const printPreview = () => {
     void window.api.export.print(getExportHtml())
   }
-  // ── Preview P2 handlers ( / / / ) ──
-  const copyImage = () => void window.api.clipboard.writeImage(imgSrc)
+
+  // ── Link actions ──
+  const openLink = () => void window.api.app.openExternal(linkHref)
+  const copyLink = () => void window.api.clipboard.writeText(linkHref)
+
+  // ── Image actions ──
+  // Copy Image: a bitmap is handed to the main process as-is; a mermaid SVG is rasterized to
+  // a PNG `data:` URL first (clipboard:write-image was extended to accept `data:` URLs).
+  const copyImage = () => {
+    if (isSvg) {
+      void svgToPngDataUrl(mermaidSvg)
+        .then((png) => window.api.clipboard.writeImage(png))
+        /* v8 ignore start -- defensive: a rejected rasterization is intentionally swallowed */
+        .catch(() => {})
+      /* v8 ignore stop */
+    } else {
+      void window.api.clipboard.writeImage(imgSrc)
+    }
+  }
+  // Copy Image Address: resolve an appdoc:// reference to its on-disk path so the copied
+  // "address" is a real file location; external URLs are copied as-is.
   const copyImageAddress = async () => {
-    // Resolve an appdoc:// reference to its on-disk path so the copied "address" is a
-    // real file location; external URLs are copied as-is.
     const resolved = imgSrc.startsWith('appdoc://')
       ? await window.api.documents.resolveAppdoc(imgSrc)
       : imgSrc
@@ -205,32 +122,36 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
   }
   const showImageInFolder = async () => {
     if (!imgSrc.startsWith('appdoc://')) {
+      /* v8 ignore next -- defensive: a rejected showInFolder is intentionally swallowed */
       void Promise.resolve(window.api.app.showInFolder(imgSrc)).catch(() => {})
       return
     }
     const resolved = await window.api.documents.resolveAppdoc(imgSrc)
+    /* v8 ignore next -- defensive: a rejected showInFolder is intentionally swallowed */
     if (resolved) void Promise.resolve(window.api.app.showInFolder(resolved)).catch(() => {})
   }
   // A remote image has no local file to reveal, so the item is greyed out instead of
   // failing silently when clicked.
   const isRemoteImage = /^https?:\/\//i.test(imgSrc)
   const saveImageAs = async () => {
-    const name = imgSrc.split(/[\\/]/).pop() || 'image'
-    const p = await window.api.dialog.saveFile(name)
-    if (p) await window.api.app.copyFile(imgSrc, p)
+    if (isSvg) {
+      // Vector image: save the SVG markup to a .svg file (plan §4.6).
+      const p = await window.api.dialog.saveFile('diagram.svg')
+      if (p) await window.api.export.write(p, mermaidSvg)
+    } else {
+      const name = imgSrc.split(/[\\/]/).pop() || 'image'
+      const p = await window.api.dialog.saveFile(name)
+      if (p) await window.api.app.copyFile(imgSrc, p)
+    }
   }
-  const saveSvgAs = async () => {
-    const p = await window.api.dialog.saveFile('diagram.svg')
-    if (p) await window.api.export.write(p, mermaidSvg)
-  }
-  // "Copy as fenced block": wraps the code in a ``` fence, keeping the language when the
-  // block declared one
-  const fencedCode = '```' + codeLang + '\n' + codeText + '\n```'
+  // Copy SVG: vector form, written by the main process as image/svg+xml (+ a text/html
+  // wrapper) so it pastes cleanly into Word / vector editors (D4).
+  const copySvg = () => void window.api.clipboard.writeSvg(mermaidSvg)
 
   // The generic copy / select-all pair is shared by every variant.
   const copyAndSelectAll = (
     <>
-      <ContextMenuItem data-testid="preview-copy" onClick={copySelectionOrAll}>
+      <ContextMenuItem data-testid="preview-copy" onClick={copyPreview}>
         <Copy size={13} /> {t('ctx.copy')}
       </ContextMenuItem>
       <ContextMenuItem data-testid="preview-select-all" onClick={selectAllPreview}>
@@ -247,22 +168,16 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
       <ContextMenuContent>
         {kind === 'link' && (
           <>
-            <ContextMenuItem
-              data-testid="preview-open-link"
-              onClick={() => void window.api.app.openExternal(linkHref)}
-            >
+            <ContextMenuItem data-testid="preview-open-link" onClick={openLink}>
               <ExternalLink size={13} /> {t('ctx.openLink')}
             </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="preview-copy-link"
-              onClick={() => void window.api.clipboard.writeText(linkHref)}
-            >
+            <ContextMenuItem data-testid="preview-copy-link" onClick={copyLink}>
               <Copy size={13} /> {t('ctx.copyLink')}
             </ContextMenuItem>
             {copyAndSelectAll}
           </>
         )}
-        {kind === 'image' && (
+        {kind === 'image' && !isSvg && (
           <>
             <ContextMenuItem data-testid="preview-copy-image" onClick={copyImage}>
               <ImageIcon size={13} /> {t('ctx.copyImage')}
@@ -284,136 +199,28 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
             >
               <FolderOpen size={13} /> {t('editor.showInFolder')}
             </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="preview-copy-image-alt"
-              disabled={!imgAlt}
-              onClick={() => void window.api.clipboard.writeText(imgAlt)}
-            >
-              <Copy size={13} /> {t('ctx.copyImageAlt')}
-            </ContextMenuItem>
             <ContextMenuSeparator />
             {copyAndSelectAll}
           </>
         )}
-        {kind === 'formula' && (
+        {kind === 'image' && isSvg && (
           <>
-            <ContextMenuItem
-              data-testid="preview-copy-formula-latex"
-              disabled={!formulaSrc}
-              onClick={() => void window.api.clipboard.writeText(formulaSrc)}
-            >
-              <Code2 size={13} /> {t('ctx.copyFormulaSource')}
-            </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="preview-copy-formula"
-              disabled={!formulaText}
-              onClick={() => void window.api.clipboard.writeText(formulaText)}
-            >
-              <FileText size={13} /> {t('ctx.copyFormula')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            {copyAndSelectAll}
-          </>
-        )}
-        {kind === 'mermaid' && (
-          <>
-            <ContextMenuItem
-              data-testid="preview-copy-diagram-source"
-              disabled={!mermaidSrc}
-              onClick={() => void window.api.clipboard.writeText(mermaidSrc)}
-            >
-              <Code2 size={13} /> {t('ctx.copyDiagramSource')}
+            <ContextMenuItem data-testid="preview-copy-image" onClick={copyImage}>
+              <ImageIcon size={13} /> {t('ctx.copyImage')}
             </ContextMenuItem>
             <ContextMenuItem
               data-testid="preview-copy-svg"
               disabled={!mermaidSvg}
-              onClick={() => void window.api.clipboard.writeText(mermaidSvg)}
+              onClick={copySvg}
             >
               <FileImage size={13} /> {t('ctx.copySvg')}
             </ContextMenuItem>
             <ContextMenuItem
-              data-testid="preview-save-svg-as"
+              data-testid="preview-save-image-as"
               disabled={!mermaidSvg}
-              onClick={() => void saveSvgAs()}
+              onClick={() => void saveImageAs()}
             >
-              <Save size={13} /> {t('ctx.saveSvgAs')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            {copyAndSelectAll}
-          </>
-        )}
-        {kind === 'code' && (
-          <>
-            <ContextMenuItem
-              data-testid="preview-copy-code"
-              onClick={() => void window.api.clipboard.writeText(codeText)}
-            >
-              <Code2 size={13} /> {t('ctx.copyCode')}
-            </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="preview-copy-code-block"
-              onClick={() => void window.api.clipboard.writeText(fencedCode)}
-            >
-              <FileText size={13} /> {t('ctx.copyCodeBlock')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            {/* Dynamic menu: when no language was declared the item is not generated at all ( 3) instead of showing a dead entry */}
-            {codeLang && (
-              <ContextMenuItem
-                data-testid="preview-copy-lang"
-                onClick={() => void window.api.clipboard.writeText(codeLang)}
-              >
-                <Code2 size={13} /> {t('ctx.copyLang')}
-              </ContextMenuItem>
-            )}
-            <ContextMenuSeparator />
-            {copyAndSelectAll}
-          </>
-        )}
-        {kind === 'table' && (
-          <>
-            <ContextMenuItem
-              data-testid="preview-copy-table"
-              onClick={() => void window.api.clipboard.writeText(tableMarkdown)}
-            >
-              <Table size={13} /> {t('ctx.copyTable')}
-            </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="preview-copy-table-tsv"
-              onClick={() => void window.api.clipboard.writeText(tableTsv)}
-            >
-              <Table size={13} /> {t('ctx.copyTableTsv')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            {copyAndSelectAll}
-          </>
-        )}
-        {kind === 'heading' && (
-          <>
-            <ContextMenuItem
-              data-testid="preview-copy-heading"
-              onClick={() => void window.api.clipboard.writeText(headingText)}
-            >
-              <Heading size={13} /> {t('ctx.copyHeading')}
-            </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="preview-copy-anchor-id"
-              disabled={!headingId}
-              onClick={() => void window.api.clipboard.writeText(headingId)}
-            >
-              <Heading size={13} /> {t('ctx.copyAnchorId')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            {copyAndSelectAll}
-          </>
-        )}
-        {kind === 'task' && (
-          <>
-            <ContextMenuItem
-              data-testid="preview-copy-task-text"
-              onClick={() => void window.api.clipboard.writeText(taskText)}
-            >
-              <CheckSquare size={13} /> {t('ctx.copyTaskText')}
+              <Save size={13} /> {t('ctx.saveImageAs')}
             </ContextMenuItem>
             <ContextMenuSeparator />
             {copyAndSelectAll}
@@ -460,13 +267,15 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
               disabled={!doc?.filePath}
               onClick={() => void window.api.clipboard.writeText(doc?.filePath as string)}
             >
-              <FileText size={13} /> {t('editor.copyFullPath')}
+              <FileText size={13} />
+              {t('editor.copyFullPath')}
             </ContextMenuItem>
             <ContextMenuItem
               data-testid="preview-show-in-folder"
               disabled={!doc?.filePath}
               onClick={() =>
                 void Promise.resolve(window.api.app.showInFolder(doc?.filePath as string)).catch(
+                  /* v8 ignore next -- defensive: a rejected showInFolder is intentionally swallowed */
                   () => {},
                 )
               }
