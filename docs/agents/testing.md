@@ -37,6 +37,26 @@ default, so production callers stay unchanged while tests inject a fake.
 - Assert resulting state, not "which method was called how many times". The in-memory
   implementation is a fake, not a mock.
 
+## Every temp directory is allocated through a registry that reclaims it
+
+A suite that needs a real directory must allocate it through the registry helper of its layer,
+never with a bare `mkdtempSync(join(tmpdir(), prefix))`:
+
+| Layer      | Helper                                              | Reclaimed by                                    |
+| ---------- | --------------------------------------------------- | ----------------------------------------------- |
+| Unit tests | `mkTestDir()` — `electron/main/test-support/tmp.ts` | `afterAll` hook in `test-setup.ts`              |
+| e2e specs  | `mkTempDir()` — `e2e/helpers/temp.ts`               | `cleanupTempDirs()` in `closeApp()`'s `finally` |
+
+Each helper records only the paths IT created and removes exactly those — no `%TEMP%` scan, so
+it can never delete a directory another process owns. That ownership rule is the point: whoever
+allocates a directory reclaims it (`test-support/tmp.test.ts` pins this contract).
+
+Why this is not optional: nothing in the toolchain cleans `%TEMP%`. A single `npm run verify` once
+left dozens of `mf-*` / `fw-*` / `of-*` directories behind and **every test still passed** — the
+suite was green while the machine slowly filled up. A `try/finally` + `rmSync` also "works", but
+it is skipped when a test fails mid-way, so prefer the helper. Production code follows the same
+rule (`mf-print-*` in `export.ts` removes its temp dir in `finally`).
+
 ## Terminology
 
 Test doubles, as defined in Meszaros' _xUnit Test Patterns_:

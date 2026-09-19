@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { writeFileSync, mkdtempSync, readFileSync, existsSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveAppdocPath } from '../ipc/appdoc'
+import { mkTestDir } from '../test-support/tmp'
 
 const handlers: Record<string, (...a: unknown[]) => unknown> = {}
 const clipboardMock = vi.hoisted(() => ({ writeText: vi.fn(), write: vi.fn() }))
@@ -116,7 +116,7 @@ describe('app handlers', () => {
   })
 
   describe('clipboard:write-image (能力 2)', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-img-'))
+    const dir = mkTestDir('mf-img-')
     it('reads the image and writes it to the clipboard', async () => {
       const p = join(dir, 'pic.png')
       writeFileSync(p, Buffer.from([1, 2, 3, 4]))
@@ -272,7 +272,7 @@ describe('app handlers', () => {
   })
 
   describe('app:copy-file (能力 2 另存为)', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-cp-'))
+    const dir = mkTestDir('mf-cp-')
     it('copies a source file to a destination', () => {
       const src = join(dir, 'src.md')
       const dest = join(dir, 'dest.md')

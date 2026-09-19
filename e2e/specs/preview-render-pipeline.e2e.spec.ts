@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 // Plan 01 stage 1 (preview render-pipeline refactor) — real-renderer acceptance.
 //
@@ -22,7 +22,7 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
 
   test.beforeEach(async () => {
     handle = await launchApp()
-    scratch = mkdtempSync(join(tmpdir(), 'markflow-e2e-'))
+    scratch = mkTempDir('markflow-e2e-')
   })
 
   test.afterEach(async () => {

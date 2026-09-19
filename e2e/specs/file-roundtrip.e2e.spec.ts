@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 test.describe('file round-trip (open / edit / save / reopen)', () => {
   let handle: AppHandle
@@ -10,7 +10,7 @@ test.describe('file round-trip (open / edit / save / reopen)', () => {
 
   test.beforeEach(async () => {
     handle = await launchApp()
-    scratch = mkdtempSync(join(tmpdir(), 'markflow-e2e-'))
+    scratch = mkTempDir('markflow-e2e-')
   })
   test.afterEach(async () => {
     await closeApp(handle)

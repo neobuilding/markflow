@@ -6,9 +6,9 @@
 // Each test asserts the DESIRED post-fix behavior, so it is red now and green once fixed.
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   let handle: AppHandle
@@ -16,7 +16,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
 
   test.beforeEach(async () => {
     handle = await launchApp()
-    scratch = mkdtempSync(join(tmpdir(), 'markflow-repro-'))
+    scratch = mkTempDir('markflow-repro-')
   })
   test.afterEach(async () => {
     await closeApp(handle)

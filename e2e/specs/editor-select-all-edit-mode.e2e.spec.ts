@@ -9,9 +9,9 @@
 // got clamped by CodeMirror into a bogus partial selection.
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 test.describe('editor Ctrl+A in edit mode', () => {
   let handle: AppHandle
@@ -19,7 +19,7 @@ test.describe('editor Ctrl+A in edit mode', () => {
 
   test.beforeEach(async () => {
     handle = await launchApp()
-    scratch = mkdtempSync(join(tmpdir(), 'markflow-editmode-'))
+    scratch = mkTempDir('markflow-editmode-')
   })
   test.afterEach(async () => {
     await closeApp(handle)

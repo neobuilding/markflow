@@ -7,12 +7,12 @@
 // written backwards; everything built on top of it is then tested against an
 // in-memory fake. Scoped to a fresh temp dir per run, and nothing outside it is touched.
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { mkTestDir } from '../test-support/tmp'
 import { createMemoryDiskIO, nodeDiskIO, isFileSystemCaseSensitive } from './disk-io'
 
-const root = mkdtempSync(join(tmpdir(), 'mf-diskio-'))
+const root = mkTestDir('mf-diskio-')
 
 describe('nodeDiskIO', () => {
   it('writes and reads a file as a Buffer', () => {

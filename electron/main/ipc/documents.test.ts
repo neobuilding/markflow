@@ -2,7 +2,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import {
   writeFileSync,
-  mkdtempSync,
   readFileSync,
   mkdirSync,
   existsSync,
@@ -11,6 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve, sep, win32 } from 'node:path'
+import { mkTestDir } from '../test-support/tmp'
 import {
   registerDocumentHandlers,
   normEnc,
@@ -290,7 +290,7 @@ const __memFs = createMemoryDiskIO()
 
 // A stable "temp dir" for the whole test file, so collision-retry tests can pre-create
 // files in the exact directory the create/update handlers will write into.
-const stableDocsRoot = mkdtempSync(join(tmpdir(), 'mf-docs-'))
+const stableDocsRoot = mkTestDir('mf-docs-')
 const fakeApp = { getPath: () => stableDocsRoot } as any
 
 // A fake main window that captures 'app:file-changed', 'app:folder-changed' and
@@ -648,7 +648,7 @@ describe('documents IPC — setEncoding', () => {
 
 describe('documents IPC — import / importMany', () => {
   it('imports a markdown file from disk', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-imp-'))
+    const dir = mkTestDir('mf-imp-')
     const p = join(dir, 'a.md')
     writeFileSync(p, '# imported')
     const doc = await call('documents:import', p)
@@ -657,7 +657,7 @@ describe('documents IPC — import / importMany', () => {
   })
 
   it('batch-imports multiple files', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-imp-'))
+    const dir = mkTestDir('mf-imp-')
     const p1 = join(dir, 'b.md')
     const p2 = join(dir, 'c.md')
     writeFileSync(p1, '# b')
@@ -678,7 +678,7 @@ describe('documents IPC — list', () => {
 
 describe('documents — folder watching (chokidar-driven store sync)', () => {
   function tmpDir(prefix: string): string {
-    return mkdtempSync(join(tmpdir(), prefix))
+    return mkTestDir(prefix)
   }
   // The fake store is keyed by id only (see above), so every value is one document.
   function storedDocs(): any[] {
@@ -1170,20 +1170,20 @@ describe('documents IPC — open folder registration', () => {
   }
 
   it('starts a watcher over the folder the user opened', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-open-a-'))
+    const dir = mkTestDir('mf-open-a-')
     call('documents:set-open-folder', dir)
     expect(latestWatcher()?.paths).toEqual([dir])
   })
 
   it('reuses the running watcher when another folder is opened', () => {
     const before = chokidarState.instances.length
-    call('documents:set-open-folder', mkdtempSync(join(tmpdir(), 'mf-open-b-')))
+    call('documents:set-open-folder', mkTestDir('mf-open-b-'))
     expect(chokidarState.instances).toHaveLength(before)
     expect(latestWatcher()?.added.length).toBeGreaterThan(0)
   })
 
   it('does not re-register a folder already covered by a broader one', () => {
-    const root = mkdtempSync(join(tmpdir(), 'mf-open-root-'))
+    const root = mkTestDir('mf-open-root-')
     call('documents:set-open-folder', root)
     const inst = latestWatcher()
     const before = inst?.added?.length ?? 0
@@ -1201,14 +1201,14 @@ describe('documents IPC — open folder registration', () => {
 
   it('creates a fresh watcher when a folder is opened after a clear', () => {
     const before = chokidarState.instances.length
-    call('documents:set-open-folder', mkdtempSync(join(tmpdir(), 'mf-open-c-')))
+    call('documents:set-open-folder', mkTestDir('mf-open-c-'))
     expect(chokidarState.instances).toHaveLength(before + 1)
   })
 })
 
 describe('documents IPC — eol (line-ending detection)', () => {
   it('detects CRLF when the file uses carriage returns', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-eol-'))
+    const dir = mkTestDir('mf-eol-')
     const p = join(dir, 'crlf.md')
     writeFileSync(p, 'a\r\nb\r\nc')
     const eol = await call('documents:eol', p)
@@ -1216,7 +1216,7 @@ describe('documents IPC — eol (line-ending detection)', () => {
   })
 
   it('defaults to LF when the file has no carriage returns', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-eol-'))
+    const dir = mkTestDir('mf-eol-')
     const p = join(dir, 'lf.md')
     writeFileSync(p, 'a\nb\nc')
     const eol = await call('documents:eol', p)
@@ -1248,7 +1248,7 @@ describe('documents IPC — set-encoding edge cases', () => {
 
 describe('documents IPC — import re-open / import-many', () => {
   it('re-opens an already-imported file, refreshing its store record from disk', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-imp-'))
+    const dir = mkTestDir('mf-imp-')
     const p = join(dir, 're.md')
     writeFileSync(p, '# first version')
     const first = await call('documents:import', p)
@@ -1260,7 +1260,7 @@ describe('documents IPC — import re-open / import-many', () => {
   })
 
   it('import-many refreshes an already-imported file in place', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-imp-'))
+    const dir = mkTestDir('mf-imp-')
     const p = join(dir, 'm.md')
     writeFileSync(p, '# v1')
     const first = await call('documents:import-many', [p])
@@ -1273,14 +1273,14 @@ describe('documents IPC — import re-open / import-many', () => {
   })
 
   it('import-many skips files that cannot be read (read error swallowed)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-imp-'))
+    const dir = mkTestDir('mf-imp-')
     const p = join(dir, 'missing.md')
     const results = await call('documents:import-many', [p])
     expect(results).toHaveLength(0)
   })
 
   it('import returns null when the file cannot be read', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-imp-'))
+    const dir = mkTestDir('mf-imp-')
     // a directory is not a readable markdown file -> readMarkdownText throws -> returns null
     expect(await call('documents:import', dir)).toBeNull()
   })
@@ -1792,7 +1792,7 @@ describe('documents — pure encoding / text utilities', () => {
 
   describe('readMarkdownText', () => {
     it('reads a UTF-8 file and reports its detected encoding', () => {
-      const dir = mkdtempSync(join(tmpdir(), 'mf-rmt-'))
+      const dir = mkTestDir('mf-rmt-')
       const p = join(dir, 'r.md')
       writeFileSync(p, '# read me')
       const { text, encoding, confidence } = readMarkdownText(p)
@@ -1805,7 +1805,7 @@ describe('documents — pure encoding / text utilities', () => {
     })
 
     it('decodes a GBK file as gbk via the CJK second pass', () => {
-      const dir = mkdtempSync(join(tmpdir(), 'mf-rmt-'))
+      const dir = mkTestDir('mf-rmt-')
       const p = join(dir, 'g.md')
       writeFileSync(p, Buffer.from([0xd6, 0xd0, 0xce, 0xc4]))
       const { text, encoding } = readMarkdownText(p)
@@ -2187,7 +2187,7 @@ describe('documents IPC — folder ops (能力 7)', () => {
   // POSIX `rename()` silently REPLACES an existing target, so a collision has to be refused
   // here — otherwise a lost race is silent data loss. Windows already errored; now both agree.
   it('refuses a rename whose target name is already taken (no silent overwrite)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-rename-clash-'))
+    const dir = mkTestDir('markflow-rename-clash-')
     const src = join(dir, 'a.md')
     const taken = join(dir, 'b.md')
     writeFileSync(src, '# A', 'utf-8')
@@ -2205,7 +2205,7 @@ describe('documents IPC — folder ops (能力 7)', () => {
   })
 
   it('refuses a folder rename whose target name is already taken', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-renamefolder-clash-'))
+    const dir = mkTestDir('markflow-renamefolder-clash-')
     const src = join(dir, 'sub')
     const taken = join(dir, 'other')
     mkdirSync(src)
@@ -2226,7 +2226,7 @@ describe('documents IPC — folder ops (能力 7)', () => {
     // not report a collision with itself (VS Code's `child !== item` rule). The platform seam is
     // injected as a case-INsensitive OS via `registerDocumentHandlers` — no global mutation, no
     // module mock — so this branch is covered on any runner.
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-rename-case-'))
+    const dir = mkTestDir('markflow-rename-case-')
     const src = join(dir, 'a.md')
     writeFileSync(src, '# A', 'utf-8')
     registerDocumentHandlers(
@@ -2270,7 +2270,7 @@ describe('documents IPC — folder ops (能力 7)', () => {
 
   // ── undo-rename (single slot) ─────────────────────────────────────────
   it('undo-rename moves a renamed file back and then reports "none"', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-file-'))
+    const dir = mkTestDir('markflow-undo-file-')
     const oldP = join(dir, 'a.md')
     const newP = join(dir, 'b.md')
     writeFileSync(oldP, '# A', 'utf-8')
@@ -2289,7 +2289,7 @@ describe('documents IPC — folder ops (能力 7)', () => {
   })
 
   it('undo-rename refuses with "occupied" when the original name is taken again', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-occ-'))
+    const dir = mkTestDir('markflow-undo-occ-')
     const oldP = join(dir, 'a.md')
     const newP = join(dir, 'b.md')
     writeFileSync(oldP, '# A', 'utf-8')
@@ -2303,7 +2303,7 @@ describe('documents IPC — folder ops (能力 7)', () => {
   })
 
   it('undo-rename refuses with "gone" when the renamed file no longer exists', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-gone-'))
+    const dir = mkTestDir('markflow-undo-gone-')
     const oldP = join(dir, 'a.md')
     const newP = join(dir, 'b.md')
     writeFileSync(oldP, '# A', 'utf-8')
@@ -2330,7 +2330,7 @@ describe('documents IPC — folder ops (能力 7)', () => {
   it('undo-rename moves a renamed FOLDER back and re-points the folder tree', async () => {
     // Covers the `last.kind === 'folder'` branch of undo-rename: it must put the watched folder
     // back and re-point the folder records, not just move a single file.
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-folder-'))
+    const dir = mkTestDir('markflow-undo-folder-')
     const oldP = join(dir, 'sub')
     const newP = join(dir, 'renamed')
     mkdirSync(oldP)
@@ -2346,7 +2346,7 @@ describe('documents IPC — folder ops (能力 7)', () => {
   it('undo-rename reports "failed" when the disk move throws', async () => {
     // Covers the catch branch of undo-rename: a rename that fails on disk must surface as a
     // "failed" refusal rather than an unhandled exception.
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-undo-fail-'))
+    const dir = mkTestDir('markflow-undo-fail-')
     const oldP = join(dir, 'a.md')
     const newP = join(dir, 'b.md')
     writeFileSync(oldP, '# A', 'utf-8')
