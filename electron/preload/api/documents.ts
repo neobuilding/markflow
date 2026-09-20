@@ -24,6 +24,9 @@ export const documentsApi = {
   stat: (filePath: string) => ipcRenderer.invoke('documents:stat', filePath),
   eol: (filePath: string) => ipcRenderer.invoke('documents:eol', filePath),
   resolveAppdoc: (src: string) => ipcRenderer.invoke('documents:resolve-appdoc', src),
+  // Resolve intrinsic dimensions of a local image (R9): reads only the header, so the
+  // preview can reserve space before first paint (CLS).
+  imageSize: (src: string) => ipcRenderer.invoke('documents:image-size', src),
   // Set the line endings of a file on disk (destructive write)
   setEol: (filePath: string, eol: '\r\n' | '\n') =>
     ipcRenderer.invoke('documents:set-eol', filePath, eol),

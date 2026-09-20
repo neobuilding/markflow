@@ -7,6 +7,7 @@ import { sanitizeHtml } from '../../lib/sanitize'
 import type { RenderResult } from '../../lib/markdownPipeline'
 
 import '../../i18n'
+import { getExportHtml } from '../../lib/exportStore'
 
 const parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
   html: '<p>hello preview</p>',
@@ -18,6 +19,9 @@ vi.mock('../../lib/parseClient', () => ({
 }))
 vi.mock('../../lib/exportStore', () => {
   let html = ''
+  // ADR 0019: the complete-bake path (export / print / copy) stores the mermaid SOURCES
+  // next to the HTML, so this mock has to expose them too.
+  let slots: unknown[] = []
   return {
     setExportHtml: (h: string) => {
       html = h
@@ -25,6 +29,10 @@ vi.mock('../../lib/exportStore', () => {
     getExportHtml: () => html,
     setExportContent: () => {},
     getExportContent: () => '',
+    setExportMermaidSlots: (s: unknown[]) => {
+      slots = s
+    },
+    getExportMermaidSlots: () => slots,
   }
 })
 vi.mock('../../lib/scrollSync', () => ({
@@ -36,6 +44,10 @@ vi.mock('mermaid', () => ({
     render: vi.fn(async (_id: string, _code: string) => ({ svg: '<svg>mermaid</svg>' })),
   },
 }))
+
+// jsdom has no IntersectionObserver, so a global mock (firing immediately) is injected in
+// test-setup.ts. That covers this suite too: every mermaid placeholder is treated as visible
+// and renders synchronously, which is what the D-E① lazy renderer asserts on.
 
 beforeEach(() => {
   ;(globalThis as any).__parseMarkdown = parseMarkdown
@@ -60,6 +72,33 @@ describe('MarkdownPreview', () => {
     expect(article.firstElementChild?.tagName).toBe('P')
   })
 
+  // R12① (plan-03 §4.2): the preview <article> is the document semantics root. role="document"
+  // is always set; lang reflects a leading frontmatter `lang:` field (extracted by
+  // extractFrontmatterLang) so assistive tech gets the right language. No frontmatter → no lang.
+  it('exposes role="document" and omits lang without frontmatter (R12①)', async () => {
+    const { container } = render(<MarkdownPreview content="# title" />)
+    await waitFor(() =>
+      expect(container.querySelector('article.markdown-preview')?.textContent).toContain(
+        'hello preview',
+      ),
+    )
+    const article = container.querySelector('article.markdown-preview') as HTMLElement
+    expect(article).toBeTruthy()
+    expect(article.getAttribute('role')).toBe('document')
+    expect(article.hasAttribute('lang')).toBe(false)
+  })
+
+  it('mirrors a frontmatter lang onto the preview article (R12①)', async () => {
+    const { container } = render(<MarkdownPreview content={'---\nlang: zh-CN\n---\n\n# title'} />)
+    await waitFor(() =>
+      expect(container.querySelector('article.markdown-preview')?.textContent).toContain(
+        'hello preview',
+      ),
+    )
+    const article = container.querySelector('article.markdown-preview') as HTMLElement
+    expect(article.getAttribute('lang')).toBe('zh-CN')
+  })
+
   it('shows the loading hint while nothing has been parsed', async () => {
     // delay the parse so the loading branch is observable
     ;(globalThis as any).__parseMarkdown = vi.fn(() => new Promise<RenderResult>(() => {}))
@@ -78,35 +117,34 @@ describe('MarkdownPreview', () => {
   it('bakes mermaid diagrams into the rendered HTML', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       // Real pipeline output for a top-level mermaid fence carries data-line (R6) —
-      // the baking step must tolerate it (regression guard for the placeholder regex).
+      // the lazy placeholder renderer must tolerate it (regression guard for the
+      // placeholder regex / data-line passthrough).
       html: '<div data-mermaid-slot="0" data-line="0"></div>',
-      mermaid: [{ hash: 'h1', code: 'graph TD;A-->B', slot: 0 }],
+      mermaid: [{ hash: 'h-bake', code: 'graph TD;A-->B', slot: 0 }],
     }))
     render(<MarkdownPreview content="```mermaid\ngraph TD;A-->B\n```" />)
     expect(await screen.findByText(/mermaid/)).toBeInTheDocument()
     expect(screen.queryByText('hello preview')).toBeNull()
   })
 
-  // The preview writes the diagram source onto the wrapper; "Copy diagram source" reads
-  // it back from the DOM. Nothing else asserted it was actually EMITTED AND SURVIVED
-  // sanitization (PreviewContextMenu.test.tsx hand-writes the attribute into its
-  // fixture), so the old HTML-escaping was silently stripped by DOMPurify — the diagram
-  // rendered while the menu item stayed permanently greyed out. It must be URI-encoded,
-  // because a decoded `-->` (i.e. every `A-->B`) makes DOMPurify drop the attribute.
-  it('bakes the diagram source onto the wrapper, URI-encoded, as data-mermaid-source', async () => {
+  // D-E① (plan-03 §4.3): mermaid renders lazily into the placeholder after the incremental
+  // patch (IntersectionObserver mocked to fire immediately). The "Copy diagram source" menu was
+  // removed in plan-02 D3, so the source is NOT written to the DOM as data-mermaid-source —
+  // this guards the cleanup (plan-02 D9): no such attribute is emitted, and extra placeholder
+  // attrs (data-line) still survive.
+  it('renders mermaid lazily into the placeholder and emits no data-mermaid-source (D-E① / plan-02 D9)', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       // Includes the pipeline's R6 `data-line` (as a real top-level mermaid fence does) so
-      // this test also guards that baking tolerates + preserves extra placeholder attrs.
+      // this also guards that the lazy renderer preserves extra placeholder attrs.
       html: '<div data-mermaid-slot="0" data-line="0"></div>',
-      mermaid: [{ hash: 'h1', code: 'graph TD;A-->B', slot: 0 }],
+      mermaid: [{ hash: 'h-lazy', code: 'graph TD;A-->B', slot: 0 }],
     }))
     const { container } = render(<MarkdownPreview content="```mermaid\ngraph TD;A-->B\n```" />)
     await waitFor(() => expect(container.querySelector('[data-mermaid-slot="0"] svg')).toBeTruthy())
     const wrapper = container.querySelector('[data-mermaid-slot="0"]')
-    const attr = wrapper?.getAttribute('data-mermaid-source')
-    expect(attr).toBeTruthy()
-    expect(decodeURIComponent(attr as string)).toBe('graph TD;A-->B')
-    // The placeholder's data-line is preserved on the baked wrapper (source mapping survives).
+    // No data-mermaid-source attribute is emitted (the "Copy diagram source" menu was removed).
+    expect(wrapper?.hasAttribute('data-mermaid-source')).toBe(false)
+    // The placeholder's data-line is preserved (source mapping survives).
     expect(wrapper?.getAttribute('data-line')).toBe('0')
   })
 
@@ -119,7 +157,7 @@ describe('MarkdownPreview', () => {
     const renderIds: string[] = []
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       html: '<div data-mermaid-slot="0" data-line="0"></div>',
-      mermaid: [{ hash: 'h1', code: 'graph TD;A-->B', slot: 0 }],
+      mermaid: [{ hash: 'h-n4', code: 'graph TD;A-->B', slot: 0 }],
     }))
     const mermaidApi = (await import('mermaid')).default as unknown as {
       render: ReturnType<typeof vi.fn>
@@ -136,10 +174,10 @@ describe('MarkdownPreview', () => {
       )
       const svg = container.querySelector('[data-mermaid-slot="0"] svg') as SVGElement
       // mermaid still gets a random (collision-free) id…
-      expect(renderIds[0]).toMatch(/^mermaid-h1-[a-z0-9]+$/)
+      expect(renderIds[0]).toMatch(/^mermaid-h-n4-[a-z0-9]+$/)
       // …but what lands in the DOM is stable: hash + slot.
-      expect(svg.id).toBe('mermaid-h1-0')
-      expect(svg.querySelector('use')?.getAttribute('href')).toBe('#mermaid-h1-0-flowchart-A-1')
+      expect(svg.id).toBe('mermaid-h-n4-0')
+      expect(svg.querySelector('use')?.getAttribute('href')).toBe('#mermaid-h-n4-0-flowchart-A-1')
       // Nothing of the random token survives anywhere in the baked markup (it would also
       // appear in <style> selectors / filter ids in a real diagram).
       expect(svg.outerHTML).not.toContain(renderIds[0]!)
@@ -153,14 +191,40 @@ describe('MarkdownPreview', () => {
   it('falls back to a skeleton when mermaid rendering fails', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       html: '<div data-mermaid-slot="0" data-line="0"></div>',
-      mermaid: [{ hash: 'h1', code: 'bad', slot: 0 }],
+      mermaid: [{ hash: 'h-fail', code: 'bad', slot: 0 }],
     }))
     const mermaid = (await import('mermaid')).default as unknown as {
       render: ReturnType<typeof vi.fn>
     }
-    mermaid.render.mockRejectedValueOnce(new Error('boom'))
-    render(<MarkdownPreview content="mermaid" />)
-    await waitFor(() => expect(screen.getByText(/Mermaid render failed/i)).toBeInTheDocument())
+    // ADR 0019: there are now TWO render paths for one diagram — the lazy preview and the
+    // complete export bake — so a diagram that fails must fail on BOTH. `mockRejectedValue`
+    // (persistent) is the honest mock for "this diagram cannot render"; `…Once` would let
+    // the second path succeed and hide the failure.
+    mermaid.render.mockRejectedValue(new Error('boom'))
+    try {
+      render(<MarkdownPreview content="mermaid" />)
+      await waitFor(() => expect(screen.getByText(/Mermaid render failed/i)).toBeInTheDocument())
+    } finally {
+      mermaid.render.mockResolvedValue({ svg: '<svg>mermaid</svg>' })
+    }
+  })
+
+  // ADR 0019: the preview keeps lazy placeholders, but the EXPORT CACHE must be a COMPLETE
+  // render — export / print / copy read it, and they must not lose the diagrams that never
+  // scrolled into view. (Under jsdom every placeholder "intersects" immediately, so this
+  // asserts the cache is completed, not that it happened lazily.)
+  it('completes the export cache with every diagram (ADR 0019)', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<div data-mermaid-slot="0"></div><div data-mermaid-slot="1"></div>',
+      mermaid: [
+        { hash: 'h-complete-0', code: 'graph TD;A-->B', slot: 0 },
+        { hash: 'h-complete-1', code: 'graph TD;C-->D', slot: 1 },
+      ],
+    }))
+    render(<MarkdownPreview content="x" />)
+    await waitFor(() => expect(getExportHtml()).toContain('<svg'))
+    const doc = new DOMParser().parseFromString(`<body>${getExportHtml()}</body>`, 'text/html')
+    expect(doc.querySelectorAll('[data-mermaid-slot] svg')).toHaveLength(2)
   })
 
   it('clears content and shows loading when switching documents', async () => {
@@ -408,7 +472,7 @@ describe('MarkdownPreview', () => {
     // path reads this canonical HTML, not the live innerHTML.
     setExportHtml(
       sanitizeHtml(
-        '<h1 tabindex="-1" data-line="0" data-mermaid-source="secret">Title</h1>' +
+        '<h1 tabindex="-1" data-line="0">Title</h1>' +
           '<pre data-lang="ts" data-baked="1"><code>body</code></pre>',
       ),
     )
@@ -418,5 +482,288 @@ describe('MarkdownPreview', () => {
     article.dispatchEvent(evt)
     expect(setData).toHaveBeenCalledWith('text/plain', 'Titlebody')
     expect(setData).toHaveBeenCalledWith('text/html', '<h1>Title</h1><pre><code>body</code></pre>')
+  })
+
+  it('reserves space for local images by writing intrinsic dimensions before patch (R9)', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { imageSize: vi.fn(async () => ({ width: 10, height: 20 })) },
+    }
+    try {
+      ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+        html: '<p><img src="appdoc://d1/img.png" alt="x"></p>',
+        mermaid: [],
+      }))
+      const { container } = render(<MarkdownPreview content="![x](appdoc://d1/img.png)" />)
+      await waitFor(() => {
+        const img = container.querySelector('img')
+        expect(img?.getAttribute('width')).toBe('10')
+        expect(img?.getAttribute('height')).toBe('20')
+      })
+    } finally {
+      ;(window as unknown as { api: unknown }).api = undefined
+    }
+  })
+
+  it('does not crash when intrinsic dimension resolution fails (R9)', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { imageSize: vi.fn().mockRejectedValue(new Error('boom')) },
+    }
+    try {
+      ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+        html: '<p><img src="appdoc://d1/img.png" alt="x"></p>',
+        mermaid: [],
+      }))
+      const { container } = render(<MarkdownPreview content="![x](appdoc://d1/img.png)" />)
+      await waitFor(() => {
+        const img = container.querySelector('img')
+        expect(img).toBeTruthy()
+        expect(img?.hasAttribute('width')).toBe(false)
+      })
+    } finally {
+      ;(window as unknown as { api: unknown }).api = undefined
+    }
+  })
+
+  it('enables the github-markdown-css dark sheet when the UI theme is dark (D-B)', () => {
+    useUIStore.getState().setTheme('dark')
+    render(<MarkdownPreview content="# t" />)
+    const light = document.getElementById('md-body-light') as HTMLStyleElement
+    const dark = document.getElementById('md-body-dark') as HTMLStyleElement
+    expect(light.disabled).toBe(true)
+    expect(dark.disabled).toBe(false)
+    useUIStore.getState().setTheme('light')
+  })
+
+  it('follows prefers-color-scheme when the UI theme is system (D-B)', () => {
+    const original = window.matchMedia
+    window.matchMedia = ((q: string) => ({
+      matches: true,
+      media: q,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia
+    useUIStore.getState().setTheme('system')
+    render(<MarkdownPreview content="# t" />)
+    const light = document.getElementById('md-body-light') as HTMLStyleElement
+    const dark = document.getElementById('md-body-dark') as HTMLStyleElement
+    expect(light.disabled).toBe(true) // OS dark → dark sheet active
+    expect(dark.disabled).toBe(false)
+    window.matchMedia = original
+    useUIStore.getState().setTheme('light')
+  })
+
+  it('falls back to light when the UI theme is system but matchMedia is unavailable (D-B)', () => {
+    const original = window.matchMedia
+    // No matchMedia at all: the `typeof window !== 'undefined' && !!window.matchMedia` guard
+    // must degrade to light rather than throwing.
+    delete (window as unknown as { matchMedia?: unknown }).matchMedia
+    try {
+      useUIStore.getState().setTheme('system')
+      render(<MarkdownPreview content="# t" />)
+      const light = document.getElementById('md-body-light') as HTMLStyleElement
+      const dark = document.getElementById('md-body-dark') as HTMLStyleElement
+      expect(light.disabled).toBe(false)
+      expect(dark.disabled).toBe(true)
+    } finally {
+      window.matchMedia = original
+      useUIStore.getState().setTheme('light')
+    }
+  })
+
+  it('still resolves the article theme when the stylesheets are missing (D-B)', () => {
+    // The two sheets are injected once per module; removing them forces the
+    // `if (light)` / `if (dark)` guards to take their null branch. The article's
+    // data-theme must still be resolved — that is what the CSS variables hang off.
+    document.getElementById('md-body-light')?.remove()
+    document.getElementById('md-body-dark')?.remove()
+    try {
+      useUIStore.getState().setTheme('dark')
+      const { container } = render(<MarkdownPreview content="# t" />)
+      expect(container.querySelector('article')?.getAttribute('data-theme')).toBe('dark')
+    } finally {
+      useUIStore.getState().setTheme('light')
+    }
+  })
+
+  it('leaves an image without a resolvable size untouched (R9)', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { imageSize: vi.fn(async () => null) },
+    }
+    try {
+      ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+        html: '<p><img src="appdoc://d1/img.png" alt="x"></p>',
+        mermaid: [],
+      }))
+      const { container } = render(<MarkdownPreview content="x" />)
+      await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
+      const img = container.querySelector('img') as HTMLImageElement
+      // A null result must NOT be written as width="0" (that would collapse the box).
+      expect(img.hasAttribute('width')).toBe(false)
+      expect(img.hasAttribute('height')).toBe(false)
+    } finally {
+      ;(window as unknown as { api: unknown }).api = undefined
+    }
+  })
+
+  it('never sends a non-appdoc image through the size IPC (R9)', async () => {
+    const imageSize = vi.fn(async () => ({ width: 1, height: 1 }))
+    ;(window as unknown as { api: unknown }).api = { documents: { imageSize } }
+    try {
+      ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+        html: '<p><img src="https://example.com/x.png" alt="x"></p>',
+        mermaid: [],
+      }))
+      const { container } = render(<MarkdownPreview content="x" />)
+      await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
+      expect(imageSize).not.toHaveBeenCalled()
+    } finally {
+      ;(window as unknown as { api: unknown }).api = undefined
+    }
+  })
+
+  it('fills an already-cached diagram immediately on re-parse instead of re-rendering it (D-E①)', async () => {
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<div data-mermaid-slot="0"></div>',
+      mermaid: [{ hash: 'h-cache-hit', code: 'graph TD;A-->B', slot: 0 }],
+    }))
+    const first = render(<MarkdownPreview content="a" />)
+    await waitFor(() =>
+      expect(first.container.querySelector('[data-mermaid-slot="0"] svg')).toBeTruthy(),
+    )
+    const mermaid = (await import('mermaid')).default as unknown as {
+      render: ReturnType<typeof vi.fn>
+    }
+    mermaid.render.mockClear()
+    cleanup()
+
+    // Second mount == a re-parse of the same source: the hash cache must fill the slot with
+    // the SAME svg, with no second mermaid render. This is the contract that keeps typing
+    // (and the export bake) from re-rendering unchanged diagrams.
+    const second = render(<MarkdownPreview content="a" />)
+    await waitFor(() =>
+      expect(second.container.querySelector('[data-mermaid-slot="0"] svg')).toBeTruthy(),
+    )
+    expect(mermaid.render).not.toHaveBeenCalled()
+  })
+
+  it('does NOT bake a placeholder that never intersects the viewport (D-E①)', async () => {
+    // Replace the global (always-intersecting) jsdom mock with one that hands us the
+    // callback, so we can drive the real decision with isIntersecting:false.
+    let ioCallback!: (entries: unknown[]) => void
+    const originalIO = (globalThis as unknown as { IntersectionObserver: unknown })
+      .IntersectionObserver
+    ;(globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver = class {
+      constructor(cb: (entries: unknown[]) => void) {
+        ioCallback = cb
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+      takeRecords(): unknown[] {
+        return []
+      }
+    }
+    try {
+      ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+        html: '<div data-mermaid-slot="0"></div>',
+        mermaid: [{ hash: 'h-offscreen', code: 'graph TD;A-->B', slot: 0 }],
+      }))
+      const { container } = render(<MarkdownPreview content="x" />)
+      await waitFor(() => expect(container.querySelector('[data-mermaid-slot="0"]')).toBeTruthy())
+      const mermaid = (await import('mermaid')).default as unknown as {
+        render: ReturnType<typeof vi.fn>
+      }
+      mermaid.render.mockClear()
+
+      ioCallback([
+        { isIntersecting: false, target: container.querySelector('[data-mermaid-slot="0"]') },
+      ])
+      await new Promise((r) => setTimeout(r, 10))
+
+      // The heart of D-E①: an off-screen diagram costs nothing.
+      expect(mermaid.render).not.toHaveBeenCalled()
+      expect(container.querySelector('[data-mermaid-slot="0"] svg')).toBeNull()
+    } finally {
+      ;(globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
+        originalIO
+    }
+  })
+
+  it('skips a mermaid placeholder whose slot is absent from the parsed slot list (D-E①)', async () => {
+    // A placeholder in the DOM with no matching MermaidSlot (stale/stale-ish patch): the
+    // loop must skip it rather than rendering an undefined slot.
+    ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+      html: '<div data-mermaid-slot="0"></div>',
+      mermaid: [],
+    }))
+    const { container } = render(<MarkdownPreview content="x" />)
+    await waitFor(() => expect(container.querySelector('[data-mermaid-slot="0"]')).toBeTruthy())
+    const mermaid = (await import('mermaid')).default as unknown as {
+      render: ReturnType<typeof vi.fn>
+    }
+    expect(mermaid.render).not.toHaveBeenCalled()
+  })
+
+  it('discards a parse cancelled while the intrinsic-size lookup is still in flight', async () => {
+    // Reaches the SECOND cancelled guard (the one after `await applyImageDimensions`): the
+    // earlier guard already ran before unmount, so only a cancellation that happens during the
+    // await can exercise it.
+    setExportHtml(sanitizeHtml(''))
+    let releaseSize!: () => void
+    const sizeGate = new Promise<{ width: number; height: number }>((r) => {
+      releaseSize = () => r({ width: 10, height: 20 })
+    })
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { imageSize: vi.fn(() => sizeGate) },
+    }
+    try {
+      ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
+        html: '<img src="appdoc://d1/img.png">',
+        mermaid: [],
+      }))
+      const { unmount } = render(<MarkdownPreview content="x" />)
+      // Let the parse start and reach the pending size lookup…
+      await new Promise((r) => setTimeout(r, 1))
+      unmount()
+      releaseSize()
+      await new Promise((r) => setTimeout(r, 10))
+      // …then it must be dropped, not written into a tree that no longer exists.
+      expect(getExportHtml()).not.toContain('<img')
+    } finally {
+      ;(window as unknown as { api: unknown }).api = undefined
+    }
+  })
+
+  it('discards a parse that resolves after unmount instead of writing into a dead tree', async () => {
+    let resolveLate!: (r: RenderResult) => void
+    ;(globalThis as any).__parseMarkdown = vi.fn(
+      () => new Promise<RenderResult>((res) => (resolveLate = res)),
+    )
+    const { unmount } = render(<MarkdownPreview content="a" />)
+    await new Promise((r) => setTimeout(r, 1))
+    unmount()
+    resolveLate({ html: '<p>LATE</p>', mermaid: [] })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(document.body.textContent ?? '').not.toContain('LATE')
+  })
+
+  it('does not report a parse failure that happens after unmount', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let rejectLate!: (e: unknown) => void
+    ;(globalThis as any).__parseMarkdown = vi.fn(
+      () => new Promise<RenderResult>((_res, rej) => (rejectLate = rej)),
+    )
+    const { unmount } = render(<MarkdownPreview content="a" />)
+    await new Promise((r) => setTimeout(r, 1))
+    unmount()
+    rejectLate(new Error('late boom'))
+    await new Promise((r) => setTimeout(r, 10))
+    // The cancelled guard must swallow it — an unmounted preview has no user to tell.
+    expect(errSpy).not.toHaveBeenCalledWith('[MarkFlow] Parse failed:', expect.anything())
+    errSpy.mockRestore()
   })
 })

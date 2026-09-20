@@ -197,6 +197,42 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     expect(where.text).toContain('second paragraph')
   })
 
+  // ADR 0019 — the copy payload must carry the diagram at all. D-E① moved mermaid baking
+  // out of the HTML string, which made a whole-article copy come out as empty placeholders.
+  //
+  // SCOPE: this only guards "the diagram is IN the payload". R13.1 ("the diagram is VISIBLE
+  // after pasting into Word") still needs plan-04 D13/D14 (rasterize to a PNG `data:` URL),
+  // because Word does not render inline `<svg>` (plan 04 §2.2 F3). That decision is still
+  // open, so the combined fidelity case below stays a `fixme`.
+  test('preview: menu Copy carries the mermaid diagram (ADR 0019)', async () => {
+    const { page, electronApp } = handle
+    await waitForAppReady(page)
+    await openDoc(page, '# T\n\nA paragraph.\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n')
+
+    // The diagram is baked in the preview…
+    await expect(page.locator('[data-mermaid-slot="0"] svg')).toBeVisible({ timeout: 30_000 })
+
+    await page.getByTestId('view-preview').click()
+    const article = page.locator('.markdown-preview')
+    await expect(article).toBeVisible()
+    await article.locator('p').first().click({ button: 'right' })
+    await page.getByTestId('preview-copy').click()
+
+    const clip = await electronApp.evaluate(async ({ clipboard }) => {
+      const items = await clipboard.read()
+      const item = items[0]
+      let html = ''
+      if (item && item.types.includes('text/html')) {
+        const blob = (await item.getType('text/html')) as Blob
+        html = await blob.text()
+      }
+      return { html }
+    })
+    // …so it must be in the clipboard payload too (and stripped of internal markers).
+    expect(clip.html).toContain('<svg')
+    expect(clip.html).not.toContain('data-mermaid-slot')
+  })
+
   // BUG 3 — menu Copy must land a styled, Word-ready payload.
   // FIXME: intentionally red until plan 04 (docs.local/plan-preview-refactor-04-copy-fidelity)
   // is implemented: it asserts the post-fix target state (mermaid rendered in the payload,

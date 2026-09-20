@@ -36,6 +36,10 @@ vi.mock('../../lib/exportStore', () => ({
   getExportHtml: () => (globalThis as any).__getExportHtml(),
   setExportHtml: () => {},
   setExportContent: () => {},
+  // ADR 0019: the export dialog bakes every diagram before writing, so it also reads the
+  // stashed mermaid sources.
+  getExportMermaidSlots: () => (globalThis as any).__getExportMermaidSlots?.() ?? [],
+  setExportMermaidSlots: () => {},
 }))
 
 beforeEach(() => {

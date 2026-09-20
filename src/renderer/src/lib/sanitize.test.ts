@@ -88,33 +88,9 @@ describe('sanitizeHtml — mermaid & data attributes', () => {
     expect(out).toContain('data-mermaid-slot="0"')
   })
 
-  it('retains the baked diagram source (data-mermaid-source)', () => {
-    // The preview URI-encodes the source (MarkdownPreview.tsx) precisely because the
-    // encoded form survives sanitization while the raw form does not see below.
-    const encoded = encodeURIComponent('graph TD;A-->B')
-    const out = sanitizeHtml(`<div data-mermaid-slot="0" data-mermaid-source="${encoded}"></div>`)
-    expect(out).toContain('data-mermaid-slot="0"')
-    expect(out).toContain('data-mermaid-source')
-    expect(decodeURIComponent(encoded)).toBe('graph TD;A-->B')
-  })
-
-  // CHARACTERIZATION (why URI-encoding is required): the HTML parser decodes entities
-  // BEFORE DOMPurify inspects the attribute, so `&gt;` is already a literal `>` here,
-  // and DOMPurify drops an attribute whose value contains `-->`. Mermaid flowcharts are
-  // full of `A-->B`, so an HTML-escaped source was silently stripped — which is exactly
-  // why "Copy diagram source" used to be permanently greyed out.
-  it('strips an HTML-escaped (but not URI-encoded) diagram source', () => {
-    const out = sanitizeHtml(
-      '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A--&gt;B"></div>',
-    )
-    expect(out).toContain('data-mermaid-slot="0"')
-    expect(out).not.toContain('data-mermaid-source')
-  })
-
-  it('keeps a diagram source that merely contains -- (no comment terminator)', () => {
-    const out = sanitizeHtml('<div data-mermaid-source="a--b"></div>')
-    expect(out).toContain('data-mermaid-source="a--b"')
-  })
+  // NOTE: `data-mermaid-source` was removed in plan-02 D3/D9 (the "Copy diagram source"
+  // menu item no longer exists), so there is no longer a diagram-source attribute to
+  // retain or strip. The placeholder keeps only `data-mermaid-slot` (tested below).
 
   it('retains mermaid SVG structure including <style> and inline styles', () => {
     const mermaid =

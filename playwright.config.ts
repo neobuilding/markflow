@@ -61,7 +61,11 @@ export default defineConfig({
     {
       name: 'electron-perf-gate',
       testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf'),
-      testMatch: /switch-perf-gate\.e2e\.spec\.ts$/,
+      // Both gates in one project: the chokidar folder-switch gate and the large-document
+      // gate. The large-document one IS the diagnostic spec (large-doc-perf) — it carries
+      // the calibrated thresholds itself, so gate and diagnostic can never drift apart
+      // (the same reason perf-fixture.ts is shared by switch-perf and its gate).
+      testMatch: /(?:switch-perf-gate|large-doc-perf)\.e2e\.spec\.ts$/,
       timeout: 600_000,
       // Inherits the global retries (1 on CI) so a noisy shared runner cannot
       // turn a one-off scheduling hiccup into a red build.

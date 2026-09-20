@@ -49,7 +49,7 @@ export function sanitizeHtml(html: string): SanitizedHtml {
   const out = DOMPurify.sanitize(html, {
     // mermaid placeholder attribute; other data-* are allowed by DOMPurify's
     // default ALLOW_DATA_ATTR.
-    ADD_ATTR: ['data-mermaid-slot', 'data-mermaid-source'],
+    ADD_ATTR: ['data-mermaid-slot'],
     // Default URI whitelist + the app's own appdoc: scheme (see above).
     ALLOWED_URI_REGEXP,
     // Allow the SVG <use> references KaTeX / mermaid need, plus KaTeX's MathML

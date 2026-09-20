@@ -5,7 +5,8 @@
 // (src.scrollHeight - src.clientHeight)` projected onto the other side's absolute
 // scrollTop. Ratio mapping is inherently continuous and jump-free, and is immune to
 // height jumps from uneven block density / async mermaid rendering / content-visibility
-// (in this design mermaid is baked fully before injection, so there is no async growth).
+// (the preview bakes each diagram lazily as it scrolls into view, so async growth is confined
+// to the visible area rather than the whole document).
 // This is the industry-standard approach (used by VS Code / Typora / Obsidian).
 //
 // Echo guard: when one side is scrolled programmatically we set the syncedPane lock and

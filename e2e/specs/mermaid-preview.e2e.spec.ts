@@ -56,14 +56,13 @@ test.describe('mermaid preview', () => {
     // mermaid module was fetched, initialised and executed in the renderer.
     const wrapper = page.locator('[data-mermaid-slot="0"]')
     await expect(wrapper.locator('svg')).toBeVisible({ timeout: 30_000 })
-    // No failure placeholder: the diagram rendered for real.
+    // No failure placeholder: the diagram rendered for real — the lazy import, the
+    // baking step and the sanitization gate all ran end-to-end in the Electron renderer.
     await expect(page.locator('.mermaid-skeleton')).toHaveCount(0)
-    // The wrapper keeps the raw source for "Copy diagram source" (URI-encoded, because
-    // a decoded `-->` would make DOMPurify drop the attribute). Its presence proves the
-    // lazy mermaid import, the baking step and the sanitization gate all ran for real.
-    const src = await wrapper.getAttribute('data-mermaid-source')
-    expect(src).toBeTruthy()
-    expect(decodeURIComponent(src as string)).toContain('graph TD')
+    // The "Copy diagram source" menu item was removed in plan-02 D3/D9, so the placeholder
+    // carries NO data-mermaid-source attribute. Asserting its absence guards against an
+    // accidental reintroduction (the unit suite makes the same assertion on the DOM).
+    await expect(wrapper).not.toHaveAttribute('data-mermaid-source')
   })
 
   test('a malformed diagram degrades to the skeleton without breaking the preview', async () => {

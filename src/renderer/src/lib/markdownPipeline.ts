@@ -110,7 +110,8 @@ md.use(texmath, {
 })
 
 // ─── Mermaid extraction: replace ```mermaid fences with placeholder <div data-mermaid-slot="{i}">,
-//   and collect the source into env.mermaid (plain string, no DOM needed). The renderer bakes SVG before injection. ───
+//   and collect the source into env.mermaid (plain string, no DOM needed). The renderer bakes
+//   SVG AFTER injection: lazily in the preview, completely for export / print / copy (ADR 0019). ───
 // markdown-it always provides a built-in fence rule, so no fallback is needed.
 const defaultFence = md.renderer.rules.fence!
 

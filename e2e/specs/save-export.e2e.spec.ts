@@ -150,6 +150,30 @@ test.describe('save and export', () => {
     expect(written).toContain(ZH)
   })
 
+  // ADR 0019: the preview bakes mermaid LAZILY (one placeholder at a time, on scroll), but
+  // an export must contain the WHOLE document. Before ADR 0019 the exporter read the same
+  // canonical HTML and silently wrote empty `<div data-mermaid-slot="0">` blocks — every
+  // diagram vanished from the exported file (and from print, which shares the builder).
+  test('exported HTML carries the baked mermaid diagram (ADR 0019)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    const mdPath = await openDiskDoc(
+      page,
+      '# Diagram\n\nA paragraph.\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n',
+      'mermaid-export',
+    )
+    // Sanity: the diagram really renders in this build (a broken mermaid chunk would make
+    // the export assertion below pass vacuously if we asserted only on the placeholder).
+    await expect(page.locator('[data-mermaid-slot="0"] svg')).toBeVisible({ timeout: 30_000 })
+
+    const htmlPath = await exportViaDialog(page, mdPath)
+    const written = readFileSync(htmlPath, 'utf-8')
+    expect(written).toContain('<svg')
+    // The placeholder must be FILLED, not left empty: `<div …slot="0"…><svg …>`.
+    expect(written).toMatch(/<div[^>]*data-mermaid-slot="0"[^>]*>\s*<svg/)
+  })
+
   test('frontmatter lang wins over content detection in the exported HTML', async () => {
     const { page } = handle
     await waitForAppReady(page)

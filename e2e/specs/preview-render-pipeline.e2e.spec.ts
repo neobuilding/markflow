@@ -89,6 +89,26 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
     await expect(page.locator('article.markdown-preview > p').first()).toBeVisible()
   })
 
+  // R12① (plan-03 §4.2): the preview article is the document semantic root — role="document"
+  // always, and a leading frontmatter `lang:` flows to the article's lang attribute.
+  test('the preview <article> exposes role="document" with no lang by default (R12①)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await openDoc(page, '# Heading\n\nA paragraph.\n')
+
+    const article = page.locator('article.markdown-preview')
+    await expect(article).toHaveAttribute('role', 'document')
+    await expect(article).not.toHaveAttribute('lang')
+  })
+
+  test('a frontmatter lang is mirrored onto the preview article (R12①)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await openDoc(page, '---\nlang: zh-CN\n---\n\n# Heading\n\nA paragraph.\n')
+
+    await expect(page.locator('article.markdown-preview')).toHaveAttribute('lang', 'zh-CN')
+  })
+
   // ── Stage-1 follow-ups (N3 / N4 / N8): incremental-patch REALLY reuses nodes ──
 
   test('a relative image keeps its appdoc:// src through the sanitize gate', async () => {
@@ -177,7 +197,12 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
     // then open it through the same import + UI-store path as every other test in this suite.
     const content = readFileSync(DIAGRAM_FIXTURE, 'utf-8')
     await openDoc(page, content, { editable: true })
-    // All four diagrams baked.
+    // D-E① renders diagrams LAZILY: a placeholder only bakes once it intersects the preview
+    // viewport (IntersectionObserver with rootMargin 200px — MarkdownPreview.tsx). Slot 3 is the
+    // LAST of the four diagrams and sits below the fold when the document opens, so it must be
+    // scrolled into view before it can bake at all. (Only slot 0/1 are on-screen at open, which is
+    // why the mermaid suites above, asserting those slots, never needed this step.)
+    await page.locator('[data-mermaid-slot="3"]').scrollIntoViewIfNeeded()
     await expect(page.locator('[data-mermaid-slot="3"] svg')).toBeVisible({ timeout: 60_000 })
 
     // Sample the root width every frame: ANY change is the visible sideways jolt.

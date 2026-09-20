@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, waitFor, within, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from '../ui/tooltip'
@@ -1837,17 +1837,36 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     // focus() can be swallowed (the real case: the context menu has not finished closing), so
     // the grab retries — but a permanently unfocusable input must not reschedule endlessly.
     const focusSpy = vi.spyOn(HTMLInputElement.prototype, 'focus').mockImplementation(() => {})
-    const rafSpy = vi.spyOn(window, 'requestAnimationFrame')
+    // The frames are driven MANUALLY instead of letting the machine draw them: the previous
+    // assertion counted how many frames happened to land in 200ms, which is a load-dependent
+    // number, not a property of the code.
+    const queue: FrameRequestCallback[] = []
+    const rafSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((cb: FrameRequestCallback) => {
+        queue.push(cb)
+        return queue.length
+      })
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
     fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
     await screen.findByTestId('folder-create-row')
-    await waitFor(() => expect(rafSpy.mock.calls.length).toBeGreaterThanOrEqual(8))
-    // Past the bounded window the retrying has stopped: no new frames are being requested.
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    const seen = rafSpy.mock.calls.length
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    expect(rafSpy.mock.calls.length).toBe(seen)
+    await waitFor(() => expect(queue.length).toBeGreaterThan(0))
+    // Run the retry loop one frame at a time until it stops asking for more.
+    let drained = 0
+    while (queue.length > 0 && drained < 100) {
+      const cb = queue.shift()!
+      drained++
+      await act(async () => {
+        cb(performance.now())
+      })
+    }
+    // Bounded (Sidebar.tsx caps this grab at 8 retries)…
+    expect(drained).toBeGreaterThan(0)
+    expect(drained).toBeLessThanOrEqual(8)
+    // …and — the actual anti-bug property — it STOPPED: an input that can never take focus
+    // must not reschedule a frame loop for the lifetime of the row.
+    expect(queue.length).toBe(0)
     focusSpy.mockRestore()
     rafSpy.mockRestore()
   })
@@ -1857,7 +1876,15 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     // then falls back to clearing focusPath (the `else setFocusPath(null)` branch) instead of
     // rescheduling forever. Renaming the real file row to a path the static tree never gains
     // means the row is never found, so the fallback runs. No shared fixture is mutated.
-    const rafSpy = vi.spyOn(window, 'requestAnimationFrame')
+    // Same manual frame driver as above: `expect(frames within 400ms >= 10)` measured the
+    // machine's frame rate and flaked at 9 under a full-suite run.
+    const queue: FrameRequestCallback[] = []
+    const rafSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((cb: FrameRequestCallback) => {
+        queue.push(cb)
+        return queue.length
+      })
     mount()
     const row = screen.getByTestId('doc-item')
     row.focus()
@@ -1866,9 +1893,21 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     fireEvent.change(input, { target: { value: 'renamed.md' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(renameFileMock).toHaveBeenCalled())
-    // Let the real rAF loop exhaust its 10 retries, so the fallback branch executes.
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    expect(rafSpy.mock.calls.length).toBeGreaterThanOrEqual(10)
+    await waitFor(() => expect(queue.length).toBeGreaterThan(0))
+    // Drive the loop to exhaustion so the `else setFocusPath(null)` fallback runs.
+    let drained = 0
+    while (queue.length > 0 && drained < 100) {
+      const cb = queue.shift()!
+      drained++
+      await act(async () => {
+        cb(performance.now())
+      })
+    }
+    // Bounded (Sidebar.tsx caps this grab at 10 retries)…
+    expect(drained).toBeGreaterThan(0)
+    expect(drained).toBeLessThanOrEqual(10)
+    // …and it gave up instead of rescheduling forever.
+    expect(queue.length).toBe(0)
     rafSpy.mockRestore()
   })
 

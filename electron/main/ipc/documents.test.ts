@@ -1907,6 +1907,76 @@ describe('documents IPC — resolve-appdoc (能力 3)', () => {
   })
 })
 
+describe('documents IPC — image-size (R9, plan-03 §4.4)', () => {
+  const dir = join(stableDocsRoot, 'imgsz')
+  const filePath = join(dir, 'note.md')
+  beforeEach(() => {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(filePath, '# note')
+    docs.set('imgsz1', {
+      id: 'imgsz1',
+      filePath,
+      encoding: 'utf-8',
+      encodingConfidence: 1,
+      title: 't',
+      content: '',
+      memoryOnly: false,
+      folderPath: dir,
+      updatedAt: 1,
+    })
+    // 1x1 transparent PNG (decodable by image-size without reading the whole file).
+    writeFileSync(
+      join(dir, 'px.png'),
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    )
+    writeFileSync(join(dir, 'bad.bin'), 'not an image')
+  })
+  it('resolves intrinsic dimensions of a local image', async () => {
+    expect(await call('documents:image-size', 'appdoc://imgsz1/px.png')).toEqual({
+      width: 1,
+      height: 1,
+    })
+  })
+  it('returns null for a missing file', async () => {
+    expect(await call('documents:image-size', 'appdoc://imgsz1/missing.png')).toBeNull()
+  })
+  it('returns null when the path escapes the document directory', async () => {
+    expect(await call('documents:image-size', 'appdoc://imgsz1/../escape.png')).toBeNull()
+  })
+  it('returns null for an unknown document', async () => {
+    expect(await call('documents:image-size', 'appdoc://ghost/px.png')).toBeNull()
+  })
+  it('returns null for an undecodable file', async () => {
+    expect(await call('documents:image-size', 'appdoc://imgsz1/bad.bin')).toBeNull()
+  })
+  it('returns null for an image whose header decodes to zero dimensions', async () => {
+    // Structurally valid PNG signature + IHDR, but width/height are 0. image-size parses it,
+    // so this takes the `!dims?.width || !dims?.height` branch (not the catch): a 0x0 box
+    // would collapse the layout, so it must be rejected (and not cached) rather than handed
+    // to the renderer as width="0".
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const ihdr = Buffer.concat([
+      Buffer.from([0x00, 0x00, 0x00, 0x0d]), // IHDR length
+      Buffer.from('IHDR'),
+      Buffer.from([0, 0, 0, 0]), // width = 0
+      Buffer.from([0, 0, 0, 0]), // height = 0
+      Buffer.from([8, 0, 0, 0, 0]), // bit depth / colour type / compression / filter / interlace
+      Buffer.from([0, 0, 0, 0]), // CRC (image-size does not verify it)
+    ])
+    writeFileSync(join(dir, 'zero.png'), Buffer.concat([sig, ihdr]))
+    expect(await call('documents:image-size', 'appdoc://imgsz1/zero.png')).toBeNull()
+  })
+  it('caches the result by path (second call hits the cache, no re-read)', async () => {
+    const a = await call('documents:image-size', 'appdoc://imgsz1/px.png')
+    const b = await call('documents:image-size', 'appdoc://imgsz1/px.png')
+    expect(a).toEqual({ width: 1, height: 1 })
+    expect(b).toEqual(a)
+  })
+})
+
 describe('documents IPC — set-eol (能力 6)', () => {
   const dir = join(stableDocsRoot, 'eol')
   const filePath = join(dir, 'file.md')

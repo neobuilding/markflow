@@ -12,6 +12,7 @@ import { ExportDialog } from './components/editor/ExportDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { buildStandaloneHtml, resolveTheme } from './lib/export'
 import { getExportHtml } from './lib/exportStore'
+import { prepareExportHtml } from './lib/exportBake'
 import { routeSelectAll, createSelectAllKeydownHandler } from './lib/selectAllRouter'
 import { queryClient, DOCS_KEY } from './lib/queryClient'
 import { isDirInFolder } from './lib/utils'
@@ -146,6 +147,9 @@ export default function App(): React.ReactElement {
       setPrinting(true)
       window.api.menu.setPrinting(true)
       try {
+        // ADR 0019: bake EVERY diagram into the canonical HTML first — the preview only
+        // renders the ones that scrolled into view, and print must be complete.
+        await prepareExportHtml()
         const theme = resolveTheme('current', useUIStore.getState().theme)
         const html = await buildStandaloneHtml({ theme, embedImages: true })
         await window.api.export.print(html)

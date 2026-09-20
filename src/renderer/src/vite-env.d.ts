@@ -56,6 +56,9 @@ export interface Api {
     // null when the URL is malformed, escapes the document directory, or the file
     // does not exist.
     resolveAppdoc: (src: string) => Promise<string | null>
+    // Resolve intrinsic dimensions of a local image (R9). Returns null when the URL is
+    // malformed, escapes the document directory, or the file does not exist / is undecodable.
+    imageSize: (src: string) => Promise<{ width: number; height: number } | null>
     // Set the line endings of a file on disk (, destructive write)
     setEol: (filePath: string, eol: '\r\n' | '\n') => Promise<void>
     // Detect the encoding of a file on disk

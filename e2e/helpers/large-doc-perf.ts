@@ -20,14 +20,14 @@ import type { ElectronApplication, Page } from 'playwright'
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /**
- * Self-contained performance fixture (see plan §8 Step 2). The fixture doc `demo-large.md`
+ * Self-contained performance fixture (see plan §8 Step 2). The fixture doc `demo-large.en.md`
  * is a committed copy of `examples/demo-large.en.md` (produced by `examples/generate-large.mjs`,
  * which also emits the Chinese sibling `examples/demo-large.zh-CN.md`). The whole directory
  * (md + assets, including the R9 big image `pic-tall.png`) is copied to a temp scratch before
  * import, so typing can never touch the committed copy.
  */
 export const E2E_FIXTURE_DIR = join(PROJECT_ROOT, 'e2e', 'fixtures', 'large-doc')
-export const LARGE_DOC_NAME = 'demo-large.md'
+export const LARGE_DOC_NAME = 'demo-large.en.md'
 
 /** Run artifacts go under reports/ (git-ignored) — never dirty the work tree. */
 export const RESULTS_DIR = join(PROJECT_ROOT, 'reports', 'perf')
@@ -43,7 +43,10 @@ export interface LargeDocMetrics {
   // ── structure actually rendered (guards against a vacuous perf run) ──
   /** `[data-mermaid-slot]` placeholders the pipeline emitted. */
   mermaidSlots: number
-  /** Placeholders that ended up with an <svg> (pre-D-E: all of them). */
+  /** Placeholders that ended up with an <svg>. Pre-D-E this was ALL of them; with D-E① lazy
+   *  render only the ones that entered the viewport bake, so this must stay far BELOW
+   *  `mermaidSlots` — a value close to it means eager baking came back (the exact
+   *  regression D-E① exists to prevent). */
   mermaidRendered: number
   /** Local (`appdoc://`) images in the preview. */
   localImages: number
@@ -55,9 +58,10 @@ export interface LargeDocMetrics {
   // ── timings (wall-clock ms, measured from activating the document) ──
   /** Activation -> first preview text on screen. */
   firstContentMs: number
-  /** Activation -> the FIRST (top-most) diagram is an <svg>. Comparable across
-   *  the D-E change, unlike "all diagrams", which lazy-render will (by design)
-   *  never reach for off-screen charts. */
+  /** Activation -> the FIRST (top-most) diagram is an <svg>. Since D-E① renders lazily, the
+   *  placeholder must be scrolled into view first (the fixture's first diagram sits below the
+   *  two 2000px R9 probe images), so this window includes that programmatic scroll. Reported
+   *  for context only — D-E① changed its meaning, so it is NOT gated. */
   firstMermaidMs: number
   /** Activation -> every local image decoded. */
   localImagesMs: number

@@ -90,6 +90,14 @@ describe('preload documentsApi', () => {
     })
   })
 
+  it('imageSize invokes documents:image-size with the url', () => {
+    documentsApi.imageSize('appdoc://d1/im.png')
+    expect(invokes[0]).toEqual({
+      channel: 'documents:image-size',
+      args: ['appdoc://d1/im.png'],
+    })
+  })
+
   it('setEol invokes documents:set-eol with the path and eol', () => {
     documentsApi.setEol('/a.md', '\r\n')
     expect(invokes[0]).toEqual({ channel: 'documents:set-eol', args: ['/a.md', '\r\n'] })

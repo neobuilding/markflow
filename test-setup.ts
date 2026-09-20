@@ -68,6 +68,45 @@ if (typeof Element !== 'undefined') {
   }
 }
 
+// jsdom does not implement IntersectionObserver, but MarkdownPreview (D-E① lazy mermaid
+// render) constructs one on mount. Without a polyfill, any component suite that mounts
+// MarkdownPreview (e.g. EditorPane) throws "IntersectionObserver is not defined". Provide a
+// mock that reports every observed element as immediately intersecting, so diagrams render
+// synchronously under jsdom — matching the visibility assumption of the real renderer.
+if (
+  typeof (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver === 'undefined'
+) {
+  class IntersectionObserverMock {
+    private readonly cb: IntersectionObserverCallback
+    constructor(cb: IntersectionObserverCallback) {
+      this.cb = cb
+    }
+    observe(el: Element): void {
+      this.cb(
+        [
+          {
+            isIntersecting: true,
+            target: el,
+            boundingClientRect: {} as DOMRect,
+            intersectionRatio: 1,
+            intersectionRect: {} as DOMRect,
+            rootBounds: null,
+            time: 0,
+          } as IntersectionObserverEntry,
+        ],
+        this as unknown as IntersectionObserver,
+      )
+    }
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return []
+    }
+  }
+  ;(globalThis as { IntersectionObserver?: unknown }).IntersectionObserver =
+    IntersectionObserverMock
+}
+
 // The suite creates real temp dirs under %TEMP% (folder-watcher / open-folder / document
 // / export fixtures). Vitest never cleans %TEMP%, so reclaim every path allocated through
 // mkTestDir() when each test file finishes. Registering the hook in this setup file means

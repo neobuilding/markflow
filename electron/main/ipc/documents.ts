@@ -1,6 +1,7 @@
 import type { App, IpcMain } from 'electron'
 import { shell } from 'electron'
 import { join, dirname, basename, extname, isAbsolute, resolve, sep } from 'node:path'
+import { promises as fsPromises } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
 import iconv from 'iconv-lite'
@@ -26,6 +27,7 @@ import {
   getDocumentByFilePath as storeGetByPath,
 } from '../model/documentStore'
 import { resolveAppdocPath } from './appdoc'
+import { imageSize } from 'image-size'
 // Case-sensitivity rule (pure) and its main-process edge detection. See
 // docs/adr/0014-*.md: the rule lives in shared/fileUtils.ts and takes the detected
 // flag as an argument so no platform check is baked into the rule itself.
@@ -836,6 +838,40 @@ export function registerDocumentHandlers(
   ipcMain.handle('documents:resolve-appdoc', (_event, src: string) => {
     try {
       return resolveAppdocPath(src)
+    } catch {
+      return null
+    }
+  })
+
+  // R9 (plan-03 §4.4): resolve intrinsic image dimensions without decoding the whole
+  // file — we read only the header (capped at MAX_HEADER_BYTES) and feed it to image-size.
+  // Cached by path so repeated keystrokes don't re-read disk. Returns null for malformed /
+  // escaping / missing URLs. The read goes through the standard `node:fs` boundary (not
+  // image-size's internal reader) so the handler stays mockable under the unit suite's
+  // in-memory fs.
+  const imageSizeCache = new Map<string, { width: number; height: number }>()
+  const MAX_HEADER_BYTES = 512 * 1024
+  ipcMain.handle('documents:image-size', async (_event, src: string) => {
+    const p = resolveAppdocPath(src)
+    if (!p) return null
+    const cached = imageSizeCache.get(p)
+    if (cached) return cached
+    try {
+      const handle = await fsPromises.open(p, 'r')
+      try {
+        const input = Buffer.alloc(MAX_HEADER_BYTES)
+        const { bytesRead } = await handle.read(input, 0, MAX_HEADER_BYTES, 0)
+        const dims = imageSize(input.subarray(0, bytesRead))
+        if (!dims?.width || !dims?.height) {
+          imageSizeCache.delete(p)
+          return null
+        }
+        const size = { width: dims.width, height: dims.height }
+        imageSizeCache.set(p, size)
+        return size
+      } finally {
+        await handle.close()
+      }
     } catch {
       return null
     }

@@ -1,6 +1,7 @@
 // Rich-text copy for the preview pane (Plan 02 §4).
 //
 import { getExportHtml } from './exportStore'
+import { prepareExportHtml, needsExportBake } from './exportBake'
 //
 // Strategy (decision D10 = option iii): we never construct the clipboard payload on the
 // main-process side. Instead the actual write happens inside the `copy` event handler
@@ -17,20 +18,14 @@ import { getExportHtml } from './exportStore'
 
 // Attributes that are internal to markflow's render pipeline and must not leak into the
 // rich-text HTML the user pastes into Word / Confluence / Excel / Notion.
-// Phase 1 (§5.5) lists five internal markers: data-line, data-mermaid-slot,
-// data-mermaid-source, data-lang, data-baked. A sixth is `tabindex`: markdown-it-anchor's
-// defaults set `tabIndex: "-1"` on EVERY heading (we call `md.use(anchor)` with no options),
-// purely so permalink anchors can take focus — author-invisible noise that would otherwise be
-// pasted onto every heading. Verified against the real clipboard in
-// e2e/specs/context-menu.e2e.spec.ts ("…lands a clean payload").
-const INTERNAL_ATTRS = [
-  'data-line',
-  'data-mermaid-source',
-  'data-mermaid-slot',
-  'data-lang',
-  'data-baked',
-  'tabindex',
-]
+// Phase 1 (§5.5) lists four internal markers: data-line, data-mermaid-slot, data-lang,
+// data-baked. A fifth is `tabindex`: markdown-it-anchor's defaults set `tabIndex: "-1"` on
+// EVERY heading (we call `md.use(anchor)` with no options), purely so permalink anchors can
+// take focus — author-invisible noise that would otherwise be pasted onto every heading.
+// Verified against the real clipboard in e2e/specs/context-menu.e2e.spec.ts ("…lands a clean payload").
+// (data-mermaid-source was removed per plan-02 D3/D9 — the "Copy diagram source" menu item no
+// longer exists, so its attribute must not be reintroduced.)
+const INTERNAL_ATTRS = ['data-line', 'data-mermaid-slot', 'data-lang', 'data-baked', 'tabindex']
 
 // Remove the pipeline's internal attributes from a copy payload so pasted HTML is clean
 // (R6). Operates on a detached node so it never touches the live preview DOM.
@@ -110,6 +105,14 @@ export function consumePendingCopy(): { text: string; html: string } | null {
 // paths converge on that single handler, so output is identical (R3). The current selection
 // is restored afterwards so a right-click "Copy" never leaves the whole article selected.
 export async function requestRichCopy(article: HTMLElement): Promise<void> {
+  // ADR 0019: complete the canonical HTML BEFORE building the payload, otherwise a
+  // whole-article copy carries empty mermaid placeholders (the preview bakes lazily, so
+  // only on-screen diagrams exist in the DOM). Guarded by the synchronous check so a
+  // document WITHOUT diagrams never yields here: everything after this point must stay
+  // synchronous for the `copy` event to see it.
+  // The keyboard path cannot await at all — it reads the same cache, which the preview
+  // completes in the background right after each parse.
+  if (needsExportBake()) await prepareExportHtml()
   const { text, html } = buildPreviewCopyPayload(article)
   let finalHtml = html
   // Only inline when the fragment actually contains an <img>: avoids needless IPC on text /

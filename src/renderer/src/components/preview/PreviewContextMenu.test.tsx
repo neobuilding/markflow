@@ -110,7 +110,7 @@ describe('buildPreviewCopyPayload', () => {
     const el = document.createElement('div')
     el.innerHTML =
       '<h1 data-line="0">T</h1><table data-line="2"><tr><td>a</td></tr></table>' +
-      '<div data-mermaid-slot="0" data-mermaid-source="x"><svg>g</svg></div>'
+      '<div data-mermaid-slot="0"><svg>g</svg></div>'
     const { html } = buildPreviewCopyPayload(el)
     expect(html).toContain('<h1')
     expect(html).toContain('<table')
@@ -171,7 +171,7 @@ describe('stripInternalAttrs', () => {
       '<h1 id="keep-me" tabindex="-1">H</h1>' +
         '<p data-line="1" data-baked="1">x</p>' +
         '<pre data-lang="ts"><code>y</code></pre>' +
-        '<div data-mermaid-slot="0" data-mermaid-source="z"></div>',
+        '<div data-mermaid-slot="0"></div>',
     )
     expect(out).not.toContain('data-line')
     expect(out).not.toContain('data-lang')
@@ -428,7 +428,7 @@ describe('PreviewContextMenu — image (bitmap)', () => {
 
 describe('PreviewContextMenu — image (mermaid SVG)', () => {
   const svg = '<svg>chart</svg>'
-  const wrapper = `<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B">${svg}</div>`
+  const wrapper = `<div data-mermaid-slot="0">${svg}</div>`
 
   it('Copy Image rasterizes the SVG to a PNG data URL and copies it', async () => {
     mountCustom(wrapper)
@@ -468,7 +468,7 @@ describe('PreviewContextMenu — image (mermaid SVG)', () => {
   it('handles a mermaid slot that rendered no <svg> (empty vector fallback)', async () => {
     // A wrapper carrying the slot marker but no baked SVG: `svgEl` is null, so `mermaidSvg`
     // falls back to the wrapper's innerHTML (here empty) and the vector items are disabled.
-    mountCustom('<div data-mermaid-slot="0" data-mermaid-source="graph TD;A-->B"></div>')
+    mountCustom('<div data-mermaid-slot="0"></div>')
     fireEvent.contextMenu(document.querySelector('[data-mermaid-slot]') as HTMLElement)
     expect(await screen.findByTestId('preview-copy-svg')).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByTestId('preview-save-image-as')).toHaveAttribute('aria-disabled', 'true')
