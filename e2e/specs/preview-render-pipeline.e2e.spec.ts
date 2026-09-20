@@ -1,8 +1,19 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { writeFileSync, readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { mkTempDir } from '../helpers/temp'
+
+// Self-contained test data: a committed copy of examples/demo.en.md (4 mermaid diagrams)
+// lives under e2e/fixtures so this spec never depends on the examples/ tree.
+const DIAGRAM_FIXTURE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'fixtures',
+  'preview-render-pipeline',
+  'diagrams.md',
+)
 
 // Plan 01 stage 1 (preview render-pipeline refactor) — real-renderer acceptance.
 //
@@ -151,7 +162,9 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
     expect(after).toBe(before)
   })
 
-  // demo.md ships 4 diagrams. Re-baking them makes mermaid append its temporary container
+  // The committed e2e fixture (e2e/fixtures/preview-render-pipeline/diagrams.md — a copy of
+  // examples/demo.en.md) ships 4 diagrams. Re-baking them makes mermaid append its temporary
+  // container
   // straight to document.body (mermaid.core.mjs renderDiagram: `root = select("body")`).
   // If the ROOT can scroll, that overflow flips a top-level scrollbar on for a frame,
   // #root loses the scrollbar's width and the WHOLE shell (both panes' scrollbars, the
@@ -160,16 +173,10 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    const id = await page.evaluate(() =>
-      window.api.documents.import('examples/demo.md').then((d: any) => d?.id),
-    )
-    expect(id).toBeTruthy()
-    await page.evaluate((docId) => {
-      const w = window as any
-      w.__uiStore.getState().setActiveDocumentId(docId)
-      w.__uiStore.getState().setEditable(true)
-      w.__queryClient.invalidateQueries({ queryKey: ['documents'] })
-    }, id)
+    // Self-contained: read the doc from e2e's own test-data dir (no dependency on examples/),
+    // then open it through the same import + UI-store path as every other test in this suite.
+    const content = readFileSync(DIAGRAM_FIXTURE, 'utf-8')
+    await openDoc(page, content, { editable: true })
     // All four diagrams baked.
     await expect(page.locator('[data-mermaid-slot="3"] svg')).toBeVisible({ timeout: 60_000 })
 

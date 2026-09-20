@@ -20,3 +20,10 @@ Single-context: one `CONTEXT.md` at the root plus `docs/adr/`. See `docs/agents/
 
 Path-shape and filesystem rules that keep the unit suite deterministic across Windows and Linux
 CI. See `docs/agents/testing.md`.
+
+## Language convention
+
+Source code, comments, commit messages, test code, and test fixtures (e2e fixtures under
+`e2e/fixtures/`) are English only. Chinese is reserved for human-facing prose (README,
+CONTRIBUTING, ADR, and the `CONTEXT.md` glossary that maps the app's localized UI strings).
+Default test data to `*.en.md`, not `*.zh-CN.md`.

@@ -69,7 +69,12 @@ export default defineConfig({
     {
       name: 'electron-perf',
       testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf'),
-      testMatch: /switch-perf\.e2e\.spec\.ts$/,
+      // On-demand diagnostics, never run by `npm run e2e` (which lists its projects
+      // explicitly): the folder-switch scenario and the large-document scenario the
+      // Phase-03 candidates (mermaid lazy-render / image size / block incremental)
+      // are judged against. `-gate` is excluded on purpose — that one IS a CI gate
+      // and belongs to electron-perf-gate.
+      testMatch: /(?:switch|large-doc)-perf\.e2e\.spec\.ts$/,
       timeout: 600_000,
       retries: 0,
     },

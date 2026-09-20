@@ -104,6 +104,10 @@ markflow/
   type-safe under TS7 (whose `Error` type lacks the `options` overload) yet still preserves the cause at runtime.
 - **Secrets**: never commit credentials. Secretlint scans the repo locally (`npm run lint:secret`)
   and in CI; CodeQL also runs on every PR.
+- **Language**: source code, comments, commit messages, test code, and test fixtures (e2e
+  fixtures under `e2e/fixtures/`) are **English only**. Chinese is reserved for human-facing prose
+  (README, this file, ADRs, and the `CONTEXT.md` glossary that maps the app's localized UI
+  strings). When adding demo/test documents, default to the `*.en.md` variant, not `*.zh-CN.md`.
 
 ## Testing
 
