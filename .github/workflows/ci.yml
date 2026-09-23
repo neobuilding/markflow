@@ -15,10 +15,14 @@ on:
 permissions:
     contents: read # Least privilege by default; only the release job elevates to write to push tags / create draft releases.
 
-# Isolate concurrency per ref; cancel-in-progress:false protects in-flight release builds from being interrupted.
+# Isolate concurrency per ref. cancel-in-progress is true ONLY for pull_request: a PR never ships a
+# release, so its superseded runs are pure waste — cancelling them keeps concurrent runs from piling up
+# now that every job fans out in parallel (one PR run = up to 6 jobs at once).
+# push to main / tag push / workflow_dispatch stay false: cancelling an in-flight RELEASE build could
+# leave a half-finished release behind (tag already pushed, artifact upload or draft creation interrupted).
 concurrency:
     group: ci-${{ github.ref }}
-    cancel-in-progress: false
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The version's single source of truth is the `version` job: it only "computes" (never "tags"),
 # calculating the tag/version after checkout and emitting them as outputs;
@@ -29,18 +33,25 @@ concurrency:
 # The actual "tag push" is deferred to the release stage via the gh api (no checkout needed), so it is idempotent and reproducible;
 # re-running on the same commit yields the same tag (commit time comes from the committer date, which is stable).
 #
-# Pipeline shape: a separate `quality` job (Prettier + ESLint + Stylelint + Markdownlint + Secretlint +
-# full `typecheck`) is the fast-fail gate. `ut` and `e2e` both depend on it, so type checking / linting
-# run exactly ONCE and must pass before either test job starts. `ut` and `e2e` then run in parallel;
-# `build` / `release` wait for both plus the computed version.
+# Pipeline shape: maximum fan-out. `version`, `quality`, `ut`, `e2e` and the
+# three-platform `build` all start immediately — only `build` waits on `version`,
+# whose computed version it injects. `quality` deliberately gates NOTHING: a style,
+# rule or type violation must not hide the unit-test, e2e and packaging results, so
+# one CI run reports every problem at once and they can all be fixed locally in a
+# single pass. Type checking / linting still run exactly ONCE, in the `quality` job
+# (never duplicated inside ut / e2e / build).
+# The trade-off is wasted work on a red run (e2e + three platforms keep going even
+# when quality fails) — accepted on purpose, in exchange for complete feedback.
+# The SINGLE gate of the pipeline is therefore `release`: it needs build, ut, e2e,
+# quality and version, so no artifact is ever tagged or drafted from a red run.
 env:
     CSC_IDENTITY_AUTOMATION: false # mac does not use signing/notarization automation (consistent with history)
 
 jobs:
     # Single source of truth for the version: only "compute" (never "tag"); after
     # checkout it calculates the tag/version and emits them as outputs for downstream
-    # jobs. Kept as its own job so `ut` and `e2e` can start in parallel once `quality`
-    # passes, while `build` / `release` read the computed version.
+    # jobs. Kept as its own job so `build` / `release` read one computed version
+    # without every other job waiting on it.
     #   - push to main / dispatch   → v{ver}-{commit-time}.{shortSHA} (not pushed)
     #   - push of a v* tag           → reuse the existing tag (version = tag with the v stripped)
     #   - PR / non-main branch push → empty outputs: build injects nothing, release does not run
@@ -93,14 +104,19 @@ jobs:
                   echo "tag=$TAG" >> "$GITHUB_OUTPUT"
                   echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-    # ── Static quality gate (fast-fail, runs ONCE and gates both test jobs) ─────
+    # ── Static quality (runs ONCE, in parallel — gates nothing) ─────────────────
     # `npm run quality` = Prettier format check + ESLint (TS7 side-by-side via the
     # `postinstall` shim in scripts/install-eslint-ts6.mjs) + Stylelint (CSS) +
     # Markdownlint (docs) + Secretlint (secrets) + full TypeScript type check
-    # (`typecheck`). Both `ut` and `e2e` depend on this job, so style/rule/type
-    # violations fail fast and are never checked twice.
+    # (`typecheck`).
+    # Deliberately NOT a `needs` of ut / e2e / build: a failed style, rule or type
+    # check must not mask the unit-test, e2e and packaging results — one CI run
+    # should surface every problem at once. Style/rule/type violations are still
+    # checked exactly ONCE, here (never duplicated in another job). `release` is
+    # the job that stays needs-gated on this one, so a red quality job can never
+    # produce a tagged / drafted release.
     quality:
-        name: Quality Gate
+        name: Quality
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v7
@@ -113,14 +129,14 @@ jobs:
                   npm run quality
                   echo "::endgroup::"
 
-    # ── Unit tests + coverage (runs after `quality` passes, in parallel with e2e) ─
+    # ── Unit tests + coverage (fully parallel; waits on nothing) ────────────────
     # UT (Vitest + jsdom) does NOT need the Electron build, so this job is otherwise
-    # independent of the e2e job below. Type checking / linting already happened once
-    # upstream in the `quality` job, so this run only adds the covered unit tests.
+    # independent of the e2e job below. It also does NOT wait on `quality`: a lint /
+    # type failure must not hide the test result. Type checking / linting happen
+    # exactly once in the `quality` job, so this run only adds the covered unit tests.
     ut:
         name: Unit Tests & Coverage
         runs-on: ubuntu-latest
-        needs: [quality]
         # Elevated from the workflow-wide `contents: read` so dorny/test-reporter can
         # publish the JUnit summaries as a PR comment and Checks annotations.
         permissions:
@@ -198,17 +214,18 @@ jobs:
                   fail_ci_if_error: false
                   token: ${{ secrets.CODECOV_TOKEN }}
 
-    # ── E2E: drive the REAL Electron app via Playwright (after `quality`, parallel with ut) ──
+    # ── E2E: drive the REAL Electron app via Playwright (fully parallel) ─────────
     # global-setup.ts starts a shared Vite dev server and waits for
     # dist/electron/index.js (globalSetup + launch.ts consume it), so the
     # main process must be built first. Electron runs headful, so a virtual
     # display (xvfb) is required on headless Linux runners. This job is a separate
     # runner from `ut` (it needs its own `npm ci` + one `npm run build`), which is
     # the trade-off for running unit tests and e2e concurrently instead of chained.
+    # Like `ut`, it does not wait on `quality`, so a lint / type failure cannot hide
+    # the e2e result.
     e2e:
         name: E2E (Electron)
         runs-on: ubuntu-latest
-        needs: [quality]
         # Elevated for dorny/test-reporter (e2e JUnit) + Codecov annotations.
         permissions:
             contents: read
@@ -311,12 +328,13 @@ jobs:
 
     # Always runs (PR / non-main push / main push / tag push / dispatch): three-platform build + dist.
     # This is the only three-platform build in the whole repo — PRs use it for validation, main/tag pushes for shipping,
-    # avoiding duplicate builds. Waits for BOTH test suites (ut + e2e) and the computed version.
+    # avoiding duplicate builds. It starts as soon as the version is computed and does NOT wait for the test
+    # suites, so packaging failures surface in the same run as test failures instead of only after they pass.
     # The version comes from the version job (the single source of truth): injected only when non-empty;
     # empty (PR) means the base package.json version is used.
     build:
         name: Build (${{ matrix.os }})
-        needs: [ut, e2e, version]
+        needs: [version]
         runs-on: ${{ matrix.os }}
         strategy:
             fail-fast: false
@@ -418,12 +436,16 @@ jobs:
     # "Tag push" is deferred here from the version job: create the git ref via gh api (no checkout needed);
     # if the tag already exists (e.g. on a re-run) it is skipped to avoid conflicts. Whether or not the draft is kept,
     # the tag remains (for traceability).
+    # THIS IS THE SINGLE GATE of the pipeline. Every other job fans out in parallel (quality gates nothing),
+    # so `release` is what guarantees no artifact is ever tagged or drafted from a red run: it needs build
+    # (download artifacts), ut, e2e, quality AND version (read its computed tag). A failure — or a skip — in
+    # any of them leaves this job skipped, so the draft release is simply never created.
     release:
         name: Draft Release
-        # Needs both build (download artifacts) and version (read its computed tag) directly.
+        # Needs build, ut, e2e, quality and version directly.
         # Note: the needs context only exposes outputs of *directly* depended-on jobs; version is an indirect
         # dependency of build, so if it were not listed here, needs.version.* would resolve to undefined (invalid CI context error).
-        needs: [build, version]
+        needs: [build, ut, e2e, quality, version]
         if: needs.version.outputs.tag != ''
         permissions:
             contents: write # Push tag + create draft release needs write permission.
