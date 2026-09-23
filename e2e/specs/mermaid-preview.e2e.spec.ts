@@ -55,6 +55,9 @@ test.describe('mermaid preview', () => {
     // The rendered SVG lands inside the slot wrapper. Seeing it proves the real
     // mermaid module was fetched, initialised and executed in the renderer.
     const wrapper = page.locator('[data-mermaid-slot="0"]')
+    // Preview mermaid bakes lazily via IntersectionObserver; scroll the slot into view first so it
+    // bakes even when it starts below the fold on a short window.
+    await wrapper.scrollIntoViewIfNeeded()
     await expect(wrapper.locator('svg')).toBeVisible({ timeout: 30_000 })
     // No failure placeholder: the diagram rendered for real — the lazy import, the
     // baking step and the sanitization gate all ran end-to-end in the Electron renderer.

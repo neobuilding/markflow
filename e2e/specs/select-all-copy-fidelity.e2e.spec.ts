@@ -213,7 +213,9 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     await waitForAppReady(page)
     await openDoc(page, '# T\n\nA paragraph.\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n')
 
-    // The diagram is baked in the preview…
+    // The diagram is baked in the preview… (preview mermaid bakes lazily via IntersectionObserver,
+    // so scroll the slot into view first — it would not bake while below the fold on a short window).
+    await page.locator('[data-mermaid-slot="0"]').scrollIntoViewIfNeeded()
     await expect(page.locator('[data-mermaid-slot="0"] svg')).toBeVisible({ timeout: 30_000 })
 
     await page.getByTestId('view-preview').click()
@@ -280,7 +282,11 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
         '',
       ].join('\n'),
     )
-    // Wait for the real mermaid SVG to render.
+    // Wait for the real mermaid SVG to render. The preview bakes mermaid lazily via
+    // IntersectionObserver, so scroll slot 0 into view first — on a short/narrow split pane it can
+    // sit below the fold and the lazy render would never fire (same class of flake as the
+    // diagrams.md test below).
+    await page.locator('[data-mermaid-slot="0"]').scrollIntoViewIfNeeded()
     await expect(page.locator('[data-mermaid-slot="0"] svg')).toBeVisible({ timeout: 30_000 })
     await page.getByTestId('view-preview').click()
     const article = page.locator('.markdown-preview')
@@ -330,13 +336,24 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // preview-render-pipeline/diagrams.md — a self-contained English copy of examples/demo.en.md,
   // 4 mermaid diagrams + highlighted code) must keep EVERY diagram (as a PNG) and every token
   // color — not drop diagrams (empty placeholders) and not paste them as inline <svg>.
+  // Window-pinned (small-window) guard: pinned to the minimum allowed size (minWidth 800 /
+  // minHeight 600) so copy fidelity is verified under the exact short/narrow split-pane condition
+  // that made this test flake on CI — slot 0 starts below the preview fold and must bake via scroll
+  // before menu Copy can rasterize all four diagrams.
   test('preview: menu Copy of the demo document keeps every diagram as a PNG', async () => {
     const { page, electronApp } = handle
     await waitForAppReady(page)
+    await page.setViewportSize({ width: 800, height: 600 })
     await openDoc(
       page,
       readFileSync(join('e2e', 'fixtures', 'preview-render-pipeline', 'diagrams.md'), 'utf-8'),
     )
+    // The preview renders mermaid lazily via IntersectionObserver (MarkdownPreview.tsx), so a
+    // slot only bakes once it scrolls into view. The wide demo table before slot 0 pushes it below
+    // the (short, narrow) split-pane fold on CI's smaller window, so scroll it into view first —
+    // otherwise the lazy render never fires and this assertion times out (it passed locally only
+    // because the taller local window happened to keep slot 0 on-screen).
+    await page.locator('[data-mermaid-slot="0"]').scrollIntoViewIfNeeded()
     await expect(page.locator('[data-mermaid-slot="0"] svg')).toBeVisible({ timeout: 30_000 })
     await page.getByTestId('view-preview').click()
     const article = page.locator('.markdown-preview')
@@ -624,6 +641,9 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     await waitForAppReady(page)
     await openDoc(page, '# T\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n')
     const svg = page.locator('[data-mermaid-slot="0"] svg')
+    // Preview mermaid bakes lazily via IntersectionObserver; scroll into view so it bakes even
+    // when it starts below the fold on a short window.
+    await svg.scrollIntoViewIfNeeded()
     await expect(svg).toBeVisible({ timeout: 30_000 })
     await page.getByTestId('view-preview').click()
     const article = page.locator('.markdown-preview')

@@ -168,6 +168,9 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
     await expect(page.locator('.cm-content')).toContainText('graph TD')
 
     const svg = page.locator('[data-mermaid-slot="0"] svg')
+    // Preview mermaid bakes lazily via IntersectionObserver; scroll into view so it bakes even
+    // when it starts below the fold on a short window.
+    await svg.scrollIntoViewIfNeeded()
     await expect(svg).toBeVisible({ timeout: 30_000 })
     const before = await svg.evaluate((el) => el.outerHTML)
 
@@ -250,6 +253,9 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
     const fence = ['```mermaid', 'graph TD', '  A[Start] --> B[End]', '```'].join('\n')
     await openDoc(page, `${fence}\n\n${fence}\n`)
 
+    // Preview mermaid bakes lazily via IntersectionObserver; scroll slot 0 into view first so it
+    // bakes even on a short window (slot 1 sits right below and rides along into view).
+    await page.locator('[data-mermaid-slot="0"]').scrollIntoViewIfNeeded()
     await expect(page.locator('[data-mermaid-slot="0"] svg')).toBeVisible({ timeout: 30_000 })
     await expect(page.locator('[data-mermaid-slot="1"] svg')).toBeVisible({ timeout: 30_000 })
     const ids = await page.evaluate(() =>
@@ -260,6 +266,23 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
     expect(ids[0]).not.toBe(ids[1])
     expect(ids[0]).toMatch(/^mermaid-[a-z0-9]+-0$/)
     expect(ids[1]).toMatch(/^mermaid-[a-z0-9]+-1$/)
+  })
+
+  // Window-pinned (small-window) guard for the lazy mermaid render: pinned to the minimum allowed
+  // size (minWidth 800 / minHeight 600) so the IntersectionObserver path is exercised under a short,
+  // narrow split pane — the exact condition that made the diagrams.md copy test flake on CI. A
+  // diagram that opens below the fold (slot 3, the last of four) must still bake once scrolled.
+  test('small window: off-screen mermaid diagrams still bake when scrolled into view', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await page.setViewportSize({ width: 800, height: 600 })
+    const content = readFileSync(DIAGRAM_FIXTURE, 'utf-8')
+    await openDoc(page, content, { editable: true })
+    // Slot 0 is on-screen at open; slot 3 starts below the fold.
+    await page.locator('[data-mermaid-slot="0"]').scrollIntoViewIfNeeded()
+    await expect(page.locator('[data-mermaid-slot="0"] svg')).toBeVisible({ timeout: 60_000 })
+    await page.locator('[data-mermaid-slot="3"]').scrollIntoViewIfNeeded()
+    await expect(page.locator('[data-mermaid-slot="3"] svg')).toBeVisible({ timeout: 60_000 })
   })
 })
 

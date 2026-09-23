@@ -7,8 +7,8 @@
 // note in switch-perf-gate.e2e.spec.ts). Now that D-E① (mermaid cache + lazy render) and R9
 // (image intrinsic size) have landed, the thresholds are calibrated from real runs.
 //
-// It is registered in BOTH perf projects: `electron-perf` (on-demand diagnostic, prints the
-// full report) and `electron-perf-gate` (CI gate, ~12s). Keeping one spec for both roles is
+// It is registered in BOTH perf projects: `e2e-perf-diag` (on-demand diagnostic, prints the
+// full report) and `e2e-perf-gate` (CI gate, ~12s). Keeping one spec for both roles is
 // deliberate — a gate that can drift from the diagnostic it was derived from stops guarding
 // anything (the same reasoning as the shared perf-fixture.ts).
 //
@@ -31,9 +31,9 @@
 // the tall `pic-tall.png` that makes the pre-R9 CLS obvious) and ~100 distinct sections
 // (block-parse cost).
 //
-// Run:  npm run e2e:perf            # this spec + the folder-switch diagnostic
-//       npx playwright test --project=electron-perf large-doc-perf
-//       PERF_UPDATE_BASELINE=1 npx playwright test --project=electron-perf large-doc-perf
+// Run:  npm run e2e:perf-diag         # this spec + the folder-switch diagnostic
+//       npx playwright test --project=e2e-perf-diag large-doc-perf
+//       PERF_UPDATE_BASELINE=1 npx playwright test --project=e2e-perf-diag large-doc-perf
 //         → also freezes e2e/perf/baselines/large-doc.json for future deltas.
 //
 // Artifacts: reports/perf/large-doc-<timestamp>.json + large-doc-latest.json
@@ -78,12 +78,12 @@ import {
 //
 // Every threshold sits comfortably above the slowest measured run AND well below the
 // pre-Phase-03 value, so a regression to the old behaviour fails loudly while run-to-run
-// noise does not. NOTE: this project (electron-perf) is on-demand, NOT the CI gate
-// (electron-perf-gate runs switch-perf-gate only), so these thresholds guard hand-run
+// noise does not. NOTE: this project (e2e-perf-diag) is on-demand, NOT the CI gate
+// (e2e-perf-gate is the CI gate), so these thresholds guard hand-run
 // regressions; promote to CI only after the numbers are shown stable on the runner.
 //
 // Override for ad-hoc runs, e.g.
-//   PERF_MAX_CLS=0.2 npx playwright test --project=electron-perf large-doc-perf
+//   PERF_MAX_CLS=0.2 npx playwright test --project=e2e-perf-diag large-doc-perf
 const MAX_FIRST_CONTENT_MS = Number(process.env.PERF_MAX_FIRST_CONTENT_MS ?? 1500)
 const MAX_TYPE_TO_PREVIEW_MS = Number(process.env.PERF_MAX_TYPE_TO_PREVIEW_MS ?? 2000)
 const MAX_TYPE_CHAR_MS = Number(process.env.PERF_MAX_TYPE_CHAR_MS ?? 2000)

@@ -23,7 +23,7 @@ export const COLD_ROUNDS = Number(process.env.PERF_COLD_ROUNDS ?? 4)
 
 // Point the diagnostic at a REAL folder instead of generating a synthetic one:
 // synthetic fixtures are near-empty markdown files and cannot reproduce costs that
-// come from real content.   PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf
+// come from real content.   PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf-diag
 export const REAL_FOLDER = process.env.PERF_FOLDER?.trim() || ''
 
 /**

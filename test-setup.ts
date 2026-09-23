@@ -78,7 +78,11 @@ if (
 ) {
   class IntersectionObserverMock {
     private readonly cb: IntersectionObserverCallback
-    constructor(cb: IntersectionObserverCallback) {
+    // Mirror the real `IntersectionObserver` signature `(callback, options?)`. The
+    // options are unused here (the mock reports every element as intersecting), but
+    // declaring the parameter keeps this consistent with the global constructor that
+    // production code calls with a second options argument.
+    constructor(cb: IntersectionObserverCallback, _options?: IntersectionObserverInit) {
       this.cb = cb
     }
     observe(el: Element): void {

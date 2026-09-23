@@ -13,7 +13,7 @@
 // app.getAppPath() resolves to dist/electron/ and the renderer path is wrong).
 //
 // Run:
-//   npm run e2e   # auto-starts Vite + Electron, runs e2e specs
+//   npm run e2e:full   # auto-starts Vite + Electron, runs e2e specs
 import { defineConfig } from '@playwright/test'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,18 +48,18 @@ export default defineConfig({
 
   projects: [
     {
-      name: 'electron-app',
+      name: 'e2e-app',
     },
     // ── Performance: one CI gate + one on-demand diagnostic ──────────────────
     //
     // These are separate projects because Playwright runs EVERY project when no
-    // --project is given, so `npm run e2e` lists its projects explicitly
-    // (see package.json): electron-app + electron-perf-gate.
+    // --project is given, so `npm run e2e:full` names both projects explicitly
+    // (see package.json): e2e-app + e2e-perf-gate, in ONE playwright run.
     //
-    //   electron-perf-gate  → runs in CI on every PR, has hard thresholds.
-    //   electron-perf       → diagnostic only, no thresholds, run by hand.
+    //   e2e-perf-gate  → runs in CI on every PR, has hard thresholds.
+    //   e2e-perf-diag  → diagnostic only, no thresholds, run by hand.
     {
-      name: 'electron-perf-gate',
+      name: 'e2e-perf-gate',
       testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf'),
       // Both gates in one project: the chokidar folder-switch gate and the large-document
       // gate. The large-document one IS the diagnostic spec (large-doc-perf) — it carries
@@ -71,13 +71,13 @@ export default defineConfig({
       // turn a one-off scheduling hiccup into a red build.
     },
     {
-      name: 'electron-perf',
+      name: 'e2e-perf-diag',
       testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf'),
-      // On-demand diagnostics, never run by `npm run e2e` (which lists its projects
-      // explicitly): the folder-switch scenario and the large-document scenario the
-      // Phase-03 candidates (mermaid lazy-render / image size / block incremental)
-      // are judged against. `-gate` is excluded on purpose — that one IS a CI gate
-      // and belongs to electron-perf-gate.
+      // On-demand diagnostics, never run by `npm run e2e:full` (which composes its
+      // scripts explicitly): the folder-switch scenario and the large-document scenario
+      // the Phase-03 candidates (mermaid lazy-render / image size / block incremental)
+      // are judged against. `e2e-perf-gate` is excluded on purpose — that one IS a CI
+      // gate and belongs to the e2e-perf-gate project.
       testMatch: /(?:switch|large-doc)-perf\.e2e\.spec\.ts$/,
       timeout: 600_000,
       retries: 0,

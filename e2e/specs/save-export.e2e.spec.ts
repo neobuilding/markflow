@@ -165,6 +165,9 @@ test.describe('save and export', () => {
     )
     // Sanity: the diagram really renders in this build (a broken mermaid chunk would make
     // the export assertion below pass vacuously if we asserted only on the placeholder).
+    // Preview mermaid bakes lazily via IntersectionObserver, so scroll the slot into view first —
+    // without this it would not bake when it starts below the fold on a short window.
+    await page.locator('[data-mermaid-slot="0"]').scrollIntoViewIfNeeded()
     await expect(page.locator('[data-mermaid-slot="0"] svg')).toBeVisible({ timeout: 30_000 })
 
     const htmlPath = await exportViaDialog(page, mdPath)
