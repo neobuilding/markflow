@@ -8,9 +8,9 @@
 import { test, expect, type Page } from '@playwright/test'
 import type { ElectronApplication } from 'playwright'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 // Destructive-action confirm dialog ---------------------------------
 // `dialog:confirm` is implemented in the MAIN process via Electron's `dialog.showMessageBox`
@@ -107,6 +107,76 @@ test.describe('context menus (PLAN §3/§4/§5)', () => {
     await expect(page.getByTestId('preview-copy')).toBeVisible()
     await expect(page.getByTestId('preview-select-all')).toBeVisible()
     await expect(page.getByTestId('preview-view-editor')).toBeVisible()
+  })
+
+  // Plan 02 §4.3 mechanism guard. The menu's "Copy" fires `document.execCommand('copy')` and
+  // relies on the resulting `copy` event reaching the preview <article>'s handler (which writes
+  // the CLEAN payload: internal attrs stripped, images inlined). That is NOT self-evident: the
+  // Radix menu content lives in a PORTAL under document.body, so if focus sat on the menu item the
+  // event could be dispatched OUTSIDE #root/<article> and React's delegated onCopy would never
+  // run — silently falling back to the browser's "dirty" native copy (R6/R3 broken, images not
+  // inlined). jsdom cannot catch that (no execCommand), so the mechanism is pinned here with a REAL
+  // Chromium copy event plus a read-back of the real system clipboard. Empirically the event DOES
+  // reach the article (probe below) — this test is the regression guard that keeps it that way.
+  test('preview: menu Copy reaches the preview copy handler and lands a clean payload (R3/R6)', async () => {
+    const { page, electronApp } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, '# Title\n\n```js\nconst x = 1\n```\n')
+    await page.getByTestId('view-preview').click()
+    const article = page.locator('.markdown-preview')
+    await expect(article).toBeVisible()
+    // Record where every `copy` event lands (capture phase sees it regardless of target).
+    await page.evaluate(() => {
+      const w = window as any
+      w.__copyProbe = { count: 0, inArticle: false }
+      document.addEventListener(
+        'copy',
+        (e) => {
+          const t = e.target as HTMLElement | null
+          w.__copyProbe.count += 1
+          w.__copyProbe.inArticle = !!t?.closest?.('article.markdown-preview')
+        },
+        true,
+      )
+    })
+    // Right-click the code block → generic variant (pre → not image / link / mermaid).
+    await article.locator('pre').first().click({ button: 'right' })
+    await page.getByTestId('preview-copy').click()
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__copyProbe.count))
+      .toBeGreaterThan(0)
+    // The event must have reached the article, otherwise our clean writer is bypassed.
+    expect(await page.evaluate(() => (window as any).__copyProbe.inArticle)).toBe(true)
+    // …and the REAL system clipboard (read back from the main process) must hold the clean
+    // payload: the code text is present, and none of the pipeline's internal markers leaked.
+    // Electron 44 replaced `readHTML()` with `read()` + `ClipboardItem.getType(mime)`.
+    await expect
+      .poll(async () => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+      .toContain('const x = 1')
+    const clip = await electronApp.evaluate(async ({ clipboard }) => {
+      const items = await clipboard.read()
+      const item = items[0]
+      let html = ''
+      if (item && item.types.includes('text/html')) {
+        const blob = (await item.getType('text/html')) as Blob
+        html = await blob.text()
+      }
+      return { html, text: await clipboard.readText(), types: item ? item.types : [] }
+    })
+    // Both halves must be present (the browser packed text/plain + text/html from setData).
+    expect(clip.types).toContain('text/html')
+    // The html keeps the semantic structure; the code text is split by hljs <span>s, so match
+    // the tag + a token rather than a contiguous source line.
+    expect(clip.html).toContain('<pre')
+    expect(clip.html).toContain('const')
+    expect(clip.text).toContain('const x = 1')
+    // R6: no internal marker survived into the pasted HTML.
+    expect(clip.html).not.toContain('data-lang')
+    expect(clip.html).not.toContain('data-line')
+    expect(clip.html).not.toContain('data-mermaid')
+    expect(clip.html).not.toContain('data-baked')
+    // markdown-it-anchor's heading tabindex must be stripped too.
+    expect(clip.html).not.toContain('tabindex')
   })
 
   test('preview: right-clicking a link shows open/copy-link/copy/select-all (PLAN §4)', async () => {
@@ -223,7 +293,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
   }
 
   function scratchDir(files: Record<string, string>): string {
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-'))
+    const dir = mkTempDir('markflow-cm3-')
     for (const [name, body] of Object.entries(files)) {
       writeFileSync(join(dir, name), body, 'utf-8')
     }
@@ -376,7 +446,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   })
 
   function scratchDir(files: Record<string, string>): string {
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-supp-'))
+    const dir = mkTempDir('markflow-cm3-supp-')
     for (const [name, body] of Object.entries(files)) {
       writeFileSync(join(dir, name), body, 'utf-8')
     }
@@ -432,7 +502,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('new-subfolder (folder row) creates a nested folder on disk (PLAN §6.2)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-supp-'))
+    const dir = mkTempDir('markflow-cm3-supp-')
     mkdirSync(join(dir, 'sub'))
     writeFileSync(join(dir, 'sub', 'beta.md'), '# Beta\n', 'utf-8')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
@@ -469,7 +539,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('folder rename (inline) shows one folder, no duplicate, keeps it expanded (PLAN §6.2)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-rename-'))
+    const dir = mkTempDir('markflow-cm3-rename-')
     writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
     mkdirSync(join(dir, 'keep'))
     writeFileSync(join(dir, 'keep', 'b.md'), '# B\n', 'utf-8')
@@ -501,7 +571,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('file rename (inline, sidebar) moves the file and stays decoupled from edit mode', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-filerename-'))
+    const dir = mkTempDir('markflow-cm3-filerename-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     writeFileSync(join(dir, 'beta.md'), '# Beta\n', 'utf-8')
     await openFolder(page, dir, 2)
@@ -545,7 +615,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: renaming to a bare name fills ".md" and holds until a second Enter', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-renamestem-'))
+    const dir = mkTempDir('markflow-renamestem-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     await openFolder(page, dir, 1)
     await page.getByTestId('doc-item').filter({ hasText: 'alpha' }).click({ button: 'right' })
@@ -571,7 +641,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('new file (inline) uses the Markdown extension the user typed, not a forced .md', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-newfile-'))
+    const dir = mkTempDir('markflow-cm3-newfile-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     // A subfolder that holds Markdown, so the tree has a folder row for the new row to sit after.
     // It stays collapsed, so the doc-item count the open helper asserts is still 1.
@@ -601,7 +671,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('go-up (empty-folder bar) navigates to the parent folder (PLAN §6.2)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-cm3-supp-'))
+    const dir = mkTempDir('markflow-cm3-supp-')
     const sub = join(dir, 'empty-sub')
     mkdirSync(sub)
     await openFolder(page, sub, 0)
@@ -619,7 +689,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: empty folders hidden by default, revealed by "Show All Folders" (ADR-0010)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-showall-'))
+    const dir = mkTempDir('markflow-showall-')
     writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
     mkdirSync(join(dir, 'pics')) // holds no Markdown at all
     await openFolder(page, dir, 1)
@@ -633,7 +703,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: tree-area right-click offers create + filter items (ADR-0010)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-treemenu-'))
+    const dir = mkTempDir('markflow-treemenu-')
     writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
     await openFolder(page, dir, 1)
     // Aim below the document row: the middle of the scroll area is empty space, so the
@@ -654,7 +724,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: the empty state can still create a folder (ADR-0010)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-emptynew-'))
+    const dir = mkTempDir('markflow-emptynew-')
     await openFolder(page, dir, 0) // no Markdown at all → sidebar shows the empty state
     await expect(page.getByTestId('sidebar-empty-state')).toBeVisible()
     await page.getByTestId('sidebar-empty-state').click({ button: 'right' })
@@ -669,7 +739,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: empty-state New File writes a real .md into the open folder (ADR-0010)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-emptynewfile-'))
+    const dir = mkTempDir('markflow-emptynewfile-')
     await openFolder(page, dir, 0) // no Markdown at all → sidebar shows the empty state
     await expect(page.getByTestId('sidebar-empty-state')).toBeVisible()
     await page.getByTestId('sidebar-empty-state').click({ button: 'right' })
@@ -692,7 +762,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: New File inside a subfolder names it inline and lands in THAT subfolder', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-subnewfile-'))
+    const dir = mkTempDir('markflow-subnewfile-')
     mkdirSync(join(dir, 'sub'), { recursive: true })
     // A non-empty subfolder so its row is rendered: empty folders are hidden by default
     // (ADR-0010), which would make the row unfindable.
@@ -719,7 +789,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: F2 starts an inline rename on the focused row', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-f2-'))
+    const dir = mkTempDir('markflow-f2-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     await openFolder(page, dir, 1)
     const row = page.getByTestId('doc-item').filter({ hasText: 'alpha.md' })
@@ -734,7 +804,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: Ctrl+Z undoes the last rename on disk and restores the old file', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-renameundo-'))
+    const dir = mkTempDir('markflow-renameundo-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     await openFolder(page, dir, 1)
     await page.getByTestId('doc-item').filter({ hasText: 'alpha.md' }).click({ button: 'right' })
@@ -754,7 +824,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: a just-created empty folder stays visible (ADR-0010)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-newfolder-'))
+    const dir = mkTempDir('markflow-newfolder-')
     writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
     await openFolder(page, dir, 1)
     await page
@@ -773,7 +843,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: the pin is dropped once the created folder holds Markdown (ADR-0010)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-pindrop-'))
+    const dir = mkTempDir('markflow-pindrop-')
     writeFileSync(join(dir, 'a.md'), '# A\n', 'utf-8')
     await openFolder(page, dir, 1)
     await page
@@ -805,7 +875,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: a New File with an unsupported extension is refused, not written (ADR-0011)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-newfile-badext-'))
+    const dir = mkTempDir('markflow-newfile-badext-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     await openFolder(page, dir, 1)
     await page
@@ -831,7 +901,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: a duplicate file name is flagged live and Enter is refused (no -N fallback)', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-dupefile-'))
+    const dir = mkTempDir('markflow-dupefile-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     await openFolder(page, dir, 1)
     await page
@@ -856,7 +926,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: a duplicate folder name is refused without inventing a -N variant', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-dupefolder-'))
+    const dir = mkTempDir('markflow-dupefolder-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     // An existing subfolder holding Markdown, so its row is rendered and can be clashed with.
     mkdirSync(join(dir, 'sub'), { recursive: true })
@@ -884,7 +954,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
   test('sidebar: a folder name with a separator is flagged live and refused', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    const dir = mkdtempSync(join(tmpdir(), 'markflow-badname-'))
+    const dir = mkTempDir('markflow-badname-')
     writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
     await openFolder(page, dir, 1)
     await page

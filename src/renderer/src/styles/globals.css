@@ -1,7 +1,8 @@
 @import 'tailwindcss';
 
-/* Tailwind Typography plugin: replace hand-written ~130 lines of markdown styles with prose (§4.6) */
-@plugin "@tailwindcss/typography";
+/* D-B (plan-03 §4.1): markdown styling now comes from github-markdown-css, injected at runtime
+   as the single source of truth (the same sheet the exporter uses). No Tailwind Typography /
+   `.prose` plugin — its styles are relocated to `.markdown-body` below. */
 
 /* v4 requirement: dark: follows the .dark class the App toggles on <html> (darkMode:'class' is a no-op in v4) */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -76,6 +77,14 @@
 html,
 body {
   height: 100%;
+  /* Desktop shell: every scrollable region (editor pane, preview pane, dialogs) owns its
+     own `overflow`, so the ROOT must never scroll. If it can, anything that TRANSIENTLY
+     overflows flips a top-level scrollbar on for a frame — the root loses the scrollbar's
+     width and the WHOLE shell (both panes' scrollbars, the toolbar, everything) visibly
+     jolts sideways. The real offender: mermaid appends its temporary bake container
+     (`<div id="d<id>">`) straight to document.body while rendering a diagram, so every
+     keystroke in a document with diagrams jolted once. See Plan 01 §10. */
+  overflow: hidden;
   font-size: 16px;
   font-family: var(--font-sans);
   background-color: var(--color-bg);
@@ -107,6 +116,12 @@ body {
   background: var(--color-text-tertiary);
 }
 
+/* (removed) A reserved scrollbar gutter was tried as a fix for the sideways jolt. It was
+   NOT the cause of that symptom and it permanently reserved ~10px, so it was reverted.
+   It does address a real but DIFFERENT, milder wobble: when a document grows past exactly
+   one screen, the preview's own scrollbar appears and narrows the `w-full` article by the
+   scrollbar width, re-wrapping every block once. Kept out deliberately; see Plan 01 §10. */
+
 /* Titlebar drag region */
 .titlebar-drag {
   -webkit-app-region: drag;
@@ -125,22 +140,22 @@ body {
    it on the editor root so a click reliably focuses the contenteditable. (Full theme override
    lives further down in "CodeMirror theme overrides".) */
 
-/* ─── Markdown Preview (prose takes over layout; keep only a minimal container here, §4.6) ─── */
+/* ─── Markdown Preview (github-markdown-css is the single source of truth; keep only a minimal container here, plan-03 §4.1) ─── */
 .markdown-preview {
   user-select: text;
   width: 100%;
 }
 
-/* Disable prose's misfiring on code/pre/katex, and the decorative quotes auto-added to blockquotes */
-.prose code::before,
-.prose code::after {
+/* Disable github-markdown-css's decorative quotes auto-added to inline code / blockquotes */
+.markdown-body code::before,
+.markdown-body code::after {
   content: none;
 }
-.prose blockquote p:first-of-type::before,
-.prose blockquote p:last-of-type::after {
+.markdown-body blockquote p:first-of-type::before,
+.markdown-body blockquote p:last-of-type::after {
   content: none;
 }
-.prose .katex {
+.markdown-body .katex {
   font-size: 1.05em;
   background: none;
   padding: 0;
@@ -153,150 +168,130 @@ body {
      - p[align="center"] > img: centered standalone images (e.g. a README logo)
    Deliberately skip standalone illustrations in normal paragraphs (no align, no <a> wrap) to keep their block layout,
    avoiding turning common `![alt](x.png)` standalone-line images into inline thumbnails (regression). */
-.prose p > a > img,
-.prose p[align='center'] > img {
+.markdown-body p > a > img,
+.markdown-body p[align='center'] > img {
   display: inline-block;
   vertical-align: middle;
   margin-top: 0;
   margin-bottom: 0;
 }
 
-/* Code block background/padding (equivalent to the old globals.css; fully replace .prose pre, don't coexist to avoid double padding) */
-.prose pre {
+/* Code block background/padding. github-markdown-css also styles `pre`; this is a defensive
+   fallback so the box reads as a code block even if its sheet order changes (plan-03 §4.1). */
+.markdown-body pre {
   background: var(--color-surface-overlay);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 1rem;
 }
-.prose pre code {
+.markdown-body pre code {
   background: transparent;
   padding: 0;
   font-size: 0.875rem;
 }
 
-/* GFM task lists: Tailwind Typography doesn't ship checkbox styles, explicitly restore them to avoid leftover bullets */
-.prose ul:has(> li > input[type='checkbox']) {
+/* GFM task lists: github-markdown-css doesn't ship checkbox styles, explicitly restore them to avoid leftover bullets */
+.markdown-body ul:has(> li > input[type='checkbox']) {
   list-style: none;
   padding-left: 0;
 }
-.prose li:has(> input[type='checkbox']) {
+.markdown-body li:has(> input[type='checkbox']) {
   list-style: none;
 }
-.prose li > input[type='checkbox'] {
+.markdown-body li > input[type='checkbox'] {
   margin-right: 0.4rem;
   vertical-align: middle;
 }
 
-/* Map prose variables to the project's Linear theme variables (avoid prose's built-in gray scale shifting colors) */
-.prose {
-  --tw-prose-body: var(--color-text-primary);
-  --tw-prose-headings: var(--color-text-primary);
-  --tw-prose-links: var(--color-accent);
-  --tw-prose-bold: var(--color-text-primary);
-  --tw-prose-quotes: var(--color-text-secondary);
-  --tw-prose-code: var(--color-text-primary);
-  --tw-prose-pre-code: var(--color-text-primary);
-  --tw-prose-th-borders: var(--color-border);
-  --tw-prose-td-borders: var(--color-border);
-  --tw-prose-quote-borders: var(--color-accent);
-}
-.dark .prose {
-  --tw-prose-body: var(--color-text-primary);
-  --tw-prose-headings: var(--color-text-primary);
-  --tw-prose-links: var(--color-accent);
-  --tw-prose-bold: var(--color-text-primary);
-  --tw-prose-quotes: var(--color-text-secondary);
-  --tw-prose-code: var(--color-text-primary);
-  --tw-prose-pre-code: var(--color-text-primary);
-  --tw-prose-th-borders: var(--color-border);
-  --tw-prose-td-borders: var(--color-border);
-  --tw-prose-quote-borders: var(--color-accent);
-}
+/* D-B (plan-03 §4.1): the Typography plugin is gone, so the --tw-prose-* variable mapping is
+   dead. github-markdown-css supplies its own Primer variables and is the single source of truth. */
 
 /* highlight.js code blocks: github.css provides the light token palette (already imported in main.tsx).
    Here we hand the .hljs box to prose theme variables for unified management (background/border/padding), avoiding double padding. */
-.prose pre.hljs {
+.markdown-body pre.hljs {
   background: var(--color-surface-overlay);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 1rem;
 }
 
-/* highlight.js dark token palette (github-dark palette, only active in dark mode) */
-html.dark .hljs {
+/* highlight.js dark token palette (github-dark palette). Scoped to the preview's resolved
+   theme (data-theme on the <article>) so it follows the github-markdown-css dark sheet without
+   dragging the app chrome into dark mode (D-B, plan-03 §4.1). */
+.markdown-body[data-theme='dark'] .hljs {
   color: #c9d1d9;
   background: transparent;
 }
-html.dark .hljs-doctag,
-html.dark .hljs-keyword,
-html.dark .hljs-meta .hljs-keyword,
-html.dark .hljs-template-tag,
-html.dark .hljs-template-variable,
-html.dark .hljs-type,
-html.dark .hljs-variable.language_ {
+.markdown-body[data-theme='dark'] .hljs-doctag,
+.markdown-body[data-theme='dark'] .hljs-keyword,
+.markdown-body[data-theme='dark'] .hljs-meta .hljs-keyword,
+.markdown-body[data-theme='dark'] .hljs-template-tag,
+.markdown-body[data-theme='dark'] .hljs-template-variable,
+.markdown-body[data-theme='dark'] .hljs-type,
+.markdown-body[data-theme='dark'] .hljs-variable.language_ {
   color: #ff7b72;
 }
-html.dark .hljs-title,
-html.dark .hljs-title.class_,
-html.dark .hljs-title.class_.inherited__,
-html.dark .hljs-title.function_ {
+.markdown-body[data-theme='dark'] .hljs-title,
+.markdown-body[data-theme='dark'] .hljs-title.class_,
+.markdown-body[data-theme='dark'] .hljs-title.class_.inherited__,
+.markdown-body[data-theme='dark'] .hljs-title.function_ {
   color: #d2a8ff;
 }
-html.dark .hljs-attr,
-html.dark .hljs-attribute,
-html.dark .hljs-literal,
-html.dark .hljs-meta,
-html.dark .hljs-number,
-html.dark .hljs-operator,
-html.dark .hljs-variable,
-html.dark .hljs-selector-attr,
-html.dark .hljs-selector-class,
-html.dark .hljs-selector-id {
+.markdown-body[data-theme='dark'] .hljs-attr,
+.markdown-body[data-theme='dark'] .hljs-attribute,
+.markdown-body[data-theme='dark'] .hljs-literal,
+.markdown-body[data-theme='dark'] .hljs-meta,
+.markdown-body[data-theme='dark'] .hljs-number,
+.markdown-body[data-theme='dark'] .hljs-operator,
+.markdown-body[data-theme='dark'] .hljs-variable,
+.markdown-body[data-theme='dark'] .hljs-selector-attr,
+.markdown-body[data-theme='dark'] .hljs-selector-class,
+.markdown-body[data-theme='dark'] .hljs-selector-id {
   color: #79c0ff;
 }
-html.dark .hljs-regexp,
-html.dark .hljs-string,
-html.dark .hljs-meta .hljs-string {
+.markdown-body[data-theme='dark'] .hljs-regexp,
+.markdown-body[data-theme='dark'] .hljs-string,
+.markdown-body[data-theme='dark'] .hljs-meta .hljs-string {
   color: #a5d6ff;
 }
-html.dark .hljs-built_in,
-html.dark .hljs-symbol {
+.markdown-body[data-theme='dark'] .hljs-built_in,
+.markdown-body[data-theme='dark'] .hljs-symbol {
   color: #ffa657;
 }
-html.dark .hljs-comment,
-html.dark .hljs-code,
-html.dark .hljs-formula {
+.markdown-body[data-theme='dark'] .hljs-comment,
+.markdown-body[data-theme='dark'] .hljs-code,
+.markdown-body[data-theme='dark'] .hljs-formula {
   color: #8b949e;
 }
-html.dark .hljs-name,
-html.dark .hljs-quote,
-html.dark .hljs-selector-tag,
-html.dark .hljs-selector-pseudo {
+.markdown-body[data-theme='dark'] .hljs-name,
+.markdown-body[data-theme='dark'] .hljs-quote,
+.markdown-body[data-theme='dark'] .hljs-selector-tag,
+.markdown-body[data-theme='dark'] .hljs-selector-pseudo {
   color: #7ee787;
 }
-html.dark .hljs-subst {
+.markdown-body[data-theme='dark'] .hljs-subst {
   color: #c9d1d9;
 }
-html.dark .hljs-section {
+.markdown-body[data-theme='dark'] .hljs-section {
   color: #1f6feb;
   font-weight: bold;
 }
-html.dark .hljs-bullet {
+.markdown-body[data-theme='dark'] .hljs-bullet {
   color: #f2cc60;
 }
-html.dark .hljs-emphasis {
+.markdown-body[data-theme='dark'] .hljs-emphasis {
   color: #c9d1d9;
   font-style: italic;
 }
-html.dark .hljs-strong {
+.markdown-body[data-theme='dark'] .hljs-strong {
   color: #c9d1d9;
   font-weight: bold;
 }
-html.dark .hljs-addition {
+.markdown-body[data-theme='dark'] .hljs-addition {
   color: #aff5b4;
   background-color: #033a16;
 }
-html.dark .hljs-deletion {
+.markdown-body[data-theme='dark'] .hljs-deletion {
   color: #ffdcd7;
   background-color: #67060c;
 }

@@ -10,12 +10,12 @@
 // Each test uses its OWN temporary user-data-dir so the document store is
 // isolated (prevents the file_path collision when multiple memory-only
 // drafts are created across tests, and keeps tests from polluting real data).
-import { mkdtempSync, existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { _electron as electron, ElectronApplication, Page } from 'playwright'
+import { mkTempDir, cleanupTempDirs } from './temp'
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DEV_URL_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '.dev-url')
@@ -109,14 +109,17 @@ export async function launchApp(): Promise<AppHandle> {
   }
 
   // Isolated user data dir per test for a clean document store each time.
-  const userDataDir = mkdtempSync(join(tmpdir(), 'markflow-e2e-'))
+  // Ownership: this directory is ALLOCATED BY THE TEST HARNESS, so reclaiming it is
+  // the harness's own job (mkTempDir tracks it; cleanupTempDirs removes it — see
+  // closeApp's finally block). The app only cleans the runtime data it writes inside.
+  const userDataDir = mkTempDir('markflow-e2e-')
 
   const electronApp = await electron.launch({
     // --no-sandbox: required for Electron to launch under the non-root CI runner
     // (GitHub Actions ubuntu-latest). Without it, Electron's chrome-sandbox helper
     // aborts because it expects root:4755 ownership, which `npm ci` never sets and
     // the runner does not grant sudo for. This flag is ONLY used by the e2e path
-    // (npm run e2e); production builds go through electron-builder and are unaffected.
+    // (npm run e2e:full); production builds go through electron-builder and are unaffected.
     args: [
       join(PROJECT_ROOT, 'dist', 'electron', 'index.js'),
       `--user-data-dir=${userDataDir}`,
@@ -125,7 +128,9 @@ export async function launchApp(): Promise<AppHandle> {
     env: {
       ...process.env,
       VITE_DEV_SERVER_URL: devUrl,
-      MARKFLOW_E2E: '1',
+      // NOTE: deliberately NO test-only environment variable here (ADR 0016) — the main
+      // process must not be able to tell that it is "under test". Isolation comes from the
+      // real --user-data-dir switch above, which the app honors like any Chromium app.
     },
     timeout: 60_000,
   })
@@ -182,6 +187,16 @@ export async function forceEnglish(page: Page): Promise<void> {
  * still drives the REAL quit flow and only bypasses the native button render.
  */
 export async function closeApp(handle: AppHandle): Promise<void> {
+  // The harness reclaims every temp dir it allocated. Doing this in `finally`
+  // means a failed close, a force-kill, or an early return can never leak them.
+  try {
+    await closeAppInternal(handle)
+  } finally {
+    cleanupTempDirs()
+  }
+}
+
+async function closeAppInternal(handle: AppHandle): Promise<void> {
   const CLOSE_TIMEOUT_MS = 15_000
   let timedOut = false
   // process() can throw (TypeError: reading '_object') if the ElectronApplication

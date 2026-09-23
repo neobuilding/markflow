@@ -12,6 +12,8 @@ import { ExportDialog } from './components/editor/ExportDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { buildStandaloneHtml, resolveTheme } from './lib/export'
 import { getExportHtml } from './lib/exportStore'
+import { prepareExportHtml } from './lib/exportBake'
+import { routeSelectAll, createSelectAllKeydownHandler } from './lib/selectAllRouter'
 import { queryClient, DOCS_KEY } from './lib/queryClient'
 import { isDirInFolder } from './lib/utils'
 import { t, useT, changeLanguage } from './i18n'
@@ -84,6 +86,17 @@ export default function App(): React.ReactElement {
     return () => window.removeEventListener('keydown', handleKey)
   }, [setNewDocOpen, toggleSidebar])
 
+  // Ctrl/Cmd+A that reaches the renderer (i.e. the native accelerator did not consume it)
+  // would otherwise trigger the browser's document-wide select-all — both panes at once,
+  // which CodeMirror then clamps into a bogus partial selection. Take it over at the document
+  // level and route it to the pane the user is working in. Document-level on purpose: in
+  // read-only mode the editor content cannot take focus, so the event's target is `body`.
+  useEffect(() => {
+    const onKeyDown = createSelectAllKeydownHandler()
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   useEffect(() => {
     if (!window.api) return
     const removeNew = window.api.onMenuEvent('new-document', () => setNewDocOpen(true))
@@ -134,6 +147,9 @@ export default function App(): React.ReactElement {
       setPrinting(true)
       window.api.menu.setPrinting(true)
       try {
+        // ADR 0019: bake EVERY diagram into the canonical HTML first — the preview only
+        // renders the ones that scrolled into view, and print must be complete.
+        await prepareExportHtml()
         const theme = resolveTheme('current', useUIStore.getState().theme)
         const html = await buildStandaloneHtml({ theme, embedImages: true })
         await window.api.export.print(html)
@@ -145,6 +161,7 @@ export default function App(): React.ReactElement {
         window.api.menu.setPrinting(false)
       }
     })
+    const removeSelectAll = window.api.onMenuEvent('select-all', () => routeSelectAll())
     const removeOpenPaths = window.api.onOpenPaths((paths) => {
       if (paths && paths.length > 0) openPathsMut.mutate(paths)
     })
@@ -159,6 +176,7 @@ export default function App(): React.ReactElement {
       removeAbout()
       removeExport()
       removePrint()
+      removeSelectAll()
     }
   }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, setPrinting, tryCloseWorkspace])
 

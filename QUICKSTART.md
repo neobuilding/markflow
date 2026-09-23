@@ -41,21 +41,22 @@ npm run quality       # Prettier 格式检查 + Stylelint + Markdownlint + Secre
 
 ```bash
 npm run test:coverage   # 单元测试（Vitest + jsdom）+ 覆盖率，无需构建 Electron
-npm run e2e             # 端到端：用 Playwright 驱动真实的 Electron 应用
+npm run e2e:full        # 端到端：用 Playwright 驱动真实的 Electron 应用
 ```
 
 - **单元测试**（`npm run test:coverage`）在 jsdom 下运行，不会触发 Electron 构建，速度快、无需显示服务。
-- **端到端测试**（`npm run e2e`）会启动真实的 Electron 应用：`e2e/global-setup.ts` 启动共享的 Vite dev server 并等待 `dist/electron/index.js` 编译完成，因此需先 `npm run build`；每个 spec 再各自启动一个 Electron 实例。在无显示的 Linux（如 CI）上需借助虚拟显示运行：
+- **端到端测试**（`npm run e2e:full`）会启动真实的 Electron 应用：`e2e/global-setup.ts` 启动共享的 Vite dev server 并等待 `dist/electron/index.js` 编译完成，因此需先 `npm run build`；每个 spec 再各自启动一个 Electron 实例。在无显示的 Linux（如 CI）上需借助虚拟显示运行：
 
   ```bash
-  xvfb-run --auto-servernum -- npm run e2e
+  xvfb-run --auto-servernum -- npm run e2e:full
   ```
 
-- **性能门禁**：`npm run e2e` 实际跑两个 Playwright project——`electron-app`（功能）与 `electron-perf-gate`（性能门禁）。后者守护"文件夹监视器只监视 Markdown 文件"这条修复：在一个塞满非 Markdown 构建产物的文件夹里打开并立刻切换文档时，断言主进程事件循环不会被卡住（尖峰数与最大卡顿均有阈值）。旁边另有一份**不带阈值**的诊断 spec，需要具体数字而非通过与失败时按需运行：
+- **e2e 脚本族**：`e2e:app`（仅功能/行为 spec）、`e2e:perf-gate`（仅性能门禁）、`e2e:perf-diag`（无阈值诊断，按需）、`e2e:full`（`e2e-app` + `e2e-perf-gate` 的**单次** Playwright 运行，CI 执行的标准组合；单次运行保证只起一次 global setup 与一份报告，避免后一次覆盖前一次的 `playwright-report/` 与 junit.xml）。
+- **性能门禁**：`npm run e2e:full` 由两个 Playwright project 组成——`e2e-app`（功能）与 `e2e-perf-gate`（性能门禁）。后者守护"文件夹监视器只监视 Markdown 文件"这条修复：在一个塞满非 Markdown 构建产物的文件夹里打开并立刻切换文档时，断言主进程事件循环不会被卡住（尖峰数与最大卡顿均有阈值）。旁边另有一份**不带阈值**的诊断 spec，需要具体数字而非通过与失败时按需运行：
 
   ```bash
-  npm run e2e:perf                                  # 合成 fixture
-  PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf   # 实测真实目录
+  npm run e2e:perf-diag                                  # 合成 fixture
+  PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf-diag   # 实测真实目录
   ```
 
 ## Create-PR Action（本地构建与预览）
@@ -77,7 +78,7 @@ CI 先跑独立的 `quality` 任务作为快速失败门禁，通过后才并行
 
 - `quality`（ubuntu）：`npm run quality`（Prettier + ESLint + Stylelint + Markdownlint + Secretlint + 类型检查），整轮仅跑一次，必须先于任一测试任务通过。
 - `ut`（ubuntu，依赖 `quality`）：单元测试 + 覆盖率（Vitest + jsdom，无需 Electron 构建）。
-- `e2e`（ubuntu，依赖 `quality`）：安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e`。
+- `e2e`（ubuntu，依赖 `quality`）：安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e:full`。quality/coverage/build 由其它 job 负责，e2e job 只跑 e2e。
   两者各自独立 runner（e2e 需自己 `npm ci` + 一次 `npm run build`），换取墙钟时间 ≈ max(ut, e2e) 而非顺序相加；`build`/`release` 任务在两者都通过且版本计算完成后才会运行。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。
 
 三平台 `build` 任务（`Build (macos|windows|ubuntu)`）在 `ut` 与 `e2e` 都通过后运行，是全仓库唯一的三平台构建，既用于 PR 校验也用于发布。

@@ -47,6 +47,7 @@ const h = vi.hoisted(() => {
 vi.mock('electron', () => {
   const app = {
     setPath: vi.fn(),
+    getPath: (name: string) => `/fake/${name}`,
     getAppPath: () => '/fake/app',
     getVersion: () => '0.0.0',
     getLocale: () => 'en-US',
@@ -146,6 +147,15 @@ vi.mock('./model/folderWatcher', () => ({
   stopFolderWatching: vi.fn(async () => {
     h.stopFolderWatchingCalled = true
   }),
+}))
+
+// Mock the temp-cleanup module so the will-quit handler's cleanup calls are observable
+// (we assert they fire with the right path and respect the e2e-skip branch) without
+// touching the real filesystem or spawning a detached deleter inside the unit suite.
+vi.mock('./lib/temp-cleanup', () => ({
+  removeOwnTempDir: vi.fn(() => true),
+  scheduleRemoveAfterExit: vi.fn(),
+  OWN_TEMP_DIR_NAME: 'markflow',
 }))
 
 async function loadLifecycle(): Promise<void> {
@@ -399,21 +409,30 @@ describe('main process — before-quit safety net', () => {
 })
 
 describe('main process — will-quit watcher teardown', () => {
-  it('awaits stopFolderWatching on will-quit so native handles close before exit', async () => {
+  it('awaits stopFolderWatching, removes its own temp dir and schedules the deferred removal', async () => {
     // will-quit fires after all windows are closed and before the process tears down.
-    // The watcher must be closed (awaited) here so chokidar's native handles release.
+    // The watcher must be closed (awaited) here so chokidar's native handles release,
+    // and THEN the app must remove its own user-data-dir so %TEMP% stays clean.
     vi.useRealTimers()
     try {
       await loadLifecycle()
       h.stopFolderWatchingCalled = false
       await h.appHandlers['will-quit']({ preventDefault: vi.fn() })
+      const tempCleanup = await import('./lib/temp-cleanup.js')
       expect(h.stopFolderWatchingCalled).toBe(true)
+      // Cleanup runs only AFTER stopFolderWatching has resolved (it is awaited just
+      // above), so its invocation proves the handles were released before exit.
+      expect(tempCleanup.removeOwnTempDir).toHaveBeenCalledWith('/fake/userData')
+      // Regression guard: the exit-time cleanup twice did NOTHING because the deferred
+      // deleter was never spawned. Chromium re-creates Preferences / Local State during
+      // teardown, so scheduling is required, not merely a fallback for a failed sync remove.
+      expect(tempCleanup.scheduleRemoveAfterExit).toHaveBeenCalledWith('/fake/userData')
     } finally {
       vi.useFakeTimers()
     }
   })
 
-  it('does not throw when stopFolderWatching rejects on will-quit', async () => {
+  it('does not throw when stopFolderWatching rejects, and still cleans up', async () => {
     vi.useRealTimers()
     try {
       const folderWatcher = await import('./model/folderWatcher.js')
@@ -421,10 +440,18 @@ describe('main process — will-quit watcher teardown', () => {
         new Error('watcher close failed'),
       )
       await loadLifecycle()
-      // Should not throw the catch in will-quit must swallow it so exit proceeds
+      const tempCleanup = await import('./lib/temp-cleanup.js')
+      // The catch on stopFolderWatching must swallow the rejection so exit proceeds,
+      // AND cleanup must still run so the app does not leave its temp dir behind.
       await expect(h.appHandlers['will-quit']({ preventDefault: vi.fn() })).resolves.toBeUndefined()
+      expect(tempCleanup.removeOwnTempDir).toHaveBeenCalledWith('/fake/userData')
     } finally {
       vi.useFakeTimers()
     }
   })
+
+  // Removed: two cases named "…in non-e2e (production) mode" and "…in e2e mode too" flipped
+  // `MARKFLOW_E2E` to cover a branch neither lifecycle.ts nor any other production module
+  // reads any more. They therefore exercised the same code path twice (the stretch of the
+  // e2e contract is pinned by the assertion above and by temp-cleanup.e2e.spec.ts).
 })

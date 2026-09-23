@@ -1,17 +1,17 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest'
-import {
-  normEnc,
-  detectEncoding,
-  cjkSecondPass,
-  countReplacements,
-  readMarkdownText,
-  countWords,
-} from './documents'
 import iconv from 'iconv-lite'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
+import { describe, expect, it } from 'vitest'
+import { mkTestDir } from '../test-support/tmp'
+import {
+  cjkSecondPass,
+  countReplacements,
+  countWords,
+  detectEncoding,
+  normEnc,
+  readMarkdownText,
+} from './documents'
 
 // Helper to build a real GBK buffer for a CJK string.
 function gbk(s: string): Buffer {
@@ -231,10 +231,9 @@ describe('countWords', () => {
 
 describe('readMarkdownText', () => {
   it('reads a file and reports its detected encoding', () => {
-    const { writeFileSync, mkdtempSync } = fs
+    const { writeFileSync } = fs
     const { join } = path
-    const { tmpdir } = os
-    const dir = mkdtempSync(join(tmpdir(), 'mf-rmt-'))
+    const dir = mkTestDir('mf-rmt-')
     const p = join(dir, 'a.md')
     writeFileSync(p, '# hello', 'utf-8')
     const r = readMarkdownText(p)

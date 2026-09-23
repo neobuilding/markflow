@@ -1,0 +1,30 @@
+{
+  "name": "large-doc",
+  "frozenAt": "2026-09-20T08:30:05.405Z",
+  "commit": "52682270",
+  "note": "Frozen by PERF_UPDATE_BASELINE=1. Compare against this when reviewing Phase-03.",
+  "metrics": {
+    "mermaidSlots": 60,
+    "mermaidRendered": 60,
+    "localImages": 62,
+    "localImagesLoaded": 62,
+    "blocks": 952,
+    "firstContentMs": 2644,
+    "firstMermaidMs": 2652,
+    "localImagesMs": 2657,
+    "typeToPreviewMs": 2535,
+    "typeCharToPreviewMs": 2756,
+    "cls": 0.1718548571874225,
+    "clsCount": 2,
+    "clsMax": 0.1706573970734127,
+    "longTaskCount": 8,
+    "longTaskTotalMs": 837,
+    "longTaskMaxMs": 190,
+    "mainP95Ms": 32.3334,
+    "mainStallMs": 0,
+    "mainMaxLagMs": 97.7851,
+    "mainHeapUsed": 8839536,
+    "mainRss": 127356928,
+    "rendererHeapUsed": 237311324
+  }
+}

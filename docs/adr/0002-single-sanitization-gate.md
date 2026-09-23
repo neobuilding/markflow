@@ -11,14 +11,25 @@ place, one of those places will eventually be bypassed, and the XSS surface beco
 ## Decision
 
 Enforce **exactly one** sanitization boundary. Rendered Markdown HTML must pass through
-`SafeHtml` → `sanitizeHtml` (DOMPurify) and no other code path may emit raw, unsanitized HTML into the
+`sanitizeHtml` (DOMPurify) and no other code path may emit raw, unsanitized HTML into the
 preview.
+
+The guarantee is enforced by the **type system** rather than by a wrapper component (the old
+`SafeHtml` component was removed in the Plan-01 render-pipeline refactor): `sanitizeHtml()` returns
+the branded type `SanitizedHtml`, whose brand is a private `unique symbol`, so the only way to
+produce one is to call `sanitizeHtml()`; and the single DOM write entry
+`patchPreviewContent(root, html: SanitizedHtml)` in `previewRender.ts` accepts nothing else. Feeding
+an unsanitized string into the preview is therefore a compile error, not a runtime convention.
 
 Concrete rules:
 
-- The gate lives in `src/renderer/src/lib/sanitize.ts`; `SafeHtml` is the forced rendering component.
+- The gate lives in `src/renderer/src/lib/sanitize.ts`; `previewRender.ts#patchPreviewContent` is the
+  only DOM write entry, called solely from `MarkdownPreview.tsx`.
+- The same `SanitizedHtml` value is reused for the preview DOM **and** the export cache
+  (`exportStore.ts`), so preview and export cannot drift apart.
 - `markdownPipeline.test.ts` and `sanitize.test.ts` lock the behavior (script/onerror/`javascript:`
-  stripping, `style` whitelist, Mermaid SVG / `data-mermaid-slot` / KaTeX `<math>` retention).
+  stripping, `style` whitelist, Mermaid SVG / `data-mermaid-slot` / KaTeX `<math>` retention,
+  `appdoc://` image src retention).
 - Any new rendering feature (new container, new embed, new code-block handler) must route its HTML through
   the same gate. "Quick local `dangerouslySetInnerHTML`" is not allowed.
 

@@ -8,7 +8,7 @@
 //     happen on every switch?
 //   * Are long tasks / IPC round-trips involved?
 //
-// It is excluded from `npm run e2e` (and therefore from CI) on purpose it
+// It is excluded from `npm run e2e:full` (and therefore from CI) on purpose it
 // reloads the app several times and is slow by design. The regression gate that
 // DOES run in CI lives beside it in switch-perf-gate.e2e.spec.ts and shares
 // every helper through e2e/helpers/perf-fixture.ts.
@@ -16,9 +16,9 @@
 // Reproduces the reported scenario: right after launch, open a folder and
 // immediately switch files.
 //
-// Run:  npm run e2e:perf
-//   PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf     # measure a real folder
-//   PERF_DOCS=500 PERF_SUBDIR_DOCS=20 PERF_SUBDIR_DEPTH=2 npm run e2e:perf
+// Run:  npm run e2e:perf-diag
+//   PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf-diag     # measure a real folder
+//   PERF_DOCS=500 PERF_SUBDIR_DOCS=20 PERF_SUBDIR_DEPTH=2 npm run e2e:perf-diag
 import { test } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp } from '../helpers/launch'
 import {

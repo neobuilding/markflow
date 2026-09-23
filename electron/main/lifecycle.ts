@@ -21,6 +21,7 @@ import {
 } from './state'
 import { purgeUnsavedDrafts as storePurgeUnsavedDrafts } from './model/documentStore'
 import { stopFolderWatching } from './model/folderWatcher'
+import { removeOwnTempDir, scheduleRemoveAfterExit } from './lib/temp-cleanup'
 
 export function setupLifecycle(): void {
   function purgeUnsavedDrafts(): void {
@@ -95,6 +96,40 @@ export function setupLifecycle(): void {
       await stopFolderWatching()
     } catch {
       // Best-effort: a failed watcher close must not block exit.
+    }
+    // The app's userData lives in %TEMP% and Windows never cleans %TEMP%, so the app
+    // removes the runtime data IT produced there, in EVERY mode:
+    //   production -> %TEMP%/markflow-<pid> (app-created redirect, private per instance)
+    //   e2e        -> %TEMP%/markflow-e2e-<random> (the CONTAINER is allocated by the
+    //                 test harness, but the caches / Local Storage / preferences inside
+    //                 it were written by this app — cleaning those is its own job)
+    // Each owner handles what it created: the harness reclaims the directory it
+    // allocated (e2e/helpers/temp.ts) and asserts this app-level cleanup happened.
+    //
+    // Step 1 is a synchronous remove; Chromium may still be holding files in its own
+    // profile at this point, which makes rmSync abort. When that happens (normal run
+    // only), step 2 moves the leftover aside and a detached deleter finishes the job
+    // just after we exit.
+    // Best-effort, like the watcher close above: cleanup must never block exit. If the
+    // user-data-dir can't be resolved we simply skip the removal rather than hang quit.
+    try {
+      const ownTemp = app.getPath('userData')
+      removeOwnTempDir(ownTemp)
+      // Always schedule the deferred removal, in EVERY mode including e2e: Chromium
+      // flushes Preferences / Local State during teardown and re-creates the directory
+      // right after the synchronous delete above, so only a post-exit remove is certain.
+      // In e2e the *container* directory is allocated by the harness, but the runtime data
+      // inside it (caches / Local Storage / preferences) is OURS — and on Windows the
+      // synchronous attempt above fails with EPERM because Chromium is still holding files
+      // at will-quit. The deferred deleter runs after we (and our Chromium children) have
+      // fully exited, so it is the only path that reliably cleans that data. The harness's
+      // own reclaim (cleanupTempDirs) is belt-and-suspenders; if it already removed the dir
+      // the deleter is a harmless no-op. Excluding e2e here broke the "app auto-removes its
+      // own user-data-dir" contract (it must hold in ANY mode), which
+      // temp-cleanup.e2e.spec.ts pins by untracking the dir from the harness.
+      scheduleRemoveAfterExit(ownTemp)
+    } catch {
+      // Best-effort: temp cleanup must not block exit.
     }
   })
 

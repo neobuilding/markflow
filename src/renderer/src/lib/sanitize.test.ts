@@ -25,6 +25,34 @@ describe('sanitizeHtml — XSS stripping', () => {
   })
 })
 
+describe('sanitizeHtml — URI scheme whitelist (appdoc://)', () => {
+  // The pipeline rewrites relative images to appdoc://<docId>/<rel>. DOMPurify's default
+  // ALLOWED_URI_REGEXP does not know that scheme and SILENTLY drops the src, which left
+  // every local image in the preview as a src-less <img> (and export with no image at all).
+  it('keeps an appdoc:// image src (the app’s own asset scheme)', () => {
+    const out = sanitizeHtml('<img src="appdoc://doc-1/img/pic.png" alt="pic">')
+    expect(out).toContain('src="appdoc://doc-1/img/pic.png"')
+    expect(out).toContain('alt="pic"')
+  })
+
+  it('keeps the ordinary schemes (https / http / data / relative / mailto)', () => {
+    expect(sanitizeHtml('<img src="https://x/y.png">')).toContain('src="https://x/y.png"')
+    expect(sanitizeHtml('<img src="http://x/y.png">')).toContain('src="http://x/y.png"')
+    expect(sanitizeHtml('<img src="data:image/png;base64,AA">')).toContain(
+      'src="data:image/png;base64,AA"',
+    )
+    expect(sanitizeHtml('<img src="pic.png">')).toContain('src="pic.png"')
+    expect(sanitizeHtml('<a href="mailto:a@b.c">m</a>')).toContain('href="mailto:a@b.c"')
+  })
+
+  it('still strips javascript: and unknown custom schemes', () => {
+    // Only `appdoc:` was added to the whitelist — every other exotic scheme must stay out.
+    expect(sanitizeHtml('<a href="javascript:alert(1)">x</a>')).not.toContain('javascript:')
+    expect(sanitizeHtml('<img src="foo://evil/p.png">')).not.toContain('foo://')
+    expect(sanitizeHtml('<img src="appdock://evil/p.png">')).not.toContain('appdock://')
+  })
+})
+
 describe('sanitizeHtml — style whitelist (BUG-5)', () => {
   it('strips style on non-allowed elements (div/p/a/pre)', () => {
     const out = sanitizeHtml(
@@ -60,33 +88,9 @@ describe('sanitizeHtml — mermaid & data attributes', () => {
     expect(out).toContain('data-mermaid-slot="0"')
   })
 
-  it('retains the baked diagram source (data-mermaid-source)', () => {
-    // The preview URI-encodes the source (MarkdownPreview.tsx) precisely because the
-    // encoded form survives sanitization while the raw form does not see below.
-    const encoded = encodeURIComponent('graph TD;A-->B')
-    const out = sanitizeHtml(`<div data-mermaid-slot="0" data-mermaid-source="${encoded}"></div>`)
-    expect(out).toContain('data-mermaid-slot="0"')
-    expect(out).toContain('data-mermaid-source')
-    expect(decodeURIComponent(encoded)).toBe('graph TD;A-->B')
-  })
-
-  // CHARACTERIZATION (why URI-encoding is required): the HTML parser decodes entities
-  // BEFORE DOMPurify inspects the attribute, so `&gt;` is already a literal `>` here,
-  // and DOMPurify drops an attribute whose value contains `-->`. Mermaid flowcharts are
-  // full of `A-->B`, so an HTML-escaped source was silently stripped — which is exactly
-  // why "Copy diagram source" used to be permanently greyed out.
-  it('strips an HTML-escaped (but not URI-encoded) diagram source', () => {
-    const out = sanitizeHtml(
-      '<div data-mermaid-slot="0" data-mermaid-source="graph TD;A--&gt;B"></div>',
-    )
-    expect(out).toContain('data-mermaid-slot="0"')
-    expect(out).not.toContain('data-mermaid-source')
-  })
-
-  it('keeps a diagram source that merely contains -- (no comment terminator)', () => {
-    const out = sanitizeHtml('<div data-mermaid-source="a--b"></div>')
-    expect(out).toContain('data-mermaid-source="a--b"')
-  })
+  // NOTE: `data-mermaid-source` was removed in plan-02 D3/D9 (the "Copy diagram source"
+  // menu item no longer exists), so there is no longer a diagram-source attribute to
+  // retain or strip. The placeholder keeps only `data-mermaid-slot` (tested below).
 
   it('retains mermaid SVG structure including <style> and inline styles', () => {
     const mermaid =
@@ -175,5 +179,43 @@ describe('sanitizeHtml — integration with markdownPipeline', () => {
     // ... while the inner KaTeX rendering is retained.
     expect(out).toContain('class="katex"')
     expect(out).toContain('katex-display')
+  })
+})
+
+describe('sanitizeHtml — SanitizedHtml brand (R5 / D-C)', () => {
+  it('returns a string carrying the sanitized (XSS-stripped) content', () => {
+    const clean = sanitizeHtml('<p>ok</p><script>alert(1)</script>')
+    expect(typeof clean).toBe('string')
+    expect(clean).toContain('<p>ok</p>')
+    expect(clean).not.toContain('<script')
+  })
+
+  it('is assignable to a plain string (SanitizedHtml is a string subtype)', () => {
+    const clean = sanitizeHtml('<p>ok</p>')
+    const asString: string = clean
+    expect(asString).toContain('<p>ok</p>')
+  })
+
+  it('cannot be constructed from an arbitrary string at the type level', () => {
+    // Runtime counterpart of the compile-time guarantee: only sanitizeHtml may mint a
+    // SanitizedHtml. We assert the value is hardening-applied, so the single write entry
+    // (patchPreviewContent) can trust it blindly.
+    const raw = '<img src=x onerror="evil()">'
+    const clean = sanitizeHtml(raw)
+    expect(clean).not.toContain('onerror')
+    expect(clean).toBe(sanitizeHtml(raw))
+  })
+})
+
+describe('sanitizeHtml — R6 data-line survives sanitization', () => {
+  it('keeps the data-line source-mapping attribute on blocks (data-* allowed by default)', () => {
+    // R6 is only real if DOMPurify lets `data-line` through: the preview DOM, the export HTML
+    // and the stage-2 rich-text-copy all read the attribute off the SANITIZED string.
+    const out = sanitizeHtml(
+      '<h1 data-line="0">T</h1><p data-line="2">b</p><pre data-line="4"><code>x</code></pre>',
+    )
+    expect(out).toContain('data-line="0"')
+    expect(out).toContain('data-line="2"')
+    expect(out).toContain('data-line="4"')
   })
 })

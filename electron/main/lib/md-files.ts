@@ -1,37 +1,32 @@
 // Markdown file-collection helpers, extracted from index.ts.
-import { readdirSync, statSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { app } from 'electron'
 import { MD_EXTS } from './markdown-ext'
+import { nodeDiskIO, type DiskIO } from './disk-io'
 
 // Re-exported so existing importers (handlers/files.ts, tests) keep one symbol.
 export { MD_EXTS }
 
-// Recursively collect all Markdown files under a directory
-export function collectMarkdownFiles(dir: string): string[] {
+// Recursively collect all Markdown files under a directory. Filesystem access goes
+// through the injected `DiskIO` port (defaults to the real node:fs adapter) so the
+// walk is testable against an in-memory fake; see docs/agents/testing.md.
+export function collectMarkdownFiles(dir: string, io: DiskIO = nodeDiskIO): string[] {
   const result: string[] = []
   try {
-    const entries = readdirSync(dir)
-    for (const name of entries) {
+    const entries = io.readdir(dir)
+    for (const entry of entries) {
       // Skip hidden directories and node_modules
-      if (name.startsWith('.') || name === 'node_modules') continue
-      const fullPath = join(dir, name)
-      try {
-        const st = statSync(fullPath)
-        if (st.isDirectory()) {
-          result.push(...collectMarkdownFiles(fullPath))
-        } else {
-          // Anything that isn't a directory (regular file, symlink, etc.) is
-          // matched by its markdown extension. Using `else` (rather than
-          // `else if (st.isFile())`) keeps the file branch reachable for
-          // non-regular entries like symlinks while still skipping directories.
-          const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
-          if (MD_EXTS.has(ext)) {
-            result.push(fullPath)
-          }
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+      if (entry.isDirectory()) {
+        result.push(...collectMarkdownFiles(join(dir, entry.name), io))
+      } else {
+        // Anything that isn't a directory (regular file, symlink, etc.) is matched
+        // by its markdown extension.
+        const ext = entry.name.slice(entry.name.lastIndexOf('.')).toLowerCase()
+        if (MD_EXTS.has(ext)) {
+          result.push(join(dir, entry.name))
         }
-      } catch {
-        // Skip files we can't access
       }
     }
   } catch {

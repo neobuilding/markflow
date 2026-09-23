@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { mkTempDir } from '../helpers/temp'
 
 // Mermaid is dynamically imported on first use (`getMermaid()` in MarkdownPreview.tsx)
 // so the ~2.5 MB library stays out of the initial chunk. Unit tests can't prove that
@@ -15,7 +15,7 @@ test.describe('mermaid preview', () => {
 
   test.beforeEach(async () => {
     handle = await launchApp()
-    scratch = mkdtempSync(join(tmpdir(), 'markflow-e2e-'))
+    scratch = mkTempDir('markflow-e2e-')
   })
 
   test.afterEach(async () => {
@@ -55,15 +55,17 @@ test.describe('mermaid preview', () => {
     // The rendered SVG lands inside the slot wrapper. Seeing it proves the real
     // mermaid module was fetched, initialised and executed in the renderer.
     const wrapper = page.locator('[data-mermaid-slot="0"]')
+    // Preview mermaid bakes lazily via IntersectionObserver; scroll the slot into view first so it
+    // bakes even when it starts below the fold on a short window.
+    await wrapper.scrollIntoViewIfNeeded()
     await expect(wrapper.locator('svg')).toBeVisible({ timeout: 30_000 })
-    // No failure placeholder: the diagram rendered for real.
+    // No failure placeholder: the diagram rendered for real — the lazy import, the
+    // baking step and the sanitization gate all ran end-to-end in the Electron renderer.
     await expect(page.locator('.mermaid-skeleton')).toHaveCount(0)
-    // The wrapper keeps the raw source for "Copy diagram source" (URI-encoded, because
-    // a decoded `-->` would make DOMPurify drop the attribute). Its presence proves the
-    // lazy mermaid import, the baking step and the sanitization gate all ran for real.
-    const src = await wrapper.getAttribute('data-mermaid-source')
-    expect(src).toBeTruthy()
-    expect(decodeURIComponent(src as string)).toContain('graph TD')
+    // The "Copy diagram source" menu item was removed in plan-02 D3/D9, so the placeholder
+    // carries NO data-mermaid-source attribute. Asserting its absence guards against an
+    // accidental reintroduction (the unit suite makes the same assertion on the DOM).
+    await expect(wrapper).not.toHaveAttribute('data-mermaid-source')
   })
 
   test('a malformed diagram degrades to the skeleton without breaking the preview', async () => {

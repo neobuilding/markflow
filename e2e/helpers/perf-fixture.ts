@@ -4,12 +4,12 @@
 // on-demand diagnostic (switch-perf) drive the EXACT same code path. A gate that
 // drifts from the diagnostic it was derived from stops guarding anything: it would
 // keep passing while the scenario it was written for regresses.
-import { mkdirSync, writeFileSync, mkdtempSync, readdirSync, statSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { summarize, percentile, type MainSample } from './perf'
 import type { AppHandle } from './launch'
 import { MD_EXTS } from '../../shared/fileUtils'
+import { mkTempDir } from './temp'
 
 // Markdown extensions recognised by the app. Single-sourced from shared/fileUtils.ts
 // (the app's one definition), so this fixture never drifts from the real set.
@@ -23,7 +23,7 @@ export const COLD_ROUNDS = Number(process.env.PERF_COLD_ROUNDS ?? 4)
 
 // Point the diagnostic at a REAL folder instead of generating a synthetic one:
 // synthetic fixtures are near-empty markdown files and cannot reproduce costs that
-// come from real content.   PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf
+// come from real content.   PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf-diag
 export const REAL_FOLDER = process.env.PERF_FOLDER?.trim() || ''
 
 /**
@@ -57,7 +57,7 @@ export function countMarkdownFiles(dir: string): number {
  * of what it has to crawl).
  */
 export function makeFixture(n: number, subPerDir: number, depth: number): string {
-  const dir = mkdtempSync(join(tmpdir(), 'markflow-perf-'))
+  const dir = mkTempDir('markflow-perf-')
   const langs = ['js', 'python', 'bash', 'json', 'ts', 'yaml', 'go', 'rust', 'sql', 'html']
   const write = (folder: string, i: number, tag: string) =>
     writeFileSync(
@@ -83,7 +83,7 @@ export function makeFixture(n: number, subPerDir: number, depth: number): string
  * "open a folder, then immediately switch files" stutter.
  */
 export function makeNoisyFolder(docs: number, noiseFiles: number): string {
-  const dir = mkdtempSync(join(tmpdir(), 'markflow-perf-noise-'))
+  const dir = mkTempDir('markflow-perf-noise-')
   const writeDoc = (folder: string, i: number) =>
     writeFileSync(
       join(folder, `doc${i}.md`),

@@ -129,7 +129,7 @@ test.describe('preload bridge contract (api/* split)', () => {
         setPrinting: 'function',
       }),
     )
-    // clipboard (writeText / writeImage): the only api group this contract never
+    // clipboard (writeText / writeImage / writeSvg): the only api group this contract never
     // collected, even though Electron 44 removed `clipboard.writeImage` in favour of the
     // async `clipboard.write([ClipboardItem])` handler. Lock the bridge shape here so a
     // dropped method fails loudly instead of only crashing the renderer at runtime.
@@ -137,6 +137,7 @@ test.describe('preload bridge contract (api/* split)', () => {
       expect.objectContaining({
         writeText: 'function',
         writeImage: 'function',
+        writeSvg: 'function',
       }),
     )
     // 4 event subscriptions events.ts
@@ -240,6 +241,67 @@ test.describe('preload bridge contract (api/* split)', () => {
     // api/search.ts, so confirm the bridge still routes to the handler.
     const results = await page.evaluate(() => window.api.search.query('anything'))
     expect(Array.isArray(results)).toBe(true)
+  })
+
+  // Plan 02 §4.4 reopened 2026-09-22: this used to assert only "the call does not throw", which
+  // stayed green while `clipboard:write-image` / `write-svg` copied NOTHING — the handler built a
+  // `new ClipboardItem(...)` from a `declare const` that does not exist at runtime in the main
+  // process, and swallowed the resulting ReferenceError. Both handlers are exercised through the
+  // real system clipboard here: "no throw" is not a clipboard write.
+  test('clipboard:writeSvg and writeImage really land on the system clipboard', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    const clear = () => handle.electronApp.evaluate(({ clipboard }) => clipboard.clear())
+    const readTypes = () =>
+      handle.electronApp.evaluate(async ({ clipboard }) => {
+        const items = await clipboard.read()
+        return items.map((item) => item.types)
+      })
+
+    // A 1x1 PNG (the same fixture the export tests use): a truncated PNG decodes to an empty
+    // nativeImage, which the handler correctly refuses to write — it must be a real image.
+    const PNG_HEX =
+      '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082'
+
+    await clear()
+    await page.evaluate(async (hex) => {
+      const bytes = new Uint8Array(hex.length / 2)
+      for (let i = 0; i < bytes.length; i += 1) {
+        bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+      }
+      let bin = ''
+      bytes.forEach((b) => {
+        bin += String.fromCharCode(b)
+      })
+      await window.api.clipboard.writeImage(`data:image/png;base64,${btoa(bin)}`)
+    }, PNG_HEX)
+    await expect
+      .poll(async () => (await readTypes()).some((types) => types.includes('image/png')), {
+        timeout: 15_000,
+      })
+      .toBe(true)
+
+    // The vector payload: Electron does not surface the custom `image/svg+xml` MIME through
+    // `clipboard.read()` (only `text/html` comes back), so assert the HTML wrapper really carries
+    // the diagram — before the ClipboardItem fix the clipboard was simply empty here.
+    await clear()
+    const readClipHtml = () =>
+      handle.electronApp.evaluate(async ({ clipboard }) => {
+        const items = await clipboard.read()
+        const item = items.find((entry) => entry.types.includes('text/html'))
+        if (!item) return ''
+        const blob = (await item.getType('text/html')) as Blob
+        return await blob.text()
+      })
+    await page.evaluate(async () => {
+      await window.api.clipboard.writeSvg('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>')
+    })
+    await expect
+      .poll(async () => (await readClipHtml()).includes('data:image/svg+xml;base64,'), {
+        timeout: 15_000,
+      })
+      .toBe(true)
   })
 
   test('onMenuEvent subscription returns a callable unsubscribe function', async () => {

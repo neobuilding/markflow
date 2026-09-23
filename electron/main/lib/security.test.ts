@@ -1,23 +1,11 @@
 // @vitest-environment node
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { parseAppDocUrl, isSubdir } from './security'
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-
-// Collect the temp dirs/files created by this test and clean them up after each case, to
-// avoid polluting the system temp directory.
-const tmpArtifacts: string[] = []
-afterEach(() => {
-  for (const p of tmpArtifacts) {
-    try {
-      rmSync(p, { recursive: true, force: true })
-    } catch {
-      /* ignore cleanup failures */
-    }
-  }
-  tmpArtifacts.length = 0
-})
+// Every temp dir here is allocated through the registry, which reclaims it when the suite
+// finishes (test-setup.ts) — no hand-rolled cleanup list to forget to extend.
+import { mkTestDir } from '../test-support/tmp'
 
 describe('parseAppDocUrl (R4/R6 appdoc parsing)', () => {
   it('docId is placed in the hostname', () => {
@@ -63,17 +51,14 @@ describe('parseAppDocUrl (R4/R6 appdoc parsing)', () => {
 
 describe('isSubdir traversal prevention (R4/R6)', () => {
   it('allows subdirectory / file', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-sub-'))
-    tmpArtifacts.push(dir)
+    const dir = mkTestDir('mf-sub-')
     const child = join(dir, 'a.png')
     writeFileSync(child, 'x') // isSubdir uses realpathSync, so the file must really exist
     expect(isSubdir(dir, child)).toBe(true)
   })
   it('blocks privilege-escalation path (../ escape)', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mf-prev-'))
-    tmpArtifacts.push(dir)
-    const outsideDir = mkdtempSync(join(tmpdir(), 'mf-prev-out-'))
-    tmpArtifacts.push(outsideDir)
+    const dir = mkTestDir('mf-prev-')
+    const outsideDir = mkTestDir('mf-prev-out-')
     const outside = join(outsideDir, 'x')
     writeFileSync(outside, 'x')
     expect(isSubdir(dir, outside)).toBe(false)

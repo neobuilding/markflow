@@ -1,12 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtempSync, mkdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { mkTestDir } from '../test-support/tmp'
 import { addOpenFolder, clearOpenFolders, getOpenFolders } from './openFolders'
 
 function tmpDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix))
+  return mkTestDir(prefix)
 }
 
 beforeEach(() => {

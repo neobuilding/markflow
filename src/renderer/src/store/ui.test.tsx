@@ -110,6 +110,46 @@ describe('useUIStore — all setters and toggles', () => {
     expect(useUIStore.getState().activeFolder).toBeNull()
   })
 
+  // Closing means the edits are discarded, so the global dirty flag must not survive:
+  // it used to, which made the NEXT dirty check (switching documents, dropping a file,
+  // quitting) ask "discard unsaved changes?" a second time for already-discarded edits.
+  it('closeDocument clears the dirty flag (discarded edits must not re-prompt)', () => {
+    const s = useUIStore.getState()
+    s.setActiveDocumentId('x')
+    s.setEditable(true)
+    s.setDirty(true)
+    expect(useUIStore.getState().dirty).toBe(true)
+
+    useUIStore.getState().closeDocument()
+
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(useUIStore.getState().dirty).toBe(false)
+  })
+
+  it('closeWorkspace clears the dirty flag', () => {
+    const s = useUIStore.getState()
+    s.setActiveDocumentId('x')
+    s.setEditable(true)
+    s.setDirty(true)
+
+    useUIStore.getState().closeWorkspace()
+
+    expect(useUIStore.getState().dirty).toBe(false)
+  })
+
+  it('a blocked close leaves dirty untouched (nothing was discarded)', () => {
+    const s = useUIStore.getState()
+    s.setActiveDocumentId('x')
+    s.setDirty(true)
+    s.setExporting(true)
+    useUIStore.getState().closeDocument()
+    expect(useUIStore.getState().activeDocumentId).toBe('x')
+    // Still dirty: the document was NOT closed, so the edits are still unsaved.
+    expect(useUIStore.getState().dirty).toBe(true)
+    s.setExporting(false)
+  })
+
   it('closeWorkspace is blocked while exporting or the export dialog is open', () => {
     const s = useUIStore.getState()
     s.setActiveDocumentId('x')

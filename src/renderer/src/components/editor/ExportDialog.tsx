@@ -3,6 +3,7 @@ import { useUIStore } from '../../store/ui'
 import { useDocument } from '../../hooks/useDocuments'
 import { exportDocument, resolveTheme } from '../../lib/export'
 import { getExportHtml } from '../../lib/exportStore'
+import { prepareExportHtml } from '../../lib/exportBake'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Button } from '../ui/button'
 import {
@@ -81,6 +82,9 @@ export function ExportDialog(): React.ReactElement {
     // the current file/workspace.
     useUIStore.getState().setExporting(true)
     try {
+      // ADR 0019: bake EVERY diagram into the canonical HTML before writing. The preview
+      // renders diagrams lazily, so the cache still holds empty placeholders.
+      await prepareExportHtml()
       await exportDocument({
         path: targetPath,
         theme: resolveTheme(themeChoice, uiTheme),

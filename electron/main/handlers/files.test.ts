@@ -1,8 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { resolve, join } from 'node:path'
+import { createMemoryDiskIO } from '../lib/disk-io'
 
+// This handler must be a genuine unit test: it exercises orchestration against the
+// in-memory DiskIO fake and never touches a real disk (the old version created real
+// temp directories — that belongs to e2e, not a handler unit test).
 const handlers: Record<string, (...a: unknown[]) => unknown> = {}
 vi.mock('electron', () => ({
   ipcMain: {
@@ -15,15 +17,21 @@ vi.mock('electron', () => ({
 import { registerFilesHandlers } from './files'
 
 describe('files handlers', () => {
+  let io: ReturnType<typeof createMemoryDiskIO>
   let root: string
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k]
-    root = mkdtempSync(join(tmpdir(), 'mf-files-'))
-    registerFilesHandlers()
+    io = createMemoryDiskIO()
+    // `resolve` produces an absolute path the handler will re-resolve; seed the
+    // in-memory disk at exactly that path so the fake and the handler agree.
+    root = resolve('mf-files-root')
+    registerFilesHandlers(io)
   })
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true })
-  })
+
+  function seed(files: string[]): void {
+    io.mkdir(root)
+    for (const f of files) io.seed(join(root, f), '# ' + f)
+  }
 
   it('returns [] for no paths', () => {
     expect(handlers['files:resolve-paths'](null, [])).toEqual({
@@ -33,8 +41,7 @@ describe('files handlers', () => {
   })
 
   it('expands a directory into its markdown files', () => {
-    writeFileSync(join(root, 'a.md'), '# a')
-    writeFileSync(join(root, 'b.txt'), 'ignore')
+    seed(['a.md', 'b.txt'])
     const out = handlers['files:resolve-paths'](null, [root]) as {
       directories: string[]
       markdownFiles: string[]
@@ -45,8 +52,7 @@ describe('files handlers', () => {
   })
 
   it('for a single .md file, also imports siblings in its directory', () => {
-    writeFileSync(join(root, 'a.md'), '# a')
-    writeFileSync(join(root, 'sibling.md'), '# s')
+    seed(['a.md', 'sibling.md'])
     const out = handlers['files:resolve-paths'](null, [join(root, 'a.md')]) as {
       directories: string[]
       markdownFiles: string[]
@@ -57,7 +63,7 @@ describe('files handlers', () => {
   })
 
   it('ignores non-markdown single files', () => {
-    writeFileSync(join(root, 'x.txt'), 'no')
+    seed(['x.txt'])
     const out = handlers['files:resolve-paths'](null, [join(root, 'x.txt')]) as {
       directories: string[]
       markdownFiles: string[]
@@ -70,8 +76,7 @@ describe('files handlers', () => {
   })
 
   it('does not duplicate a directory already added via a sibling file', () => {
-    writeFileSync(join(root, 'a.md'), '# a')
-    writeFileSync(join(root, 'sibling.md'), '# s')
+    seed(['a.md', 'sibling.md'])
     // Pass the directory AND a file inside it in the same call; the parent dir
     // must only appear once (exercises the !directories.includes(parentDir) false branch).
     const out = handlers['files:resolve-paths'](null, [root, join(root, 'a.md')]) as {

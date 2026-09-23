@@ -1,4 +1,4 @@
-// PERFORMANCE REGRESSION GATE (runs in CI as part of `npm run e2e`).
+// PERFORMANCE REGRESSION GATE (runs in CI as part of `npm run e2e:full`).
 //
 // Guards the chokidar-lag root cause: the folder watcher must watch MARKDOWN
 // ONLY. Opening a folder buried under non-md build output (coverage reports,
@@ -14,7 +14,7 @@
 // (switch-perf.e2e.spec.ts), which has NO thresholds and is never run in CI:
 // a gate must be small, deterministic and fast enough for every PR.
 //
-// Run alone:  npx playwright test --project=electron-perf-gate
+// Run alone:  npx playwright test --project=e2e-perf-gate
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp } from '../helpers/launch'
 import { installMainProbe, collectMainProbe } from '../helpers/perf'
@@ -61,7 +61,7 @@ const ROUNDS = 3
 // "only watches markdown" case it asserts behaviour and has no timing
 // dependence. This gate is only a backstop for the COST of watching.
 //
-// Override for ad-hoc runs:  PERF_MAX_P95=300 npx playwright test --project=electron-perf-gate
+// Override for ad-hoc runs:  PERF_MAX_P95=300 npx playwright test --project=e2e-perf-gate
 const MAX_P95_MS = Number(process.env.PERF_MAX_P95 ?? 55)
 const MAX_STALL_MS = Number(process.env.PERF_MAX_STALL_MS ?? 150)
 const MAX_LAG_MS = Number(process.env.PERF_MAX_LAG ?? 250)

@@ -67,3 +67,57 @@ if (typeof Element !== 'undefined') {
     Element.prototype.scrollIntoView = () => {}
   }
 }
+
+// jsdom does not implement IntersectionObserver, but MarkdownPreview (D-E① lazy mermaid
+// render) constructs one on mount. Without a polyfill, any component suite that mounts
+// MarkdownPreview (e.g. EditorPane) throws "IntersectionObserver is not defined". Provide a
+// mock that reports every observed element as immediately intersecting, so diagrams render
+// synchronously under jsdom — matching the visibility assumption of the real renderer.
+if (
+  typeof (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver === 'undefined'
+) {
+  class IntersectionObserverMock {
+    private readonly cb: IntersectionObserverCallback
+    // Mirror the real `IntersectionObserver` signature `(callback, options?)`. The
+    // options are unused here (the mock reports every element as intersecting), but
+    // declaring the parameter keeps this consistent with the global constructor that
+    // production code calls with a second options argument.
+    constructor(cb: IntersectionObserverCallback, _options?: IntersectionObserverInit) {
+      this.cb = cb
+    }
+    observe(el: Element): void {
+      this.cb(
+        [
+          {
+            isIntersecting: true,
+            target: el,
+            boundingClientRect: {} as DOMRect,
+            intersectionRatio: 1,
+            intersectionRect: {} as DOMRect,
+            rootBounds: null,
+            time: 0,
+          } as IntersectionObserverEntry,
+        ],
+        this as unknown as IntersectionObserver,
+      )
+    }
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return []
+    }
+  }
+  ;(globalThis as { IntersectionObserver?: unknown }).IntersectionObserver =
+    IntersectionObserverMock
+}
+
+// The suite creates real temp dirs under %TEMP% (folder-watcher / open-folder / document
+// / export fixtures). Vitest never cleans %TEMP%, so reclaim every path allocated through
+// mkTestDir() when each test file finishes. Registering the hook in this setup file means
+// it runs for every suite without editing each one, and it only removes dirs the suite
+// itself recorded (no scan of %TEMP%, so it can never touch another process's data).
+// NOTE: a process-level `exit` handler is unreliable under Vitest's worker/thread pool, so
+// we use Vitest's own `afterAll` hook, which is guaranteed to fire per test file.
+import { afterAll } from 'vitest'
+import { cleanupTestDirs } from './electron/main/test-support/tmp'
+afterAll(() => cleanupTestDirs())

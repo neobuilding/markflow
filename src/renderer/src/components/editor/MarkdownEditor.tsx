@@ -231,6 +231,7 @@ export function MarkdownEditor({
     selectAll(v)
     v.focus()
   }
+
   const doCut = async () => {
     const v = viewRef.current
     /* v8 ignore next -- defensive: only invoked from a menu item over the mounted editor */
@@ -391,6 +392,20 @@ export function MarkdownEditor({
 
     document.addEventListener('markdown:insert', handleInsert)
 
+    // Select All routed from the native menu (menu:select-all IPC → selectAllRouter → this
+    // event). Must use CodeMirror's OWN selectAll command: the DOM-level select-all the old
+    // menu role performed desynced CM's internal selection from the DOM (the "Ctrl+A only
+    // selects content before the cursor" bug). The CM command selects the whole document
+    // and keeps both selections in sync.
+    const handleSelectAll = () => {
+      const v = viewRef.current
+      /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
+      if (!v) return
+      selectAll(v)
+      v.focus()
+    }
+    document.addEventListener('markdown:select-all', handleSelectAll)
+
     // Open the in-editor find panel on request from the editor toolbar button. CodeMirror's
     // own Mod-f binding already opens it when the editor has focus; this listener covers the
     // case where the button is clicked without editor focus.
@@ -414,6 +429,7 @@ export function MarkdownEditor({
 
     return () => {
       document.removeEventListener('markdown:insert', handleInsert)
+      document.removeEventListener('markdown:select-all', handleSelectAll)
       document.removeEventListener('markdown:find', handleFind)
       document.removeEventListener('markdown:replace', handleReplace)
       scrollSync.unregister('editor')

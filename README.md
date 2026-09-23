@@ -155,21 +155,21 @@ markflow/
 
 ## 🛠️ Tech Stack
 
-| Layer             | Technology                                                                                             |
-| ----------------- | ------------------------------------------------------------------------------------------------------ |
-| Build             | Vite 8 + vite-plugin-electron                                                                          |
-| Desktop           | Electron 43                                                                                            |
-| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                        |
-| UI Components     | Radix UI primitives (shadcn/ui style)                                                                  |
-| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                 |
-| Storage           | In-memory document store (Map) + minisearch index + chokidar folder watcher + Markdown file dual-write |
-| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                         |
-| Math              | KaTeX (LaTeX formula rendering)                                                                        |
-| Diagrams          | Mermaid.js                                                                                             |
-| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                          |
-| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)                                                  |
-| Testing           | Vitest + jsdom                                                                                         |
-| Packaging         | electron-builder                                                                                       |
+| Layer             | Technology                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------- |
+| Build             | Vite 8 + vite-plugin-electron                                                                                   |
+| Desktop           | Electron 43                                                                                                     |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                 |
+| UI Components     | Radix UI primitives (shadcn/ui style)                                                                           |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                          |
+| Storage           | In-memory document store (Map) + minisearch index + chokidar folder watcher + Markdown file dual-write          |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                                  |
+| Math              | KaTeX (LaTeX formula rendering)                                                                                 |
+| Diagrams          | Mermaid.js                                                                                                      |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                                   |
+| HTML sanitization | DOMPurify + branded `SanitizedHtml` type gate + single DOM write entry `patchPreviewContent` (single XSS point) |
+| Testing           | Vitest + jsdom                                                                                                  |
+| Packaging         | electron-builder                                                                                                |
 
 ## 📦 Packaging Configuration
 
@@ -206,24 +206,29 @@ Two test layers run locally and in CI:
 
 ```bash
 npm run test:coverage   # Unit tests (Vitest, jsdom) + coverage — *no* electron build needed
-npm run e2e             # End-to-end: drives the REAL Electron app via Playwright
+npm run e2e:full        # End-to-end: drives the REAL Electron app via Playwright
 ```
 
 - **Unit tests** (`npm run test:coverage`) use Vitest in jsdom and do **not** trigger the Electron
   build, so they run fast and need no display server.
-- **E2E tests** (`npm run e2e`) launch the real Electron app. `e2e/global-setup.ts` starts a shared
-  Vite dev server and waits for `dist/electron/index.js`, so the main process must be built first
-  (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you must
-  run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e`.
-- **Performance**: `npm run e2e` runs two Playwright projects — `electron-app` (functional) and
-  `electron-perf-gate`. The gate asserts that opening a folder buried in non-Markdown build output
+- **E2E tests** (`npm run e2e:full`) launch the real Electron app. `e2e/global-setup.ts` starts a
+  shared Vite dev server and waits for `dist/electron/index.js`, so the main process must be built
+  first (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you
+  must run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e:full`.
+- **E2E script family**: `e2e:app` (functional/behavioral specs only), `e2e:perf-gate` (performance
+  regression gate only), `e2e:perf-diag` (threshold-free diagnostics, on demand), and
+  `e2e:full` — `e2e-app` + `e2e-perf-gate` in a **single** Playwright run, which is what CI
+  executes. One run matters: it keeps a single global setup (one Vite dev server) and a single
+  report (`playwright-report/`, `reports/e2e/junit.xml`) covering both suites.
+- **Performance**: `npm run e2e:full` composes two Playwright projects — `e2e-app` (functional) and
+  `e2e-perf-gate`. The gate asserts that opening a folder buried in non-Markdown build output
   and immediately switching documents does not stall the main-process event loop, which is the
   regression guard for the folder watcher watching markdown only. A threshold-free diagnostic spec
   sits beside it and is run on demand when numbers (not pass/fail) are what you need:
 
   ```bash
-  npm run e2e:perf                              # synthetic fixture
-  PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf   # measure a real folder
+  npm run e2e:perf-diag                              # synthetic fixture
+  PERF_FOLDER=D:/GitHub/markflow npm run e2e:perf-diag   # measure a real folder
   ```
 
 ### Create-PR GitHub Action (local build & preview)
@@ -261,8 +266,8 @@ The CI gates everything behind a separate `quality` job, then runs `ut` and `e2e
 - `quality` (ubuntu): `npm run quality` (Prettier + ESLint + Stylelint + Markdownlint + Secretlint +
   typecheck) as a fast-fail gate. It runs once and must pass before either test job starts.
 - `ut` (ubuntu, after `quality`): unit tests + coverage (Vitest + jsdom; no Electron build needed).
-- `e2e` (ubuntu, after `quality`): Playwright browser install → `npm run build` → `npm run e2e`
-  (under `xvfb-run`).
+- `e2e` (ubuntu, after `quality`): Playwright browser install → `npm run build` → `npm run e2e:full`
+  (under `xvfb-run`). Quality/coverage/build are separate jobs, so the e2e job runs e2e only.
   Each test job runs on its own runner (e2e does its own `npm ci` + a single `npm run build`), trading one
   extra install for wall-clock time ≈ max(ut, e2e) instead of chained. The `build` / `release` jobs run
   only after both test jobs and the version computation pass. The Playwright HTML report and

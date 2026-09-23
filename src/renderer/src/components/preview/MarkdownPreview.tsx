@@ -1,66 +1,95 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useUIStore } from '../../store/ui'
 import { parseMarkdown } from '../../lib/parseClient'
-import type { RenderResult } from '../../lib/markdownPipeline'
-import { SafeHtml } from '../SafeHtml'
+import type { RenderResult, MermaidSlot } from '../../lib/markdownPipeline'
 import { scrollSync } from '../../lib/scrollSync'
-import { debounce } from '../../lib/utils'
-import { sanitizeHtml } from '../../lib/sanitize'
-import { setExportHtml, setExportContent } from '../../lib/exportStore'
+import { sanitizeHtml, type SanitizedHtml } from '../../lib/sanitize'
+import { patchPreviewContent, DATA_BAKED } from '../../lib/previewRender'
+import { setExportHtml, setExportContent, setExportMermaidSlots } from '../../lib/exportStore'
 import { useT } from '../../i18n'
+import {
+  consumePendingCopy,
+  buildPreviewCopyPayload,
+  warmInlinedImages,
+  deferColdCopy,
+} from '../../lib/previewCopy'
+import { safeEnhanceForPaste } from '../../lib/copyFidelity'
+import { extractFrontmatterLang } from '../../lib/lang'
+import type { Document, ThemeMode } from '../../types'
+// D-B (plan-03 §4.1): the single source of truth for markdown styling is github-markdown-css
+// (the same sheet the exporter uses), injected as a string so we can toggle light/dark by
+// disabling one of the two variant stylesheets — no `.prose` / `.dark` prefix overlay.
+import lightCss from 'github-markdown-css/github-markdown.css?inline'
+import darkCss from 'github-markdown-css/github-markdown-dark.css?inline'
 import { PreviewContextMenu } from './PreviewContextMenu'
-import type { Document } from '../../types'
-// Mermaid is heavy (~2.5 MB) and only needed when a document actually contains a
-// diagram, so it is dynamically imported on first use instead of being bundled into
-// the initial preview chunk. The module is cached after the first load.
-interface MermaidApi {
-  initialize: (config: unknown) => void
-  render: (id: string, code: string) => Promise<{ svg: string }>
-}
-let mermaidReady: Promise<MermaidApi> | null = null
+// D-E① (plan-03 §4.3): mermaid lives in lib/mermaidBake.ts so the lazy preview and the
+// COMPLETE export/print/copy bake share one hash cache (ADR 0019) — export must never
+// depend on which diagrams happen to be on screen.
+import { renderMermaidSlot, mermaidSvgCache, fillMermaidSlot } from '../../lib/mermaidBake'
+import { scheduleExportBake } from '../../lib/exportBake'
 
-function getMermaid(): Promise<MermaidApi> {
-  if (!mermaidReady) {
-    mermaidReady = import('mermaid')
-      .then((m) => {
-        const mod = m.default as unknown as MermaidApi
-        mod.initialize({ securityLevel: 'strict', startOnLoad: false, htmlLabels: false })
-        return mod
-      })
-      // If the dynamic import rejects (corrupt/missing chunk), clear the cached
-      // promise so the NEXT render retries instead of permanently rejecting for
-      // the whole session.
-      /* v8 ignore start -- defensive: the import-failure path isn't exercised under jsdom (mermaid is bundled) */
-      .catch((err) => {
-        mermaidReady = null
-        throw err
-      })
-    /* v8 ignore stop */
+// R9 (plan-03 §4.4): resolve intrinsic dimensions of local `appdoc://` images before
+// sanitize/patch so the browser reserves space and the first paint doesn't jump (CLS).
+async function applyImageDimensions(html: string): Promise<string> {
+  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  const imgs = Array.from(doc.querySelectorAll('img[src^="appdoc://"]:not([width]):not([height])'))
+  // Braces (not a single-line if) on purpose: v8 counts an implicit empty "else" range for a
+  // braceless `if`, which shows up as an uncovered block even though this line runs on every
+  // parse of a document without local images.
+  if (imgs.length === 0) {
+    return html
   }
-  return mermaidReady
+  await Promise.all(
+    imgs.map(async (img) => {
+      const src = img.getAttribute('src')
+      // Unreachable: the `img[src^="appdoc://"]` selector already guarantees a non-empty src.
+      /* v8 ignore next */
+      if (!src) return
+      try {
+        const size = await window.api.documents.imageSize(src)
+        if (size) {
+          img.setAttribute('width', String(size.width))
+          img.setAttribute('height', String(size.height))
+        }
+      } catch {
+        /* leave without dimensions */
+      }
+    }),
+  )
+  return doc.body.innerHTML
 }
 
-// Encode a mermaid source so it survives BOTH the HTML parser and DOMPurify.
-//
-// HTML-escaping is NOT enough: the parser decodes entities BEFORE DOMPurify inspects
-// the attribute, so `&gt;` is already a literal `>` by then — and DOMPurify drops an
-// attribute whose value contains `-->` (locked in by sanitize.test.ts). Mermaid
-// flowcharts are full of `A-->B`, so escaping silently removed the attribute and left
-// "Copy diagram source" permanently greyed out in the real app. URI-encoding keeps the
-// decoded value free of `<`, `>`, `&` and `"`, so the attribute always survives.
-// The reader decodes it again (see PreviewContextMenu.tsx).
-
-// Module-level serial queue: mermaid has internal global state (shared id / temp DOM),
-// so concurrent renders would corrupt diagrams / throw. All renders are queued.
-let mermaidChain: Promise<unknown> = Promise.resolve()
-function renderMermaidSvg(id: string, code: string): Promise<{ svg: string }> {
-  const task = mermaidChain.then(async () => {
-    const mermaid = await getMermaid()
-    return mermaid.render(id, code.trim())
-  })
-  /* v8 ignore next -- defensive: the mermaid render error path isn't exercised under jsdom, but it keeps the serial queue alive */
-  mermaidChain = task.catch(() => undefined) // Keep the chain alive on failure so later renders aren't blocked.
-  return task as Promise<{ svg: string }>
+// D-B (plan-03 §4.1): inject the single github-markdown-css source of truth once, and toggle
+// light/dark via the `disabled` flag. The two variant files are independent full stylesheets
+// (not a `.dark` prefix overlay), so we never rely on a `.dark` class — plan-03 §4.1.
+let mdBodyStylesInjected = false
+function injectMarkdownBodyStyles(): void {
+  if (mdBodyStylesInjected) return
+  const head = document.head
+  const light = document.createElement('style')
+  light.id = 'md-body-light'
+  light.textContent = lightCss
+  const dark = document.createElement('style')
+  dark.id = 'md-body-dark'
+  dark.textContent = darkCss
+  head.appendChild(light)
+  head.appendChild(dark)
+  mdBodyStylesInjected = true
+}
+function applyMarkdownBodyTheme(theme: ThemeMode): boolean {
+  let isDark: boolean
+  if (theme === 'light') isDark = false
+  else if (theme === 'dark') isDark = true
+  else
+    isDark =
+      typeof window !== 'undefined' && !!window.matchMedia
+        ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        : false
+  const light = document.getElementById('md-body-light') as HTMLStyleElement | null
+  const dark = document.getElementById('md-body-dark') as HTMLStyleElement | null
+  if (light) light.disabled = isDark
+  if (dark) dark.disabled = !isDark
+  return isDark
 }
 
 interface MarkdownPreviewProps {
@@ -73,48 +102,32 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
   const scrollRef = useRef<HTMLDivElement>(null)
   const renderToken = useRef(0)
   const lastDocIdRef = useRef<string | null | undefined>(undefined)
-  const [renderedHtml, setRenderedHtml] = useState('')
+  const [sanitizedHtml, setSanitizedHtml] = useState<SanitizedHtml>(sanitizeHtml(''))
   const [loading, setLoading] = useState(true)
-  // docId comes from the global store and is passed to the Worker via comlink for appdoc: image rewriting.
   const docId = useUIStore((s) => s.activeDocumentId)
-  // Tracks whether the preview has rendered at least once, so the parse effect can decide whether to
-  // parse immediately (first paint) without reading `renderedHtml` reactively (which would make it a
-  // dependency and cause a re-parse loop). This ref gates the "parse immediately on first paint"
-  // path instead of checking `renderedHtml === ''` reactively.
+  const theme = useUIStore((s) => s.theme)
   const hasContentRef = useRef(false)
-  // The content seen on the previous render. Used to detect "recovering from an
-  // empty pane" see `isRecovering` below
   const prevContentRef = useRef('')
   const { t } = useT()
-  // Mirror `t` in a ref so effects can read the latest translator without making it a
-  // dependency (which would re-run the parse effect on every language switch). The
-  // assignment happens in an effect (not during render) to satisfy react-hooks/refs.
   const tRef = useRef(t)
   useEffect(() => {
     tRef.current = t
   }, [t])
+  const mermaidSlotsRef = useRef<MermaidSlot[]>([])
+  const mermaidObserverRef = useRef<IntersectionObserver | null>(null)
+  const lang = useMemo(() => extractFrontmatterLang(content), [content])
 
-  // Parsing: sent to the Worker via comlink, with automatic fallback to the main thread on failure.
-  // Parse immediately on first paint / document switch (no debounce); only debounce 150ms for
-  // consecutive keystrokes within the same document, so the "open / switch document" critical path
-  // never waits on the debounce (otherwise the preview would sit empty first).
   useEffect(() => {
     const token = ++renderToken.current
     const isDocSwitch = docId !== lastDocIdRef.current
     lastDocIdRef.current = docId
-    // Recovering from an empty pane: the document switch empties the panes first
-    // (docId already changed on that commit) and fills in the real content on the
-    // NEXT commit, where isDocSwitch is already false. Without this the fill would
-    // take the 150ms keystroke-debounce path and the preview would sit blank for
-    // 150ms after every switch to an uncached document.
     const isRecovering = prevContentRef.current === '' && content !== ''
     prevContentRef.current = content
     const immediate = isDocSwitch || isRecovering || !hasContentRef.current
     let cancelled = false
 
-    // On document switch: clear old content immediately and show Loading to avoid stale content.
     if (isDocSwitch) {
-      setRenderedHtml('')
+      setSanitizedHtml(sanitizeHtml(''))
       setLoading(true)
     }
 
@@ -122,70 +135,50 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
       parseMarkdown(content, docId)
         .then(async (res: RenderResult) => {
           if (cancelled || token !== renderToken.current) return
-          // Bake mermaid before injection: replace placeholder <div data-mermaid-slot="{i}"> with
-          // the raw SVG, producing the full HTML string containing mermaid SVGs; sanitization is
-          // done once later by SafeHtml.
+          // D-E① (plan-03 §4.3): do NOT bake mermaid into the HTML string. Keep the empty
+          // `<div data-mermaid-slot>` placeholders and render them lazily in the DOM after
+          // the incremental patch (IntersectionObserver + hash cache). The old "Copy diagram
+          // source" menu item was removed in plan-02 D3, so no `data-mermaid-source` attribute
+          // is needed — plan-03 §4.3's stale reference to it is dropped per plan-02 D9.
+          mermaidSlotsRef.current = res.mermaid
           let html = res.html
-          if (res.mermaid.length > 0) {
-            await getMermaid()
-            const svgs: string[] = []
-            // Slot → raw mermaid source, so the rendered wrapper can carry it as
-            // `data-mermaid-source` for the "Copy diagram source" menu ()
-            // A slot whose render fails is removed here so the failure placeholder is NOT
-            // given a source attribute (: failed diagrams fall back to the
-            // generic menu, which has no copy-source item).
-            const sources = new Map(res.mermaid.map((m) => [m.slot, m.code]))
-            for (const m of res.mermaid) {
-              const id = `mermaid-${m.hash}-${Math.random().toString(36).slice(2)}`
-              try {
-                const out = await renderMermaidSvg(id, m.code)
-                svgs[m.slot] = out.svg
-              } catch {
-                sources.delete(m.slot)
-                svgs[m.slot] =
-                  `<div class="mermaid-skeleton">⚠ ${tRef.current('preview.mermaidFailed')}</div>`
-              }
-            }
-            // Replace each placeholder with a wrapper that KEEPS the container (the SVG is
-            // injected inside it), so the `data-mermaid-source` attribute survives. The
-            // original plan wrote the source on the placeholder div, but the old replace
-            // discarded the whole div keeping the wrapper fixes that
-            html = html.replace(/<div data-mermaid-slot="(\d+)"><\/div>/g, (_m, i) => {
-              const slot = Number(i)
-              // `svgs[slot]` is always populated by the render loop above (every mermaid
-              // slot is rendered into `svgs`), so the fallback is purely defensive.
-              /* v8 ignore next */
-              const svg = svgs[slot] ?? ''
-              const src = sources.get(slot)
-              const attr = src ? ` data-mermaid-source="${encodeURIComponent(src)}"` : ''
-              return `<div data-mermaid-slot="${slot}"${attr}>${svg}</div>`
-            })
+          // R9 (plan-03 §4.4): resolve intrinsic dimensions of local images before
+          // sanitize/patch so the first paint reserves space and doesn't jump (CLS).
+          try {
+            html = await applyImageDimensions(html)
+            /* v8 ignore next 2 */
+          } catch {
+            /* dimension resolution failures are non-fatal: images still load, just without reserved space */
           }
-          /* v8 ignore next -- defensive: guards a stale/aborted render; the cancelled/token-mismatch returns aren't exercised under jsdom's synchronous render */
           if (cancelled || token !== renderToken.current) return
-          // Stash the "sanitized" preview HTML as the single source of truth for export (R7 single source).
-          // SafeHtml sanitizes again on render (idempotent), keeping the single-point semantics.
-          setExportHtml(sanitizeHtml(html))
-          // Stash the raw markdown (frontmatter intact) so export/print can resolve <html lang> on demand.
+          // Single sanitization gate (plan-01 §5.2): the cleaned HTML is shared by the preview
+          // DOM patch and the export cache.
+          const clean = sanitizeHtml(html)
+          // ADR 0019: stash the diagram sources next to the HTML. The preview keeps empty
+          // placeholders, so the complete bake (export / print / copy) needs the SOURCE to
+          // render them itself — it cannot recover them from the string.
+          setExportMermaidSlots(res.mermaid)
+          setExportHtml(clean)
           setExportContent(content)
-          setRenderedHtml(html)
+          setSanitizedHtml(clean)
           hasContentRef.current = true
           setLoading(false)
-          // Fallback: after parsing completes (large images may be ready now or soon), realign once
-          // to fix the half-screen offset caused by image height jumps (Final Design )
-          requestAnimationFrame(() => scrollSync.realign())
+          // ADR 0019: keep the preview lazy, but make the export cache a COMPLETE render so
+          // export / print / copy never depend on what is currently on screen. Deferred so the
+          // bake does not compete with the keystroke that triggered this parse; export / print
+          // await it explicitly, and copy reads a cache that is complete by then.
+          scheduleExportBake()
+          // Note: no scrollSync.realign() — images are no longer reloaded on every keystroke
+          // (the DOM is incrementally patched, not rebuilt), so the preview height is stable and
+          // the ratio-based sync needs no height-jump compensation (Plan 01 §5.4).
         })
         .catch((err) => {
-          /* v8 ignore next -- defensive: same stale/aborted-render guard as the success path; not exercised under jsdom */
           if (cancelled || token !== renderToken.current) return
           console.error('[MarkFlow] Parse failed:', err)
           setLoading(false)
         })
     }
 
-    // Document switch uses setTimeout(0): merge the transient double render where "docId changes
-    // first, content changes later via useLocalDocument's effect" into a single (docId, content)
-    // send to the Worker. For consecutive keystrokes in the same document: debounce 150ms.
     const timer = setTimeout(run, immediate ? 0 : 150)
     return () => {
       cancelled = true
@@ -193,26 +186,28 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
     }
   }, [content, docId])
 
-  // Container-level error delegation: downgrade failed images to a placeholder (covers all <img>
-  // inside the injected HTML). Also attach a load delegate (capture phase, needed to catch <img>
-  // load) so that after an image is ready and the preview height changes, a debounced realign
-  // keeps scroll in sync, fixing the half-screen offset from height jumps (W5-D).
+  // Delegate <img> load errors to a visible placeholder (icons / images fail in preview
+  // when their absolute path can't be resolved). Wrapped images already carry data-baked.
   useEffect(() => {
     const container = previewRef.current
-    // The ref is attached to the <article> rendered below, so it is always populated once
-    // this effect runs; the guard only narrows its nullable type for TypeScript.
-    /* v8 ignore next -- defensive: the ref is attached to the rendered <article>, so it is always populated when this effect runs */
+    // Unreachable: this effect runs after mount, when the article ref is always attached.
+    /* v8 ignore next */
     if (!container) return
     const onErr = (e: Event) => {
       const target = e.target as HTMLElement | null
-      /* v8 ignore next -- defensive image-error fallback: image 'error' events don't fire under jsdom, so this early-return branch is never exercised */
+      // `!target` is unreachable (a dispatched event always has a target); the tagName half is
+      // real and covered by "ignores an error event that does not target an image".
+      /* v8 ignore next */
       if (!target || target.tagName !== 'IMG') return
       const img = target as HTMLImageElement
-      /* v8 ignore next -- defensive: the already-applied guard is only hit on a second error event, which jsdom doesn't emit */
+      // Unreachable today: the first error REPLACES the <img>, so the node cannot error twice
+      // while still attached. Kept as a guard for the day the patcher reuses the node.
+      /* v8 ignore next */
       if (img.dataset.fallbackApplied) return
       img.dataset.fallbackApplied = '1'
       const placeholder = document.createElement('span')
       placeholder.className = 'img-error-placeholder'
+      placeholder.setAttribute(DATA_BAKED, '1')
       const alt = img.getAttribute('alt') ?? ''
       placeholder.textContent = alt
         ? `⚠ ${tRef.current('preview.imageFailedAlt', { alt })}`
@@ -222,21 +217,76 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
         'border-radius:6px;color:var(--color-text-tertiary);font-size:12px;background:var(--color-surface-overlay);'
       img.replaceWith(placeholder)
     }
-    const onLoad = debounce(() => scrollSync.realign(), 150)
     container.addEventListener('error', onErr, true)
-    container.addEventListener('load', onLoad, true)
     return () => {
       container.removeEventListener('error', onErr, true)
-      container.removeEventListener('load', onLoad, true)
     }
-  }, [renderedHtml])
+  }, [])
 
-  // Register with the scroll-sync controller (preview side).
+  useEffect(() => {
+    const el = previewRef.current
+    // Unreachable: same as the error-handler effect — the ref is attached when this runs.
+    /* v8 ignore next */
+    if (!el) return
+    patchPreviewContent(el, sanitizedHtml)
+    // Plan 04: pre-inline images (§4.8) so the synchronous copy path can paste base64 images
+    // without awaiting. Fire-and-forget. (Math needs no pre-pass: it rides its MathML, §4.8.)
+    void warmInlinedImages(el)
+    // D-E①: after the incremental patch, fill any cache-hit mermaid immediately (so a
+    // re-parse never wipes an already-rendered diagram) and lazily render the rest.
+    el.querySelectorAll('[data-mermaid-slot]').forEach((node) => {
+      const slotEl = node as HTMLElement
+      const slot = Number(slotEl.getAttribute('data-mermaid-slot'))
+      const info = mermaidSlotsRef.current.find((m) => m.slot === slot)
+      if (!info) return
+      const cached = mermaidSvgCache.get(info.hash)
+      if (cached) {
+        fillMermaidSlot(slotEl, cached)
+        return
+      }
+      slotEl.style.minHeight = '200px' // stable placeholder before lazy render (scroll-sync)
+      mermaidObserverRef.current?.observe(slotEl)
+    })
+  }, [sanitizedHtml])
+
+  // D-E①: observe mermaid placeholders and render them when they scroll into view.
+  useEffect(() => {
+    const root = scrollRef.current
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const el = entry.target as HTMLElement
+            io.unobserve(el)
+            void renderMermaidSlot(el, mermaidSlotsRef.current, tRef.current)
+          }
+        }
+      },
+      { root, rootMargin: '200px' },
+    )
+    mermaidObserverRef.current = io
+    return () => io.disconnect()
+  }, [])
+
+  // D-B: inject the single github-markdown-css source of truth and keep it in sync with
+  // the UI theme (no `.prose` / `.dark` toggle — plan-03 §4.1).
+  useEffect(() => {
+    injectMarkdownBodyStyles()
+  }, [])
+  useEffect(() => {
+    const isDark = applyMarkdownBodyTheme(theme)
+    const el = previewRef.current
+    // Unreachable false branch: the ref is attached whenever this effect runs.
+    /* v8 ignore next */
+    if (el) {
+      el.setAttribute('data-theme', isDark ? 'dark' : 'light')
+    }
+  }, [theme])
+
   useEffect(() => {
     const el = scrollRef.current
-    // The ref is attached to the scroll container rendered below, so it is always populated
-    // once this effect runs; the guard only narrows its nullable type for TypeScript.
-    /* v8 ignore next -- defensive: the ref is attached to the scroll container, so it is always populated when this effect runs */
+    // Unreachable: the scroll container is rendered unconditionally.
+    /* v8 ignore next */
     if (!el) return
     scrollSync.register('preview', el)
     return () => scrollSync.unregister('preview')
@@ -252,15 +302,54 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
         <article
           ref={previewRef}
           tabIndex={0}
-          className="markdown-preview prose dark:prose-invert max-w-none px-6 py-6 w-full"
-        >
-          {loading && renderedHtml === '' ? (
-            <div className="text-[var(--color-text-tertiary)] text-sm">{t('editor.loading')}</div>
-          ) : (
-            <SafeHtml html={renderedHtml} />
-          )}
-        </article>
+          role="document"
+          lang={lang ?? undefined}
+          className="markdown-body markdown-preview max-w-none px-6 py-6 w-full"
+          onKeyDown={(e) => {
+            if (
+              (e.ctrlKey || e.metaKey) &&
+              !e.shiftKey &&
+              !e.altKey &&
+              e.key.toLowerCase() === 'a'
+            ) {
+              e.preventDefault()
+              window.getSelection()?.selectAllChildren(e.currentTarget)
+            }
+          }}
+          onCopy={(e) => {
+            const article = e.currentTarget
+            const payload = consumePendingCopy() ?? buildPreviewCopyPayload(article)
+            // Cold cache: the payload carries a diagram whose PNG isn't rasterized yet, and this
+            // synchronous event cannot await it — shipping now would drop the diagram. Defer: let
+            // deferWarmCopy finish the bake, rebuild the payload and re-fire the native copy, which
+            // re-enters here with a warm cache (single retry). deferColdCopy declines (and we write
+            // immediately) when the payload awaits no diagram, or when the native copy cannot be
+            // re-fired at all — deferring there would silently copy nothing.
+            if (deferColdCopy(article, payload)) {
+              e.preventDefault()
+              return
+            }
+            // Plan 04: upgrade the bare HTML to a Word/Confluence/Excel-ready payload
+            // (inline styles + rasterized mermaid/math + light theme), then strip the
+            // pipeline's internal markers as the final step (enhanceForPaste). The `safe`
+            // wrapper never throws: a fidelity failure must still preventDefault, never let
+            // the browser copy the raw un-styled DOM.
+            const finalHtml = safeEnhanceForPaste(payload.html)
+            try {
+              e.clipboardData?.setData('text/plain', payload.text)
+              e.clipboardData?.setData('text/html', finalHtml)
+              e.preventDefault()
+            } catch {
+              /* setData failed: leave the default copy in place */
+            }
+          }}
+        />
       </PreviewContextMenu>
+      {loading && (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center text-[var(--color-text-tertiary)] text-sm">
+          {t('editor.loading')}
+        </div>
+      )}
     </div>
   )
 }

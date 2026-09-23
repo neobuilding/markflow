@@ -18,7 +18,8 @@ describe('markdownPipeline — GFM', () => {
 
   it('renders tables', () => {
     const { html } = render('| a | b |\n|---|---|\n| 1 | 2 |\n', docId)
-    expect(html).toContain('<table>')
+    // R6 (D-G): the top-level <table> now also carries data-line.
+    expect(html).toContain('<table data-line="0">')
   })
 })
 
@@ -110,7 +111,9 @@ describe('markdownPipeline — GitHub alerts & containers', () => {
 
   it('renders :::warning container as <div class="warning">', () => {
     const { html } = render(':::warning\nCareful\n:::\n', docId)
-    expect(html).toContain('<div class="warning">')
+    // R6 (D-G): the top-level container <div> now also carries data-line; assert both
+    // attributes regardless of renderer emission order.
+    expect(html).toMatch(/<div(?=[^>]*class="warning")(?=[^>]*data-line="0")/)
   })
 })
 
@@ -223,6 +226,63 @@ describe('markdownPipeline — raw HTML passthrough', () => {
   it('passes raw HTML through to the sanitize step', () => {
     const { html } = render('<div onclick="x()">hi</div>\n', docId)
     expect(html).toContain('<div')
+  })
+})
+
+describe('markdownPipeline — source-line mapping (R6 / D-G)', () => {
+  it('tags each top-level block with its 0-based source line as data-line', () => {
+    const md = ['# Title', '', 'A paragraph.', '', '- one', '- two', '', '> quote'].join('\n')
+    const { html } = render(md, docId)
+    expect(html).toMatch(/<h1[^>]*data-line="0"/)
+    expect(html).toMatch(/<p[^>]*data-line="2"/)
+    expect(html).toMatch(/<ul[^>]*data-line="4"/)
+    expect(html).toMatch(/<blockquote[^>]*data-line="7"/)
+    // exactly the 4 top-level blocks are tagged — nested list items / inner paragraphs are not
+    expect((html.match(/data-line=/g) || []).length).toBe(4)
+  })
+
+  it('tags a fenced code block (pre) with its starting line', () => {
+    const { html } = render('intro\n\n```js\nconst x = 1;\n```\n', docId)
+    expect(html).toMatch(/<pre[^>]*data-line="2"/)
+    // Exactly ONE data-line on the <pre>: the core ruler also sets the attr on the fence
+    // token, but the fence renderer emits a raw string (never renderToken), so it must not
+    // leak a duplicate. Guards against a double `data-line="2" data-line="2"`.
+    const preTag = html.match(/<pre[^>]*>/)?.[0] ?? ''
+    expect((preTag.match(/data-line=/g) || []).length).toBe(1)
+  })
+
+  it('tags a table and a custom container open as top-level blocks', () => {
+    const md = ['| a | b |', '|---|---|', '| 1 | 2 |', '', ':::warning', 'Careful', ':::'].join(
+      '\n',
+    )
+    const { html } = render(md, docId)
+    expect(html).toMatch(/<table[^>]*data-line="0"/)
+    // Order-independent: the table is at source line 0, the container at line 4.
+    expect(html).toMatch(/<div(?=[^>]*class="warning")(?=[^>]*data-line="4")/)
+  })
+
+  it('keeps mermaid placeholder divs tagged with data-line too', () => {
+    const { html } = render('```mermaid\nA-->B\n```\n', docId)
+    const m = html.match(/<div[^>]*data-mermaid-slot="0"[^>]*>/)
+    expect(m).toBeTruthy()
+    expect(m![0]).toContain('data-line="0"')
+  })
+
+  it('does NOT tag nested list items or their inner paragraphs with data-line', () => {
+    const { html } = render('- one\n  - nested\n', docId)
+    // The outer <ul> is tagged; the <li> items and the inner <p> must not be.
+    expect(html).toMatch(/<ul[^>]*data-line=/)
+    expect(html).not.toMatch(/<li[^>]*data-line=/)
+    expect(html).not.toMatch(/<p[^>]*data-line=/)
+  })
+
+  it('does NOT tag a fenced code block nested inside a container (only top-level blocks)', () => {
+    const md = [':::warning', '```js', 'const x = 1;', '```', ':::'].join('\n')
+    const { html } = render(md, docId)
+    // The container <div> (top-level) carries data-line...
+    expect(html).toMatch(/<div(?=[^>]*class="warning")(?=[^>]*data-line="0")/)
+    // ...but the nested <pre> must NOT (it is not a level-0 block).
+    expect(html).not.toMatch(/<pre[^>]*data-line=/)
   })
 })
 

@@ -250,12 +250,14 @@ jobs:
                   key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
                   restore-keys: |
                       ${{ runner.os }}-electron-
-            # `npm run e2e` runs exactly two Playwright projects: electron-app
-            # (functional) and electron-perf-gate — the main-process stall
+            # `npm run e2e:full` composes exactly two Playwright projects: e2e-app
+            # (functional) and e2e-perf-gate — the main-process stall
             # regression gate that stops the folder watcher from going back to
             # watching every file instead of markdown only.
-            # The diagnostic project (electron-perf) has no thresholds and is slow
-            # by design, so it is NOT part of this run; use `npm run e2e:perf`.
+            # It deliberately does NOT run quality/coverage/build here: those are
+            # separate jobs in this pipeline.
+            # The diagnostic project (e2e-perf-diag) has no thresholds and is slow
+            # by design, so it is NOT part of this run; use `npm run e2e:perf-diag`.
             - name: Run e2e (functional + performance gate)
               # Hard wall-clock cap on the whole step. A bad/unexecutable Electron
               # binary is already caught fast in e2e/global-setup.ts
@@ -268,7 +270,7 @@ jobs:
               timeout-minutes: 20
               run: |
                   echo "::group::E2E (functional + performance gate) via Playwright"
-                  xvfb-run --auto-servernum -- npm run e2e
+                  xvfb-run --auto-servernum -- npm run e2e:full
                   echo "::endgroup::"
             - name: Upload e2e report
               if: always()

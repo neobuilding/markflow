@@ -109,9 +109,56 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 
 - **Markdown pipeline** — `src/renderer/src/lib/markdownPipeline.ts` + `sanitize.ts`, producing sanitized
   HTML from GFM + KaTeX + Mermaid + GitHub Alerts + custom containers.
-- **SafeHtml / single sanitization gate** — the sole XSS boundary: rendered HTML passes through
-  `SafeHtml` → `sanitizeHtml` (DOMPurify). Never bypassed (see `docs/adr/0002-single-sanitization-gate.md`).
-- **appdoc:// protocol** — custom scheme for in-app document image / asset rewriting.
+- **single sanitization gate（单点净化门）** — the sole XSS boundary: `sanitizeHtml()` (DOMPurify) is the only
+  producer of the branded `SanitizedHtml` type, and `patchPreviewContent()` (`previewRender.ts`) is the only
+  DOM write entry that accepts it — an unsanitized string cannot compile. Never bypassed
+  (see `docs/adr/0002-single-sanitization-gate.md`).
+- **internal markers（内部标记）** — attributes the pipeline injects for its own bookkeeping; must be stripped
+  when content leaves the app (rich-text copy): `data-line` (source-line mapping), `data-mermaid-slot`
+  (mermaid placeholder index), `data-lang` (fence language), `data-baked` (runtime-mutated node, e.g. the
+  image-error placeholder). _Removed in plan-03 / plan-02 D9_: `data-mermaid-source` — the "Copy diagram
+  source" menu was deleted in plan-02 D3, so the mermaid source now lives only in the renderer's per-parse
+  mermaid slot, never the DOM.
+- **github-markdown-css（单一 Markdown 样式源）** — the preview and the exporter share the same
+  `github-markdown-css` stylesheet (injected at runtime for the preview, inlined for export), so
+  preview == export == print (WYSIWYG). Replaced the hand-rolled Tailwind Typography `.prose` rules in
+  plan-03 §4.1.
+- **lazy mermaid render（Mermaid 懒渲染）** — mermaid diagrams render in the DOM after the incremental patch,
+  via IntersectionObserver + a content-hash SVG cache, instead of being baked into the HTML string. Avoids the
+  ~2.5s first-paint regression and keeps re-parses from re-rendering unchanged diagrams (plan-03 §4.3).
+- **complete bake（导出补齐烘焙）** — export / print / rich-text copy render **every** mermaid
+  diagram into the canonical HTML before building their output, instead of reusing the
+  preview's lazily-rendered DOM. The preview is allowed to be partial (viewport-driven); an
+  output artifact is not. Shares the lazy path's content-hash cache, so a diagram the preview
+  already rendered is never rendered again. ADR 0019.
+- **intrinsic image dimensions（图片固有尺寸）** — local `appdoc://` images get `width`/`height` from
+  `image-size` (main process, header-only, cached by path) before sanitize/patch, so the browser reserves
+  space and the first paint doesn't jump (CLS). See plan-03 §4.4 / R9.
+- **appdoc:// protocol** — custom scheme for in-app document image / asset rewriting. The sanitize gate
+  explicitly whitelists it (`ALLOWED_URI_REGEXP`), otherwise DOMPurify would strip the `src`.
+- **Formula（公式）** — one KaTeX-rendered math node in the preview, inline or display: the unit the UI
+  treats as a single object (what a right-click targets, what a copy carries). _Avoid_: "equation"
+  (a meaning inside the math), "math block" (that is the layout, not the object). See ADR-0020.
+- **Carrier（承载物）** — the form a piece of content takes once it is on the clipboard. A formula
+  rides its **MathML carrier** (text, which Word / OneNote turn into an editable equation) or its
+  **bitmap carrier** (a PNG). A target app reads whichever carrier it understands, and one clipboard
+  cannot distinguish targets. _Avoid_: "format" (that is the MIME type, not the content form).
+
+## Theme & appearance
+
+- **Theme mode** — `useUIStore.theme` is `'light' | 'dark' | 'system'`
+  (`src/renderer/src/types/index.ts`). The Markdown **preview** follows it: `MarkdownPreview.tsx` resolves
+  `isDark` from `theme`, or from `matchMedia('(prefers-color-scheme: dark)')` when `theme === 'system'`, and
+  sets `data-theme` on the `<article>`; the **exporter** follows it too (`export.ts` resolves `current` → UI
+  theme, `system` → `matchMedia`). See `docs/adr/0018-preview-refactor-03-style-perf-media.md`.
+- **No UI theme toggle** — `setTheme` exists in the store and as `window.api.app.setTheme` (preload IPC), but
+  **no user-facing control invokes it**; the store default is `'light'`, so the app renders light unless
+  changed programmatically. The app **chrome** applies
+  `document.documentElement.classList.toggle('dark', …)` only when `theme === 'dark'` — it does **not** track
+  `system`. So: preview/export honor the theme, the chrome does not follow the OS `system` preference, and there
+  is no user switch. This is a pre-existing theme-sync gap, out of scope for `plan-03` (D-B only unifies the
+  preview's style source to github-markdown-css; it does not add a toggle). _Avoid_: assuming the app ships a
+  clickable dark-mode switch.
 
 ## Platform & filesystem
 

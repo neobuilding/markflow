@@ -269,6 +269,21 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     expect(sel.to).toBe(getView().state.doc.length)
   })
 
+  // The native menu's Ctrl+A is routed via menu:select-all IPC → selectAllRouter → the
+  // `markdown:select-all` DOM event. The handler must run CodeMirror's own selectAll
+  // (whole document, CM selection kept in sync with the DOM) — a DOM select-all produced
+  // the "only content before the cursor" bug (see selectAllRouter.ts).
+  it('selects the whole document on a markdown:select-all event', async () => {
+    setup()
+    const view = getView()
+    // Park the cursor mid-document first (simulates the user's caret position).
+    view.dispatch({ selection: { anchor: 3, head: 3 } })
+    document.dispatchEvent(new CustomEvent('markdown:select-all'))
+    const sel = getView().state.selection.main
+    expect(sel.from).toBe(0)
+    expect(sel.to).toBe(getView().state.doc.length)
+  })
+
   it('italic wraps the selection with underscores', async () => {
     const c = setup()
     getView().dispatch({ selection: { anchor: 0, head: 7 } })

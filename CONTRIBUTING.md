@@ -67,21 +67,21 @@ markflow/
 
 ## Tech Stack
 
-| Layer             | Technology                                                                                             |
-| ----------------- | ------------------------------------------------------------------------------------------------------ |
-| Build             | Vite 8 + vite-plugin-electron                                                                          |
-| Desktop           | Electron 43                                                                                            |
-| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                        |
-| UI Components     | Radix UI primitives (shadcn/ui style)                                                                  |
-| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                 |
-| Storage           | In-memory document store (Map) + minisearch index + chokidar folder watcher + Markdown file dual-write |
-| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                         |
-| Math              | KaTeX (LaTeX formula rendering)                                                                        |
-| Diagrams          | Mermaid.js                                                                                             |
-| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                          |
-| HTML sanitization | DOMPurify + `SafeHtml` forced gate (single XSS point)                                                  |
-| Testing           | Vitest + jsdom                                                                                         |
-| Packaging         | electron-builder                                                                                       |
+| Layer             | Technology                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------- |
+| Build             | Vite 8 + vite-plugin-electron                                                                                   |
+| Desktop           | Electron 43                                                                                                     |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                 |
+| UI Components     | Radix UI primitives (shadcn/ui style)                                                                           |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                          |
+| Storage           | In-memory document store (Map) + minisearch index + chokidar folder watcher + Markdown file dual-write          |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                                  |
+| Math              | KaTeX (LaTeX formula rendering)                                                                                 |
+| Diagrams          | Mermaid.js                                                                                                      |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                                   |
+| HTML sanitization | DOMPurify + branded `SanitizedHtml` type gate + single DOM write entry `patchPreviewContent` (single XSS point) |
+| Testing           | Vitest + jsdom                                                                                                  |
+| Packaging         | electron-builder                                                                                                |
 
 ## Coding Conventions
 
@@ -104,6 +104,10 @@ markflow/
   type-safe under TS7 (whose `Error` type lacks the `options` overload) yet still preserves the cause at runtime.
 - **Secrets**: never commit credentials. Secretlint scans the repo locally (`npm run lint:secret`)
   and in CI; CodeQL also runs on every PR.
+- **Language**: source code, comments, commit messages, test code, and test fixtures (e2e
+  fixtures under `e2e/fixtures/`) are **English only**. Chinese is reserved for human-facing prose
+  (README, this file, ADRs, and the `CONTEXT.md` glossary that maps the app's localized UI
+  strings). When adding demo/test documents, default to the `*.en.md` variant, not `*.zh-CN.md`.
 
 ## Testing
 
@@ -131,8 +135,10 @@ What's covered (see `src/renderer/src/lib/*.test.ts`):
   KaTeX `<math>` / `<annotation>` retention.
 
 > When you touch `markdownPipeline.ts` or `sanitize.ts`, add/extend a test so
-> the behavior stays locked. The single sanitization gate (`SafeHtml` →
-> `sanitizeHtml`) must never be bypassed.
+> the behavior stays locked. The single sanitization gate must never be
+> bypassed: `sanitizeHtml()` is the only producer of the branded `SanitizedHtml`
+> type, and `patchPreviewContent()` is the only DOM write entry that accepts it —
+> so an unsanitized string fails to compile rather than fail at runtime.
 
 ### Coverage policy
 
