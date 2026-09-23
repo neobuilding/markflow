@@ -136,6 +136,13 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   space and the first paint doesn't jump (CLS). See plan-03 §4.4 / R9.
 - **appdoc:// protocol** — custom scheme for in-app document image / asset rewriting. The sanitize gate
   explicitly whitelists it (`ALLOWED_URI_REGEXP`), otherwise DOMPurify would strip the `src`.
+- **Formula（公式）** — one KaTeX-rendered math node in the preview, inline or display: the unit the UI
+  treats as a single object (what a right-click targets, what a copy carries). _Avoid_: "equation"
+  (a meaning inside the math), "math block" (that is the layout, not the object). See ADR-0020.
+- **Carrier（承载物）** — the form a piece of content takes once it is on the clipboard. A formula
+  rides its **MathML carrier** (text, which Word / OneNote turn into an editable equation) or its
+  **bitmap carrier** (a PNG). A target app reads whichever carrier it understands, and one clipboard
+  cannot distinguish targets. _Avoid_: "format" (that is the MIME type, not the content form).
 
 ## Theme & appearance
 

@@ -239,7 +239,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.filterHtml': 'HTML',
 
   // ── Context menus (ctx.*) ─────────────────────────────────────────────
-  // 57
+  // 44
 
   'ctx.undo': '撤销',
   'ctx.redo': '重做',
@@ -258,6 +258,9 @@ export const zhCN: Record<TranslationKey, string> = {
 
   // Mermaid
   'ctx.copySvg': '复制为 SVG',
+
+  // 公式（KaTeX）
+  'ctx.copyFormulaImage': '复制公式为图片',
 
   'ctx.openDocument': '打开',
   'ctx.copyFileName': '复制文件名',

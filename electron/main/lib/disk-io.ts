@@ -20,6 +20,7 @@ import {
   openSync,
   writeSync,
   closeSync,
+  copyFileSync,
   promises as fsPromises,
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
@@ -61,11 +62,15 @@ export interface DiskIO {
   rename(oldPath: string, newPath: string): void
   stat(path: string): FileStats
   readdir(path: string): DirEntry[]
+  /** True if `path` is a directory; false for files, missing paths, or anything else. */
+  isDirectory(path: string): boolean
   /** Create a file that must not already exist (`wx`); rejects with EEXIST if it does. */
   openExclusive(path: string): number
   writeToFd(fd: number, content: string): void
   closeFd(fd: number): void
   openForRead(path: string): Promise<ReadHandle>
+  /** Copy `src` to `dest` (atomic on real fs; fails if `src` is missing). */
+  copyFile(src: string, dest: string): void
 }
 
 export const nodeDiskIO: DiskIO = {
@@ -74,6 +79,7 @@ export const nodeDiskIO: DiskIO = {
   exists: (path) => existsSync(path),
   mkdir: (path, options) => mkdirSync(path, options),
   rename: (oldPath, newPath) => renameSync(oldPath, newPath),
+  copyFile: (src, dest) => copyFileSync(src, dest),
   stat: (path) => {
     const st = statSync(path)
     return { size: st.size, birthtimeMs: st.birthtimeMs, mtimeMs: st.mtimeMs }
@@ -83,6 +89,7 @@ export const nodeDiskIO: DiskIO = {
       name: entry.name,
       isDirectory: () => entry.isDirectory(),
     })),
+  isDirectory: (path) => statSync(path).isDirectory(),
   openExclusive: (path) => openSync(path, 'wx'),
   writeToFd: (fd, content) => writeSync(fd, content, undefined, 'utf-8'),
   closeFd: (fd) => closeSync(fd),
@@ -109,8 +116,13 @@ export const nodeDiskIO: DiskIO = {
 // Deliberately a FAKE (real working behaviour over a Map), not a mock: tests assert the
 // resulting state, not "which method was called how many times".
 export interface MemoryDiskIO extends DiskIO {
-  /** Seed a UTF-8 file, for test setup. */
-  seed(path: string, content: string): void
+  /**
+   * Seed a file for test setup. A string is stored as UTF-8; a Buffer/Uint8Array is stored
+   * VERBATIM, so a test can seed a BINARY fixture (e.g. a PNG's raw bytes) directly instead of
+   * having to encode it as text — seeding `Buffer.from([1,2,3,4])` as a string would silently
+   * go through UTF-8 and lose the intent (and mis-handle non-UTF-8 byte sequences).
+   */
+  seed(path: string, content: string | Uint8Array): void
   /** Delete a file. Test-only: production deletes go through shell.trashItem. */
   remove(path: string): void
   /** Recursive delete for test cleanup. Mirrors fsPromises.rm semantics. */
@@ -138,7 +150,10 @@ export function createMemoryDiskIO(): MemoryDiskIO {
 
   return {
     seed(path, content) {
-      files.set(canon(path), Buffer.from(content, 'utf-8'))
+      files.set(
+        canon(path),
+        typeof content === 'string' ? Buffer.from(content, 'utf-8') : Buffer.from(content),
+      )
     },
     readFile(path) {
       const buf = files.get(canon(path))
@@ -216,6 +231,11 @@ export function createMemoryDiskIO(): MemoryDiskIO {
         }
       }
     },
+    copyFile(src, dest) {
+      const buf = files.get(canon(src))
+      if (buf === undefined) fail('ENOENT', canon(src))
+      files.set(canon(dest), Buffer.from(buf))
+    },
     stat(path) {
       const buf = files.get(canon(path))
       if (buf === undefined) fail('ENOENT', canon(path))
@@ -251,6 +271,7 @@ export function createMemoryDiskIO(): MemoryDiskIO {
           isDirectory: () => dirs.has(`${base}/${name}`) || dirs.has(`${base}\\${name}`),
         }))
     },
+    isDirectory: (path) => dirs.has(canon(path)),
     remove(path) {
       const c = canon(path)
       if (!files.has(c)) fail('ENOENT', c)

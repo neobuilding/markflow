@@ -8,7 +8,7 @@ import {
 } from './exportBake'
 import { setExportHtml, setExportMermaidSlots, getExportHtml } from './exportStore'
 import { sanitizeHtml } from './sanitize'
-import { mermaidSvgCache } from './mermaidBake'
+import { mermaidSvgCache, mermaidPngCache } from './mermaidBake'
 
 // Same indirection as mermaidBake.test.ts so a test can make the render hang (to prove a
 // re-parse that lands mid-bake is not clobbered by the stale result).
@@ -23,6 +23,25 @@ vi.mock('mermaid', () => ({
 }))
 
 const renderMock = vi.fn(async (id: string) => ({ svg: `<svg id="${id}"></svg>` }))
+
+// Canvas rasterization cannot run under jsdom, so the real `rasterizeSvg` is mocked. The bake
+// must now await it; the mock resolves with a deterministic PNG entry.
+vi.mock('./rasterize', () => ({
+  svgDataUrl: (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+  RASTER_SCALE: 2,
+  MAX_RASTER_EDGE: 2000,
+  svgIntrinsicSize: () => ({ width: 181, height: 499 }),
+  rasterPixelSize: (s: { width: number; height: number }) => ({
+    width: s.width * 2,
+    height: s.height * 2,
+  }),
+  rasterizeSvg: vi.fn(async () => ({
+    dataUrl: 'data:image/png;base64,MOCKPNG',
+    width: 181,
+    height: 499,
+  })),
+  svgToPngDataUrl: vi.fn(async () => 'data:image/png;base64,MOCKPNG'),
+}))
 
 const slots = [{ slot: 0, code: 'graph TD;A-->B', hash: 'h-eb' }]
 const PLACEHOLDER = '<div data-mermaid-slot="0" data-line="0"></div>'
@@ -61,6 +80,17 @@ describe('prepareExportHtml (ADR 0019)', () => {
     expect(getExportHtml()).toContain('<svg')
     // The wrapper keeps its slot marker (copy strips it later; export keeps the structure).
     expect(getExportHtml()).toContain('data-mermaid-slot="0"')
+    expect(needsExportBake()).toBe(false)
+  })
+
+  it('awaits the diagram PNGs so the synchronous copy event finds them cached', async () => {
+    setExportMermaidSlots(slots)
+    setExportHtml(sanitizeHtml(PLACEHOLDER))
+    await prepareExportHtml()
+    // The bake is not "complete" until every diagram's PNG is in the cache — that is the gate
+    // the synchronous `copy` handler waits on. If this were fire-and-forget, the first copy
+    // would race the rasterization and drop diagrams.
+    expect(mermaidPngCache.get('h-eb')?.dataUrl).toBe('data:image/png;base64,MOCKPNG')
     expect(needsExportBake()).toBe(false)
   })
 

@@ -33,7 +33,7 @@ async function loadMdFiles() {
 
 describe('md-files — non-dir/non-file entries are skipped', () => {
   it('collectMarkdownFiles skips an entry that is neither dir nor file', async () => {
-    h.readdirSync.mockReturnValue(['special-node'])
+    h.readdirSync.mockReturnValue([{ name: 'special-node', isDirectory: () => false }])
     h.statSync.mockReturnValue({ isDirectory: () => false, isFile: () => false })
     const { collectMarkdownFiles } = await loadMdFiles()
     expect(collectMarkdownFiles('/some/dir')).toEqual([])

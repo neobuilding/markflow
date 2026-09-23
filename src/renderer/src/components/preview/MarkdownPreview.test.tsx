@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 import { MarkdownPreview } from './MarkdownPreview'
 import { useUIStore } from '../../store/ui'
-import { setExportHtml } from '../../lib/exportStore'
+import { setExportHtml, setExportMermaidSlots } from '../../lib/exportStore'
 import { sanitizeHtml } from '../../lib/sanitize'
 import type { RenderResult } from '../../lib/markdownPipeline'
 
@@ -43,6 +43,25 @@ vi.mock('mermaid', () => ({
     initialize: () => {},
     render: vi.fn(async (_id: string, _code: string) => ({ svg: '<svg>mermaid</svg>' })),
   },
+}))
+
+// Canvas rasterization cannot run under jsdom, so `rasterizeSvg` is mocked. prepareExportHtml
+// (awaited by warmInlinedImages / the cold-copy retry) now awaits it; the mock resolves.
+vi.mock('../../lib/rasterize', () => ({
+  svgDataUrl: (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+  RASTER_SCALE: 2,
+  MAX_RASTER_EDGE: 2000,
+  svgIntrinsicSize: () => ({ width: 181, height: 499 }),
+  rasterPixelSize: (s: { width: number; height: number }) => ({
+    width: s.width * 2,
+    height: s.height * 2,
+  }),
+  rasterizeSvg: vi.fn(async () => ({
+    dataUrl: 'data:image/png;base64,MOCKPNG',
+    width: 181,
+    height: 499,
+  })),
+  svgToPngDataUrl: vi.fn(async () => 'data:image/png;base64,MOCKPNG'),
 }))
 
 // jsdom has no IntersectionObserver, so a global mock (firing immediately) is injected in
@@ -480,8 +499,71 @@ describe('MarkdownPreview', () => {
     const evt = new Event('copy', { bubbles: true, cancelable: true })
     Object.defineProperty(evt, 'clipboardData', { value: { setData } })
     article.dispatchEvent(evt)
+    // Plan 04: the copy payload is now fidelity-enhanced (wrapped in a light document
+    // envelope) and its internal markers are stripped as the final step.
     expect(setData).toHaveBeenCalledWith('text/plain', 'Titlebody')
-    expect(setData).toHaveBeenCalledWith('text/html', '<h1>Title</h1><pre><code>body</code></pre>')
+    // Plan 04 wraps the payload and inlines real github-markdown-css styles (jsdom applies them),
+    // so assert on structural substrings rather than the exact serialized tag.
+    expect(setData).toHaveBeenCalledWith('text/html', expect.stringContaining('<h1'))
+    expect(setData).toHaveBeenCalledWith('text/html', expect.stringContaining('Title</h1>'))
+    expect(setData).toHaveBeenCalledWith(
+      'text/html',
+      expect.stringContaining('<code>body</code></pre>'),
+    )
+    expect(setData).toHaveBeenCalledWith('text/html', expect.not.stringContaining('data-line'))
+    expect(setData).toHaveBeenCalledWith('text/html', expect.not.stringContaining('tabindex'))
+    expect(setData).toHaveBeenCalledWith('text/html', expect.not.stringContaining('data-baked'))
+  })
+
+  // The bug this closes: the `copy` event is synchronous, but the diagrams' PNG forms are produced
+  // asynchronously, so a copy fired before the bake settled used to ship a payload with EMPTY slots
+  // (Word / OneNote silently dropped them) while a SECOND copy came out complete. The handler must
+  // therefore defer rather than write an incomplete payload, and the deferred re-fire must carry
+  // every diagram as a PNG.
+  it('defers a cold copy and re-fires it with every diagram once the bake completes', async () => {
+    const { container } = render(<MarkdownPreview content={'hello preview'} />)
+    const article = container.querySelector('article') as HTMLElement
+    await waitFor(() => expect(article.innerHTML).toContain('hello preview'))
+
+    // Force the COLD state: publish slots that have NOT been baked yet. Mutating the store directly
+    // schedules no background pass (that only happens on re-parse), so `needsExportBake()` stays
+    // true until this test's copy — deterministic, unlike racing the real background bake.
+    setExportMermaidSlots([{ slot: 0, code: 'graph TD', hash: 'h-cold-cmp' }])
+    setExportHtml(sanitizeHtml('<div data-mermaid-slot="0"></div>'))
+
+    const setData = vi.fn()
+    const fireCopy = () => {
+      const evt = new Event('copy', { bubbles: true, cancelable: true })
+      Object.defineProperty(evt, 'clipboardData', { value: { setData } })
+      article.dispatchEvent(evt)
+    }
+    // The deferred copy re-fires itself via execCommand('copy'); jsdom does not implement it, so
+    // stand it in: it must dispatch the same kind of copy event the real one produces.
+    const realExecCommand = document.execCommand
+    document.execCommand = vi.fn((cmd: string) => {
+      if (cmd === 'copy') fireCopy()
+      return true
+    }) as typeof document.execCommand
+
+    try {
+      // Copy #1 — the cold one. Nothing may be written: it is deferred, not shipped incomplete.
+      fireCopy()
+      expect(setData).not.toHaveBeenCalled()
+
+      // …and the deferred re-fire lands with the diagram present as a PNG (not an empty slot).
+      await waitFor(() =>
+        expect(setData).toHaveBeenCalledWith(
+          'text/html',
+          expect.stringContaining('data:image/png;base64,MOCKPNG'),
+        ),
+      )
+      expect(setData).toHaveBeenCalledWith(
+        'text/html',
+        expect.not.stringContaining('data-mermaid-slot'),
+      )
+    } finally {
+      document.execCommand = realExecCommand
+    }
   })
 
   it('reserves space for local images by writing intrinsic dimensions before patch (R9)', async () => {

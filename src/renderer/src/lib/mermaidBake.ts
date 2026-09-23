@@ -14,8 +14,112 @@
 // Keeping this in a lib (not in the component) is what lets export / print / copy bake
 // without importing the preview component — see ADR 0019.
 import { sanitizeHtml } from './sanitize'
+import { rasterizeSvg, type SvgSize } from './rasterize'
 import type { MermaidSlot } from './markdownPipeline'
+import { getExportMermaidSlots } from './exportStore'
 import type { TranslationKey } from '../../../../shared/i18n/en'
+
+// plan-04 §4.3 — the diagram caches are content-keyed, so they never need invalidation on doc or
+// theme switches (same source ⇒ same artifact, and D16 already forces a light, white-background
+// rasterization). They are FIFO-capped instead: a long session over many documents would
+// otherwise hold every SVG string and base64 PNG (~tens to hundreds of KB each) for the lifetime
+// of the window. A cap can only cost a re-render — never a wrong diagram.
+const MAX_CACHED_DIAGRAMS = 200
+
+/** Drop the oldest entries until `map` holds at most `max` (deleting during iteration is safe). */
+export function evictOldest<K, V>(map: Map<K, V>, max: number): void {
+  for (const key of map.keys()) {
+    if (map.size <= max) return
+    map.delete(key)
+  }
+}
+
+// D14 — PNG rasterization cache, keyed by mermaid content hash. Filled on every render (lazy
+// preview + complete bake) so the synchronous copy path can swap a diagram for a Word-safe
+// `<img data:png>` without awaiting rasterization.
+//
+// The entry carries the diagram's CSS size next to the bitmap: the copy payload writes it onto the
+// `<img>` as width/height so the target app displays the 2× bitmap at the size the preview shows.
+export interface MermaidPngEntry extends SvgSize {
+  dataUrl: string
+}
+export const mermaidPngCache = new Map<string, MermaidPngEntry>()
+
+// In-flight rasterizations, keyed by hash, so two triggers of the same diagram (e.g. the lazy
+// preview render AND the complete bake) collapse into ONE canvas rasterization instead of racing.
+const pngInflight = new Map<string, Promise<void>>()
+
+/**
+ * Await a diagram's PNG form being in `mermaidPngCache`. Idempotent (already cached → resolves
+ * immediately) and de-duped per hash (concurrent callers share one rasterization). This is the
+ * awaitable core the bake uses so the SYNCHRONOUS `copy` event always finds a warm cache — the
+ * fix for "the first copy drops diagrams" (rasterization is async, the copy event is not).
+ */
+export function ensureMermaidPng(hash: string, svg: string): Promise<void> {
+  if (mermaidPngCache.has(hash)) return Promise.resolve()
+  const pending = pngInflight.get(hash)
+  if (pending) return pending
+  // Deliberately NOT behind `v8 ignore`: this chain is reachable under unit tests (the suite
+  // mocks `./rasterize`), and ADR 0004 / CONTRIBUTING allow an ignore only for a block that can
+  // neither be reached by tests nor be deleted. Masking it would hide real regressions.
+  const p = rasterizeSvg(svg, { background: '#ffffff' })
+    .then((entry) => {
+      mermaidPngCache.set(hash, entry)
+      evictOldest(mermaidPngCache, MAX_CACHED_DIAGRAMS)
+    })
+    .catch(() => {})
+    .finally(() => {
+      pngInflight.delete(hash)
+    })
+  pngInflight.set(hash, p)
+  return p
+}
+
+/**
+ * Rasterize every listed diagram's PNG form into `mermaidPngCache`. Cache-first: a diagram that
+ * already has a PNG (or whose SVG was never rendered) is skipped. Runs after the SVG bake, which
+ * guarantees every slot's source SVG is in `mermaidSvgCache`.
+ */
+export async function ensureAllMermaidPngs(slots: MermaidSlot[]): Promise<void> {
+  await Promise.all(
+    slots.map((s) => {
+      const cached = mermaidSvgCache.get(s.hash)
+      return cached ? ensureMermaidPng(s.hash, cached.svg) : Promise.resolve()
+    }),
+  )
+}
+
+/**
+ * slot index → content hash for the current document (ADR 0019: the diagram SOURCES live in
+ * exportStore next to the HTML, because the string alone carries only placeholders). Shared by
+ * every consumer that has to resolve a `data-mermaid-slot="N"` marker back to a diagram.
+ */
+export function slotHashMap(): Map<number, string> {
+  const map = new Map<number, string>()
+  for (const s of getExportMermaidSlots()) map.set(s.slot, s.hash)
+  return map
+}
+
+/**
+ * True iff `html` carries a diagram slot whose PNG is not in the cache yet — writing it out now
+ * would ship a degraded (or empty) diagram. The synchronous `copy` handler uses this to decide
+ * whether the copy must be deferred. The check is deliberately on the PAYLOAD and not on "is the
+ * bake complete", so a copy that carries no diagram at all (a paragraph, a table) is never delayed
+ * behind a whole-document rasterization.
+ */
+export function hasUnresolvedDiagram(html: string): boolean {
+  const slotMap = slotHashMap()
+  for (const m of html.matchAll(/data-mermaid-slot="(\d+)"/g)) {
+    const hash = slotMap.get(Number(m[1]))
+    if (hash && !mermaidPngCache.has(hash)) return true
+  }
+  return false
+}
+
+/** Fire-and-forget PNG cache warm (D14). The render paths don't need to await it. */
+export function cacheMermaidPng(hash: string, svg: string): void {
+  void ensureMermaidPng(hash, svg)
+}
 
 // Mermaid is heavy (~2.5 MB) and only needed when a document actually contains a
 // diagram, so it is dynamically imported on first use instead of being bundled into
@@ -107,6 +211,7 @@ export async function bakeMermaidSlot(info: MermaidSlot): Promise<MermaidCacheEn
   const safe = sanitizeHtml(raw) // sanitize the injected fragment (single gate)
   const entry: MermaidCacheEntry = { svg: safe, height: readSvgHeight(safe) }
   mermaidSvgCache.set(info.hash, entry)
+  evictOldest(mermaidSvgCache, MAX_CACHED_DIAGRAMS)
   return entry
 }
 
@@ -130,10 +235,13 @@ export async function renderMermaidSlot(
   const cached = mermaidSvgCache.get(info.hash)
   if (cached) {
     fillMermaidSlot(el, cached)
+    cacheMermaidPng(info.hash, cached.svg)
     return
   }
   try {
-    fillMermaidSlot(el, await bakeMermaidSlot(info))
+    const entry = await bakeMermaidSlot(info)
+    fillMermaidSlot(el, entry)
+    cacheMermaidPng(info.hash, entry.svg)
   } catch {
     el.innerHTML = mermaidFailureMarkup(t)
   }
@@ -159,7 +267,9 @@ export async function bakeMermaidIntoHtml(
     if (!info) continue
     let inner: string
     try {
-      inner = (await bakeMermaidSlot(info)).svg
+      const entry = await bakeMermaidSlot(info)
+      inner = entry.svg
+      cacheMermaidPng(info.hash, inner)
     } catch {
       inner = mermaidFailureMarkup(t)
     }

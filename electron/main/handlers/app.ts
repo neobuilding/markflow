@@ -1,26 +1,27 @@
 // App-level IPC handlers: get-initial-paths / show-in-folder / get-version.
 // Extracted from index.ts.
-import { ipcMain, shell, app, clipboard, nativeImage } from 'electron'
-import { readFileSync, copyFileSync } from 'node:fs'
+import { ipcMain, shell, app, clipboard, nativeImage, ClipboardItem } from 'electron'
 import { resolveAppdocPath } from '../ipc/appdoc'
 import { pendingInitialPaths } from '../state'
+import { nodeDiskIO, type DiskIO } from '../lib/disk-io'
 
-// Electron 44 injects the web-standard `ClipboardItem` global into the main process
-// (it is what `clipboard.write` consumes). It is not a named export of the `electron`
-// module — its type is `Electron.ClipboardItem`, and at runtime this binding resolves
-// to the Electron-injected global.
-declare const ClipboardItem: typeof Electron.ClipboardItem
+// Electron 44 removed `clipboard.writeImage` in favour of `clipboard.write([ClipboardItem])`.
+// `ClipboardItem` is a named EXPORT of `electron` — it is NOT a global in the main process.
+// Declaring it as one (`declare const ClipboardItem: typeof Electron.ClipboardItem`) type-checked
+// fine but threw `ReferenceError: ClipboardItem is not defined` at runtime, which the two
+// handlers below swallowed: every image and SVG copy silently copied NOTHING. Verified on
+// Electron 44.3.0: only the imported constructor makes `clipboard.write` accept the item.
 
 // Resolve a clipboard image source to raw bytes. Supports three forms:
 //  - `data:` URL (rasterized mermaid SVG from the renderer) → decoded in-process
 //  - `appdoc://…` → resolved through the protocol handler's security layer
 //  - plain disk path → read directly
 // Returns null when the source is unreadable / escapes its document directory.
-function decodeImageSource(src: string): Buffer | null {
+function decodeImageSource(src: string, io: DiskIO): Buffer | null {
   if (src.startsWith('data:')) return decodeDataUrl(src)
   const path = src.startsWith('appdoc://') ? resolveAppdocPath(src) : src
   if (!path) return null
-  return readFileSync(path)
+  return io.readFile(path)
 }
 
 function decodeDataUrl(src: string): Buffer | null {
@@ -42,7 +43,7 @@ function decodeDataUrl(src: string): Buffer | null {
   }
 }
 
-export function registerAppHandlers(): void {
+export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
   // After the renderer starts, proactively pull the pending open paths accumulated at launch (CLI args, etc.)
   ipcMain.handle('app:get-initial-paths', () => {
     const paths = pendingInitialPaths.splice(0, pendingInitialPaths.length)
@@ -81,7 +82,7 @@ export function registerAppHandlers(): void {
   // swallowed so a bad path can't crash the handler.
   ipcMain.handle('clipboard:write-image', async (_event, src: string) => {
     try {
-      const buf = decodeImageSource(src)
+      const buf = decodeImageSource(src, io)
       if (!buf || buf.length === 0) return
       const image = nativeImage.createFromBuffer(buf)
       if (image.isEmpty()) return
@@ -135,7 +136,7 @@ export function registerAppHandlers(): void {
     try {
       const path = src.startsWith('appdoc://') ? resolveAppdocPath(src) : src
       if (!path) return
-      copyFileSync(path, dest)
+      io.copyFile(path, dest)
     } catch {
       // Ignore unreadable source / unwritable destination
     }

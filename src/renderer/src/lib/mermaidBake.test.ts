@@ -2,8 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   bakeMermaidIntoHtml,
   bakeMermaidSlot,
+  cacheMermaidPng,
+  ensureMermaidPng,
+  evictOldest,
   fillMermaidSlot,
   mermaidFailureMarkup,
+  mermaidPngCache,
   mermaidSvgCache,
   readSvgHeight,
   renderMermaidSlot,
@@ -27,6 +31,26 @@ const renderMock = vi.fn(async (id: string, _code: string) => ({
   svg: `<svg id="${id}"><use href="#${id}-flowchart-A-1"/></svg>`,
 }))
 
+// Canvas rasterization cannot run under jsdom (no Image.onload / 2d context / toDataURL), so the
+// real `rasterizeSvg` is mocked. The mock returns a deterministic PNG entry; the real path is
+// exercised end-to-end by the e2e suite in a real browser.
+vi.mock('./rasterize', () => ({
+  svgDataUrl: (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+  RASTER_SCALE: 2,
+  MAX_RASTER_EDGE: 2000,
+  svgIntrinsicSize: () => ({ width: 181, height: 499 }),
+  rasterPixelSize: (s: { width: number; height: number }) => ({
+    width: s.width * 2,
+    height: s.height * 2,
+  }),
+  rasterizeSvg: vi.fn(async () => ({
+    dataUrl: 'data:image/png;base64,MOCKPNG',
+    width: 181,
+    height: 499,
+  })),
+  svgToPngDataUrl: vi.fn(async () => 'data:image/png;base64,MOCKPNG'),
+}))
+
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string
 const t = ((key: string) => `i18n:${key}`) as unknown as Translate
 
@@ -34,6 +58,7 @@ beforeEach(() => {
   ;(globalThis as unknown as { __mermaidRender: unknown }).__mermaidRender = renderMock
   renderMock.mockClear()
   mermaidSvgCache.clear()
+  mermaidPngCache.clear()
 })
 
 describe('readSvgHeight', () => {
@@ -78,6 +103,58 @@ describe('mermaidFailureMarkup', () => {
   it('renders the skeleton with the localized message', () => {
     expect(mermaidFailureMarkup(t)).toContain('mermaid-skeleton')
     expect(mermaidFailureMarkup(t)).toContain('i18n:preview.mermaidFailed')
+  })
+})
+
+describe('cacheMermaidPng (D14 PNG cache)', () => {
+  it('keeps the existing PNG when the hash is already cached (early return)', () => {
+    const entry = { dataUrl: 'data:image/png;base64,FIRST', width: 10, height: 20 }
+    mermaidPngCache.set('h-png', entry)
+    cacheMermaidPng('h-png', '<svg></svg>')
+    expect(mermaidPngCache.get('h-png')).toBe(entry)
+  })
+})
+
+describe('ensureMermaidPng (D14 awaitable + de-duped PNG cache)', () => {
+  it('rasterizes and caches the PNG when missing', async () => {
+    await ensureMermaidPng('h-new', '<svg></svg>')
+    expect(mermaidPngCache.get('h-new')?.dataUrl).toBe('data:image/png;base64,MOCKPNG')
+  })
+
+  it('resolves immediately (no second rasterization) when already cached', async () => {
+    mermaidPngCache.set('h-hit', { dataUrl: 'data:image/png;base64,HIT', width: 1, height: 1 })
+    const { rasterizeSvg } = await import('./rasterize')
+    const before = (rasterizeSvg as ReturnType<typeof vi.fn>).mock.calls.length
+    await ensureMermaidPng('h-hit', '<svg></svg>')
+    expect((rasterizeSvg as ReturnType<typeof vi.fn>).mock.calls.length).toBe(before)
+  })
+
+  it('collapses concurrent calls for the same hash into one rasterization', async () => {
+    const { rasterizeSvg } = await import('./rasterize')
+    ;(rasterizeSvg as ReturnType<typeof vi.fn>).mockClear()
+    const p1 = ensureMermaidPng('h-dup', '<svg></svg>')
+    const p2 = ensureMermaidPng('h-dup', '<svg></svg>')
+    await Promise.all([p1, p2])
+    expect((rasterizeSvg as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1)
+    expect(mermaidPngCache.get('h-dup')?.dataUrl).toBe('data:image/png;base64,MOCKPNG')
+  })
+})
+
+describe('evictOldest (plan-04 §4.3 FIFO cache cap)', () => {
+  it('drops the oldest entries until the map fits the cap', () => {
+    const map = new Map([
+      ['a', 1],
+      ['b', 2],
+      ['c', 3],
+    ])
+    evictOldest(map, 2)
+    expect([...map.keys()]).toEqual(['b', 'c'])
+  })
+
+  it('leaves a map within the cap untouched', () => {
+    const map = new Map([['a', 1]])
+    evictOldest(map, 5)
+    expect([...map.keys()]).toEqual(['a'])
   })
 })
 

@@ -2,6 +2,7 @@
 //
 import { getExportHtml } from './exportStore'
 import { prepareExportHtml, needsExportBake } from './exportBake'
+import { hasUnresolvedDiagram } from './mermaidBake'
 //
 // Strategy (decision D10 = option iii): we never construct the clipboard payload on the
 // main-process side. Instead the actual write happens inside the `copy` event handler
@@ -54,8 +55,11 @@ function selectionIsInPreview(article: HTMLElement): boolean {
   )
 }
 
-// Pure builder: produce the clean { text, html } payload for the current preview state.
-// Selection-priority, whole-article fallback, cross-pane guard (§4.1 / §4.2).
+// Pure builder: produce the { text, html } payload for the current preview state. The HTML is
+// returned UN-STRIPPED (internal markers such as data-mermaid-slot still present) because the
+// fidelity layer (enhanceForPaste in copyFidelity.ts) needs them to locate mermaid slots, and
+// stripInternalAttrs runs as the final step of that layer. Selection-priority, whole-article
+// fallback, cross-pane guard (§4.1 / §4.2).
 export function buildPreviewCopyPayload(article: HTMLElement): { text: string; html: string } {
   const selInPreview = selectionIsInPreview(article)
   let text: string
@@ -70,16 +74,95 @@ export function buildPreviewCopyPayload(article: HTMLElement): { text: string; h
     html = tmp.innerHTML
     text = window.getSelection()!.toString()
   } else {
-    // No in-preview selection → whole article. Phase 1 contract #2 delivers a canonical,
-    // single-sanitized HTML (already mermaid/KaTeX-baked, appdoc:// srcs preserved, no
-    // runtime UI injection such as data-baked) as the single source of truth. Prefer it
-    // over scraping article.innerHTML, which can carry browser normalization and runtime
-    // markers and would re-derive the payload Stage 2 was told to reuse (§5.5).
+    // No in-preview selection → whole article. The inlined-image cache (§4.8) is preferred
+    // when warm so the keyboard path pastes base64 images (Word-safe) just like the menu
+    // path; otherwise the canonical export HTML (ADR 0019, complete bake) is the source of
+    // truth, with article.innerHTML as the last-resort fallback.
     const canonical = getExportHtml()
-    html = canonical && canonical.length > 0 ? canonical : article.innerHTML
-    text = htmlToText(html)
+    const base =
+      inlinedWholeArticleHtml ?? (canonical && canonical.length > 0 ? canonical : article.innerHTML)
+    html = base
+    text = htmlToText(base)
   }
-  return { text, html: stripInternalAttrs(html) }
+  return { text, html }
+}
+
+// §4.8 — pre-inlined whole-article HTML cache (appdoc:// → base64) so the synchronous keyboard
+// Ctrl+C path pastes embedded images too. Warmed by warmInlinedImages after each render; null
+// until then (the keyboard path then degrades to un-inlined images, which is the pre-plan-04
+// behaviour and never breaks the copy).
+let inlinedWholeArticleHtml: string | null = null
+
+// §4.8 — the same pass also yields an appdoc:// → data: map, so a keyboard copy of a PARTIAL
+// SELECTION can rewrite its own <img>s synchronously (that path has no pending payload and the
+// whole-article cache above does not cover a fragment).
+let inlinedImageMap = new Map<string, string>()
+
+/** Read-only view of the pre-inlined image map (consumed by the copy fidelity layer, §4.8). */
+export function getInlinedImageMap(): ReadonlyMap<string, string> {
+  return inlinedImageMap
+}
+
+/** Forget the pre-inlined image caches (doc switch / re-parse). */
+export function resetInlinedImageCache(): void {
+  inlinedWholeArticleHtml = null
+  inlinedImageMap = new Map()
+}
+
+/**
+ * Pre-inline every `<img>` in the article to a base64 `data:` URL (§4.8) so the keyboard copy
+ * path matches the menu path (R13.7). Fire-and-forget: the result is cached and the copy reads
+ * it synchronously. No-op when there are no images or the embed IPC is unavailable (tests).
+ *
+ * IMPORTANT: the source is the COMPLETE, baked canonical HTML (ADR 0019), never the live
+ * `article.innerHTML`. The preview bakes mermaid lazily (only on-screen diagrams), so the live
+ * DOM carries EMPTY placeholders for off-screen diagrams — caching that would silently DROP
+ * every diagram on paste (the whole-article branch prefers this cache). `prepareExportHtml()`
+ * bakes every slot first and is cache-first/idempotent, so this stays cheap.
+ */
+export async function warmInlinedImages(article: HTMLElement): Promise<void> {
+  inlinedWholeArticleHtml = null
+  inlinedImageMap = new Map()
+  await prepareExportHtml()
+  const canonical = getExportHtml()
+  const source = canonical && canonical.length > 0 ? canonical : article.innerHTML
+  if (!source.includes('<img')) return
+  const embed = (
+    window as unknown as { api?: { export?: { embedImages?: (h: string) => Promise<string> } } }
+  ).api?.export?.embedImages
+  if (typeof embed !== 'function') return
+  try {
+    const inlined = await embed(source)
+    inlinedWholeArticleHtml = inlined
+    inlinedImageMap = collectInlinedImages(source, inlined)
+  } catch {
+    /* keep the caches empty: the copy then falls back to the (baked) canonical html */
+  }
+}
+
+// Pair every <img> of the source with the one embedImages returned. The main-process handler keeps
+// the order and the count (it rewrites `src`, or leaves the original tag untouched when inlining
+// fails), so zipping by index is exact; on a shape mismatch the map is dropped — the copy then
+// pastes un-inlined images instead of embedding the WRONG picture.
+function collectInlinedImages(source: string, inlined: string): Map<string, string> {
+  const map = new Map<string, string>()
+  const from = imgSources(source)
+  const to = imgSources(inlined)
+  if (from.length !== to.length) return map
+  for (let i = 0; i < from.length; i++) {
+    const src = from[i]!
+    const dataUrl = to[i]!
+    if (src.startsWith('data:') || !dataUrl.startsWith('data:')) continue
+    map.set(src, dataUrl)
+  }
+  return map
+}
+
+// Raw `src` attributes in document order ('' for an <img> without one, e.g. a relative image whose
+// URL was stripped upstream). Raw rather than `img.src`, so the keys match the payload verbatim.
+function imgSources(html: string): string[] {
+  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  return Array.from(doc.querySelectorAll('img')).map((img) => img.getAttribute('src') ?? '')
 }
 
 // Plain-text projection of an HTML string for the text/plain clipboard half.
@@ -98,6 +181,69 @@ export function consumePendingCopy(): { text: string; html: string } | null {
   const p = pendingCopy
   pendingCopy = null
   return p
+}
+
+/**
+ * Fire the native `copy` event. A no-op when the environment lacks execCommand or refuses it —
+ * the copy is best-effort and must never throw out of the copy handler.
+ */
+function fireNativeCopy(): void {
+  // Guard: some environments (non-focused webviews, test DOM) lack execCommand entirely.
+  if (typeof document.execCommand !== 'function') return
+  try {
+    document.execCommand('copy')
+  } catch {
+    /* execCommand blocked — the native copy won't fire and no payload is written */
+  }
+}
+
+// ── Cold-cache copy retry (fixes "the first copy drops diagrams") ──
+//
+// The `copy` event is synchronous and cannot await the PNG rasterization the payload needs. When
+// the payload carries a diagram whose PNG is missing, the handler defers instead of shipping it:
+// `deferWarmCopy` finishes the bake, REBUILDS the payload (the cold-time one still referenced the
+// pre-bake placeholders) and re-fires the native copy — which re-enters the handler with a warm
+// cache and takes the fast path. `coldCopyArmed` stops the re-fired event from deferring again
+// (no infinite loop). This is the only way to guarantee zero dropped diagrams for the "user copies
+// within ~1s of opening" edge without blocking the UI.
+let coldCopyArmed = false
+
+/**
+ * Take over a cold copy. Returns true when the copy was deferred — the caller must then
+ * preventDefault and write NOTHING. Deferred only when the payload actually awaits a diagram PNG
+ * AND the native copy can be re-fired: in an environment without execCommand, deferring would
+ * silently copy nothing at all, which is strictly worse than writing the degraded payload.
+ */
+export function deferColdCopy(
+  article: HTMLElement,
+  payload: { text: string; html: string },
+): boolean {
+  if (coldCopyArmed) return false
+  if (!hasUnresolvedDiagram(payload.html)) return false
+  if (typeof document.execCommand !== 'function') return false
+  coldCopyArmed = true
+  void deferWarmCopy(article)
+  return true
+}
+
+/** Await the complete bake, rebuild the payload, then re-fire the native copy to write it. */
+export async function deferWarmCopy(article: HTMLElement): Promise<void> {
+  try {
+    await prepareExportHtml()
+  } catch {
+    /* Bake failed: fall through and re-fire anyway, so the handler still writes the best
+       payload it has (a failed bake degrades content; it must never swallow the copy). */
+  }
+  try {
+    // Rebuild NOW: the canonical HTML is baked and the PNG cache is warm, so this payload
+    // carries every diagram as a PNG. Reusing the cold-time payload (placeholders) would
+    // still drop diagrams even after the bake completed.
+    pendingCopy = buildPreviewCopyPayload(article)
+    fireNativeCopy()
+  } finally {
+    pendingCopy = null
+    coldCopyArmed = false
+  }
 }
 
 // Menu entry point: build the payload, inline images when present (async), then trigger the
@@ -148,13 +294,7 @@ export async function requestRichCopy(article: HTMLElement): Promise<void> {
   // Guard: some environments (non-focused webviews, test DOM) lack execCommand; if it is
   // unavailable the native copy simply won't fire and the pending payload is cleared below,
   // so we never crash the copy action.
-  if (typeof document.execCommand === 'function') {
-    try {
-      document.execCommand('copy')
-    } catch {
-      /* execCommand blocked — native copy won't fire; pendingCopy cleared below */
-    }
-  }
+  fireNativeCopy()
   pendingCopy = null
 
   // Restore the user's original selection so the visible selection state is unchanged.
@@ -166,64 +306,6 @@ export async function requestRichCopy(article: HTMLElement): Promise<void> {
   }
 }
 
-// Rasterize an SVG string to a PNG `data:` URL so it can be copied as a bitmap via
-// `clipboard:write-image` (§4.4). Runs entirely on the renderer using an offscreen <img> +
-// <canvas>. Used by the mermaid "Copy Image" item; the result is a `data:image/png;base64,…`
-// URL, which is why `clipboard:write-image` was extended to accept `data:` URLs.
-/* v8 ignore start: svgToPngDataUrl + svgPixelSize drive a real <img>/<canvas> rasterization
-   pipeline that jsdom cannot execute (no Image.onload, no 2d context, no toDataURL). Both the
-   PNG and SVG-size paths are exercised by the e2e suite (context-menu.e2e.spec.ts) in a real
-   browser, so they are held out of unit line/branch coverage. */
-export async function svgToPngDataUrl(svg: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const blob = new Blob([svg], { type: 'image/svg+xml' })
-    const url = URL.createObjectURL(blob)
-    const img = new Image()
-    img.onload = () => {
-      const { width, height } = svgPixelSize(svg, img)
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.max(1, Math.round(width))
-      canvas.height = Math.max(1, Math.round(height))
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        URL.revokeObjectURL(url)
-        reject(new Error('no 2d context'))
-        return
-      }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-      URL.revokeObjectURL(url)
-      resolve(canvas.toDataURL('image/png'))
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      reject(new Error('svg rasterization failed'))
-    }
-    img.src = url
-  })
-}
-
-// Resolve the pixel size to rasterize at. SVG often has no intrinsic size, so prefer the
-// parsed `viewBox` / width / height attributes; fall back to a default canvas when absent.
-function svgPixelSize(svg: string, img: HTMLImageElement): { width: number; height: number } {
-  if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-    return { width: img.naturalWidth, height: img.naturalHeight }
-  }
-  try {
-    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml')
-    const el = doc.documentElement
-    const vb = el.getAttribute('viewBox')
-    if (vb) {
-      const parts = vb.split(/[\s,]+/).map(Number)
-      if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
-        return { width: parts[2], height: parts[3] }
-      }
-    }
-    const aw = parseFloat(el.getAttribute('width') ?? '')
-    const ah = parseFloat(el.getAttribute('height') ?? '')
-    if (aw > 0 && ah > 0) return { width: aw, height: ah }
-  } catch {
-    /* ignore parse errors */
-  }
-  return { width: 800, height: 600 }
-}
-/* v8 ignore stop */
+// Rasterization now lives in rasterize.ts (shared with copyFidelity / mermaidBake) so the
+// copy pipeline and the mermaid bake don't form an import cycle.
+export { svgToPngDataUrl } from './rasterize'

@@ -7,7 +7,13 @@ import { sanitizeHtml, type SanitizedHtml } from '../../lib/sanitize'
 import { patchPreviewContent, DATA_BAKED } from '../../lib/previewRender'
 import { setExportHtml, setExportContent, setExportMermaidSlots } from '../../lib/exportStore'
 import { useT } from '../../i18n'
-import { consumePendingCopy, buildPreviewCopyPayload } from '../../lib/previewCopy'
+import {
+  consumePendingCopy,
+  buildPreviewCopyPayload,
+  warmInlinedImages,
+  deferColdCopy,
+} from '../../lib/previewCopy'
+import { safeEnhanceForPaste } from '../../lib/copyFidelity'
 import { extractFrontmatterLang } from '../../lib/lang'
 import type { Document, ThemeMode } from '../../types'
 // D-B (plan-03 §4.1): the single source of truth for markdown styling is github-markdown-css
@@ -223,6 +229,9 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
     /* v8 ignore next */
     if (!el) return
     patchPreviewContent(el, sanitizedHtml)
+    // Plan 04: pre-inline images (§4.8) so the synchronous copy path can paste base64 images
+    // without awaiting. Fire-and-forget. (Math needs no pre-pass: it rides its MathML, §4.8.)
+    void warmInlinedImages(el)
     // D-E①: after the incremental patch, fill any cache-hit mermaid immediately (so a
     // re-parse never wipes an already-rendered diagram) and lazily render the rest.
     el.querySelectorAll('[data-mermaid-slot]').forEach((node) => {
@@ -310,9 +319,25 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           onCopy={(e) => {
             const article = e.currentTarget
             const payload = consumePendingCopy() ?? buildPreviewCopyPayload(article)
+            // Cold cache: the payload carries a diagram whose PNG isn't rasterized yet, and this
+            // synchronous event cannot await it — shipping now would drop the diagram. Defer: let
+            // deferWarmCopy finish the bake, rebuild the payload and re-fire the native copy, which
+            // re-enters here with a warm cache (single retry). deferColdCopy declines (and we write
+            // immediately) when the payload awaits no diagram, or when the native copy cannot be
+            // re-fired at all — deferring there would silently copy nothing.
+            if (deferColdCopy(article, payload)) {
+              e.preventDefault()
+              return
+            }
+            // Plan 04: upgrade the bare HTML to a Word/Confluence/Excel-ready payload
+            // (inline styles + rasterized mermaid/math + light theme), then strip the
+            // pipeline's internal markers as the final step (enhanceForPaste). The `safe`
+            // wrapper never throws: a fidelity failure must still preventDefault, never let
+            // the browser copy the raw un-styled DOM.
+            const finalHtml = safeEnhanceForPaste(payload.html)
             try {
               e.clipboardData?.setData('text/plain', payload.text)
-              e.clipboardData?.setData('text/html', payload.html)
+              e.clipboardData?.setData('text/html', finalHtml)
               e.preventDefault()
             } catch {
               /* setData failed: leave the default copy in place */

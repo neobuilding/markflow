@@ -3,26 +3,27 @@
 // Markdown file lists. Extracted from index.ts.
 import { ipcMain } from 'electron'
 import { resolve, dirname } from 'node:path'
-import { statSync } from 'node:fs'
 import { MD_EXTS, collectMarkdownFiles } from '../lib/md-files'
+import { nodeDiskIO, type DiskIO } from '../lib/disk-io'
 
-export function registerFilesHandlers(): void {
+export function registerFilesHandlers(io: DiskIO = nodeDiskIO): void {
   // Resolve a set of dropped/passed paths: expand folders into all their .md files,
   // filter files by extension, and return de-duplicated directory and Markdown file lists.
   // The renderer uses this to import in one shot and set the "current folder".
+  // All filesystem access flows through the injected `io` (the DiskIO port) so the
+  // handler is testable against an in-memory fake; see docs/agents/testing.md.
   ipcMain.handle('files:resolve-paths', (_event, paths: string[]) => {
     const directories: string[] = []
     const markdownFiles = new Set<string>()
     for (const p of paths) {
       try {
         const absolute = resolve(p)
-        const st = statSync(absolute)
-        if (st.isDirectory()) {
+        if (io.isDirectory(absolute)) {
           directories.push(absolute)
-          for (const f of collectMarkdownFiles(absolute)) markdownFiles.add(f)
+          for (const f of collectMarkdownFiles(absolute, io)) markdownFiles.add(f)
         } else {
-          // statSync followed by isDirectory()===false means a regular file (symlinks
-          // resolve to their target). Filter by extension; non-markdown paths add nothing.
+          // isDirectory()===false means a regular file (symlinks resolve to their
+          // target). Filter by extension; non-markdown paths add nothing.
           const ext = absolute.slice(absolute.lastIndexOf('.')).toLowerCase()
           if (MD_EXTS.has(ext)) {
             markdownFiles.add(absolute)
@@ -32,7 +33,7 @@ export function registerFilesHandlers(): void {
             if (!directories.includes(parentDir)) {
               directories.push(parentDir)
             }
-            for (const f of collectMarkdownFiles(parentDir)) markdownFiles.add(f)
+            for (const f of collectMarkdownFiles(parentDir, io)) markdownFiles.add(f)
           }
         }
       } catch {

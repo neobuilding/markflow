@@ -12,7 +12,7 @@
 // is cache hits + one string reassembly).
 import { sanitizeHtml } from './sanitize'
 import { getExportHtml, setExportHtml, getExportMermaidSlots } from './exportStore'
-import { bakeMermaidIntoHtml } from './mermaidBake'
+import { bakeMermaidIntoHtml, ensureAllMermaidPngs } from './mermaidBake'
 import { t } from '../i18n'
 
 // The HTML we last published, so callers that CANNOT await (the synchronous `copy` handler)
@@ -37,6 +37,21 @@ export function needsExportBake(): boolean {
  * Bake every mermaid diagram into the canonical export HTML and publish it. Idempotent,
  * cheap when the cache is warm, and safe to call from the preview (background), the
  * export dialog, the print handler and the copy path.
+ *
+ * The bake is complete only once the diagrams' PNG forms are ALSO in the cache — the
+ * synchronous `copy` event swaps each diagram for a `<img data:png>` from that cache, so an
+ * incomplete PNG pass is exactly what made the first copy after opening drop diagrams. We
+ * therefore publish the baked SVG HTML first (export / print read it) but only flip the
+ * "complete" marker after the PNGs are warm (§4.3 / fix for the missing-diagrams bug).
+ *
+ * Export and print consume only the SVG HTML, never the PNG cache — so a reviewer may ask
+ * why they also `await` the PNG rasterization below instead of returning early. We do NOT
+ * split a PNG-free path: the background `scheduleExportBake` pass already warms the cache,
+ * so that await is a no-op on the common read-then-export/print path (only the narrow
+ * open-heavy-doc-then-export-within-~1s window would pay for it). Splitting would require a
+ * second "SVG-ready" completion marker alongside the PNG-ready one, and letting export flip
+ * "complete" without the PNGs warm would let a later copy re-emit placeholder diagrams — the
+ * dropped-diagrams bug returns. One marker, one source of truth; keep it that way.
  */
 export async function prepareExportHtml(): Promise<string> {
   const html = getExportHtml()
@@ -47,11 +62,24 @@ export async function prepareExportHtml(): Promise<string> {
     try {
       const baked = await bakeMermaidIntoHtml(html, getExportMermaidSlots(), t)
       const clean = sanitizeHtml(baked)
-      // Publish only when the canonical HTML is still the one we started from: a re-parse
-      // in between has already reset the cache to placeholders and will schedule its own
-      // pass, so writing now would publish a stale document.
-      if (getExportHtml() === html) {
+      // Capture the "this is still the HTML we started from" decision BEFORE publishing, because
+      // setExportHtml mutates the canonical HTML. A re-parse that landed mid-bake has already reset
+      // the cache to placeholders and will schedule its own pass, so writing now would publish a
+      // stale document — in that case we skip both publishing and the "complete" marker.
+      const stillSameDoc = getExportHtml() === html
+      if (stillSameDoc) {
         setExportHtml(clean)
+      }
+      // Await the PNG rasterization so the synchronous copy event finds every diagram in
+      // `mermaidPngCache`. This is the part that used to be fire-and-forget, leaving the
+      // first copy racing the rasterization. The bake is cache-first, so this only touches
+      // diagrams not yet rendered, and the background pass (scheduleExportBake) already runs
+      // it — the common "read then copy" path never waits here.
+      await ensureAllMermaidPngs(getExportMermaidSlots())
+      // Mark complete only once the PNG cache is warm, so `needsExportBake()` stays the
+      // single "is the copy payload fully ready?" gate until then — and only for the document
+      // we actually published.
+      if (stillSameDoc) {
         completedHtml = clean
       }
       return clean

@@ -4,6 +4,7 @@ import { useT } from '../../i18n'
 import type { Document } from '../../types'
 import { getExportHtml } from '../../lib/exportStore'
 import { requestRichCopy, svgToPngDataUrl } from '../../lib/previewCopy'
+import { formulaToPng } from '../../lib/formulaImage'
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -26,10 +27,13 @@ import {
 } from 'lucide-react'
 
 // Right-click menu for the preview surface. The kind is detected from the element under the
-// cursor at open time: a link, an image (bitmap or mermaid SVG), or the generic article.
+// cursor at open time: a link, an image (bitmap or mermaid SVG), a KaTeX formula, or the generic
+// article.
 // Plan 02 (D3): the old per-object "copy source / copy X" items are gone — a single rich-text
-// "Copy" now covers headings, code, tables, lists and formulas, so the menu stays small.
-type TargetKind = 'generic' | 'link' | 'image'
+// "Copy" now covers headings, code, tables, lists and formulas, so the menu stays small. The one
+// exception is a formula's "Copy as image" (ADR 0020): the payload keeps MathML, and targets that
+// render neither MathML nor KaTeX's CSS need the bitmap as an explicit, separate action.
+type TargetKind = 'generic' | 'link' | 'image' | 'formula'
 
 interface PreviewContextMenuProps {
   doc: Document | null | undefined
@@ -50,6 +54,8 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
   // Mermaid / vector image state (kind === 'image' && isSvg)
   const [isSvg, setIsSvg] = useState(false)
   const [mermaidSvg, setMermaidSvg] = useState('')
+  // Formula state (kind === 'formula'): the rendered `.katex` node that gets rasterized.
+  const [formulaEl, setFormulaEl] = useState<HTMLElement | null>(null)
 
   // Capture-phase handler: classify the context target before the menu opens.
   const capture = (e: React.MouseEvent) => {
@@ -72,6 +78,19 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
       setKind('link')
       setLinkHref(href)
     } else {
+      // A rendered KaTeX formula: right-click anywhere on it — including the empty margin of a
+      // block-level `.katex-display` — to copy a bitmap for targets that render neither MathML
+      // nor KaTeX's CSS (ADR 0020). Link precedence is unchanged: a formula inside a link still
+      // offers the link menu, because that is what the surrounding text promised.
+      const holder = target.closest<HTMLElement>('.katex, .katex-display')
+      const katex = holder?.classList.contains('katex')
+        ? holder
+        : (holder?.querySelector<HTMLElement>('.katex') ?? null)
+      if (katex) {
+        setKind('formula')
+        setFormulaEl(katex)
+        return
+      }
       setKind('generic')
     }
   }
@@ -148,6 +167,17 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
   // wrapper) so it pastes cleanly into Word / vector editors (D4).
   const copySvg = () => void window.api.clipboard.writeSvg(mermaidSvg)
 
+  // ── Formula action ──
+  // "Copy formula as image" (ADR 0020): the rich-text payload keeps MathML, which Word / OneNote
+  // turn into editable equations; a bitmap would be a downgrade there. It is opt-in for the
+  // targets that render neither MathML nor KaTeX's CSS (F23). Silent on failure, like copyImage.
+  const copyFormulaImage = async () => {
+    /* v8 ignore next -- defensive: kind === 'formula' always carries a captured element */
+    if (!formulaEl) return
+    const png = await formulaToPng(formulaEl)
+    if (png) void window.api.clipboard.writeImage(png)
+  }
+
   // The generic copy / select-all pair is shared by every variant.
   const copyAndSelectAll = (
     <>
@@ -221,6 +251,18 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
               onClick={() => void saveImageAs()}
             >
               <Save size={13} /> {t('ctx.saveImageAs')}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            {copyAndSelectAll}
+          </>
+        )}
+        {kind === 'formula' && (
+          <>
+            <ContextMenuItem
+              data-testid="preview-copy-formula-image"
+              onClick={() => void copyFormulaImage()}
+            >
+              <ImageIcon size={13} /> {t('ctx.copyFormulaImage')}
             </ContextMenuItem>
             <ContextMenuSeparator />
             {copyAndSelectAll}

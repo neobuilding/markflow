@@ -42,6 +42,17 @@ describe('nodeDiskIO', () => {
     expect(nodeDiskIO.exists(to)).toBe(true)
   })
 
+  it('copies a file without disturbing the source', () => {
+    const from = join(root, 'cp1.txt')
+    const to = join(root, 'cp2.txt')
+    writeFileSync(from, 'payload')
+    nodeDiskIO.copyFile(from, to)
+    expect(nodeDiskIO.readFile(to).toString('utf-8')).toBe('payload')
+    // A copy, not a move: the source stays in place with its contents intact.
+    expect(nodeDiskIO.exists(from)).toBe(true)
+    expect(nodeDiskIO.readFile(from).toString('utf-8')).toBe('payload')
+  })
+
   it('reports size and timestamps', () => {
     const p = join(root, 's.txt')
     writeFileSync(p, '12345')
@@ -69,6 +80,14 @@ describe('nodeDiskIO', () => {
     nodeDiskIO.closeFd(fd)
     expect(nodeDiskIO.readFile(p).toString('utf-8')).toBe('body')
     expect(() => nodeDiskIO.openExclusive(p)).toThrow(/EEXIST/)
+  })
+
+  it('reports whether a path is a directory', () => {
+    const dir = join(root, 'isdir')
+    nodeDiskIO.mkdir(dir)
+    writeFileSync(join(root, 'isfile.txt'), 'x')
+    expect(nodeDiskIO.isDirectory(dir)).toBe(true)
+    expect(nodeDiskIO.isDirectory(join(root, 'isfile.txt'))).toBe(false)
   })
 
   it('reads a bounded sample through an async handle and closes it', async () => {

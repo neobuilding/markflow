@@ -256,7 +256,7 @@ export const en = {
   'menu.filterHtml': 'HTML',
 
   // ── Context menus (ctx.*) ─────────────────────────────────────────────
-  // Right-click menu items across all areas. 56 keys, en/zh-CN parity required.
+  // Right-click menu items across all areas. 44 keys, en/zh-CN parity required.
   // Editor
   'ctx.undo': 'Undo',
   'ctx.redo': 'Redo',
@@ -274,6 +274,8 @@ export const en = {
   'ctx.copyImageSrc': 'Copy Image Address',
   // Preview diagram (mermaid)
   'ctx.copySvg': 'Copy as SVG',
+  // Preview formula (KaTeX)
+  'ctx.copyFormulaImage': 'Copy Formula as Image',
   // Sidebar document item
   'ctx.openDocument': 'Open',
   'ctx.copyFileName': 'Copy File Name',

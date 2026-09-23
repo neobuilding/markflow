@@ -5,6 +5,7 @@ import { PreviewContextMenu } from './PreviewContextMenu'
 import { useUIStore } from '../../store/ui'
 import type { Document } from '../../types'
 import * as previewCopy from '../../lib/previewCopy'
+import * as formulaImage from '../../lib/formulaImage'
 import {
   buildPreviewCopyPayload,
   stripInternalAttrs,
@@ -38,6 +39,9 @@ beforeEach(() => {
   setExportHtml(sanitizeHtml(''))
   vi.spyOn(previewCopy, 'requestRichCopy').mockImplementation(() => Promise.resolve())
   vi.spyOn(previewCopy, 'svgToPngDataUrl').mockResolvedValue('data:image/png;base64,TESTPNG')
+  // The formula variant rasterizes through the real <img>/<canvas> pipeline, which jsdom cannot
+  // run at all; that half is covered by e2e (formula-copy-image.e2e.spec.ts).
+  vi.spyOn(formulaImage, 'formulaToPng').mockResolvedValue('data:image/png;base64,FORMULA')
   ;(window as unknown as { api: unknown }).api = {
     clipboard: { writeText: vi.fn(), writeImage: vi.fn(), writeSvg: vi.fn() },
     app: { openExternal: vi.fn(), showInFolder: vi.fn(), copyFile: vi.fn() },
@@ -105,7 +109,7 @@ describe('buildPreviewCopyPayload', () => {
     return vi.spyOn(window, 'getSelection').mockReturnValue(sel)
   }
 
-  it('whole-article copy (no in-preview selection) keeps semantic structure and strips internal attrs (R6)', () => {
+  it('whole-article copy (no in-preview selection) keeps semantic structure and leaves internal markers intact (R6)', () => {
     mockSelection(null, true)
     const el = document.createElement('div')
     el.innerHTML =
@@ -115,13 +119,15 @@ describe('buildPreviewCopyPayload', () => {
     expect(html).toContain('<h1')
     expect(html).toContain('<table')
     expect(html).toContain('<svg')
-    expect(html).not.toContain('data-line')
-    expect(html).not.toContain('data-mermaid-source')
-    expect(html).not.toContain('data-mermaid-slot')
-    expect(html).not.toContain('data-baked')
+    // plan-04: build() no longer strips. The internal markers (data-line, data-mermaid-slot,
+    // data-baked…) stay so the fidelity layer (enhanceForPaste in copyFidelity.ts) can locate
+    // mermaid slots and finally strip them — that final strip is asserted in copyFidelity.test.ts.
+    // Keeping the markers here guards the contract change from accidentally re-stripping upstream.
+    expect(html).toContain('data-line')
+    expect(html).toContain('data-mermaid-slot')
   })
 
-  it('whole-article copy prefers the canonical export HTML and strips data-lang (contract #2)', () => {
+  it('whole-article copy prefers the canonical export HTML (contract #2)', () => {
     mockSelection(null, true)
     // The canonical HTML (Phase 1 §5.5) carries data-line / data-lang / data-baked; the stale
     // live innerHTML must be ignored in favour of it.
@@ -131,10 +137,10 @@ describe('buildPreviewCopyPayload', () => {
     const el = document.createElement('div')
     el.innerHTML = '<pre data-line="999"><code>STALE</code></pre>'
     const { html, text } = buildPreviewCopyPayload(el)
-    expect(html).toBe('<pre><code>x</code></pre>')
-    expect(html).not.toContain('data-lang')
-    expect(html).not.toContain('data-line')
-    expect(html).not.toContain('data-baked')
+    // build() returns the canonical export HTML UNSTRIPPED; the fidelity layer (enhanceForPaste)
+    // performs the final strip (verified in copyFidelity.test.ts). Here we only guard the
+    // whole-article / canonical-preference contract.
+    expect(html).toBe('<pre data-line="0" data-lang="ts" data-baked="1"><code>x</code></pre>')
     expect(text).toBe('x')
   })
 
@@ -595,5 +601,72 @@ describe('previewCopy — requestRichCopy branch coverage', () => {
     } finally {
       setExec(orig)
     }
+  })
+})
+
+// ADR 0020 — a formula's bitmap is an OPT-IN action: rich-text copy keeps MathML (Word / OneNote
+// turn it into editable equations), so the PNG is a separate menu item for the targets that
+// render neither MathML nor KaTeX's CSS (F23). One clipboard cannot tell the targets apart.
+describe('PreviewContextMenu — formula (KaTeX)', () => {
+  const inlineFormula =
+    '<p>see <span class="katex"><span class="katex-mathml"><math><annotation ' +
+    'encoding="application/x-tex">E=mc^2</annotation></math></span><span class="katex-html">' +
+    'E=mc<sup>2</sup></span></span> here</p>'
+  const blockFormula =
+    '<section><span class="katex-display"><span class="katex"><span class="katex-html">' +
+    'x</span></span></span></section>'
+
+  it('offers the bitmap item on an inline formula, next to the rich-text items', async () => {
+    mountCustom(inlineFormula)
+    fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
+    expect(await screen.findByTestId('preview-copy-formula-image')).toBeInTheDocument()
+    expect(screen.getByTestId('preview-copy')).toBeInTheDocument()
+    expect(screen.getByTestId('preview-select-all')).toBeInTheDocument()
+  })
+
+  it('writes the rasterized PNG to the clipboard', async () => {
+    mountCustom(inlineFormula)
+    fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-copy-formula-image'))
+    await waitFor(() =>
+      expect(window.api.clipboard.writeImage).toHaveBeenCalledWith('data:image/png;base64,FORMULA'),
+    )
+  })
+
+  it('is offered from the block-level container too, and rasterizes the inner .katex', async () => {
+    mountCustom(blockFormula)
+    // Right-click the full-width `.katex-display` (the margin around a centred formula), not the
+    // formula itself: the item must still appear…
+    fireEvent.contextMenu(document.querySelector('.katex-display') as HTMLElement)
+    expect(await screen.findByTestId('preview-copy-formula-image')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('preview-copy-formula-image'))
+    // …and the bitmap is taken from the tight `.katex` box, not the whole centred block.
+    await waitFor(() => expect(formulaImage.formulaToPng).toHaveBeenCalled())
+    const [el] = vi.mocked(formulaImage.formulaToPng).mock.calls[0]
+    expect(el.classList.contains('katex')).toBe(true)
+    expect(el.classList.contains('katex-display')).toBe(false)
+  })
+
+  it('falls back to the generic menu when the container holds no formula', async () => {
+    mountCustom('<section><span class="katex-display"></span></section>')
+    fireEvent.contextMenu(document.querySelector('.katex-display') as HTMLElement)
+    expect(screen.queryByTestId('preview-copy-formula-image')).toBeNull()
+    expect(await screen.findByTestId('preview-copy')).toBeInTheDocument()
+  })
+
+  it('copies nothing when the formula cannot be rasterized', async () => {
+    vi.mocked(formulaImage.formulaToPng).mockResolvedValueOnce(null)
+    mountCustom(inlineFormula)
+    fireEvent.contextMenu(document.querySelector('.katex') as HTMLElement)
+    fireEvent.click(await screen.findByTestId('preview-copy-formula-image'))
+    await waitFor(() => expect(formulaImage.formulaToPng).toHaveBeenCalled())
+    expect(window.api.clipboard.writeImage).not.toHaveBeenCalled()
+  })
+
+  it('does not offer the bitmap item on ordinary text', async () => {
+    mountCustom('<p>plain text</p>')
+    fireEvent.contextMenu(screen.getByText('plain text'))
+    expect(await screen.findByTestId('preview-copy')).toBeInTheDocument()
+    expect(screen.queryByTestId('preview-copy-formula-image')).toBeNull()
   })
 })
