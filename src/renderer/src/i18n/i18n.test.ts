@@ -25,6 +25,31 @@ describe('i18n dictionaries', () => {
   it('localizes the native file-dialog "All Files" filter label', () => {
     expect(zhCN['menu.filterAllFiles']).toBe('所有文件')
   })
+
+  it('localizes the Electron role labels the native menu renders', () => {
+    // A bare `{ role: 'undo' }` shows Electron's OWN text, which follows the system locale and
+    // therefore stays English after an in-app switch to Chinese. menu.ts now pairs every role
+    // with a menuT() label — these are the strings that label must resolve to.
+    expect(zhCN['menu.undo']).toBe('撤销')
+    expect(zhCN['menu.redo']).toBe('重做')
+    expect(zhCN['menu.cut']).toBe('剪切')
+    expect(zhCN['menu.copy']).toBe('复制')
+    expect(zhCN['menu.paste']).toBe('粘贴')
+    expect(zhCN['menu.resetZoom']).toBe('实际大小')
+    expect(zhCN['menu.zoomIn']).toBe('放大')
+    expect(zhCN['menu.zoomOut']).toBe('缩小')
+    expect(zhCN['menu.toggleFullScreen']).toBe('切换全屏')
+    expect(zhCN['menu.minimize']).toBe('最小化')
+    expect(zhCN['menu.zoom']).toBe('缩放')
+    expect(zhCN['menu.quit']).toBe('退出')
+    expect(zhCN['menu.closeWindow']).toBe('关闭窗口')
+  })
+
+  it('localizes the app-modal confirm fallback button', () => {
+    // dialog:confirm used to hardcode 'OK' when the caller passed no okText.
+    expect(zhCN['app.ok']).toBe('确定')
+    expect(zhCN['app.cancel']).toBe('取消')
+  })
 })
 
 describe('locale normalization', () => {

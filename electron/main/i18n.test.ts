@@ -44,4 +44,16 @@ describe('main-process i18n', () => {
     i18n.setMenuLanguage('zh-CN')
     expect(i18n.menuT('menu.file')).toBe('文件')
   })
+
+  // The native menu pairs each Electron `role` with a menuT() label, so these keys are read at
+  // runtime through the real dictionary (menu.test.ts mocks menuT and cannot prove the value).
+  it('translates the role labels and the confirm fallback through the real dictionary', () => {
+    i18n.setMenuLanguage('zh-CN')
+    expect(i18n.menuT('menu.undo')).toBe('撤销')
+    expect(i18n.menuT('menu.copy')).toBe('复制')
+    expect(i18n.menuT('menu.minimize')).toBe('最小化')
+    expect(i18n.menuT('menu.quit')).toBe('退出')
+    expect(i18n.menuT('app.ok')).toBe('确定')
+    expect(i18n.menuT('app.cancel')).toBe('取消')
+  })
 })

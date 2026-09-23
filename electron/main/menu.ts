@@ -179,18 +179,23 @@ export function setupMenu(): void {
           click: () => getMainWindow()?.webContents.send('menu:close-workspace'),
         },
         { type: 'separator' },
-        process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
+        // A bare `{ role: 'quit' }` renders Electron's OWN label, which follows the *system*
+        // locale and therefore stayed English after an in-app switch to Chinese. Pairing the
+        // role with an explicit label keeps the behavior/accelerator and localizes the text.
+        process.platform === 'darwin'
+          ? { label: menuT('menu.closeWindow'), role: 'close' }
+          : { label: menuT('menu.quit'), role: 'quit' },
       ],
     },
     {
       label: menuT('menu.edit'),
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        { label: menuT('menu.undo'), role: 'undo' },
+        { label: menuT('menu.redo'), role: 'redo' },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
+        { label: menuT('menu.cut'), role: 'cut' },
+        { label: menuT('menu.copy'), role: 'copy' },
+        { label: menuT('menu.paste'), role: 'paste' },
         // NOT `{ role: 'selectAll' }`: that role runs a NATIVE webContents-wide select-all,
         // which (a) ignores CodeMirror (the editor ends up with a bogus clamped selection
         // instead of "select the whole document") and (b) spans BOTH panes when the caret
@@ -219,11 +224,11 @@ export function setupMenu(): void {
           click: () => getMainWindow()?.webContents.send('menu:toggle-preview'),
         },
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        { label: menuT('menu.resetZoom'), role: 'resetZoom' },
+        { label: menuT('menu.zoomIn'), role: 'zoomIn' },
+        { label: menuT('menu.zoomOut'), role: 'zoomOut' },
         { type: 'separator' },
-        { role: 'togglefullscreen' },
+        { label: menuT('menu.toggleFullScreen'), role: 'togglefullscreen' },
         { type: 'separator' },
         {
           label: menuT('menu.toggleDevTools'),
@@ -242,7 +247,10 @@ export function setupMenu(): void {
     },
     {
       label: menuT('menu.window'),
-      submenu: [{ role: 'minimize' }, { role: 'zoom' }],
+      submenu: [
+        { label: menuT('menu.minimize'), role: 'minimize' },
+        { label: menuT('menu.zoom'), role: 'zoom' },
+      ],
     },
     {
       label: menuT('menu.help'),

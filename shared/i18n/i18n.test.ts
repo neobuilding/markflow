@@ -45,4 +45,21 @@ describe('shared/i18n — zh-CN parity with en', () => {
     // Guards against accidentally shipping the English dictionary as zh-CN.
     expect(zhCN['sidebar.search']).not.toBe(en['sidebar.search'])
   })
+
+  it('leaves no key untranslated outside the intentional pass-throughs', () => {
+    // The only keys whose zh-CN value is deliberately identical to English: the two language
+    // names in the Language menu (a language switcher must show each language's OWN name) and
+    // the two file-format filter names. Anything else that matches English means a key was
+    // copied over instead of written in Chinese — e.g. a menu entry shipping English text.
+    const intentionalPassThroughs = new Set<TranslationKey>([
+      'menu.english',
+      'menu.chinese',
+      'menu.filterMarkdown',
+      'menu.filterHtml',
+    ])
+    const untranslated = (Object.keys(en) as TranslationKey[]).filter(
+      (key) => en[key] === zhCN[key] && !intentionalPassThroughs.has(key),
+    )
+    expect(untranslated).toEqual([])
+  })
 })

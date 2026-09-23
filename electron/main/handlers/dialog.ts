@@ -68,7 +68,9 @@ export function registerDialogHandlers(): void {
     ): Promise<boolean> => {
       const result = await dialog.showMessageBox({
         type: 'question',
-        buttons: [opts.cancelText ?? 'Cancel', opts.okText ?? 'OK'],
+        // Localized fallbacks: a caller that omits okText/cancelText must not leak raw
+        // English 'OK'/'Cancel' into a Chinese UI.
+        buttons: [opts.cancelText ?? menuT('app.cancel'), opts.okText ?? menuT('app.ok')],
         defaultId: 1,
         cancelId: 0,
         message: opts.message,

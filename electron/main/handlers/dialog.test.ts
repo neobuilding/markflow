@@ -29,6 +29,11 @@ vi.mock('../lib/md-files', () => ({
   collectMarkdownFiles: (dir: string) => [`${dir}/x.md`],
   MD_EXTS: new Set(['.md']),
 }))
+// Identity translator, matching menu.test.ts: the keys themselves are the assertions, so the
+// test proves the defaults are read from the dictionary instead of hardcoded English.
+vi.mock('../i18n', () => ({
+  menuT: (key: string) => key,
+}))
 
 import { registerDialogHandlers } from './dialog'
 
@@ -98,10 +103,12 @@ describe('dialog handlers', () => {
     })
   })
 
-  it('confirm falls back to [Cancel, OK] when no labels are provided', async () => {
+  it('confirm falls back to the localized app.cancel / app.ok when no labels are provided', async () => {
     h.calls.length = 0
     await handlers['dialog:confirm'](null, { message: 'Sure?' })
-    expect(h.calls[0].buttons).toEqual(['Cancel', 'OK'])
+    // Not the hardcoded 'Cancel'/'OK': the fallbacks must come from the shared dictionary so
+    // a Chinese UI never shows an English button.
+    expect(h.calls[0].buttons).toEqual(['app.cancel', 'app.ok'])
     expect(h.calls[0].defaultId).toBe(1)
     expect(h.calls[0].cancelId).toBe(0)
   })

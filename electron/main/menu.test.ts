@@ -3,6 +3,8 @@ import { collectMarkdownFiles } from './lib/md-files'
 
 const menuItems: Record<string, { id?: string; enabled: boolean }> = {}
 const setAppMenuCalls: unknown[] = []
+// Raw template handed to Menu.buildFromTemplate, kept for the "every item is labeled" guard.
+let lastTemplate: Array<Record<string, unknown>> = []
 const ipcHandlers: Record<string, (...a: unknown[]) => void> = {}
 const allClicks: Array<(() => void) | undefined> = []
 
@@ -28,6 +30,7 @@ vi.mock('electron', () => ({
   },
   Menu: {
     buildFromTemplate: (template: Array<Record<string, unknown>>) => {
+      lastTemplate = template
       const collect = (items: typeof template) => {
         for (const item of items) {
           if (typeof item.id === 'string') {
@@ -320,6 +323,71 @@ describe('native menu', () => {
     }
     expect(sent).toBe(true)
     expect(h.openFilesSent).toContainEqual(['menu:open-files', ['/docs/a.md', '/docs/b.md']])
+  })
+
+  // Regression guard: a bare `{ role: 'undo' }` renders Electron's OWN label, which follows the
+  // *system* locale — so Undo / Copy / Zoom In … stayed English after the user switched the app
+  // to Chinese. Every printable item must therefore pair its role with a menuT() label.
+  it('gives every menu item a translated label instead of a bare role', () => {
+    const assertAllLabeled = () => {
+      const walk = (items: Array<Record<string, unknown>>, path: string): void => {
+        for (const item of items) {
+          if (item.type === 'separator') continue
+          const where = `${path}/${String(item.role ?? item.id ?? '?')}`
+          expect(item.label, `menu item ${where} must carry a menuT() label`).toBeTruthy()
+          if (Array.isArray(item.submenu)) {
+            walk(item.submenu as Array<Record<string, unknown>>, where)
+          }
+        }
+      }
+      walk(lastTemplate, '')
+    }
+
+    menu.setupMenu()
+    assertAllLabeled()
+
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    try {
+      menu.setupMenu()
+      assertAllLabeled()
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original })
+    }
+  })
+
+  // Complement to the label guard above: the fix must localize the TEXT only. Dropping the
+  // role and hand-rolling a `click` would silently lose the native action AND the platform
+  // accelerator (Ctrl+Z for undo, F11 for fullscreen …) that Electron derives from the role.
+  it('pairs each `role` with a label instead of replacing the role', () => {
+    menu.setupMenu()
+    const labelByRole = new Map<string, string>()
+    const walk = (items: Array<Record<string, unknown>>): void => {
+      for (const item of items) {
+        if (item.type === 'separator') continue
+        if (typeof item.role === 'string') labelByRole.set(item.role, String(item.label ?? ''))
+        if (Array.isArray(item.submenu)) walk(item.submenu as Array<Record<string, unknown>>)
+      }
+    }
+    walk(lastTemplate)
+
+    for (const role of [
+      'undo',
+      'redo',
+      'cut',
+      'copy',
+      'paste',
+      'resetZoom',
+      'zoomIn',
+      'zoomOut',
+      'togglefullscreen',
+      'minimize',
+      'zoom',
+    ]) {
+      expect(labelByRole.get(role), `role ${role} must be kept and carry a label`).toBeTruthy()
+    }
+    // File menu: quit on Windows/Linux, close on macOS (both carry their own localized label).
+    expect(labelByRole.has('quit') || labelByRole.has('close')).toBe(true)
   })
 
   it('builds the darwin-specific menu (close role + hiddenInset title bar)', () => {
