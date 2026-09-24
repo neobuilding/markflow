@@ -261,20 +261,28 @@ actions/create-pr` + `npm run build:action`) in a step **before** `uses: ./actio
 
 ### CI pipeline (`.github/workflows/ci.yml`)
 
-The CI gates everything behind a separate `quality` job, then runs `ut` and `e2e` **in parallel**:
+Every job fans out in parallel — `version`, `quality`, `ut`, `e2e` and the three-platform `build` all
+start immediately (only `build` waits on `version`, whose computed version it injects):
 
 - `quality` (ubuntu): `npm run quality` (Prettier + ESLint + Stylelint + Markdownlint + Secretlint +
-  typecheck) as a fast-fail gate. It runs once and must pass before either test job starts.
-- `ut` (ubuntu, after `quality`): unit tests + coverage (Vitest + jsdom; no Electron build needed).
-- `e2e` (ubuntu, after `quality`): Playwright browser install → `npm run build` → `npm run e2e:full`
-  (under `xvfb-run`). Quality/coverage/build are separate jobs, so the e2e job runs e2e only.
+  typecheck). It runs once and gates nothing on purpose: a style, rule or type violation must not hide
+  the test and packaging results, so a single run reports every problem at once.
+- `ut` (ubuntu): unit tests + coverage (Vitest + jsdom; no Electron build needed).
+- `e2e` (ubuntu): Playwright browser install → `npm run build` → `npm run e2e:full` (under
+  `xvfb-run`). Quality/coverage/build are separate jobs, so the e2e job runs e2e only.
   Each test job runs on its own runner (e2e does its own `npm ci` + a single `npm run build`), trading one
-  extra install for wall-clock time ≈ max(ut, e2e) instead of chained. The `build` / `release` jobs run
-  only after both test jobs and the version computation pass. The Playwright HTML report and
+  extra install for wall-clock time ≈ max(ut, e2e) instead of chained. The Playwright HTML report and
   `test-results/` are uploaded as artifacts on every run (even on failure) for inspection.
 
-The three-platform `build` job (`Build (macos|windows|ubuntu)`) runs only after both the `ut` and `e2e`
-jobs pass and is the only three-platform build in the repo, used for both PR validation and releases.
+The three-platform `build` job (`Build (macos-latest|windows-latest|ubuntu-latest)`) starts as soon as the
+version is computed and does **not** wait for the test suites, so packaging problems surface in the same
+run as test problems. It is the only three-platform build in the repo, used for both PR validation and
+releases.
+
+`release` is the pipeline's single gate: it needs `build`, `ut`, `e2e`, `quality` and `version`, so no
+artifact is ever tagged or drafted from a red run. On `pull_request` runs, superseded runs are cancelled
+automatically (`cancel-in-progress`); pushes to `main` are never cancelled, so an in-flight release build
+cannot be interrupted halfway.
 
 ### Viewing test results
 

@@ -29,10 +29,29 @@ function makeFakeGit({ revParseValue = null, log = '- deadbeef did a thing' } = 
     hasOrigin: () => true,
     fetchBase: () => '',
     logRange: () => log,
-    logSubjects: () => log,
+    logSubjects: vi.fn(() => log),
     lsRemote: () => null,
   }
 }
+
+const ISSUE_AND_TYPE_TEMPLATE = [
+  '<!-- AUTO:issue -->',
+  '## Fixes #(issue number)',
+  '{{issue}}',
+  '<!-- /AUTO:issue -->',
+  '',
+  '<!-- AUTO:type -->',
+  '## Type of Change',
+  '{{types}}',
+  '<!-- /AUTO:type -->',
+  '',
+  '<!-- AUTO:commits -->',
+  '## Commits',
+  '',
+  '{{commits}}',
+  '<!-- /AUTO:commits -->',
+  '',
+].join('\n')
 
 const SAMPLE_TEMPLATE = [
   '<!-- AUTO:title -->',
@@ -159,5 +178,24 @@ describe('renderTemplate — single rendering entry point', () => {
       expect(git.revParse).toHaveBeenCalledWith('origin/main')
       expect(body).toContain('## Commits')
     })
+  })
+
+  it('memoizes the injected git service so each method+args spawns at most once', async () => {
+    // The built-in `issue` plugin and the user `types` plugin both pull raw commit
+    // subjects via `services.git.logSubjects(head, base)` with identical arguments.
+    // The memoization boundary must collapse those two calls into a single
+    // underlying `git.logSubjects` invocation (cache hit on the 2nd) so plugins
+    // stay cheap without the core having to pre-compute shared facts.
+    const git = makeFakeGit({ revParseValue: 'abc123' })
+    const body = await renderTemplate({
+      head: 'fix/#123-login',
+      base: 'main',
+      template: ISSUE_AND_TYPE_TEMPLATE,
+      git,
+    })
+    expect(git.logSubjects).toHaveBeenCalledTimes(1)
+    expect(body).toContain('123') // issue plugin extracted #123 from the head
+    expect(body).toContain('- [x] Bug fix') // types plugin ticked Bug fix (fix/ prefix)
+    expect(body).toContain('## Commits') // commits block still rendered (logRange)
   })
 })

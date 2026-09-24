@@ -226,6 +226,21 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **Create-PR Action** — in-repo GitHub Action (`actions/create-pr`) that idempotently creates/refreshes PRs;
   its bundled `dist/index.mjs` is **built at runtime** by `auto-pr.yml` from committed `src/` and is
   not committed (see `docs/adr/0005-committed-action-bundle.md`).
+- **Type-of-Change taxonomy (create-pr)** — the PR template's `{{types}}` block renders seven self-ticking
+  checkboxes: `Bug fix`, `New feature`, `Refactor`, `Tests`, `Performance / technical improvement`
+  (one `improvement` flag aggregating the `perf`/`ci`/`build`/`chore` branch prefixes), `Documentation
+update`, and a `Breaking change` **overlay** that can sit on any work-type box. The taxonomy is owned
+  by the repo-side `types` plugin, which derives the flags itself from `ctx.head` + `ctx.services.git`
+  via `classifyChange`; the render core never computes a `typeFlags` field. See
+  `docs/adr/0021-pr-type-of-change-follows-branch-taxonomy.md` and the unified core↔plugin contract in
+  `docs/adr/0022-plugin-context-and-service-injection.md`.
+- **PluginContext (create-pr)** — the single `ctx` object passed to every block plugin: `{ head, base,
+title, services }`. `services` is the set of injectable I/O capabilities (`git`/`gh`/`templateSource`)
+  the plugin pulls data from; the renderer/middleware never pre-computes domain facts (PR type, linked
+  issue) — plugins own those. See `docs/adr/0022-plugin-context-and-service-injection.md`.
+- **plugin-autonomy (create-pr)** — block plugins fetch the data they need (e.g. `git log`, linked issue)
+  from `ctx.services` themselves rather than receiving pre-computed fields; `services.git` is memoized at
+  the injection boundary so multiple plugins calling it cost at most one real git spawn.
 - **Coverage gate** — `npm run test:coverage` enforces 100% per-file on the unit-testable logic surface
   (see `docs/adr/0004-per-file-100-percent-coverage.md`).
 - **ADR** — Architecture Decision Record, kept under `docs/adr/` (this file's sibling directory).

@@ -41,6 +41,8 @@ export default defineConfig({
       'scripts/**/*.test.ts',
       'scripts/**/*.test.mjs',
       'actions/create-pr/src/**/*.test.mjs',
+      'actions/create-pr/blocks/**/*.test.mjs',
+      '.github/create-pr/blocks/**/*.test.mjs',
     ],
     // Report coverage for the ENTIRE project (every source file), not only the files
     // that happened to be imported by a test. This surfaces untested modules instead of
@@ -74,6 +76,7 @@ export default defineConfig({
         'electron/main/lifecycle.ts',
         'shared/**/*.ts',
         'actions/create-pr/src/**/*.mjs',
+        'actions/create-pr/blocks/**/*.mjs',
       ],
       exclude: [
         '**/*.test.ts',

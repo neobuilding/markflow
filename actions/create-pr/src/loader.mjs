@@ -7,7 +7,7 @@
 // Loading model:
 //   - Built-in blocks (`title` / `issue` / `commits`) are imported statically
 //     so they are bundled into `dist/index.mjs` by ncc. Relying on ncc to copy
-//     `src/blocks/` as assets does not work because ncc 0.38 has no `--asset`
+//     `blocks/` as assets does not work because ncc 0.38 has no `--asset`
 //     flag and, more importantly, it replaces runtime `import()` with an empty
 //     webpack async context that always throws `MODULE_NOT_FOUND`.
 //   - User blocks are `*.mjs` files in `.github/create-pr/blocks/` (or the
@@ -23,9 +23,9 @@ import { readdirSync, existsSync } from './services/fs-glue.mjs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import titleBlock from './blocks/title.mjs'
-import issueBlock from './blocks/issue.mjs'
-import commitsBlock from './blocks/commits.mjs'
+import titleBlock from '../blocks/title.mjs'
+import issueBlock from '../blocks/issue.mjs'
+import commitsBlock from '../blocks/commits.mjs'
 
 // Use a real Node.js ESM dynamic import for user block plugins. The
 // `/* webpackIgnore: true */` comment tells ncc/webpack not to create its

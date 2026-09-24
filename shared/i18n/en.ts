@@ -202,6 +202,8 @@ export const en = {
     'The file is rewritten and reloaded from disk, discarding unsaved changes.',
   'app.switchEolOk': 'Switch',
   'app.cancel': 'Cancel',
+  // Fallback label of the app-modal confirm box when the caller passes no okText.
+  'app.ok': 'OK',
   'app.printNotReady':
     'Preview is not ready yet. Please switch to the preview or split view first.',
   'app.printFailed': 'Print failed: {{message}}',
@@ -249,6 +251,23 @@ export const en = {
   'menu.toggleDevTools': 'Toggle Developer Tools',
   'menu.about': 'About MarkFlow',
   'menu.selectAll': 'Select All',
+  // Labels for Electron `role` items. They are listed explicitly (instead of relying on
+  // Electron's built-in role labels) because those follow the *system* locale, so they stayed
+  // English when the user switched the app to Chinese. The `role` still provides the behavior
+  // and the platform accelerator; this only overrides the text.
+  'menu.undo': 'Undo',
+  'menu.redo': 'Redo',
+  'menu.cut': 'Cut',
+  'menu.copy': 'Copy',
+  'menu.paste': 'Paste',
+  'menu.resetZoom': 'Actual Size',
+  'menu.zoomIn': 'Zoom In',
+  'menu.zoomOut': 'Zoom Out',
+  'menu.toggleFullScreen': 'Toggle Full Screen',
+  'menu.minimize': 'Minimize',
+  'menu.zoom': 'Zoom',
+  'menu.quit': 'Quit',
+  'menu.closeWindow': 'Close Window',
   'menu.dlgOpenFile': 'Open Markdown File',
   'menu.dlgOpenFolder': 'Open Folder (batch import .md files)',
   'menu.filterMarkdown': 'Markdown',

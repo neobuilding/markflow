@@ -38,6 +38,35 @@ const DEFAULT_BLOCKS_DIR = join(process.cwd(), '.github', 'create-pr', 'blocks')
 // `{{commits}}` must live inside an AUTO block for fillAutoBlocks to render it.
 const COMMITS_ONLY_TEMPLATE = '<!-- AUTO:commits -->\n{{commits}}\n<!-- /AUTO:commits -->'
 
+// Memoize the git service at the injection boundary. Plugins (e.g. `types`,
+// `issue`, `commits`) each pull raw commit data from `services.git`; wrapping
+// the methods here guarantees that, regardless of how many plugins call
+// `logSubjects` / `logRange` for the same head/base, the real git CLI is spawned
+// at most once per method+args. This preserves the performance property the old
+// core enjoyed (pre-computing facts once) without the core having to know which
+// facts the plugins need the plugins own their data, the boundary caches it.
+function memoizeGit(git) {
+  const cache = new Map()
+  const wrap =
+    (method) =>
+    (...args) => {
+      const key = `${method} ${args.join(' ')}`
+      if (!cache.has(key)) {
+        // Cache the raw result as-is so the wrapped method keeps the original
+        // return type: a sync git service stays sync (callers that don't await,
+        // e.g. the `commits` plugin, keep working) and an async one stays async
+        // (callers that await, e.g. `issue`/`types`, keep working).
+        cache.set(key, git[method](...args))
+      }
+      return cache.get(key)
+    }
+  return {
+    ...git,
+    logSubjects: wrap('logSubjects'),
+    logRange: wrap('logRange'),
+  }
+}
+
 // Resolve the base ref to compare against. Prefer `origin/<base>` (fresh after
 // fetch, present in CI even when the local branch is absent); fall back to bare
 // `<base>` only if the remote ref is missing (or there is no git service).
@@ -81,7 +110,7 @@ export async function renderTemplate({
   // service; the `commits` block pulls the commit list from ctx.services.git
   // itself. `--no-git` omits it entirely (commits renders empty).
   const services = {}
-  if (!noGit) services.git = injectedGit || createExecGitService()
+  if (!noGit) services.git = memoizeGit(injectedGit || createExecGitService())
 
   // Build the block-plugin registry (built-in + user; user overrides built-in).
   // Loading plugins is part of rendering and only needed here.
@@ -94,7 +123,7 @@ export async function renderTemplate({
 
   // The actual rendering is a single pure call. Both the Action and local
   // previews go through this exact line rendering lives in one place
-  const fresh = fillAutoBlocks(tpl, ctx, registry)
+  const fresh = await fillAutoBlocks(tpl, ctx, registry)
 
   // Refresh: merge the fresh render into the existing body. When there is no
   // existing body, the fresh render is used verbatim (first creation).

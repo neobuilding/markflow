@@ -47,25 +47,43 @@ uniform extension mechanism: a directory of `*.mjs` files.
   built-ins, so a same-named file overrides a built-in.
 
 The `ctx` passed to every plugin includes: `head` (branch name), `base` (resolved
-base ref), `title`, `fixes` (extracted issue number), `typeFlags` (derived by
-`classifyChange`: `bug` / `feature` / `breaking` / `docs`), and `commits`.
+base ref), `title`, and `services` (the injectable I/O capabilities — `git`, `gh`,
+`templateSource`). The core deliberately does **not** pre-compute domain facts such
+as the linked issue or the PR "type"; each plugin pulls the raw data it needs from
+`ctx.services.git` itself (the plugin-autonomy contract). So a plugin only ever
+receives what it asks for, via the shared context object — add a new block by
+dropping a `.mjs` file, with **no** core changes.
 
 Example — a repo-provided `types.mjs` plugin that generates the "Type of Change"
-checkboxes (the action core never hard-codes any checkbox wording):
+checkboxes (the action core never hard-codes any checkbox wording, and it never
+computes the type for you — THIS plugin owns the taxonomy):
 
 ```js
 // .github/create-pr/blocks/types.mjs
-export default (ctx) => {
-  const f = ctx.typeFlags || {}
+// This plugin owns the classification: it reads the branch name and the commit
+// subjects from the injected git service and ticks the boxes itself. Write your
+// own `classify(head, commits)` (or copy the canonical implementation shipped in
+// the action's repo-side example plugin `.github/create-pr/blocks/types.mjs`) —
+// the action core contains NO classification module.
+export default async (ctx) => {
+  const git = ctx.services && ctx.services.git
+  const commits = git && git.logSubjects ? await git.logSubjects(ctx.head, ctx.base) : ''
+  const f = classify(ctx.head, commits) // your own classifyChange, inlined above
   const row = (label, on) => `- [${on ? 'x' : ' '}] ${label}`
   return [
     row('Bug fix (non-breaking change which fixes an issue)', f.bug),
     row('New feature (non-breaking change which adds functionality)', f.feature),
+    row('Refactor (code change that neither fixes a bug nor adds a feature)', f.refactor),
+    row('Tests (adding or updating tests)', f.test),
+    row(
+      'Performance / technical improvement (perf, CI, build, chore, or other internal improvement)',
+      f.improvement,
+    ),
+    row('Documentation update', f.docs),
     row(
       'Breaking change (fix or feature that would cause existing functionality to not work as expected)',
       f.breaking,
     ),
-    row('Documentation update', f.docs),
   ].join('\n')
 }
 ```
@@ -177,13 +195,14 @@ resolved):
 Both resolve `feature/my-branch` against the default template and print the
 rendered body. Run either one — they produce the same output.
 
-It reads the template file, loads the block plugins, and derives the title /
-change type from the branch name. Per the plugin-autonomy rule, the renderer
-only injects the services into the render context — it does NOT fetch commits
-itself. The `commits` block plugin pulls the real `git log <base>..HEAD` from
-`ctx.services.git` on its own. Pass `--no-git` to skip the git service entirely
-and render `{{commits}}` empty (handy on machines without git, or to just
-inspect the template structure).
+It reads the template file, loads the block plugins, and derives the title from
+the branch name. Per the plugin-autonomy rule, the renderer only injects the
+`services` (git / gh / templateSource) into the render context — it does NOT
+fetch commits or compute the PR type itself. The `types`, `issue`, and `commits`
+block plugins each pull the raw data they need (`git log`, the linked issue
+number) from `ctx.services.git` on their own. Pass `--no-git` to skip the git
+service entirely and render `{{commits}}` (and the linked issue) empty (handy on
+machines without git, or to just inspect the template structure).
 
 #### Previewing a _refresh_ (existing PR) render
 

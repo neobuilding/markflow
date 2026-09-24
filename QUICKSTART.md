@@ -74,14 +74,16 @@ npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 to
 
 ### CI 流水线（`.github/workflows/ci.yml`）
 
-CI 先跑独立的 `quality` 任务作为快速失败门禁，通过后才并行运行 `ut` 与 `e2e`：
+所有 job 全并发启动 —— `version`、`quality`、`ut`、`e2e` 与三平台 `build` 同时开始（只有 `build` 依赖 `version`，用于注入计算出的版本号）：
 
-- `quality`（ubuntu）：`npm run quality`（Prettier + ESLint + Stylelint + Markdownlint + Secretlint + 类型检查），整轮仅跑一次，必须先于任一测试任务通过。
-- `ut`（ubuntu，依赖 `quality`）：单元测试 + 覆盖率（Vitest + jsdom，无需 Electron 构建）。
-- `e2e`（ubuntu，依赖 `quality`）：安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e:full`。quality/coverage/build 由其它 job 负责，e2e job 只跑 e2e。
-  两者各自独立 runner（e2e 需自己 `npm ci` + 一次 `npm run build`），换取墙钟时间 ≈ max(ut, e2e) 而非顺序相加；`build`/`release` 任务在两者都通过且版本计算完成后才会运行。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。
+- `quality`（ubuntu）：`npm run quality`（Prettier + ESLint + Stylelint + Markdownlint + Secretlint + 类型检查），整轮仅跑一次，且**刻意不做任何门禁**：格式/规则/类型错误不应掩盖测试与打包结果，一次运行就把所有问题一起暴露出来。
+- `ut`（ubuntu）：单元测试 + 覆盖率（Vitest + jsdom，无需 Electron 构建）。
+- `e2e`（ubuntu）：安装 Playwright 浏览器 → `npm run build` → 在 `xvfb-run` 下 `npm run e2e:full`。quality/coverage/build 由其它 job 负责，e2e job 只跑 e2e。
+  两者各自独立 runner（e2e 需自己 `npm ci` + 一次 `npm run build`），换取墙钟时间 ≈ max(ut, e2e) 而非顺序相加。Playwright 的 HTML 报告与 `test-results/` 会在每次运行（含失败）后作为产物上传，便于排查。
 
-三平台 `build` 任务（`Build (macos|windows|ubuntu)`）在 `ut` 与 `e2e` 都通过后运行，是全仓库唯一的三平台构建，既用于 PR 校验也用于发布。
+三平台 `build` 任务（`Build (macos-latest|windows-latest|ubuntu-latest)`）在版本计算完成后立即开始，**不等待**测试任务，因此打包问题与测试问题会在同一次运行中一起暴露。它是全仓库唯一的三平台构建，既用于 PR 校验也用于发布。
+
+`release` 是整条流水线**唯一的门禁**：它依赖 `build`、`ut`、`e2e`、`quality` 和 `version`，因此任何一项失败都不会打 tag 或生成 draft release。另外，`pull_request` 触发的运行会被后续推送自动取消（`cancel-in-progress`），而推送到 `main` 的运行永不取消，以免发布构建被中途打断。
 
 ## 文件说明
 
