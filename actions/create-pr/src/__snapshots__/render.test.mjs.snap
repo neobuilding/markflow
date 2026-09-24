@@ -14,8 +14,11 @@ Please include a summary of the change and which issue is fixed. Please also inc
 
 - [ ] Bug fix (non-breaking change which fixes an issue)
 - [x] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Refactor (code change that neither fixes a bug nor adds a feature)
+- [ ] Tests (adding or updating tests)
+- [ ] Performance / technical improvement (perf, CI, build, chore, or other internal improvement)
 - [ ] Documentation update
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
 <!-- /AUTO:type -->
 
 <!-- AUTO:checklist -->
@@ -34,7 +37,7 @@ Please include a summary of the change and which issue is fixed. Please also inc
 <!-- AUTO:issue -->
 ## Fixes #(issue number)
 
-42
+N/A
 <!-- /AUTO:issue -->
 
 <!-- AUTO:commits -->

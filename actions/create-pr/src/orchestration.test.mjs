@@ -79,12 +79,18 @@ function fakeGh(opts = {}) {
 }
 
 // A minimal block registry (title/issue/commits) for rendering. The `commits`
-// plugin mirrors the real src/blocks/commits.mjs: it is autonomous and pulls
+// plugin mirrors the real blocks/commits.mjs: it is autonomous and pulls
 // the list from ctx.services.git.logRange.
 function miniRegistry() {
   return {
     title: (ctx) => ctx.title || '',
-    issue: (ctx) => ctx.fixes || 'N/A',
+    issue: async (ctx) => {
+      const git = (ctx.services && ctx.services.git) || {}
+      const commits = git.logSubjects ? git.logSubjects(ctx.head, ctx.base) : ''
+      const hay = `${ctx.head}\n${commits}`
+      const m = hay.match(/#(\d+)/)
+      return (m ? m[1] : '') || 'N/A'
+    },
     commits: (ctx) => {
       const git = (ctx.services && ctx.services.git) || {}
       return git.logRange ? git.logRange(ctx.head, ctx.base) : ''
@@ -126,7 +132,7 @@ function fakeRender(git) {
       title: deriveTitle(head),
       services: { git },
     }
-    const fresh = fillAutoBlocks(TEMPLATE, ctx, miniRegistry())
+    const fresh = await fillAutoBlocks(TEMPLATE, ctx, miniRegistry())
     return existingBody != null ? buildBody(fresh, existingBody) : fresh
   }
 }
@@ -242,7 +248,7 @@ describe('createOrRefreshPr — update path', () => {
     // Simulate an existing PR with a stale title/commits, so the refreshed body
     // (rendered by the injected fake renderer with a *different* git) differs.
     const staleGit = fakeGit({ logRange: '- old commit\n' })
-    const existingBody = fillAutoBlocks(
+    const existingBody = await fillAutoBlocks(
       TEMPLATE,
       {
         head: 'feature/x',
@@ -277,8 +283,9 @@ describe('createOrRefreshPr — update path', () => {
   it('returns noop when the existing body is already up to date', async () => {
     // Build the "current" body using the SAME services the orchestration will
     // use: the commits plugin pulls the list from ctx.services.git.logRange, and
-    // fixes/typeFlags derive from git.logSubjects. So the refreshed body matches
-    // the existing one exactly => noop.
+    // the `issue`/`types` plugins derive their facts from ctx.services.git.logSubjects
+    // themselves (plugin-autonomy). So the refreshed body matches the existing one
+    // exactly => noop.
     const git = fakeGit() // default logRange/logSubjects
     const fresh = await fakeRender(git)({ head: 'feature/x', base: 'main' })
     const gh = fakeGh({

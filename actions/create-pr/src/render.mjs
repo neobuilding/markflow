@@ -61,46 +61,40 @@ export function buildCommitsSection(head, base, gitLogFn) {
   return `${log}\n`
 }
 
-// Build a human-readable commit summary (subjects only, no hashes). It drives
-// the type classification and issue-number extraction in buildCtx. Exported for
-// unit testing; gitLogFn injectable.
+// Build a human-readable commit summary (subjects only, no hashes). Exported for
+// unit testing; gitLogFn injectable. NOTE: this helper is no longer consumed by
+// the render core the `types` / `issue` plugins now fetch raw commit data from
+// `ctx.services.git` themselves (plugin-autonomy). It remains as a tested pure
+// utility.
 export function buildDescription(head, base, gitLogFn) {
   if (!gitLogFn) return ''
   const log = gitLogFn(head, base)
   return log ? `${log}\n` : ''
 }
 
-// Classify the change type from the branch name and commit subjects, so the
-// PR template's "Type of Change" boxes can be auto-ticked. Exported for tests.
-export function classifyChange(head, commitsText) {
-  const hay = `${head}\n${commitsText}`.toLowerCase()
-  const flags = {
-    bug: /\bfix\b|fix\//.test(hay),
-    feature: /\bfeat\b|feature\//.test(hay),
-    breaking: /break|breaking/.test(hay),
-    docs: /\bdocs?\b|doc\//.test(hay),
-  }
-  // Guarantee at least one box is ticked (bug fix is the safe default).
-  if (!flags.bug && !flags.feature && !flags.breaking && !flags.docs) flags.bug = true
-  return flags
-}
-
-// Extract the first referenced issue number (e.g. "fix #123", "fixes #45") from
-// the branch name and commit subjects. Exported for tests. Returns '' if none.
-export function extractFixes(head, commitsText) {
-  const hay = `${head}\n${commitsText}`
-  const m = hay.match(/#(\d+)/)
-  return m ? m[1] : ''
-}
+// Classification & issue extraction live INSIDE the plugins themselves (the
+// repo-side `types` plugin inlines `classifyChange`; the built-in `issue` plugin
+// inlines `extractFixes`). There is deliberately no core classification module.
+// The render core (this module) knows nothing about "PR type" or "linked issue"
+// it only assembles `ctx` (inputs + injectable `services`) and lets each plugin
+// pull the data it needs. See `docs/adr/0022-*.md`.
 
 // Render a block plugin by name from the registry. Returns the rendered string
 // when the plugin exists, otherwise the `{{name}}` placeholder text unchanged
 // (so a missing plugin never drops or corrupts human content). Exported for
-// unit testing. `blocks` maps a plugin name to its `(ctx) => string` generator.
-export function renderBlock(name, ctx, blocks) {
+// unit testing. `blocks` maps a plugin name to its `(ctx) => string | Promise<string>`
+// generator (plugins may be async, e.g. when they await `ctx.services.git`).
+export async function renderBlock(name, ctx, blocks) {
   const fn = blocks && blocks[name]
   if (!fn) return `{{${name}}}`
-  return fn(ctx)
+  try {
+    // A plugin may be async (it often awaits `ctx.services.git`); resolve it.
+    return await fn(ctx)
+  } catch {
+    // A throwing plugin must not abort the whole render (resilience): leave the
+    // placeholder untouched, exactly as if the plugin were missing.
+    return `{{${name}}}`
+  }
 }
 
 // Discover every auto-block key present in a template by scanning its
@@ -125,7 +119,7 @@ export function discoverSegments(template) {
 // from `blocks`; tokens without a matching plugin are left untouched. Blocks
 // with no `{{placeholder}}` (e.g. the Checklist) are copied verbatim, which
 // resets them to the template state on every refresh. Exported for tests.
-export function fillAutoBlocks(template, ctx, blocks = {}) {
+export async function fillAutoBlocks(template, ctx, blocks = {}) {
   let out = template
   for (const key of discoverSegments(template)) {
     const open = openMarker(key)
@@ -133,8 +127,15 @@ export function fillAutoBlocks(template, ctx, blocks = {}) {
     const start = template.indexOf(open) + open.length
     const end = template.indexOf(close)
     const blockText = template.slice(start, end).trim()
-    const rendered = blockText.replace(/\{\{(\w[\w-]*)\}\}/g, (whole, name) =>
-      renderBlock(name, ctx, blocks),
+    // Each `{{token}}` is rendered by its plugin; plugins may be async, so collect
+    // the promises in parallel and substitute all occurrences of each token.
+    const rendered = await Promise.all(
+      [...blockText.matchAll(/\{\{(\w[\w-]*)\}\}/g)].map(async (m) => {
+        const value = await renderBlock(m[1], ctx, blocks)
+        return [m[0], value]
+      }),
+    ).then((pairs) =>
+      pairs.reduce((acc, [token, value]) => acc.split(token).join(value), blockText),
     )
     out = replaceAutoBlock(out, key, rendered.trim())
   }
@@ -182,34 +183,31 @@ export function blockContent(body, key) {
   return body.slice(s + o.length, e).trim()
 }
 
-// Assemble the context object for fillAutoBlocks from the branch, resolved base
-// ref, title, and the injected services.
+// Assemble the context object for fillAutoBlocks from the branch, the resolved
+// base ref, the derived title, and the injected I/O `services`.
 //
-// The `services` object carries the I/O capabilities each block plugin may call
-// on its own (per the plugin-autonomy design): `services.git`, `services.gh`,
-// `services.templateSource`. The context exposes `head` / `base` (resolved base
-// ref) / `title` plus two *shared derived facts* the plugins commonly consume:
-// `fixes` (linked issue number) and `typeFlags` (Bug/feature/breaking/docs).
-// These two are derived once here from `services.git.logSubjects` so the
-// `issue` and `types` plugins don't each re-run git. Individual plugins may
-// still call `ctx.services.git` themselves for data only they need (e.g. the
-// `commits` plugin fetches the commit list itself). This keeps the renderer and
-// orchestrator free of "which data does each plugin need" a new plugin can
-// pull whatever it wants from `ctx.services`.
+// Per the plugin-autonomy contract, the core NEVER pre-computes domain facts such
+// as the PR "type" or the linked "issue number". Those are derived by the `types`
+// / `issue` plugins themselves, each pulling raw data from `ctx.services.git`
+// (the git service is memoized at the injection boundary in render-template.mjs,
+// so multiple plugins calling it cost at most one real git spawn per method).
+// The renderer/orchestrator therefore stays ignorant of "which data each plugin
+// needs": a new plugin simply pulls whatever it wants from `ctx.services`
+// (and `head` / `base` / `title`).
+//
+// @typedef {Object} PluginContext
+// @property {string} head      resolved head branch name
+// @property {string} base      resolved base ref (e.g. `origin/main`)
+// @property {string} title     derived PR title
+// @property {Object} services  injectable I/O capabilities (git / gh / templateSource)
+//
+// @typedef {function(PluginContext): (string|Promise<string>)} BlockPlugin
 export function buildCtx(head, baseRef, title, services) {
-  const git = services && services.git
-  const commitsText = buildDescription(
-    head,
-    baseRef,
-    git && ((h, b) => git.logSubjects(h, b)),
-  ).replace(/^- /gm, '')
   return {
     head,
     base: baseRef,
     title,
     services: services || {},
-    fixes: extractFixes(head, commitsText),
-    typeFlags: classifyChange(head, commitsText),
   }
 }
 

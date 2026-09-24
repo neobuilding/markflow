@@ -26,7 +26,7 @@ vi.mock('./services/fs-glue.mjs', () => ({
 // still performs a real dynamic import() of the named plugins.
 const BLOCKS_DIR = join(__dirname, '__fixtures__', 'blocks')
 const BLOCKS_BROKEN_DIR = join(__dirname, '__fixtures__', 'blocks-broken')
-const BLOCKS_FILES = ['good.mjs', 'notafn.mjs', 'readme.md', 'types.mjs']
+const BLOCKS_FILES = ['good.mjs', 'notafn.mjs', 'readme.md']
 const BLOCKS_BROKEN_FILES = ['broken.mjs', 'broken-nomsg.mjs', 'ok.mjs']
 
 beforeEach(() => {

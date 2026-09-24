@@ -113,4 +113,25 @@ describe('cli-render — local preview CLI (integration)', () => {
     // Human text outside the blocks preserved.
     expect(stdout).toContain('human note kept')
   })
+
+  it('renders the repo-side `types` user plugin (not just the {{types}} placeholder)', async () => {
+    // feature/ branch via the REAL .github/create-pr/blocks/types.mjs plugin.
+    // With --no-git the classification is head-only, so Feature must be ticked
+    // and Bug fix left unticked — proving the user plugin actually loaded and ran
+    // (a failing/skipped plugin would leave the raw `{{types}}` token behind).
+    const { code, stdout } = await runCli(['--head', 'feature/my-branch', '--no-git'])
+    expect(code).toBe(0)
+    expect(stdout).not.toContain('{{types}}')
+    expect(stdout).toContain('- [x] New feature (non-breaking change which adds functionality)')
+    expect(stdout).toContain('- [ ] Bug fix (non-breaking change which fixes an issue)')
+  })
+
+  it('renders the built-in `issue` plugin extracting #NNN from the branch head', async () => {
+    // fix/#123-login with --no-git extracts 123 from the head (no git subjects),
+    // so the issue block shows the number rather than the N/A fallback.
+    const { code, stdout } = await runCli(['--head', 'fix/#123-login', '--no-git'])
+    expect(code).toBe(0)
+    expect(stdout).toContain('123')
+    expect(stdout).toContain('- [x] Bug fix (non-breaking change which fixes an issue)')
+  })
 })
