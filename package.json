@@ -116,7 +116,7 @@
     "jsdom": "^30.0.1",
     "lint-staged": "^17.5.1",
     "lucide-react": "^1.46.0",
-    "markdownlint-cli2": "^0.23.2",
+    "markdownlint-cli2": "^0.23.3",
     "playwright": "^1.63.0",
     "postcss": "^8.5.28",
     "prettier": "^3.9.6",
