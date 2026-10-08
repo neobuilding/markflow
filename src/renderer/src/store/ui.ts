@@ -91,6 +91,19 @@ interface UIState {
   searchMode: SearchMode
   setSearchMode: (mode: SearchMode) => void
 
+  // Collapsed state of the resident sidebar search panel (Phase 4). Session-in-memory only
+  // (like every other UI setting): never persisted, so it resets to expanded on restart.
+  residentSearchCollapsed: boolean
+  setResidentSearchCollapsed: (collapsed: boolean) => void
+
+  // Pending hit to jump to after a document opens (Phase 4). Set when a resident search hit is
+  // clicked; the editor consumes it (selects + scrolls to the offset) once the document content
+  // has loaded, then clears it. Carries the saved-content offsets (CodeMirror doc positions).
+  pendingMatch: { id: string; start: number; end: number } | null
+  setPendingMatch: (m: { id: string; start: number; end: number } | null) => void
+  // Open a document and jump its editor cursor to a specific hit offset.
+  openDocumentWithMatch: (id: string, start: number, end: number) => void
+
   // Theme
   theme: ThemeMode
   setTheme: (theme: ThemeMode) => void
@@ -227,6 +240,14 @@ export const useUIStore = create<UIState>((set, get) => ({
   setSearchQuery: (q) => set({ searchQuery: q }),
   searchMode: 'content',
   setSearchMode: (mode) => set({ searchMode: mode }),
+
+  residentSearchCollapsed: false,
+  setResidentSearchCollapsed: (collapsed) => set({ residentSearchCollapsed: collapsed }),
+
+  pendingMatch: null,
+  setPendingMatch: (m) => set({ pendingMatch: m }),
+  openDocumentWithMatch: (id, start, end) =>
+    set({ activeDocumentId: id, editable: false, pendingMatch: { id, start, end } }),
 
   theme: 'light',
   setTheme: (theme) => set({ theme }),

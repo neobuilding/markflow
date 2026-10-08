@@ -56,6 +56,11 @@ describe('shared/i18n — zh-CN parity with en', () => {
       'menu.chinese',
       'menu.filterMarkdown',
       'menu.filterHtml',
+      // Visual glyphs on the find toggle group (Aa / ab / .* / AB) are language-neutral.
+      'find.toggle.caseShort',
+      'find.toggle.wholeWordShort',
+      'find.toggle.regexShort',
+      'find.toggle.preserveCaseShort',
     ])
     const untranslated = (Object.keys(en) as TranslationKey[]).filter(
       (key) => en[key] === zhCN[key] && !intentionalPassThroughs.has(key),

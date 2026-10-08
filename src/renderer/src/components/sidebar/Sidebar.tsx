@@ -77,6 +77,7 @@ import {
   ContextMenuCheckboxItem,
 } from '../ui/context-menu'
 import type { Document } from '../../types'
+import { SidebarSearch } from './SidebarSearch'
 
 // Inline folder naming : 'create' adds a subfolder under `parentPath`,
 // 'rename' renames `targetPath`. Null means no row is being named.
@@ -977,6 +978,9 @@ export function Sidebar(): React.ReactElement | null {
           </ContextMenuContent>
         </ContextMenu>
       )}
+
+      {/* Resident "search in files" panel (Phase 4): pinned above the document tree. */}
+      <SidebarSearch />
 
       {/* Document list / welcome . The area itself is now right-clickable: while the tree
           is populated this used to be the one dead zone in the sidebar (G2 kept it silent). */}

@@ -67,11 +67,31 @@ import {
 } from '../ui/context-menu'
 import { FileMenuItems, type DocMenuActions } from './FileMenuItems'
 import { InputContextMenu } from '../ui/input-context-menu'
+import { hasModalSurface } from '../../lib/shortcut-scope'
 
 // Reveal a path in the system file manager. Failures (a file deleted outside the app) are
 // swallowed so they never surface as an unhandled rejection
 function revealInFolder(target: string): void {
   void Promise.resolve(window.api.app.showInFolder(target)).catch(() => {})
+}
+
+// Decide which pane's find surface a window-level Ctrl/Cmd+F should open.
+//  - preview-only  -> always the preview (it is the only pane rendered)
+//  - edit-only     -> always the editor (the preview pane is display:none there)
+//  - split         -> whichever pane the user last interacted with. The preview is a
+//                     NON-FOCUSABLE <div>, so document.activeElement cannot answer this; we track
+//                     the last pointerdown per pane instead. Routing purely by viewMode sent the
+//                     user to the editor's find even while they were clicking in the visible
+//                     preview (the reported bug); the editor searches the markdown SOURCE while
+//                     the preview find searches the RENDERED text, so the wrong target is a real
+//                     behavioural difference, not just a misplaced popup.
+function findTargetPane(
+  viewMode: ViewMode,
+  lastPane: 'editor' | 'preview' | null,
+): 'editor' | 'preview' {
+  if (viewMode === 'preview') return 'preview'
+  if (viewMode === 'edit') return 'editor'
+  return lastPane === 'preview' ? 'preview' : 'editor'
 }
 
 export function EditorPane(): React.ReactElement {
@@ -87,7 +107,18 @@ export function EditorPane(): React.ReactElement {
     clearExternalChange,
   } = useUIStore()
   const { t } = useT()
+  // Resident search jump (Phase 4): when a search hit is clicked, openDocumentWithMatch stores
+  // the target offset here; we hand it to the editor, which selects + scrolls once the document
+  // content has loaded, then calls back to clear it.
+  const pendingMatch = useUIStore((s) => s.pendingMatch)
+  const consumeMatch = useCallback(() => useUIStore.getState().setPendingMatch(null), [])
+  const selectionOffset = pendingMatch ? { from: pendingMatch.start, to: pendingMatch.end } : null
   const previewContentRef = useRef<HTMLDivElement>(null)
+  // Which pane the user last interacted with. The preview is a non-focusable <div>, so focus
+  // cannot identify the active pane; this ref (fed by each pane's onPointerDown) is what routes
+  // Ctrl/Cmd+F to the right find surface in split mode. A ref (not state) is deliberate: it is
+  // only read inside the keydown handler, so it must not trigger a re-render.
+  const lastPaneRef = useRef<'editor' | 'preview' | null>(null)
   const { data: doc, isLoading } = useDocument(activeDocumentId)
   const updateMut = useUpdateDocument()
   const saveAsMut = useSaveDocumentAs()
@@ -275,15 +306,38 @@ export function EditorPane(): React.ReactElement {
     }
   }, [handleSave, handleSaveAs, handleReload])
 
-  // Global Ctrl/Cmd+H opens the editor's find-and-replace panel. The CodeMirror search
-  // panel already includes a replace field, so the same panel serves both Ctrl+F and Ctrl+H.
-  // Listening on window (not the CodeMirror keymap) means it works without editor focus;
-  // CodeMirror has no Mod-h binding, so the event always reaches this listener.
+  // Global Ctrl/Cmd+H opens the editor's find-and-replace panel; Shift+Ctrl/Cmd+H replaces
+  // all matches of the current query. The CodeMirror search panel already includes a replace
+  // field, so the same panel serves both Ctrl+F and Ctrl+H. Listening on window (not the
+  // CodeMirror keymap) means it works without editor focus; CodeMirror has no Mod-h binding,
+  // so the event always reaches this listener.
+  //
+  // Ctrl/Cmd+F is routed here too (bug: it used to be only CodeMirror's `searchKeymap`, which
+  // fires solely while the editor content itself holds focus — clicking the sidebar, the title
+  // bar or the preview left find completely dead, and the preview is a non-focusable div so its
+  // own keydown listener could never fire). The surface is chosen by view mode, not by focus:
+  // the user is looking at the preview when the preview is all there is to look at.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h') {
+      if (!(e.ctrlKey || e.metaKey)) return
+      // A window listener sees every key in the app, so it must be told when it does NOT own the
+      // key. While a modal surface is open the keyboard belongs to that surface (VS Code `when`
+      // clauses / the WAI-ARIA modal-dialog pattern): a background shortcut must not fire — and
+      // must not swallow the key either, hence returning WITHOUT preventDefault. Otherwise
+      // Ctrl/Cmd+F would open a find panel hidden behind the dialog and look like a dead key.
+      if (hasModalSurface(document)) return
+      const key = e.key.toLowerCase()
+      if (key === 'h') {
         e.preventDefault()
-        document.dispatchEvent(new CustomEvent('markdown:replace'))
+        document.dispatchEvent(
+          new CustomEvent(e.shiftKey ? 'markdown:replaceAll' : 'markdown:replace'),
+        )
+      } else if (key === 'f') {
+        e.preventDefault()
+        const target = findTargetPane(useUIStore.getState().viewMode, lastPaneRef.current)
+        document.dispatchEvent(
+          new CustomEvent(target === 'preview' ? 'preview:find' : 'markdown:find'),
+        )
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -819,6 +873,7 @@ export function EditorPane(): React.ReactElement {
               <InputContextMenu targetRef={titleInputRef}>
                 <input
                   ref={titleInputRef}
+                  data-testid="title-input"
                   value={localTitle}
                   onChange={(e) => setLocalTitle(e.target.value)}
                   onBlur={handleTitleSave}
@@ -1093,6 +1148,10 @@ export function EditorPane(): React.ReactElement {
         {/* Editor: shown in edit / split; hidden in preview mode */}
         {viewMode !== 'preview' && (
           <div
+            data-testid="editor-pane"
+            onPointerDown={() => {
+              lastPaneRef.current = 'editor'
+            }}
             className={
               viewMode === 'split' ? 'min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'
             }
@@ -1104,6 +1163,8 @@ export function EditorPane(): React.ReactElement {
               editable={editable}
               docId={activeDocumentId}
               filePath={doc?.filePath ?? null}
+              selectionOffset={selectionOffset}
+              onConsumeSelection={consumeMatch}
             />
           </div>
         )}
@@ -1141,7 +1202,13 @@ export function EditorPane(): React.ReactElement {
 
         {/* Preview: shown in preview / split; hidden in edit mode but still mounted so the single
             export-HTML data source stays ready (R7) */}
-        <div className={viewMode === 'edit' ? 'hidden' : 'relative flex-1 min-w-0 overflow-hidden'}>
+        <div
+          data-testid="preview-pane"
+          onPointerDown={() => {
+            lastPaneRef.current = 'preview'
+          }}
+          className={viewMode === 'edit' ? 'hidden' : 'relative flex-1 min-w-0 overflow-hidden'}
+        >
           {/* The content container is separate from the find bar so the bar's own labels are
               never matched by the in-preview search. */}
           <div ref={previewContentRef} className="h-full w-full">

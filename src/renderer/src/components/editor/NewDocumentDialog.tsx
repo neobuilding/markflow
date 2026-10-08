@@ -30,7 +30,7 @@ export function NewDocumentDialog(): React.ReactElement {
 
   return (
     <Dialog open={newDocOpen} onOpenChange={setNewDocOpen}>
-      <DialogContent>
+      <DialogContent data-testid="new-document-dialog">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText size={16} className="text-accent" />

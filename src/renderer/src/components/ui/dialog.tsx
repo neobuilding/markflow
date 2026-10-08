@@ -31,6 +31,10 @@ const DialogContent = React.forwardRef<
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      // Marks this as a modal surface that owns the keyboard, so window-level shortcuts stand down
+      // while a dialog is open (see lib/shortcut-scope). Set here — in OUR wrapper — rather than
+      // relying on Radix's own attributes, which are an implementation detail we don't control.
+      data-modal-surface=""
       className={cn(
         'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-[var(--color-surface)] rounded-xl shadow-linear-lg border border-[var(--color-border)] p-6 animate-slide-up',
         className,

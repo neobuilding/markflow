@@ -22,7 +22,8 @@
     "electron/preload/**/*",
     "shared/i18n/en.ts",
     "shared/i18n/zh-CN.ts",
-    "shared/fileUtils.ts"
+    "shared/fileUtils.ts",
+    "shared/searchTypes.ts"
   ],
   "exclude": ["electron/main/**/__tests__/**", "electron/preload/**/*.test.ts"]
 }

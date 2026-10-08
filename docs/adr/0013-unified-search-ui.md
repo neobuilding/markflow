@@ -37,7 +37,12 @@ the **Search view** (sidebar: query + toggles + results grouped by file), and **
 3. **Preview:** find-only widget in the same visual language (replace stays permanently out of scope).
 4. **Sidebar search panel:** one input line + an inline `文件名 / 正文` segment + a result list + a
    one-line shortcut footer. In **filename mode** a row shows the **file name + relative path** (never a
-   body snippet); **content mode** keeps grouped body snippets.
+   body snippet); **content mode** also shows file name + relative path only — it does **not** return a body
+   snippet (the original "keep grouped body snippets" intent was reversed during implementation for
+   data-minimization; see `docs.local/plan-unified-search-ui-2026-09.md` §2 Q21). The "relative path" is
+   computed by `relativePath()`, single-sourced from `shared/fileUtils.ts` (pure, no `node:path`) so the
+   main process (glob filename search) and the renderer (row display) agree. The row's **context menu still
+   copies the absolute** path — a relative path is useless once pasted elsewhere.
 5. **Glob filename search.** Filename mode accepts VS Code's glob syntax (`/`, `*`, `?`, `**`, `{}`,
    `[]`, `[!]`), implemented with `picomatch`. A query containing a glob metacharacter (`* ? [ {`) switches
    automatically to glob matching; a pattern **without** `/` matches the file name at any depth, one **with**
@@ -47,6 +52,18 @@ the **Search view** (sidebar: query + toggles + results grouped by file), and **
 7. **Shortcuts follow focus.** `Ctrl/Cmd+F` opens the find widget of the focused surface; `Ctrl/Cmd+H` is
    editor-only; `F3` / `Ctrl/Cmd+G` next, `Shift+F3` previous; `Esc` closes.
 8. **Menu labels shortened:** `ctx.newFolderHere` and `ctx.newSubfolder` both read `新建文件夹`.
+9. **Resident sidebar search panel ("search in files").** The sidebar gains a collapsible, **session-only**
+   resident search area above the document tree that **reuses the same `SearchPanel`** as the `Ctrl/Cmd+K`
+   palette (single source of truth); the palette keeps its flat list and unchanged behavior, so the two do not
+   overlap in responsibility (modal = quick jump, resident = iterative "search in files"). To make a resident
+   panel worthwhile, **content mode returns bounded hit context** instead of a body snippet: `SearchResult.matches`
+   (≤ `MAX_MATCHES_PER_DOC = 50` per document, ≤ `MAX_RESULT_DOCS = 200` documents; each hit carries `line`, the
+   document-wide `start`/`end` character offsets, and a ≤120-char `excerpt`). Grouped, `<mark>`-highlighted hit
+   rows render **only when an `onSelectMatch` handler is supplied** (i.e. resident mode; the excerpt is HTML-escaped
+   before the `<mark>` wrap). Clicking / `Enter` on a hit opens the document and **selects + scrolls to the offset**.
+   Input is debounced ~200ms; `Esc` collapses. Offsets are computed against the **saved** text, so an unsaved
+   buffer can drift — the jump is skipped (not applied) if the range does not fit the live content, and the
+   editor draws the programmatic selection even while unfocused. Collapse state is in-memory only (decision 6).
 
 ## Considered Options
 
@@ -65,7 +82,9 @@ the **Search view** (sidebar: query + toggles + results grouped by file), and **
 
 - **Positive:** one coherent search language; editor replace gains i18n, `Ctrl/Cmd+F`/`H`, `k / n` and an
   emphasis on the active match; filename mode stops looking like content search; glob unlocks power queries
-  (`**/*aa*.m*`); preserve-case (`AB`) ships with the custom widget instead of being blocked.
+  (`**/*aa*.m*`); preserve-case (`AB`) ships with the custom widget instead of being blocked. The resident
+  panel adds cross-document, per-file hit navigation with one-click jump-to-offset.
 - **Negative / deferred:** sidebar cross-file replace is still unimplemented (it needs match offsets plus a
   read-replace-write IPC); `files to include/exclude` are not offered as separate boxes; ADR-0012's
-  "reuse the native panel" decision is superseded.
+  "reuse the native panel" decision is superseded. The resident panel's collapse state is not persisted (a
+  deliberate divergence from VS Code, which persists panel state), per decision 6.

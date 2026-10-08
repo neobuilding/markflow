@@ -5,6 +5,10 @@
 export const en = {
   // ── Sidebar ────────────────────────────────────────────────────────────
   'sidebar.search': 'Search',
+  // Accessible name for the resident "search in files" panel toggle in the sidebar, kept
+  // distinct from the toolbar "Search" button (which opens the Ctrl/Cmd+K palette) so
+  // assistive tech and getByRole queries don't collide.
+  'sidebar.searchPanel': 'Search in files',
   'sidebar.openFile': 'Open File…',
   'sidebar.openFolder': 'Open Folder…',
   'sidebar.newDraft': 'New Draft',
@@ -129,6 +133,23 @@ export const en = {
   'palette.mode.content': 'Content',
   'palette.scopeFolder': 'Current folder and its sub-folders',
   'palette.scopeAll': 'All documents',
+
+  // ── Resident sidebar search panel (Phase 4) ────────────────────────────
+  // Scope toggle: limit the resident search to the active folder (and its sub-folders)
+  // or widen it to every document in the workspace.
+  'search.inFiles': 'In this folder',
+  'search.allDocuments': 'All documents',
+  // Global hit summary, e.g. "12 matches in 3 files"; and the truncation note shown when
+  // the candidate document set was capped (e.g. "Showing first 200 files").
+  'search.matchCount': '{{count}} matches in {{files}} files',
+  'search.showingFirst': 'Showing first {{n}} files',
+  // Shown in filename mode to advertise the glob syntax the query accepts (plan §3.8).
+  'search.globHint': 'Glob: * ? ** {a,b} [a-z]',
+  // Shown when a (non-empty) resident query returns nothing.
+  'search.noResults': 'No results',
+  // Tooltip for the `Esc` hint chip in the resident search field (plan §3.4): Esc collapses the
+  // panel. The chip itself shows the literal key name, so only the explanation is translated.
+  'search.escHint': 'Collapse the search panel (Esc)',
 
   // ── About dialog ───────────────────────────────────────────────────────
   'about.title': 'About MarkFlow',
@@ -337,6 +358,27 @@ export const en = {
   // ── Editor extra ───────────────────────────────────────────────────────
   // Tooltip shown on disabled (read-only) rename/save menu items
   'editor.needsEditMode': 'Switch to edit mode first',
+
+  // ── Find widget (shared by editor & preview) ───────────────────────────
+  'find.placeholder': 'Find',
+  'find.replacePlaceholder': 'Replace',
+  'find.toggle.case': 'Match Case',
+  'find.toggle.wholeWord': 'Match Whole Word',
+  'find.toggle.regex': 'Use Regular Expression',
+  'find.toggle.preserveCase': 'Preserve Case',
+  // Visible glyphs on the toggle group: Aa / ab / .* / AB
+  'find.toggle.caseShort': 'Aa',
+  'find.toggle.wholeWordShort': 'ab',
+  'find.toggle.regexShort': '.*',
+  'find.toggle.preserveCaseShort': 'AB',
+  'find.prev': 'Previous Match',
+  'find.next': 'Next Match',
+  'find.close': 'Close Find',
+  'find.replace': 'Replace',
+  'find.replaceAll': 'Replace All',
+  'find.noResults': 'No match',
+  // aria-live label for the match counter, e.g. "3 of 12"
+  'find.results': '{{current}} of {{total}}',
 } as const
 
 export type TranslationKey = keyof typeof en

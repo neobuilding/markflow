@@ -163,6 +163,60 @@ describe('routeSelectAll (wiring)', () => {
     expect(spy).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'markdown:select-all' }))
   })
 
+  // While a modal surface owns the keyboard, the background panes are off-limits: the select-all
+  // must not be routed to the editor or preview behind the modal (see lib/shortcut-scope).
+  it('does not route to the editor while a modal surface owns the keyboard', () => {
+    const spy = vi.spyOn(document, 'dispatchEvent')
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+    const pane = document.createElement('div')
+    pane.className = 'editor-content'
+    pane.tabIndex = 0
+    document.body.appendChild(pane)
+    pane.focus()
+    routeSelectAll()
+    expect(spy).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'markdown:select-all' }))
+    pane.remove()
+    modal.remove()
+  })
+
+  it('does not scope to the preview while a modal surface owns the keyboard', () => {
+    const article = document.createElement('article')
+    article.className = 'markdown-preview'
+    article.tabIndex = 0
+    article.textContent = 'preview body'
+    document.body.appendChild(article)
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+    const anchor = article.firstChild as Node
+    const fakeSel = {
+      anchorNode: anchor,
+      removeAllRanges: vi.fn(),
+      selectAllChildren: vi.fn(),
+    } as unknown as Selection
+    routeSelectAll({ getSelection: () => fakeSel } as unknown as Window, document)
+    expect(fakeSel.selectAllChildren).not.toHaveBeenCalled()
+    article.remove()
+    modal.remove()
+  })
+
+  it('still native-selects an input inside a modal surface', () => {
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+    const input = document.createElement('input')
+    input.value = 'rename me'
+    modal.appendChild(input)
+    input.focus()
+    routeSelectAll()
+    expect(input.selectionStart).toBe(0)
+    expect(input.selectionEnd).toBe(input.value.length)
+    input.remove()
+    modal.remove()
+  })
+
   it('scopes the preview select-all to the article (never the whole document)', () => {
     const article = document.createElement('article')
     article.className = 'markdown-preview'

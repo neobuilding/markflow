@@ -92,7 +92,7 @@ export function dirName(filePath: string): string {
 
 // Path containment is now defined once in shared/fileUtils.ts (single source, shared by
 // main and renderer). Re-exported here so existing importers of utils.ts keep working.
-export { isInFolder, isDirInFolder } from '../../../../shared/fileUtils'
+export { isInFolder, isDirInFolder, relativePath } from '../../../../shared/fileUtils'
 
 // Return the file-name part of a path (with extension); cross-platform, normalized to forward slashes
 export function baseName(filePath: string): string {

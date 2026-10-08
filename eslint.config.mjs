@@ -53,12 +53,15 @@ export default tseslint.config(
       // intent stays visible without blocking the gate.
       'preserve-caught-error': 'warn',
       'no-undef': 'off',
-      // These two rules are very new (eslint-plugin-react-hooks v6) and flag patterns
-      // the codebase uses deliberately: writing the latest value into a ref during render
-      // (to avoid stale closures) and resetting component state when an effect runs.
-      // They are kept as warnings so they surface without blocking the build.
-      'react-hooks/refs': 'warn',
-      'react-hooks/set-state-in-effect': 'warn',
+      // Both rules come from eslint-plugin-react-hooks v7's React-Compiler-era presets. They
+      // used to be pinned to `warn` so they would "surface without blocking the gate" — but
+      // `lint` runs with `--max-warnings=0`, so a warning blocks the gate exactly like an
+      // error would. That downgrade never bought any relief; it only hid the violations.
+      // The flagged patterns are now fixed properly (derived state is computed during render,
+      // never pushed in from an effect; refs are no longer written during render), so both
+      // rules sit at `error` and act as regression guards.
+      'react-hooks/refs': 'error',
+      'react-hooks/set-state-in-effect': 'error',
     },
   },
   {
