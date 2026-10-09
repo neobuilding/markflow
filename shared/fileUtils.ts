@@ -57,3 +57,24 @@ export function isDirInFolder(dirPath: string, folder: string): boolean {
   const d = dirPath.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase()
   return d === f || d.startsWith(f + '/')
 }
+
+// ─── Relative paths ─────────────────────────────────────────────────────────
+//
+// `filePath` as seen from `scopeFolder`, normalised to forward slashes so it is
+// portable across OSes and directly usable in a glob pattern. When there is no
+// scope folder the path is returned unchanged (there is no root to be relative
+// to), and when the file lies outside the scope folder it is likewise returned
+// unchanged rather than producing a `../..` chain.
+//
+// Shared by the main process (glob filename search) and the renderer (search
+// result rows show a folder-relative path, per ADR-0013 §4).
+export function relativePath(filePath: string, scopeFolder?: string | null): string {
+  const p = filePath.replace(/\\/g, '/')
+  if (!scopeFolder) return p
+  const root = scopeFolder.replace(/\\/g, '/').replace(/\/$/, '')
+  if (!root) return p
+  const lower = p.toLowerCase()
+  const rootLower = root.toLowerCase()
+  if (lower === rootLower || lower.startsWith(rootLower + '/')) return p.slice(root.length + 1)
+  return p
+}

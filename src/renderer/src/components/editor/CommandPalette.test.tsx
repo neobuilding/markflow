@@ -12,11 +12,19 @@ const results: SearchResult[] = [
     title: 'Apple',
     folderPath: '',
     filePath: '/docs/apple.md',
-    snippet: 'a',
     score: 0,
     updatedAt: 1,
+    matches: [],
   },
-  { id: 'b', title: 'Banana', folderPath: '', filePath: '', snippet: 'b', score: 0, updatedAt: 2 },
+  {
+    id: 'b',
+    title: 'Banana',
+    folderPath: '',
+    filePath: '',
+    score: 0,
+    updatedAt: 2,
+    matches: [],
+  },
 ]
 
 vi.mock('../../hooks/useSearch', () => ({
@@ -174,6 +182,26 @@ describe('CommandPalette', () => {
     render(<CommandPalette />)
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(useUIStore.getState().searchOpen).toBe(false)
+  })
+
+  it('does not open on Ctrl/Cmd+K while a modal surface owns the keyboard', () => {
+    useUIStore.getState().setSearchOpen(false)
+    render(<CommandPalette />)
+    // A dialog is already open: the palette must not be stacked on top of it.
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+    const ev = new KeyboardEvent('keydown', {
+      key: 'k',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(ev)
+    expect(useUIStore.getState().searchOpen).toBe(false)
+    // And it must not swallow a key it does not own.
+    expect(ev.defaultPrevented).toBe(false)
+    modal.remove()
   })
 
   it('does nothing when Enter is pressed with no selected result', async () => {

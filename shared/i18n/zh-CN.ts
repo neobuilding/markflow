@@ -5,6 +5,7 @@ import type { TranslationKey } from './en'
 export const zhCN: Record<TranslationKey, string> = {
   // ── Sidebar ────────────────────────────────────────────────────────────
   'sidebar.search': '搜索',
+  'sidebar.searchPanel': '在文件内搜索',
   'sidebar.openFile': '打开文件…',
   'sidebar.openFolder': '打开文件夹…',
   'sidebar.newDraft': '新建草稿',
@@ -119,6 +120,17 @@ export const zhCN: Record<TranslationKey, string> = {
   'palette.mode.content': '正文',
   'palette.scopeFolder': '当前文件夹及其子文件夹',
   'palette.scopeAll': '全部文档',
+
+  // ── 常驻侧栏搜索面板（Phase 4）─────────────────────────────────────
+  'search.inFiles': '当前文件夹',
+  'search.allDocuments': '全部文档',
+  'search.matchCount': '{{count}} 处匹配，分布在 {{files}} 个文件',
+  'search.showingFirst': '仅显示前 {{n}} 个文件',
+  'search.globHint': '通配符：* ? ** {a,b} [a-z]',
+  'search.noResults': '无结果',
+  'search.escHint': '收起搜索面板（Esc）',
+  'search.clear': '清除搜索',
+  'search.focusHint': '聚焦搜索面板（Ctrl/⌘+Shift+F）',
 
   // ── About dialog ───────────────────────────────────────────────────────
   'about.title': '关于 MarkFlow',
@@ -318,4 +330,25 @@ export const zhCN: Record<TranslationKey, string> = {
   'ctx.collapseSidebar': '折叠侧边栏',
 
   'editor.needsEditMode': '请先切换到编辑模式',
+
+  // ── Find widget（编辑器与预览共用）───────────────────────────────────
+  'find.placeholder': '查找',
+  'find.replacePlaceholder': '替换',
+  'find.toggle.case': '区分大小写',
+  'find.toggle.wholeWord': '全字匹配',
+  'find.toggle.regex': '使用正则表达式',
+  'find.toggle.preserveCase': '保留大小写',
+  // 切换组上的可见字形：Aa / ab / .* / AB
+  'find.toggle.caseShort': 'Aa',
+  'find.toggle.wholeWordShort': 'ab',
+  'find.toggle.regexShort': '.*',
+  'find.toggle.preserveCaseShort': 'AB',
+  'find.prev': '上一个匹配',
+  'find.next': '下一个匹配',
+  'find.close': '关闭查找',
+  'find.replace': '替换',
+  'find.replaceAll': '全部替换',
+  'find.noResults': '无匹配',
+  // 计数器的 aria-live 文案，例如「3 / 12」
+  'find.results': '{{current}} / {{total}}',
 }

@@ -16,6 +16,7 @@ import { prepareExportHtml } from './lib/exportBake'
 import { routeSelectAll, createSelectAllKeydownHandler } from './lib/selectAllRouter'
 import { queryClient, DOCS_KEY } from './lib/queryClient'
 import { isDirInFolder } from './lib/utils'
+import { hasModalSurface } from './lib/shortcut-scope'
 import { t, useT, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
 
@@ -73,6 +74,11 @@ export default function App(): React.ReactElement {
     const handleKey = (e: KeyboardEvent) => {
       const isMac = /mac|iphone|ipad/i.test(navigator.userAgent)
       const mod = isMac ? e.metaKey : e.ctrlKey
+      // Same modal guard as Ctrl/Cmd+F/H (lib/shortcut-scope): while a modal surface owns the
+      // keyboard, stand down — and deliberately do NOT preventDefault, so the key stays available
+      // to whoever does own it. Without this, Ctrl+N would stack a second dialog on top of an open
+      // one and Ctrl+\ would move the sidebar behind it.
+      if (hasModalSurface(document)) return
       if (mod && e.key === 'n') {
         e.preventDefault()
         setNewDocOpen(true)

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
-import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
+import { EditorView, keymap, highlightActiveLine, drawSelection } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import {
   defaultKeymap,
@@ -15,7 +15,15 @@ import {
 } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
-import { searchKeymap, search, openSearchPanel } from '@codemirror/search'
+import {
+  searchKeymap,
+  search,
+  openSearchPanel,
+  findNext,
+  findPrevious,
+  replaceAll,
+} from '@codemirror/search'
+import { createFindPanel } from './createFindPanel'
 import { autocompletion } from '@codemirror/autocomplete'
 import {
   Undo2,
@@ -50,6 +58,11 @@ interface MarkdownEditorProps {
   editable?: boolean
   docId?: string | null
   filePath?: string | null
+  // Resident search jump (Phase 4): when set, the editor selects + scrolls to this saved-content
+  // offset once the document content has loaded. Provided by EditorPane from the store's
+  // pendingMatch; the editor calls onConsumeSelection after applying it so the store can clear it.
+  selectionOffset?: { from: number; to: number } | null
+  onConsumeSelection?: () => void
 }
 
 export function MarkdownEditor({
@@ -59,6 +72,8 @@ export function MarkdownEditor({
   editable = true,
   docId,
   filePath = null,
+  selectionOffset = null,
+  onConsumeSelection,
 }: MarkdownEditorProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -81,6 +96,23 @@ export function MarkdownEditor({
   // for user input and written back, causing a false "unsaved" flag after switching documents.
   const isApplyingExternal = useRef(false)
   const editableCompartment = useRef(new Compartment())
+  // Mirror of the current editable flag, read lazily when the find panel is (re)created
+  // so the panel always reflects the latest edit mode rather than the mount-time value.
+  const editableRef = useRef(editable)
+  // Mirror of the current find/replace open intent, read lazily when the find panel is (re)created
+  // so it opens in the right mode: `markdown:find` (Ctrl/Cmd+F) → find-only, `markdown:replace`
+  // (Ctrl/Cmd+H) → find+replace. Keeps Ctrl+F a pure "find" (VS Code parity) instead of always
+  // showing the replace field just because the editor happens to be editable.
+  const replaceIntentRef = useRef(false)
+
+  // Registered by the find panel on mount; CodeMirror's `panel.update` forwards the editor
+  // view through it so the k/n match counter recomputes on every selection change. Kept in a
+  // ref so the (mount-time) update listener always reads the latest registered callback.
+  const [panelUpdate, setPanelUpdate] = useState<((v: EditorView) => void) | null>(null)
+  const panelUpdateRef = useRef<((v: EditorView) => void) | null>(null)
+  useEffect(() => {
+    panelUpdateRef.current = panelUpdate
+  }, [panelUpdate])
 
   const debouncedOnChange = useMemo(() => debounce((val: string) => onChange(val), 400), [onChange])
 
@@ -301,12 +333,42 @@ export function MarkdownEditor({
         editableCompartment.current.of(readOnlyFacets(editable)),
         history(),
         highlightActiveLine(),
-        keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, indentWithTab]),
-        // In-editor find panel. The keymap above binds Mod-f to open it; the `search` extension
-        // provides both the search state and the panel UI that `openSearchPanel` reveals. An
-        // external "markdown:find" event (fired by the editor toolbar button) opens it too, so
-        // the button works without editor focus.
-        search(),
+        // Draw the selection even when the editor is NOT focused. A resident-search hit sets
+        // the selection programmatically (the sidebar keeps focus), so without this the
+        // "jump to hit" would place the cursor where the user cannot see it.
+        drawSelection(),
+        keymap.of([
+          ...defaultKeymap,
+          ...historyKeymap,
+          // Ctrl/Cmd+F is deliberately NOT bound here: it must have a SINGLE owner — the guarded
+          // window-level handler in EditorPane. CodeMirror's own Mod-f binding opens the find panel
+          // whenever the editor happens to hold focus, which includes while a modal overlay that
+          // does not trap focus (the command palette is a plain overlay) is open. That is exactly
+          // what the modal guard exists to prevent, so leaving Mod-f here would silently bypass it.
+          // Behaviour is unchanged: the window handler opens the same panel via `markdown:find`.
+          ...searchKeymap.filter((binding) => binding.key !== 'Mod-f'),
+          // Editor-scoped find navigation: F3 / Ctrl|Cmd+G step through matches even when
+          // the editor content (not the panel) has focus. The search extension already binds
+          // these inside the "search-panel" scope, so this only fills the gap for the content
+          // scope.
+          { key: 'F3', run: findNext, shift: findPrevious },
+          { key: 'Mod-g', run: findNext, shift: findPrevious },
+          indentWithTab,
+        ]),
+        // In-editor find panel. `createPanel` mounts our shared FindWidget (top-anchored, VS Code
+        // style) instead of CodeMirror's native panel. Opening is owned by the window-level
+        // Ctrl/Cmd+F handler in EditorPane (Mod-f is filtered out of searchKeymap above), and any
+        // external "markdown:find" event (e.g. the editor toolbar button) opens it too.
+        search({
+          createPanel: (view) =>
+            createFindPanel(view, {
+              editable: editableRef.current,
+              registerUpdate: setPanelUpdate,
+              // Read at creation time so the first open matches the shortcut that triggered it.
+              openInReplaceMode: replaceIntentRef.current,
+            }),
+          top: true,
+        }),
         markdown({
           base: markdownLanguage,
           codeLanguages: languages,
@@ -318,6 +380,8 @@ export function MarkdownEditor({
             isInternalChange.current = true
             debouncedOnChange(update.state.doc.toString())
           }
+          // Refresh the find panel's k/n counter when the cursor moves between matches.
+          if (update.selectionSet) panelUpdateRef.current?.(view)
         }),
         EditorView.theme({
           '&': {
@@ -413,25 +477,43 @@ export function MarkdownEditor({
       const v = viewRef.current
       /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
       if (!v) return
+      // Ctrl/Cmd+F intent: find-only (VS Code parity). The panel reads this on (re)create and the
+      // editor find panel collapses its replace row in response.
+      replaceIntentRef.current = false
       openSearchPanel(v)
+      // Focus of the query field is owned by `EditorFindPanel`'s mount effect, which runs after
+      // React commits the (asynchronously-rendered) panel so the `[main-field]` input actually
+      // exists. CodeMirror itself refocuses it on a *subsequent* `openSearchPanel` (when the panel
+      // already lives in the view state), so nothing more is needed here for repeat Ctrl+F.
     }
     document.addEventListener('markdown:find', handleFind)
 
     // Replace entry point (Ctrl+H / toolbar button). The CodeMirror search panel already
-    // includes a replace field, so we reuse the same panel as find.
+    // includes a replace field, so we reuse the same panel as find — but opened in replace mode.
     const handleReplace = () => {
       const v = viewRef.current
       /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
       if (!v) return
+      replaceIntentRef.current = true
       openSearchPanel(v)
     }
     document.addEventListener('markdown:replace', handleReplace)
+
+    // Replace-all entry point (Shift+Ctrl+H). Reuses the search state's current query.
+    const handleReplaceAll = () => {
+      const v = viewRef.current
+      /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
+      if (!v) return
+      replaceAll(v)
+    }
+    document.addEventListener('markdown:replaceAll', handleReplaceAll)
 
     return () => {
       document.removeEventListener('markdown:insert', handleInsert)
       document.removeEventListener('markdown:select-all', handleSelectAll)
       document.removeEventListener('markdown:find', handleFind)
       document.removeEventListener('markdown:replace', handleReplace)
+      document.removeEventListener('markdown:replaceAll', handleReplaceAll)
       scrollSync.unregister('editor')
       view.destroy()
       viewRef.current = null
@@ -448,6 +530,7 @@ export function MarkdownEditor({
     // editor), so `view` is never null here defensive guard only
     /* v8 ignore next -- defensive: the mount effect always creates the view before this effect runs, so view is never null */
     if (!view) return
+    editableRef.current = editable
     view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(editable)) })
     // Entering edit mode: take focus so the user can type immediately without first clicking into
     // the editor. This is the real fix for "switched to edit mode but couldn't type" the editor
@@ -502,7 +585,21 @@ export function MarkdownEditor({
     }
 
     const currentContent = view.state.doc.toString()
-    if (isDocSwitch || currentContent !== content) {
+    // A resident-search jump applies once the real (non-empty) content is present; while the
+    // document is still loading (content === '') we only fill the editor, then the follow-up
+    // run (real content arrives) performs the jump.
+    const jumpOff = selectionOffset && content !== '' ? selectionOffset : null
+    // A jump offset is computed against the SAVED document text. While the editor is mid-switch
+    // it can still be showing the PREVIOUS document, and an unsaved buffer can differ from the
+    // saved text — so the offsets may fall outside the content being written. Dispatching an
+    // out-of-range selection makes CodeMirror throw "Selection points outside of document" and
+    // crash the pane. Jump only when the range is valid for THIS content; otherwise leave the
+    // offset pending so the follow-up run (once the real content lands) applies it.
+    const jumpTarget =
+      jumpOff && jumpOff.from >= 0 && jumpOff.from <= jumpOff.to && jumpOff.to <= content.length
+        ? jumpOff
+        : null
+    if (isDocSwitch || currentContent !== content || jumpTarget) {
       // The whole switch sequence (empty → fill) must be isolated, not just the
       // frame where the id changed: see pendingSwitchRef above.
       const isolateUndo = pendingSwitchRef.current
@@ -513,7 +610,7 @@ export function MarkdownEditor({
       try {
         const tr = {
           changes: { from: 0, to: currentContent.length, insert: content },
-          selection: { anchor: 0 },
+          selection: jumpTarget ? { anchor: jumpTarget.from, head: jumpTarget.to } : { anchor: 0 },
           scrollIntoView: true,
           // Isolate undo history at the document boundary so edits to the previous document can't
           // be undone from the new one (we keep a single persistent EditorView instead of remounting
@@ -528,6 +625,10 @@ export function MarkdownEditor({
       // switch sequence is over. (An empty document leaves the flag set until the
       // next switch resets it, which only costs one redundant isolation.)
       if (content !== '') pendingSwitchRef.current = false
+      // The jump offset is consumed only once the cursor was actually placed + scrolled into
+      // view. An offset that did not fit the content yet (mid-switch / drifted buffer) is left
+      // pending so a later run with the correct content applies it instead of dropping it.
+      if (jumpTarget) onConsumeSelection?.()
     }
 
     // After a document switch, apply the REAL read-only/edit state (the write above happened with
@@ -536,7 +637,7 @@ export function MarkdownEditor({
     if (isDocSwitch) {
       view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(editable)) })
     }
-  }, [content, docId, editable])
+  }, [content, docId, editable, selectionOffset, onConsumeSelection])
 
   // Focus the editor on a REAL user gesture (pointerdown into the editor area). This runs
   // synchronously inside the browser's user-activation context, so the browser WILL grant the

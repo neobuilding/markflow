@@ -80,7 +80,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
   async function renameViaUI(newName: string) {
     const { page } = handle
     await page.getByTestId('rename-title-btn').click()
-    const input = page.locator('input').first()
+    const input = page.getByTestId('title-input')
     await input.fill(newName)
     await input.press('Enter')
     await page.getByTestId('save-btn').click()

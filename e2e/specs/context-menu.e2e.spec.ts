@@ -492,7 +492,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await page.evaluate(() => (window as any).__uiStore.getState().setEditable(true))
     await page.getByTestId('title-btn').click({ button: 'right' })
     await page.getByTestId('doc-rename').click()
-    const input = page.locator('input').first()
+    const input = page.getByTestId('title-input')
     await expect(input).toBeFocused()
     await input.fill('RenamedDoc')
     await input.press('Enter')

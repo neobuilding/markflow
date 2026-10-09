@@ -82,7 +82,8 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **folderWatcher (chokidar)** — recursive watcher over `openFolders` that syncs disk changes into the
   store; ignores non-Markdown and build output (`**/*.html`, `**/*.pdf`, `**/*.docx`, `**/*.tmp`).
 - **Markdown dual-write** — Markdown files are written to disk; there is no separate index file.
-- **Full-text search** — minisearch-powered, instant results with highlighted snippets.
+- **Full-text search** — minisearch-powered, instant results. Neither search mode returns a body
+  snippet (see **Bounded hit context**); results are presented by title and path only.
 
 ## Search & find
 
@@ -91,12 +92,37 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   **match-case (`Aa`)**, **whole-word (`ab`)**, **regex (`.*`)** and **preserve-case (`AB`)** toggles.
   _Avoid_: "search panel" when you mean this.
 - **Search panel (搜索面板)** — the cross-document search surface that lists matching documents. It
-  navigates between documents rather than overlaying one.
+  navigates between documents rather than overlaying one. Both the temporary `Ctrl/Cmd+K` palette
+  and the **sidebar's resident panel** are instances of it.
   _Avoid_: "find bar" when you mean this.
+  Note: unlike the Find widget, the Search panel is **MiniSearch-based** and deliberately does **not**
+  expose case-sensitive / whole-word / regex toggles — that is a capability boundary, not an oversight
+  (the same `Aa`/`ab`/`.*`/`AB` set belongs to the Find widget only).
+- **Resident search panel (常驻搜索面板)** — the persistent, collapsible instance of the **Search
+  panel** that lives above the document tree in the sidebar. It is the only surface that renders
+  per-file **hit rows**; the `Ctrl/Cmd+K` palette stays a flat list for quick jumps. Its collapsed
+  state is session-only (see **No persisted settings**). The UI label reads "Search in files".
+  _Avoid_: "search panel" when you need to distinguish it from the palette; "find bar" entirely.
+- **Hit row (命中行)** — one in-document occurrence row inside a search group, carrying the line
+  number plus the **document-wide character offsets** of the match, so it can place the editor
+  cursor there.
+- **Bounded hit context (有界命中上下文)** — the capped match list returned **instead of** a body
+  snippet (≤ `MAX_MATCHES_PER_DOC` per document, ≤ `MAX_RESULT_DOCS` documents), each entry being a
+  line number, the match offsets and a short excerpt. Returning only this keeps document bodies out
+  of the UI and the clipboard (data minimization).
 - **Content mode (正文模式)** — the search mode that matches a document's `title`, `content` and
   `folderPath`.
 - **Filename mode (文件名模式)** — the search mode that matches the **file name** only; by default the
   path and the extension are ignored.
+- **Active folder (当前文件夹)** — the folder the workspace is rooted at: the opened folder, or — when a
+  single file is opened instead — that file's parent directory (`useOpenPaths` sets it either way). It is
+  `null` only for an **empty workspace** (start-up, or after closing the workspace), i.e. when there are no
+  documents at all. Glob and relative paths are both resolved against it (Q11).
+- **Relative path (相对路径)** — a document's `filePath` as seen from the **active folder**, forward-slash
+  separated (`2026/notes.md`); this is what a search result row shows. Because any opened file establishes
+  an active folder, there is always a root once a document exists. The "Copy File Path" menu item still
+  copies the **absolute** path — that is the form you can paste into a terminal or file manager.
+  _Avoid_: rendering the absolute path in the UI.
 - **File name (文件名)** — `basename(filePath)`, **including** the extension (e.g. `notes.md`).
 - **Document title (`title`)** — the document's derived, **extension-less** file name (e.g. `notes`); what
   the sidebar shows. _Avoid_: using "file name" to mean `title`.

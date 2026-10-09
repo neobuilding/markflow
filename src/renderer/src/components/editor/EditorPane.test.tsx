@@ -84,6 +84,7 @@ beforeEach(() => {
   h.editingTitle = false
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setEditable(true)
+  useUIStore.getState().setPendingMatch(null)
   // Reset the export lock: closeDocument/closeWorkspace are hard-locked while it is set,
   // and the export menu test below leaves it on.
   useUIStore.getState().setExportOpen(false)
@@ -112,6 +113,13 @@ function mount() {
     </TooltipProvider>,
   )
 }
+
+it('jumps the editor to a pending search hit and then clears it (Phase 4)', async () => {
+  useUIStore.getState().setPendingMatch({ id: 'a', start: 2, end: 3 })
+  mount()
+  // MarkdownEditor applies the offset and calls back, clearing pendingMatch.
+  await waitFor(() => expect(useUIStore.getState().pendingMatch).toBeNull())
+})
 
 describe('EditorPane pendingFileAction rename (PLAN §5.1)', () => {
   it('enters title-edit when rename is requested for the active, loaded, editable doc', async () => {
@@ -429,6 +437,170 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     expect(screen.queryByTestId('editor-find-btn')).toBeNull()
   })
 
+  it('opens the editor find panel from a window-level Ctrl+F, with no editor focus', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    // Deliberately blur: the shortcut must not depend on the editor holding focus. It used to be
+    // CodeMirror's own keymap only, so clicking the sidebar, the title bar or the preview left
+    // Ctrl+F completely dead.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+    // Ctrl/Cmd+F is find-ONLY (VS Code parity): the replace row stays collapsed even though the editor
+    // is editable. Ctrl/Cmd+H is what reveals it.
+    expect(screen.queryByTestId('editor-find-replace')).toBeNull()
+  })
+
+  it('routes Ctrl+F to the preview when the user last interacted with the preview pane (split mode)', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    // The preview pane is visible in split mode but is a NON-FOCUSABLE <div>: clicking it grants it
+    // no focus, so routing by focus (or by viewMode alone) opened the editor's find even though the
+    // user was in the preview. It must open the preview's find instead.
+    fireEvent.pointerDown(screen.getByTestId('preview-pane'))
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('preview-find-bar')).toBeInTheDocument())
+    expect(document.querySelector('.cm-panel')).toBeNull()
+  })
+
+  it('routes Ctrl+F back to the editor after the user touches the editor pane (split mode)', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    // Touch the preview first so the pane tracking is exercised in both directions.
+    fireEvent.pointerDown(screen.getByTestId('preview-pane'))
+    fireEvent.pointerDown(screen.getByTestId('editor-pane'))
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+    expect(screen.queryByTestId('preview-find-bar')).toBeNull()
+  })
+
+  it('routes Ctrl+F to the editor in edit-only mode (the preview pane is hidden there)', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    fireEvent.pointerDown(screen.getByTestId('editor-pane'))
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+    expect(screen.queryByTestId('preview-find-bar')).toBeNull()
+  })
+
+  it('stands down while a modal surface owns the keyboard (no find panel behind a dialog)', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+
+    // What a Radix dialog puts in the DOM (see lib/shortcut-scope). While it is there the keyboard
+    // belongs to the dialog: a background shortcut must not open a find panel hidden behind it.
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+
+    // Dispatch manually so we can read defaultPrevented: standing down must NOT swallow the key.
+    const findEvent = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(findEvent)
+    const replaceEvent = new KeyboardEvent('keydown', {
+      key: 'h',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(replaceEvent)
+    expect(document.querySelector('.cm-panel')).toBeNull()
+    expect(findEvent.defaultPrevented).toBe(false)
+    expect(replaceEvent.defaultPrevented).toBe(false)
+
+    // Once the modal closes the shortcut works again — and this time it DOES claim the key.
+    modal.remove()
+    const reopened = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(reopened)
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+    expect(reopened.defaultPrevented).toBe(true)
+  })
+
+  it('does not open find via CodeMirror’s own Mod-f while a modal owns the keyboard', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+
+    // Dispatch on the editor's content DOM — the event CodeMirror's keymap sees. A modal overlay
+    // that does not trap focus (e.g. the command palette) leaves focus here, so with Mod-f still
+    // bound in searchKeymap it would open the panel straight through the modal guard. Keep this:
+    // it is the only test that fails if Mod-f is ever added back.
+    const content = document.querySelector('.cm-content') as HTMLElement
+    const ev = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    content.dispatchEvent(ev)
+    expect(document.querySelector('.cm-panel')).toBeNull()
+
+    modal.remove()
+  })
+
+  it('focuses the editor find input once the panel has rendered', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    // CodeMirror's own attempt to focus `[main-field]` runs before React has committed the panel,
+    // so it is a no-op; MarkdownEditor focuses it on the next frame instead. Without that, the
+    // panel opens but the user's keystrokes land in the document.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByTestId('editor-find-input')),
+    )
+  })
+
+  it('routes Ctrl+F to the preview find bar in pure preview mode', async () => {
+    useUIStore.getState().setViewMode('preview')
+    mount()
+    await waitFor(() => expect(screen.getByTestId('preview-find-btn')).toBeInTheDocument())
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    await waitFor(() => expect(screen.getByTestId('preview-find-bar')).toBeInTheDocument())
+  })
+
+  it('ignores a keydown without the Ctrl/Cmd modifier', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    fireEvent.keyDown(window, { key: 'f' })
+    expect(document.querySelector('.cm-panel')).toBeNull()
+  })
+
+  it('ignores Ctrl/Cmd with an unrelated key', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    fireEvent.keyDown(window, { key: 'g', ctrlKey: true })
+    expect(document.querySelector('.cm-panel')).toBeNull()
+  })
+
+  it('opens the find panel via Cmd+F (macOS metaKey)', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    fireEvent.keyDown(window, { key: 'f', metaKey: true })
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+  })
+
   it('opens the replace panel from the toolbar replace button', async () => {
     useUIStore.getState().setViewMode('split')
     mount()
@@ -446,9 +618,228 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
   })
 
+  it('routes Shift+Ctrl+H to replace-all, not replace', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    const seen: string[] = []
+    const listener = (e: Event) => {
+      seen.push(e.type)
+    }
+    document.addEventListener('markdown:replaceAll', listener)
+    document.addEventListener('markdown:replace', listener)
+    fireEvent.keyDown(window, { key: 'h', ctrlKey: true, shiftKey: true })
+    document.removeEventListener('markdown:replaceAll', listener)
+    document.removeEventListener('markdown:replace', listener)
+    expect(seen).toEqual(['markdown:replaceAll'])
+  })
+
   it('hides the replace button in pure preview mode', async () => {
     useUIStore.getState().setViewMode('preview')
     mount()
     expect(screen.queryByTestId('editor-replace-btn')).toBeNull()
+  })
+
+  // ── Plan §5.9 G4 / G5 / G6 ──────────────────────────────────────────────────
+  it('leaves Ctrl+H a no-op in pure preview mode (editor unmounted — G4)', async () => {
+    useUIStore.getState().setViewMode('preview')
+    mount()
+    await waitFor(() => expect(screen.getByTestId('preview-find-btn')).toBeInTheDocument())
+    let replaced = false
+    const onReplace = () => {
+      replaced = true
+    }
+    window.addEventListener('markdown:replace', onReplace)
+    const ev = new KeyboardEvent('keydown', {
+      key: 'h',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(ev)
+    // The editor is unmounted in preview-only mode, so replace has no target: stand down without
+    // swallowing the key.
+    expect(replaced).toBe(false)
+    expect(ev.defaultPrevented).toBe(false)
+    window.removeEventListener('markdown:replace', onReplace)
+  })
+
+  it('routes Ctrl+H by pane too: it stands down while the preview is the active pane (G4 pane-routing)', async () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    // Split mode was the cell the original G4 fix left open: it only tested
+    // `viewMode === 'preview'`, so with the preview as the active pane Ctrl+H still hijacked the key
+    // to the editor's replace panel. Ctrl+F routes by pane via `findTargetPane`; Ctrl+H must use the
+    // same predicate so both shortcuts agree on the target.
+    fireEvent.pointerDown(screen.getByTestId('preview-pane'))
+    let replaced = false
+    const onReplace = () => {
+      replaced = true
+    }
+    window.addEventListener('markdown:replace', onReplace)
+    const ev = new KeyboardEvent('keydown', {
+      key: 'h',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(ev)
+    // The preview is the active pane and has no replace field: stand down without swallowing the key.
+    expect(replaced).toBe(false)
+    expect(ev.defaultPrevented).toBe(false)
+    expect(document.querySelector('.cm-panel')).toBeNull()
+    window.removeEventListener('markdown:replace', onReplace)
+
+    // …and touching the editor pane hands the key straight back to it (both directions, mirroring
+    // the Ctrl+F routing pair above).
+    fireEvent.pointerDown(screen.getByTestId('editor-pane'))
+    fireEvent.keyDown(window, { key: 'h', ctrlKey: true })
+    await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+  })
+
+  it('does not hijack Ctrl+F while a text <input> is focused (G5)', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    expect(document.activeElement).toBe(input)
+    const ev = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(ev)
+    expect(document.querySelector('.cm-panel')).toBeNull()
+    expect(ev.defaultPrevented).toBe(false)
+    input.remove()
+  })
+
+  it('does not hijack Ctrl+F while a <textarea> is focused (G5)', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    const ta = document.createElement('textarea')
+    document.body.appendChild(ta)
+    ta.focus()
+    const ev = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(ev)
+    expect(document.querySelector('.cm-panel')).toBeNull()
+    ta.remove()
+  })
+
+  it('does not hijack Ctrl+F while a contentEditable element is focused (G5)', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    // A rich-text (contentEditable) field that is NOT the editor itself — e.g. an inline editor in a
+    // dialog. jsdom doesn't reflect `isContentEditable` from the attribute, so force it to exercise
+    // the third arm of the editable-target guard (plan §5.9 / G5).
+    const div = document.createElement('div')
+    div.contentEditable = 'true'
+    div.tabIndex = 0
+    document.body.appendChild(div)
+    Object.defineProperty(div, 'isContentEditable', { configurable: true, value: true })
+    div.focus()
+    const ev = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(ev)
+    expect(document.querySelector('.cm-panel')).toBeNull()
+    div.remove()
+  })
+
+  it('still opens the editor find panel when Ctrl+F is pressed while the editor content holds focus (G5: editor surface is exempt)', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    // The editor's own contentEditable (.cm-content) must NOT be treated as "someone else's field":
+    // Ctrl/Cmd+F there belongs to the editor find widget. Force activeElement to it (jsdom doesn't
+    // reflect isContentEditable from the attribute) to exercise the cm-content exempt arm.
+    const content = document.querySelector('.cm-content') as HTMLElement
+    Object.defineProperty(content, 'isContentEditable', { configurable: true, value: true })
+    const original = Object.getOwnPropertyDescriptor(document, 'activeElement')
+    Object.defineProperty(document, 'activeElement', { configurable: true, get: () => content })
+    try {
+      fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+      await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+    } finally {
+      if (original) Object.defineProperty(document, 'activeElement', original)
+      else delete (document as unknown as { activeElement?: unknown }).activeElement
+    }
+  })
+
+  it('still opens the replace panel when Ctrl+H is pressed while an input inside the find panel is focused (G5: cm-panel fields are exempt)', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    // The find/replace widget's own fields live inside a CodeMirror panel, and their Ctrl/Cmd+F/H
+    // belong to that widget (same rule as the .cm-content exemption). Without this arm the §5.10
+    // re-open path was unreachable: focus sits in the find input the moment the panel opens, so
+    // the guard swallowed every follow-up shortcut. Modelled with a standalone panel-like input
+    // since exercising the real panel needs a full open cycle (pinned in e2e instead).
+    const panel = document.createElement('div')
+    panel.className = 'cm-panel'
+    const input = document.createElement('input')
+    panel.appendChild(input)
+    document.body.appendChild(panel)
+    input.focus()
+    expect(document.activeElement).toBe(input)
+    try {
+      fireEvent.keyDown(window, { key: 'h', ctrlKey: true })
+      await waitFor(() => expect(screen.getByTestId('editor-find')).toBeInTheDocument())
+    } finally {
+      panel.remove()
+    }
+  })
+
+  it('still routes Ctrl+F when activeElement is null (G5 guard falsy branch)', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    const original = Object.getOwnPropertyDescriptor(document, 'activeElement')
+    Object.defineProperty(document, 'activeElement', { configurable: true, get: () => null })
+    try {
+      fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+      await waitFor(() => expect(document.querySelector('.cm-panel')).not.toBeNull())
+    } finally {
+      if (original) Object.defineProperty(document, 'activeElement', original)
+      else delete (document as unknown as { activeElement?: unknown }).activeElement
+    }
+  })
+
+  it('focuses the resident search panel via Ctrl+Shift+F (G6)', async () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
+    let focused = false
+    const onFocus = () => {
+      focused = true
+    }
+    // The handler dispatches the event on `document` (bubbles:false), so listen there — matching the
+    // real sidebar listener in SidebarSearch.tsx.
+    document.addEventListener('sidebar:focusSearch', onFocus)
+    const ev = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(ev)
+    expect(focused).toBe(true)
+    expect(ev.defaultPrevented).toBe(true)
+    document.removeEventListener('sidebar:focusSearch', onFocus)
   })
 })
