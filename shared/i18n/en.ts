@@ -150,6 +150,12 @@ export const en = {
   // Tooltip for the `Esc` hint chip in the resident search field (plan §3.4): Esc collapses the
   // panel. The chip itself shows the literal key name, so only the explanation is translated.
   'search.escHint': 'Collapse the search panel (Esc)',
+  // Accessible name for the clear (✕) button on every search input — must differ from the input's
+  // own label so screen readers can tell "clear the field" apart from "type here" (plan §5.9 / G2).
+  'search.clear': 'Clear search',
+  // Tooltip for the focus-shortcut chip on the resident search field (plan §5.9 / G6): focuses the
+  // panel. The chip shows the literal key combo, so only the explanation is translated.
+  'search.focusHint': 'Focus the search panel (Ctrl/Cmd+Shift+F)',
 
   // ── About dialog ───────────────────────────────────────────────────────
   'about.title': 'About MarkFlow',

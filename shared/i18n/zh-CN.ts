@@ -129,6 +129,8 @@ export const zhCN: Record<TranslationKey, string> = {
   'search.globHint': '通配符：* ? ** {a,b} [a-z]',
   'search.noResults': '无结果',
   'search.escHint': '收起搜索面板（Esc）',
+  'search.clear': '清除搜索',
+  'search.focusHint': '聚焦搜索面板（Ctrl/⌘+Shift+F）',
 
   // ── About dialog ───────────────────────────────────────────────────────
   'about.title': '关于 MarkFlow',

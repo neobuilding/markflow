@@ -66,6 +66,22 @@ export function SidebarSearch(): React.ReactElement {
     [results, searchMode],
   )
 
+  // G6: Ctrl/Cmd+Shift+F focuses this panel. The EditorPane window handler dispatches
+  // `sidebar:focusSearch`; we expand (the collapse state lives in the store) and focus the input.
+  // Same modal-guard philosophy as every other window shortcut: the key is only ours when nothing
+  // else owns it, and we never steal focus from a text field (handled upstream in EditorPane).
+  useEffect(() => {
+    const onFocusSearch = () => {
+      setCollapsed(false)
+      requestAnimationFrame(() => inputRef.current?.focus())
+    }
+    document.addEventListener('sidebar:focusSearch', onFocusSearch)
+    return () => document.removeEventListener('sidebar:focusSearch', onFocusSearch)
+  }, [setCollapsed])
+
+  // Platform-dependent shortcut label for the hint chip (the key combo itself isn't translated).
+  const isMac = useMemo(() => /Mac|iPod|iPhone|iPad/.test(navigator.userAgent), [])
+
   // Reset the highlighted row whenever the result set / query / mode / scope changes. Done during
   // render (React re-renders immediately without committing) instead of in an effect, which would
   // cost an extra cascading render on every keystroke.
@@ -156,6 +172,13 @@ export function SidebarSearch(): React.ReactElement {
                 className="shrink-0 px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs text-[var(--color-text-tertiary)]"
               >
                 Esc
+              </kbd>
+              <kbd
+                data-testid="resident-search-focus"
+                title={t('search.focusHint')}
+                className="shrink-0 px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs text-[var(--color-text-tertiary)]"
+              >
+                {isMac ? '⌘⇧F' : 'Ctrl+⇧F'}
               </kbd>
             </div>
           </div>

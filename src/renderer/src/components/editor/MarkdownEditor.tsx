@@ -99,6 +99,11 @@ export function MarkdownEditor({
   // Mirror of the current editable flag, read lazily when the find panel is (re)created
   // so the panel always reflects the latest edit mode rather than the mount-time value.
   const editableRef = useRef(editable)
+  // Mirror of the current find/replace open intent, read lazily when the find panel is (re)created
+  // so it opens in the right mode: `markdown:find` (Ctrl/Cmd+F) → find-only, `markdown:replace`
+  // (Ctrl/Cmd+H) → find+replace. Keeps Ctrl+F a pure "find" (VS Code parity) instead of always
+  // showing the replace field just because the editor happens to be editable.
+  const replaceIntentRef = useRef(false)
 
   // Registered by the find panel on mount; CodeMirror's `panel.update` forwards the editor
   // view through it so the k/n match counter recomputes on every selection change. Kept in a
@@ -359,6 +364,8 @@ export function MarkdownEditor({
             createFindPanel(view, {
               editable: editableRef.current,
               registerUpdate: setPanelUpdate,
+              // Read at creation time so the first open matches the shortcut that triggered it.
+              openInReplaceMode: replaceIntentRef.current,
             }),
           top: true,
         }),
@@ -470,6 +477,9 @@ export function MarkdownEditor({
       const v = viewRef.current
       /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
       if (!v) return
+      // Ctrl/Cmd+F intent: find-only (VS Code parity). The panel reads this on (re)create and the
+      // editor find panel collapses its replace row in response.
+      replaceIntentRef.current = false
       openSearchPanel(v)
       // Focus of the query field is owned by `EditorFindPanel`'s mount effect, which runs after
       // React commits the (asynchronously-rendered) panel so the `[main-field]` input actually
@@ -479,11 +489,12 @@ export function MarkdownEditor({
     document.addEventListener('markdown:find', handleFind)
 
     // Replace entry point (Ctrl+H / toolbar button). The CodeMirror search panel already
-    // includes a replace field, so we reuse the same panel as find.
+    // includes a replace field, so we reuse the same panel as find — but opened in replace mode.
     const handleReplace = () => {
       const v = viewRef.current
       /* v8 ignore next -- defensive: the event is only dispatched while an editor is mounted */
       if (!v) return
+      replaceIntentRef.current = true
       openSearchPanel(v)
     }
     document.addEventListener('markdown:replace', handleReplace)

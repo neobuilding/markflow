@@ -94,6 +94,32 @@ function findTargetPane(
   return lastPane === 'preview' ? 'preview' : 'editor'
 }
 
+// True when keyboard focus sits in a text-entry surface that is NOT the editor's own content, so a
+// window-level find/replace shortcut must stand down and let that surface keep the key (plan §5.9 /
+// G5). `null` / non-HTMLElement active elements (e.g. just the body) are treated as "not editing".
+//
+// The editor's own editing surface (`.cm-content`) is deliberately EXEMPT: its Ctrl/Cmd+F / Ctrl/Cmd+H
+// belong to the editor's find & replace widget, so the key must route there and NOT be swallowed. Only
+// genuine "other" fields — the resident sidebar search `<input>`, a rename `<input>`, or any
+// contentEditable that isn't the editor itself — keep the key.
+function isEditableTarget(el: Element | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+    // The editor find widget's own fields live inside a CodeMirror panel: their Ctrl/Cmd+F/H
+    // belong to that widget (same rule as the .cm-content exemption below), so the shortcuts keep
+    // working while the user is typing in the find/replace inputs. Without this arm the §5.10
+    // re-open path (Ctrl+H expanding an already-open panel) was unreachable — focus sits in the
+    // find input the moment the panel opens, and the guard swallowed every follow-up shortcut.
+    if (el.closest('.cm-panel')) return false
+    return true
+  }
+  if (el.isContentEditable) {
+    if (el.classList.contains('cm-content')) return false
+    return true
+  }
+  return false
+}
+
 export function EditorPane(): React.ReactElement {
   const {
     activeDocumentId,
@@ -327,7 +353,30 @@ export function EditorPane(): React.ReactElement {
       // Ctrl/Cmd+F would open a find panel hidden behind the dialog and look like a dead key.
       if (hasModalSurface(document)) return
       const key = e.key.toLowerCase()
+      // Ctrl/Cmd+Shift+F: focus the resident "search in files" panel. This is a navigation
+      // shortcut (VS Code parity: Ctrl+Shift+F = "Search in Files") and deliberately works from
+      // anywhere — including the editor — so it is EXEMPT from the editable-field guard below and
+      // checked first.
+      if (key === 'f' && e.shiftKey) {
+        e.preventDefault()
+        document.dispatchEvent(new CustomEvent('sidebar:focusSearch'))
+        return
+      }
+      // Don't hijack plain find/replace while the caret is in a text field that is NOT the editor's own
+      // content (plan §5.9 / G5): e.g. Ctrl/Cmd+F inside the resident sidebar search box must NOT yank
+      // focus to the editor find widget. The field keeps the key — return WITHOUT preventDefault so its
+      // own behaviour is untouched. The editor's own `.cm-content` is exempt (see isEditableTarget), so
+      // Ctrl/Cmd+F/H still opens the editor find widget from within the editor.
+      if (isEditableTarget(document.activeElement)) return
       if (key === 'h') {
+        // Replace is editor-only (Q2): the preview has no replace field, so when the ACTIVE pane is
+        // the preview this key has no target — stand down WITHOUT preventDefault (don't swallow it,
+        // don't open a panel over the pane the user is actually in). The target is resolved with the
+        // SAME predicate as the Ctrl/Cmd+F branch below, so both shortcuts route by pane
+        // identically. The original G4 fix only tested `viewMode === 'preview'`, which left the
+        // split-mode + preview-focused cell hijacking the key to the editor.
+        if (findTargetPane(useUIStore.getState().viewMode, lastPaneRef.current) === 'preview')
+          return
         e.preventDefault()
         document.dispatchEvent(
           new CustomEvent(e.shiftKey ? 'markdown:replaceAll' : 'markdown:replace'),

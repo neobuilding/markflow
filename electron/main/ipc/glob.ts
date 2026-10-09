@@ -1,10 +1,4 @@
 import picomatch from 'picomatch'
-import { relativePath } from '../../../shared/fileUtils'
-
-// `relativePath` is single-sourced from shared/fileUtils (pure, no `node:path`) so the main
-// process and the renderer agree on what "relative to the active folder" means. Re-exported
-// here because callers/tests already import it from this module.
-export { relativePath }
 
 // Filename-mode search routes through picomatch (the same matcher VS Code's file search
 // uses) instead of the full-text index. This keeps "file name" search about paths, not

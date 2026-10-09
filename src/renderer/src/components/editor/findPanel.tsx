@@ -93,10 +93,15 @@ function computePanelState(view: EditorView, preserveCase: boolean): PanelState 
 export function EditorFindPanel({
   view,
   editable,
+  openInReplaceMode = false,
   registerUpdate,
 }: {
   view: EditorView
   editable: boolean
+  // Open mode for the FIRST open: when true the panel shows its replace row (Ctrl/Cmd+H), when
+  // false it is find-only (Ctrl/Cmd+F). Mirrors VS Code, where the two shortcuts are not
+  // equivalent. Re-opens while already open are handled by the listeners below.
+  openInReplaceMode?: boolean
   registerUpdate?: (fn: FindPanelUpdate | null) => void
 }): React.ReactElement {
   // Lazy initializers read the live search state during the FIRST render, so the panel is
@@ -107,6 +112,12 @@ export function EditorFindPanel({
   // clobber what the user typed into the replace field.
   const [replaceText, setReplaceText] = useState(() => getSearchQuery(view.state).replace)
   const preserveRef = useRef(false)
+  // Whether the replace row is expanded. Seeded from the open mode for the FIRST open — at that
+  // point the listeners below are not attached yet (the React commit that mounts them happens
+  // after the markdown:replace event has fired) — then toggled live when the panel is already
+  // open and the user presses Ctrl/Cmd+H (expand) or Ctrl/Cmd+F (collapse), so the shortcuts
+  // stay distinct at runtime.
+  const [replaceOpen, setReplaceOpen] = useState(openInReplaceMode)
 
   const recompute = useCallback((v: EditorView) => {
     setState(computePanelState(v, preserveRef.current))
@@ -136,6 +147,22 @@ export function EditorFindPanel({
     // `view.dom` is assigned once when the EditorView is constructed and never reassigned, so
     // this dep is stable and the effect still runs exactly once per panel.
   }, [view.dom])
+
+  // Expand/collapse the replace row in response to which shortcut opened (or re-targeted) the
+  // panel, so Ctrl/Cmd+F stays find-only and Ctrl/Cmd+H stays find+replace even when the panel
+  // is already open and the user switches shortcuts.
+  useEffect(() => {
+    const expand = () => setReplaceOpen(true)
+    const collapse = () => setReplaceOpen(false)
+    document.addEventListener('markdown:replace', expand)
+    document.addEventListener('markdown:replaceAll', expand)
+    document.addEventListener('markdown:find', collapse)
+    return () => {
+      document.removeEventListener('markdown:replace', expand)
+      document.removeEventListener('markdown:replaceAll', expand)
+      document.removeEventListener('markdown:find', collapse)
+    }
+  }, [])
 
   const onQueryChange = useCallback(
     (s: string) => {
@@ -193,7 +220,7 @@ export function EditorFindPanel({
       onClose={onClose}
       toggleState={state.toggleState}
       onToggle={onToggle}
-      showReplace={editable}
+      showReplace={editable && replaceOpen}
       replaceText={replaceText}
       onReplaceTextChange={onReplaceTextChange}
       onReplaceNext={onReplaceNext}

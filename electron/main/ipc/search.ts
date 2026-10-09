@@ -1,7 +1,8 @@
 import type { IpcMain } from 'electron'
 import MiniSearch from 'minisearch'
 import { getAllDocuments, listDocuments, type Document } from '../model/documentStore'
-import { hasGlobMeta, globMatch, relativePath } from './glob'
+import { hasGlobMeta, globMatch } from './glob'
+import { relativePath } from '../../../shared/fileUtils'
 
 // The search wire types (SearchMode / SearchMatch / SearchResult) are shared with the renderer and
 // live in `shared/searchTypes.ts` — they used to be declared twice, here and in the renderer's
@@ -142,8 +143,8 @@ export function extractMatches(content: string, terms: string[], maxPerDoc: numb
     const lineEnd = nl === -1 ? content.length : nl
     const lineText = content.slice(lineStart, lineEnd)
     const hits: Array<{ from: number; to: number }> = []
+    const lower = lineText.toLowerCase()
     for (const term of terms) {
-      const lower = lineText.toLowerCase()
       let idx = lower.indexOf(term)
       while (idx !== -1) {
         hits.push({ from: lineStart + idx, to: lineStart + idx + term.length })
@@ -199,21 +200,25 @@ function filenameSearch(
 ): SearchResult[] {
   const useGlob = hasGlobMeta(query)
   const lower = query.toLowerCase()
-  return docs
-    .filter((d) => {
-      const rel = relativePath(d.filePath, scopeFolder)
-      if (useGlob) return globMatch(rel, query)
-      return d.title.toLowerCase().includes(lower) || rel.toLowerCase().includes(lower)
-    })
+  const matched = docs.filter((d) => {
+    const rel = relativePath(d.filePath, scopeFolder)
+    if (useGlob) return globMatch(rel, query)
+    return d.title.toLowerCase().includes(lower) || rel.toLowerCase().includes(lower)
+  })
+  // Bounds the result set so a broad glob (`*`, `**`) over a large library never returns an
+  // unbounded list — matches the content-mode cap (§3.8 / Q26(e)).
+  const capped = matched.length > MAX_RESULT_DOCS
+  const top = capped ? matched.slice(0, MAX_RESULT_DOCS) : matched
+  return top
     .map((d) => ({
       id: d.id,
       title: d.title,
       folderPath: d.folderPath,
       filePath: d.filePath,
-      snippet: '',
       score: 0,
       updatedAt: d.updatedAt,
       matches: [],
+      truncated: capped,
     }))
     .sort((a, b) => a.title.localeCompare(b.title))
 }
@@ -248,7 +253,6 @@ function contentSearch(docs: Document[], query: string): SearchResult[] {
         title: (r.title as string) ?? '',
         folderPath: (r.folderPath as string) ?? '',
         filePath: doc?.filePath ?? '',
-        snippet: '',
         score: r.score,
         updatedAt: doc?.updatedAt ?? 0,
         matches,

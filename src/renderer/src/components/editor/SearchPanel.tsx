@@ -396,6 +396,17 @@ export function SearchPanel({
             )}
           </div>
         )}
+        {/* Filename-mode truncation note (plan §5.9 / G8): the grouped summary above is content-mode
+            only, so filename mode surfaces its own. Same `search.showingFirst` copy. `truncated` being
+            true already implies a non-empty result set, so there is no separate empty-set branch. */}
+        {!grouped && truncated && (
+          <div
+            data-testid="search-truncated"
+            className="px-4 py-2 text-2xs text-[var(--color-text-tertiary)] border-t border-[var(--color-border)]"
+          >
+            {t('search.showingFirst', { n: results.length })}
+          </div>
+        )}
       </div>
 
       {/* Footer */}

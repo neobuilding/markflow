@@ -108,6 +108,8 @@ export function CommandPalette(): React.ReactElement | null {
           </InputContextMenu>
           {searchQuery && (
             <button
+              type="button"
+              aria-label={t('search.clear')}
               onClick={() => setSearchQuery('')}
               className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
             >

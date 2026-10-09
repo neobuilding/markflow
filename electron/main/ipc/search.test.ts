@@ -92,12 +92,6 @@ describe('search:query', () => {
     expect(res.map((r) => r.id)).toContain('3')
   })
 
-  it('does not return a body snippet in content mode (plan §3.5)', async () => {
-    const res = (await query('markdown')) as Array<{ id: string; snippet: string }>
-    const hit = res.find((r) => r.id === '1')
-    expect(hit?.snippet).toBe('')
-  })
-
   it('returns score and updatedAt fields', async () => {
     const res = (await query('editor')) as Array<{ score: number; updatedAt: number }>
     expect(typeof res[0].score).toBe('number')
@@ -202,7 +196,6 @@ describe('search:query', () => {
         id: string
         title: string
         folderPath: string
-        snippet: string
         updatedAt: number
       }>
 
@@ -210,7 +203,6 @@ describe('search:query', () => {
       expect(res[0].id).toBe('ghost')
       expect(res[0].title).toBe('')
       expect(res[0].folderPath).toBe('')
-      expect(res[0].snippet).toBe('')
       expect(res[0].updatedAt).toBe(0)
     } finally {
       spy.mockRestore()
@@ -336,6 +328,21 @@ describe('search:query hit context (Phase 4)', () => {
     expect(res).toHaveLength(200)
     expect(res.every((r) => r.truncated === true)).toBe(true)
     expect(res.some((r) => r.matches.length > 0)).toBe(true)
+  })
+
+  it('filename mode caps the candidate set at MAX_RESULT_DOCS and flags truncated (G8)', async () => {
+    // A broad query over many file names must be bounded too (plan §3.8 / Q26(e)) — previously only
+    // content mode enforced the cap, so a glob like `*` over a large library returned unbounded rows.
+    for (let i = 0; i < 250; i++) {
+      upsertDocument(doc({ id: `fn-${i}`, title: `Doc ${i}`, content: 'placeholder' }))
+    }
+    const res = (await query('doc', { mode: 'filename' })) as Array<{
+      id: string
+      truncated?: boolean
+    }>
+    // Capped at 200 docs and flagged as truncated.
+    expect(res).toHaveLength(200)
+    expect(res.every((r) => r.truncated === true)).toBe(true)
   })
 
   it('breaks relevance ties by title, lexicographically (Q12 / §3.8)', async () => {

@@ -9,7 +9,6 @@ function makeResult(over: Partial<SearchResult> & { id: string }): SearchResult 
     title: 'Doc',
     folderPath: '',
     filePath: '/docs/doc.md',
-    snippet: '',
     score: 0,
     updatedAt: 0,
     matches: [],
@@ -304,6 +303,18 @@ describe('SearchPanel (modal file-name mode, unchanged behavior)', () => {
     fireEvent.click(await screen.findByTestId('palette-copy-result-path'))
     // A relative path would be useless once pasted, so the copy stays absolute.
     expect(writeText).toHaveBeenCalledWith('/work/alpha.md')
+  })
+
+  it('shows the "showing first N" note when the filename result set is truncated (G8)', () => {
+    const truncated = fileResults.map((r) => ({ ...r, truncated: true }))
+    renderPanel({
+      results: truncated,
+      searchMode: 'filename',
+      query: 'Alpha',
+      onSelectMatch: vi.fn(),
+    })
+    // Filename mode is flat (no grouped summary), so the cap note gets its own element.
+    expect(screen.getByTestId('search-truncated')).toBeTruthy()
   })
 
   it('renders the glob hint in filename mode on the resident surface only', () => {

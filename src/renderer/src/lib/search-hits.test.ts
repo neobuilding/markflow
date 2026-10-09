@@ -8,7 +8,6 @@ function result(id: string, matches: SearchResult['matches']): SearchResult {
     title: id,
     folderPath: '',
     filePath: `/docs/${id}.md`,
-    snippet: '',
     score: 0,
     updatedAt: 0,
     matches,

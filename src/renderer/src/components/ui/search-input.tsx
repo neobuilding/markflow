@@ -1,5 +1,6 @@
 import React from 'react'
 import { X } from 'lucide-react'
+import { useT } from '../../i18n'
 
 interface SearchInputProps {
   value: string
@@ -29,6 +30,7 @@ export function SearchInput({
   mainField = false,
   onClear,
 }: SearchInputProps): React.ReactElement {
+  const { t } = useT()
   return (
     <div className="flex items-center gap-1.5 flex-1 min-w-0">
       <input
@@ -46,7 +48,7 @@ export function SearchInput({
         <button
           type="button"
           data-testid={`${testId}-clear`}
-          aria-label={ariaLabel}
+          aria-label={t('search.clear')}
           onClick={onClear}
           className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] shrink-0"
         >

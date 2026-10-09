@@ -158,4 +158,27 @@ test.describe('sidebar resident search panel', () => {
     await expect(page.getByTestId('search-result')).toHaveCount(1)
     await expect(page.getByTestId('search-result').first()).toContainText('deep')
   })
+
+  test('Ctrl+Shift+F expands and focuses the resident panel, even while the editor holds focus (G6)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await importFile(page, 'solo.md', 'body text\n')
+    await expect(page.locator('.cm-content')).toBeVisible()
+
+    // Collapse first so the shortcut — not the default expanded state — does the expanding.
+    await page.getByTestId('resident-search-collapse').click()
+    await expect(page.getByTestId('resident-search-input')).toHaveCount(0)
+
+    // Focus the editor's own contentEditable before pressing: this shortcut deliberately works
+    // from anywhere, including an editable field (it is exempt from the G5 editable-field guard),
+    // mirroring VS Code's Ctrl+Shift+F = "Search in Files". The e2e pins the real-focus path that
+    // the unit tests (which dispatch the event directly) cannot reach.
+    await page.locator('.cm-content').click()
+
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+    await page.keyboard.press(`${mod}+Shift+F`)
+
+    await expect(page.getByTestId('resident-search-input')).toBeVisible()
+    await expect(page.getByTestId('resident-search-input')).toBeFocused()
+  })
 })

@@ -162,6 +162,9 @@ describe('EditorFindPanel', () => {
   it('toggles preserve case without touching the search state', () => {
     const view = makeView('foo bar foo')
     render(<EditorFindPanel view={view} editable registerUpdate={() => {}} />)
+    // The preserve-case toggle lives inside the replace row, which only appears in replace mode
+    // (Ctrl/Cmd+H) — not for a plain Ctrl/Cmd+F open. Enter replace mode first.
+    act(() => document.dispatchEvent(new CustomEvent('markdown:replace')))
     fireEvent.click(screen.getByTestId('editor-find-toggles-preserve'))
     expect(screen.getByTestId('editor-find-toggles-preserve').getAttribute('aria-pressed')).toBe(
       'true',
@@ -186,6 +189,8 @@ describe('EditorFindPanel', () => {
   it('replaces next and replace all when editable', () => {
     const view = makeView('foo bar foo')
     render(<EditorFindPanel view={view} editable registerUpdate={() => {}} />)
+    // Replace mode is entered via Ctrl/Cmd+H (or the toolbar replace button) — not by editable alone.
+    act(() => document.dispatchEvent(new CustomEvent('markdown:replace')))
     fireEvent.change(screen.getByTestId('editor-find-input'), { target: { value: 'foo' } })
     fireEvent.change(screen.getByTestId('editor-find-replace'), { target: { value: 'X' } })
     fireEvent.click(screen.getByTestId('editor-find-count-next'))
@@ -200,6 +205,40 @@ describe('EditorFindPanel', () => {
     render(<EditorFindPanel view={view} editable={false} registerUpdate={() => {}} />)
     expect(screen.queryByTestId('editor-find-replace')).toBeNull()
     expect(screen.queryByTestId('editor-find-toggles-preserve')).toBeNull()
+  })
+
+  it('opens in replace mode when mounted with openInReplaceMode (Ctrl/Cmd+H first open)', () => {
+    const view = makeView('foo bar foo')
+    // Pins the prop threading for the FIRST open: the replace row must come from the panel's own
+    // initializer, because the expand/collapse listeners below are not attached yet at that point
+    // (the React commit that mounts them happens after the markdown:replace event has fired).
+    render(<EditorFindPanel view={view} editable openInReplaceMode registerUpdate={() => {}} />)
+    expect(screen.getByTestId('editor-find-replace')).toBeInTheDocument()
+  })
+
+  it('shows the replace row when opened via markdown:replace (Ctrl/Cmd+H)', () => {
+    const view = makeView('foo bar foo')
+    render(<EditorFindPanel view={view} editable registerUpdate={() => {}} />)
+    // Find-only by default (Ctrl/Cmd+F intent) — the replace row stays hidden until replace mode.
+    expect(screen.queryByTestId('editor-find-replace')).toBeNull()
+    act(() => document.dispatchEvent(new CustomEvent('markdown:replace')))
+    expect(screen.getByTestId('editor-find-replace')).toBeInTheDocument()
+  })
+
+  it('shows the replace row when opened via markdown:replaceAll too', () => {
+    const view = makeView('foo bar foo')
+    render(<EditorFindPanel view={view} editable registerUpdate={() => {}} />)
+    act(() => document.dispatchEvent(new CustomEvent('markdown:replaceAll')))
+    expect(screen.getByTestId('editor-find-replace')).toBeInTheDocument()
+  })
+
+  it('collapses the replace row again when markdown:find (Ctrl/Cmd+F) is dispatched', () => {
+    const view = makeView('foo bar foo')
+    render(<EditorFindPanel view={view} editable registerUpdate={() => {}} />)
+    act(() => document.dispatchEvent(new CustomEvent('markdown:replace')))
+    expect(screen.getByTestId('editor-find-replace')).toBeInTheDocument()
+    act(() => document.dispatchEvent(new CustomEvent('markdown:find')))
+    expect(screen.queryByTestId('editor-find-replace')).toBeNull()
   })
 })
 
@@ -241,6 +280,8 @@ describe('EditorFindPanel toggle merging', () => {
     const view = makeView('foo bar foo')
     setQuery(view, new SearchQuery({ search: 'foo' }))
     render(<EditorFindPanel view={view} editable registerUpdate={() => {}} />)
+    // The preserve-case toggle lives inside the replace row, which only appears in replace mode.
+    act(() => document.dispatchEvent(new CustomEvent('markdown:replace')))
     const btn = screen.getByTestId('editor-find-toggles-preserve')
     expect(btn.getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(btn)

@@ -2,6 +2,7 @@ import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { SearchInput } from './search-input'
+import { t } from '../../i18n'
 
 describe('SearchInput', () => {
   it('renders the input with placeholder and aria-label', () => {
@@ -75,5 +76,24 @@ describe('SearchInput', () => {
       />,
     )
     expect(screen.getByTestId('editor-find-input').getAttribute('main-field')).toBe('true')
+  })
+
+  it('labels the clear button from i18n, distinct from the input label (G2)', () => {
+    render(
+      <SearchInput
+        value="abc"
+        onChange={() => {}}
+        placeholder="Find"
+        ariaLabel="Find in editor"
+        testId="editor-find-input"
+        onClear={() => {}}
+      />,
+    )
+    const clear = screen.getByTestId('editor-find-input-clear')
+    // The clear button must not borrow the input's aria-label: a screen reader would announce
+    // "Find in editor" for a button that clears the field. It carries its own translated label
+    // instead — the G2 requirement was precisely that the two labels differ.
+    expect(clear.getAttribute('aria-label')).toBe(t('search.clear'))
+    expect(clear.getAttribute('aria-label')).not.toBe('Find in editor')
   })
 })

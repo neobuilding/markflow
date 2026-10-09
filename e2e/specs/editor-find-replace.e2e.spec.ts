@@ -131,6 +131,29 @@ test.describe('find and replace', () => {
     await expect(page.getByTestId('editor-find-input')).toBeFocused()
   })
 
+  test('Ctrl+F opens find-only — no replace field (VS Code parity with Ctrl+H)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+    await page.keyboard.press(`${mod}+F`)
+
+    await expect(page.getByTestId('editor-find')).toBeVisible()
+    // Ctrl/Cmd+F is the find-only shortcut: the replace row must stay hidden (it appears only on
+    // Ctrl/Cmd+H or the toolbar replace button). Guards against the two shortcuts collapsing into the
+    // same panel — the deviation first spotted during the §5.9 review.
+    await expect(page.getByTestId('editor-find-replace')).toBeHidden()
+
+    // §5.10 re-open path, with the focus where real users have it: the panel opened above put focus
+    // in the find input, so these presses ride the panel's own listeners (createPanel only runs on
+    // the first open) AND require the cm-panel fields to be exempt from the G5 editable guard.
+    await page.keyboard.press(`${mod}+H`)
+    await expect(page.getByTestId('editor-find-replace')).toBeVisible()
+    await page.keyboard.press(`${mod}+F`)
+    await expect(page.getByTestId('editor-find-replace')).toBeHidden()
+  })
+
   test('Ctrl+F in preview mode opens the preview find bar', async () => {
     const { page } = handle
     await waitForAppReady(page)
@@ -175,6 +198,31 @@ test.describe('find and replace', () => {
     await page.keyboard.press(`${mod}+F`)
     await expect(page.getByTestId('editor-find')).toBeVisible()
     await expect(page.getByTestId('preview-find-bar')).toBeHidden()
+  })
+
+  test('in split mode, Ctrl+H follows the same pane routing as Ctrl+F', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+    await page.getByTestId('view-split').click()
+    await expect(page.getByTestId('preview-pane')).toBeVisible()
+
+    // The preview has no replace field, so while it is the active pane Ctrl+H must NOT drag the user
+    // across to the editor's replace panel — same pane-routing rule (and the same "don't take a key
+    // that isn't yours" stand-down) as Ctrl+F. Regression guard: the G4 fix only exercised
+    // pure-preview mode, leaving this cell hijacking the key to the editor.
+    await page.getByTestId('preview-pane').click()
+    await page.keyboard.press(`${mod}+H`)
+    await expect(page.getByTestId('editor-find')).toBeHidden()
+    await expect(page.getByTestId('preview-find-bar')).toBeHidden()
+
+    // Touching the editor pane hands Ctrl+H back to it, and it opens in replace mode.
+    await page.getByTestId('editor-pane').click()
+    await page.keyboard.press(`${mod}+H`)
+    await expect(page.getByTestId('editor-find')).toBeVisible()
+    await expect(page.getByTestId('editor-find-replace')).toBeVisible()
   })
 
   test('Ctrl+F stands down while a modal surface owns the keyboard', async () => {

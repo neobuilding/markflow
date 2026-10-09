@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { hasGlobMeta, globMatch, relativePath } from './glob'
+import { hasGlobMeta, globMatch } from './glob'
+import { relativePath } from '../../../shared/fileUtils'
 
 describe('hasGlobMeta', () => {
   it('detects glob metacharacters', () => {

@@ -12,7 +12,14 @@ import { EditorFindPanel, type FindPanelUpdate } from './findPanel'
 // (react-refresh/only-export-components).
 export function createFindPanel(
   view: EditorView,
-  opts: { editable: boolean; registerUpdate?: (fn: FindPanelUpdate | null) => void } = {
+  opts: {
+    editable: boolean
+    registerUpdate?: (fn: FindPanelUpdate | null) => void
+    // Open mode for the FIRST open: when true the panel shows its replace row (Ctrl/Cmd+H), when
+    // false it is find-only (Ctrl/Cmd+F). Read at panel creation so the panel matches how it was
+    // opened; re-opens while already open are handled by the panel's own event listeners.
+    openInReplaceMode?: boolean
+  } = {
     editable: false,
   },
 ): Panel {
@@ -26,6 +33,7 @@ export function createFindPanel(
     <EditorFindPanel
       view={view}
       editable={opts.editable}
+      openInReplaceMode={opts.openInReplaceMode}
       registerUpdate={(fn) => {
         updateFn = fn
       }}

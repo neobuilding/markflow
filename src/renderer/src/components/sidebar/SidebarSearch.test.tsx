@@ -11,7 +11,6 @@ function makeResult(over: Partial<SearchResult> & { id: string }): SearchResult 
     title: 'Doc',
     folderPath: '',
     filePath: '/docs/doc.md',
-    snippet: '',
     score: 0,
     updatedAt: 0,
     matches: [],
@@ -195,5 +194,34 @@ describe('SidebarSearch (Phase 4 resident panel)', () => {
       const calls = querySpy.mock.calls
       expect(calls[calls.length - 1][1].scopeFolder).toBeNull()
     })
+  })
+
+  it('expands and focuses the field when the Ctrl+Shift+F event fires (G6)', async () => {
+    useUIStore.getState().setResidentSearchCollapsed(true)
+    renderPanel()
+    // Collapsed: the field is not in the DOM yet.
+    expect(screen.queryByTestId('resident-search-input')).toBeNull()
+    document.dispatchEvent(new Event('sidebar:focusSearch'))
+    await waitFor(() => {
+      const input = screen.getByTestId('resident-search-input') as HTMLInputElement
+      expect(input).toBeTruthy()
+      // The panel expanded and moved focus into the field.
+      expect(document.activeElement).toBe(input)
+    })
+  })
+
+  it('shows the macOS key combo on the focus hint when running on a Mac (G6)', () => {
+    const original = Object.getOwnPropertyDescriptor(navigator, 'userAgent')
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    })
+    try {
+      renderPanel()
+      expect(screen.getByTestId('resident-search-focus').textContent).toBe('⌘⇧F')
+    } finally {
+      if (original) Object.defineProperty(navigator, 'userAgent', original)
+      else delete (navigator as unknown as { userAgent?: unknown }).userAgent
+    }
   })
 })

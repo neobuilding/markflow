@@ -24,10 +24,11 @@ export interface SearchMatch {
   excerptEnd: number
 }
 
-// One search hit returned to the renderer. `snippet` is always '' — a body snippet is deliberately
-// NOT returned (data-minimization); `matches` carries the bounded per-document hit context for
-// content-mode results instead (empty for file-name mode and for docs with no literal
-// occurrence). `truncated` is set when the candidate doc set was capped (content mode only).
+// One search hit returned to the renderer. A body snippet is deliberately NOT returned
+// (data-minimization: the UI only ever shows the title + on-disk path), so there is no `snippet`
+// field. `matches` carries the bounded per-document hit context for content-mode results instead
+// (empty for file-name mode and for docs with no literal occurrence). `truncated` is set when the
+// candidate doc set was capped (see MAX_RESULT_DOCS in search.ts).
 export interface SearchResult {
   id: string
   title: string
@@ -35,7 +36,6 @@ export interface SearchResult {
   // Absolute on-disk path of the matching document. Empty for memory-only drafts that have no
   // file yet.
   filePath: string
-  snippet: string
   score: number
   updatedAt: number
   matches: SearchMatch[]
