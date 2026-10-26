@@ -199,7 +199,7 @@ describe('app handlers', () => {
     })
   })
 
-  describe('clipboard:write-svg (Plan 02 §4.4 / D4)', () => {
+  describe('clipboard:write-svg', () => {
     it('writes an image/svg+xml blob plus a text/html wrapper', async () => {
       clipboardMock.write.mockClear()
       await (handlers['clipboard:write-svg'](null, '<svg>x</svg>') as Promise<void>)
@@ -228,7 +228,7 @@ describe('app handlers', () => {
     })
   })
 
-  describe('clipboard:write-image — data: URL source (Plan 02 §4.4)', () => {
+  describe('clipboard:write-image — data: URL source', () => {
     it('decodes a data: URL and writes it to the clipboard', async () => {
       const buf = Buffer.from([9, 8, 7, 6])
       const dataUrl = `data:image/png;base64,${buf.toString('base64')}`

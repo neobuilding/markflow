@@ -275,7 +275,7 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
   }
 
   // Re-run highlighting whenever the query or a toggle changes — and again whenever the bar
-  // REOPENS. Closing clears the marks but deliberately KEEPS the query (plan §5.3 Q2), so without
+  // REOPENS. Closing clears the marks but deliberately KEEPS the query (ADR-0023), so without
   // re-applying on open the bar comes back with the query text still sitting in the box but zero
   // highlights and a stale "No match" counter. `open` in the deps is what restores them; when it
   // flips to false we skip, because onClose has already cleared the marks.
@@ -309,7 +309,7 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
     clearMarks()
     setOpen(false)
     // Keep `query` so reopening restores it — matching the editor find widget, which never
-    // clears the query on close (plan §3.1: one interaction model for both find surfaces).
+    // clears the query on close (ADR-0023: one interaction model for both find surfaces).
     publish(EMPTY_SNAPSHOT)
   }
 
@@ -333,8 +333,10 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
       <button
         type="button"
         data-testid="preview-find-btn"
-        aria-label={t('find.placeholder')}
-        title={t('find.placeholder')}
+        // Name the surface's scope ("Find in preview"), not the generic input placeholder
+        // (§10.3: every search entry says what it searches).
+        aria-label={t('preview.find')}
+        title={t('preview.find')}
         onClick={() => setOpen(true)}
         // MUST be positioned. As a flow element following an `h-full` content div inside an
         // `overflow-hidden` parent it was laid out below the visible area and clipped away: the

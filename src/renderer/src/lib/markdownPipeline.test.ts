@@ -129,7 +129,7 @@ describe('markdownPipeline — syntax highlighting', () => {
   })
 
   // the preview context menu reads the language from data-lang
-  it('exposes the fence language as data-lang (PLAN §12 能力 4)', () => {
+  it('exposes the fence language as data-lang', () => {
     const { html } = render('```js\nconst x = 1;\n```\n', docId)
     expect(html).toContain('data-lang="js"')
   })

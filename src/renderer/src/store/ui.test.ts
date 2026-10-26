@@ -7,7 +7,7 @@ import { useUIStore } from './ui'
 // under unit tests, so the `false` branch is exercised by the production build
 // instead. These tests only assert the stable, mode-independent exports.
 
-describe('useUIStore (PLAN §6.4)', () => {
+describe('useUIStore', () => {
   it('exports a zustand store factory', () => {
     expect(typeof useUIStore).toBe('function')
     expect(typeof useUIStore.getState).toBe('function')

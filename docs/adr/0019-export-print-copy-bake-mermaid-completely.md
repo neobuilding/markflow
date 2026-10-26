@@ -5,7 +5,7 @@ They never read the lazily-rendered preview DOM.
 
 ## Why the preview cannot be the source
 
-D-E① (plan-03 §4.3) moved mermaid baking out of the HTML string: the pipeline emits empty
+Lazy mermaid rendering (ADR 0018) moved mermaid baking out of the HTML string: the pipeline emits empty
 `<div data-mermaid-slot="N">` placeholders and the preview renders each one only when it
 intersects the viewport. That is what removed the ~2.5s first-paint regression (ADR 0018).
 
@@ -58,5 +58,5 @@ gains virtualization or `content-visibility`.
   a failure is not cached. That is intentional — caching a failure would make a transient error
   permanent for the session.
 - Rich-text copy (R13.1) is only half-solved by this: the payload now carries the diagram, but
-  Word does not render inline `<svg>` (plan-04 §2.2 F3). Making it _visible_ after paste still
-  needs plan-04 D13/D14 (rasterize to a PNG `data:` URL), which remains an open decision.
+  Word does not render inline `<svg>`. Making it _visible_ after paste still needs rasterizing to a
+  PNG `data:` URL, which remains an open decision (see ADR 0020).

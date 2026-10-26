@@ -53,7 +53,7 @@ async function confirmCalls(
   )
 }
 
-test.describe('context menus (PLAN §3/§4/§5)', () => {
+test.describe('context menus', () => {
   let handle: AppHandle
 
   test.beforeEach(async () => {
@@ -109,7 +109,7 @@ test.describe('context menus (PLAN §3/§4/§5)', () => {
     await expect(page.getByTestId('preview-view-editor')).toBeVisible()
   })
 
-  // Plan 02 §4.3 mechanism guard. The menu's "Copy" fires `document.execCommand('copy')` and
+  // Mechanism guard. The menu's "Copy" fires `document.execCommand('copy')` and
   // relies on the resulting `copy` event reaching the preview <article>'s handler (which writes
   // the CLEAN payload: internal attrs stripped, images inlined). That is NOT self-evident: the
   // Radix menu content lives in a PORTAL under document.body, so if focus sat on the menu item the
@@ -179,7 +179,7 @@ test.describe('context menus (PLAN §3/§4/§5)', () => {
     expect(clip.html).not.toContain('tabindex')
   })
 
-  test('preview: right-clicking a link shows open/copy-link/copy/select-all (PLAN §4)', async () => {
+  test('preview: right-clicking a link shows open/copy-link/copy/select-all', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, '[ex](http://example.com)')
@@ -193,7 +193,7 @@ test.describe('context menus (PLAN §3/§4/§5)', () => {
     await expect(page.getByTestId('preview-select-all')).toBeVisible()
   })
 
-  test('sidebar: right-clicking a draft row shows discard + open + copy-content (PLAN §5)', async () => {
+  test('sidebar: right-clicking a draft row shows discard + open + copy-content', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await page.getByTestId('new-document-btn').click()
@@ -230,7 +230,7 @@ test.describe('context menus (PLAN §3/§4/§5)', () => {
     await expect(page.getByTestId('preview-copy')).toBeVisible()
   })
 
-  test('sidebar: discarding a draft shows a confirmation and removes it on confirm (PLAN §5-4)', async () => {
+  test('sidebar: discarding a draft shows a confirmation and removes it on confirm', async () => {
     const { electronApp, page } = handle
     await waitForAppReady(page)
     // Auto-answer the native confirm dialog with OK (response 1).
@@ -253,7 +253,7 @@ test.describe('context menus (PLAN §3/§4/§5)', () => {
     await expect(page.getByTestId('doc-item')).toHaveCount(0)
   })
 
-  test('sidebar: cancelling the discard confirmation keeps the draft (PLAN §5-4)', async () => {
+  test('sidebar: cancelling the discard confirmation keeps the draft', async () => {
     const { electronApp, page } = handle
     await waitForAppReady(page)
     // Auto-answer the native confirm dialog with Cancel (response 0).
@@ -271,7 +271,7 @@ test.describe('context menus (PLAN §3/§4/§5)', () => {
   })
 })
 
-// M3 surfaces — context menus added across the plan's later milestones. These
+// M3 surfaces — context menus added in later milestones. These
 // exercise the REAL Chromium right-click on each new surface and assert the
 // expected items appear (acceptance: every planned right-click menu renders
 // its documented items, no crash, no dead/duplicated entry).
@@ -307,8 +307,8 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await page.evaluate(() => (window as any).__uiStore.getState().setActiveFolder(null))
     await page.evaluate(async (f: string) => {
       const { markdownFiles } = await (window as any).api.files.resolvePaths([f])
+      await (window as any).api.documents.setWorkspaceRoot(f)
       const imported = await (window as any).api.documents.importMany(markdownFiles)
-      await (window as any).api.documents.setOpenFolder(f)
       const ui = (window as any).__uiStore.getState()
       ui.setActiveFolder(f)
       if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)
@@ -318,7 +318,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
       .toBe(expectedDocs)
   }
 
-  test('status bar: word-count right-click offers copy word-count / path / filename (PLAN §8)', async () => {
+  test('status bar: word-count right-click offers copy word-count / path / filename', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, 'hello world')
@@ -328,7 +328,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.getByTestId('sb-copy-filename')).toBeVisible()
   })
 
-  test('status bar: encoding pill right-click lists encodings + re-detect/copy (PLAN §8)', async () => {
+  test('status bar: encoding pill right-click lists encodings + re-detect/copy', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, 'hello')
@@ -338,7 +338,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.locator('[data-testid^="sb-encoding-"]').first()).toBeVisible()
   })
 
-  test('status bar: line-ending pill right-click offers CRLF/LF switch + copy (PLAN §8)', async () => {
+  test('status bar: line-ending pill right-click offers CRLF/LF switch + copy', async () => {
     const { page } = handle
     await waitForAppReady(page)
     // The EOL pill only renders for a document that has an on-disk line ending
@@ -351,7 +351,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.getByTestId('sb-copy-line-ending')).toBeVisible()
   })
 
-  test('status bar: save region right-click offers save / save-as / reload (PLAN §8)', async () => {
+  test('status bar: save region right-click offers save / save-as / reload', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, 'hello')
@@ -361,7 +361,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.getByTestId('sb-reload')).toBeVisible()
   })
 
-  test('search palette: right-clicking a result row offers open/copy/title/details (PLAN §9)', async () => {
+  test('search palette: right-clicking a result row offers open/copy/title/details', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = scratchDir({ 'alpha.md': '# Alpha\n\nbody', 'beta.md': '# Beta\n\nbody' })
@@ -380,7 +380,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.getByTestId('palette-details')).toBeVisible()
   })
 
-  test('sidebar: resize handle right-click offers reset-width / collapse (PLAN §5.13 / §10)', async () => {
+  test('sidebar: resize handle right-click offers reset-width / collapse', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await page.getByTestId('sidebar-resize-handle').click({ button: 'right' })
@@ -388,7 +388,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.getByTestId('side-collapse-sidebar')).toBeVisible()
   })
 
-  test('sidebar: welcome state right-click offers new/open-folder/search (PLAN §10 / §5.12)', async () => {
+  test('sidebar: welcome state right-click offers new/open-folder/search', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const welcome = page.getByTestId('sidebar-welcome-state')
@@ -399,7 +399,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.getByTestId('side-search-documents')).toBeVisible()
   })
 
-  test('sidebar: current-folder bar right-click offers folder operations (PLAN §5.5 / §6.2)', async () => {
+  test('sidebar: current-folder bar right-click offers folder operations', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = scratchDir({ 'a.md': '# A', 'b.md': '# B' })
@@ -415,7 +415,7 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.getByTestId('side-close-workspace')).toBeVisible()
   })
 
-  test('file details dialog: right-clicking the path offers copy path/name + show-in-folder (PLAN §10)', async () => {
+  test('file details dialog: right-clicking the path offers copy path/name + show-in-folder', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = scratchDir({ 'alpha.md': '# Alpha' })
@@ -456,8 +456,8 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await page.evaluate(() => (window as any).__uiStore.getState().setActiveFolder(null))
     await page.evaluate(async (f: string) => {
       const { markdownFiles } = await (window as any).api.files.resolvePaths([f])
+      await (window as any).api.documents.setWorkspaceRoot(f)
       const imported = await (window as any).api.documents.importMany(markdownFiles)
-      await (window as any).api.documents.setOpenFolder(f)
       const ui = (window as any).__uiStore.getState()
       ui.setActiveFolder(f)
       if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)
@@ -467,7 +467,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
       .toBe(expectedDocs)
   }
 
-  test('export-html (title menu) writes a standalone HTML file next to the markdown (PLAN §10)', async () => {
+  test('export-html (title menu) writes a standalone HTML file next to the markdown', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = scratchDir({ 'alpha.md': '# Alpha\n\nHello from e2e.\n' })
@@ -481,7 +481,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await expect(dialog.getByRole('button', { name: 'Export' })).toBeVisible()
   })
 
-  test('rename (title menu) enters title-edit and renames the document (PLAN §5.3)', async () => {
+  test('rename (title menu) enters title-edit and renames the document', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = scratchDir({ 'alpha.md': '# Alpha\n' })
@@ -499,7 +499,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await expect(page.getByTestId('title-btn')).toContainText('RenamedDoc')
   })
 
-  test('new-subfolder (folder row) creates a nested folder on disk (PLAN §6.2)', async () => {
+  test('new-subfolder (folder row) creates a nested folder on disk', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = mkTempDir('markflow-cm3-supp-')
@@ -531,12 +531,12 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await expect.poll(() => existsSync(join(dir, 'sub', 'nested')), { timeout: 15000 }).toBe(true)
   })
 
-  // Folder rename (PLAN §6.2): inline rename must leave exactly ONE folder in the tree
+  // Folder rename: inline rename must leave exactly ONE folder in the tree
   // (no stale duplicate of the old name lingering until the dirs query refetches) and must
   // preserve the open/closed state — a folder that was expanded stays expanded under the
   // new name. Guards the renderer-side fixes in useRenameFolder (cache rewrite) and
   // Sidebar.submitFolderName (expanded-set re-pointing).
-  test('folder rename (inline) shows one folder, no duplicate, keeps it expanded (PLAN §6.2)', async () => {
+  test('folder rename (inline) shows one folder, no duplicate, keeps it expanded', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = mkTempDir('markflow-cm3-rename-')
@@ -668,7 +668,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await expect.poll(() => existsSync(join(dir, 'notes.markdown')), { timeout: 15000 }).toBe(true)
   })
 
-  test('go-up (empty-folder bar) navigates to the parent folder (PLAN §6.2)', async () => {
+  test('go-up (empty-folder bar) navigates to the parent folder', async () => {
     const { page } = handle
     await waitForAppReady(page)
     const dir = mkTempDir('markflow-cm3-supp-')

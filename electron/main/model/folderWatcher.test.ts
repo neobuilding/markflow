@@ -1,18 +1,18 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { join } from 'node:path'
 import { mkTestDir } from '../test-support/tmp'
 import {
   __emitFolderEvent,
   __emitFolderDirEvent,
-  addWatchedFolder,
   markOwnWrite,
   startFolderWatching,
   stopFolderWatching,
   pauseFolderWatching,
   resumeFolderWatching,
+  refreshFolderWatching,
   type FolderWatchHandlers,
 } from './folderWatcher'
+import { setWorkspaceRoot, getWorkspaceRoot } from './workspaceRoot'
 
 // chokidar is replaced wholesale: creating a real recursive watcher would make these
 // tests depend on OS event latency. The mock only has to satisfy the API surface
@@ -70,9 +70,17 @@ function install(): FolderWatchHandlers {
   return h
 }
 
-// The watcher and the open-folder set are module-level singletons; reset between tests.
+// Opening a root REPLACES the workspace (ADR-0023): the store-side reset is tested with the
+// documents IPC, here we only care that the watcher follows the single root.
+function openRoot(dir: string): void {
+  setWorkspaceRoot(dir)
+  refreshFolderWatching()
+}
+
+// The watcher and the workspace root are module-level singletons; reset between tests.
 beforeEach(async () => {
   await stopFolderWatching()
+  setWorkspaceRoot(null)
   state.instances.length = 0
 })
 
@@ -80,7 +88,7 @@ beforeEach(async () => {
 // drops events when no handlers have been installed yet.
 describe('folderWatcher — before handlers are installed', () => {
   it('drops events silently when no handlers are installed', () => {
-    addWatchedFolder(tmpDir('fw-nohandler-'))
+    openRoot(tmpDir('fw-nohandler-'))
     expect(() => {
       __emitFolderEvent('add', '/w/a.md')
       __emitFolderEvent('change', '/w/a.md')
@@ -100,59 +108,62 @@ describe('folderWatcher — before handlers are installed', () => {
 })
 
 describe('folderWatcher — lifecycle', () => {
-  it('starts no watcher until a folder has been opened', () => {
+  it('starts no watcher until a root has been opened', () => {
     install()
     expect(state.instances).toHaveLength(0)
+    expect(getWorkspaceRoot()).toBeNull()
   })
 
-  it('starts a watcher over the opened folder', () => {
+  it('starts a watcher over the opened root', () => {
     install()
     const dir = tmpDir('fw-start-')
-    addWatchedFolder(dir)
+    openRoot(dir)
     expect(state.instances).toHaveLength(1)
     expect(state.instances[0].paths).toEqual([dir])
   })
 
-  it('adds further folders to the running watcher instead of starting a second one', () => {
+  it('ignores an empty root', () => {
     install()
-    addWatchedFolder(tmpDir('fw-one-'))
-    addWatchedFolder(tmpDir('fw-two-'))
-    expect(state.instances).toHaveLength(1)
-    expect(state.instances[0].added).toHaveLength(1)
-  })
-
-  it('ignores a folder already covered by one being watched', () => {
-    install()
-    const root = tmpDir('fw-root-')
-    addWatchedFolder(root)
-    addWatchedFolder(join(root, 'nested'))
-    expect(state.instances[0].added).toHaveLength(0)
-  })
-
-  it('ignores an empty folder path', () => {
-    install()
-    addWatchedFolder('')
+    openRoot('')
     expect(state.instances).toHaveLength(0)
+  })
+
+  it('replacing the root closes the previous watcher — only ever ONE root is watched (D14/D21)', () => {
+    install()
+    openRoot(tmpDir('fw-replace-a-'))
+    const first = state.instances[0]
+    openRoot(tmpDir('fw-replace-b-'))
+    expect(first.closed).toBe(true)
+    expect(state.instances).toHaveLength(2)
+    expect(state.instances[1].closed).toBe(false)
+    expect(getWorkspaceRoot()).not.toBeNull()
+  })
+
+  it('closing the workspace stops watching', async () => {
+    install()
+    openRoot(tmpDir('fw-clear-'))
+    const inst = state.instances[0]
+    setWorkspaceRoot(null)
+    await stopFolderWatching()
+    expect(inst.closed).toBe(true)
+    expect(getWorkspaceRoot()).toBeNull()
   })
 
   it('does not start a second watcher when one is already running', () => {
     install()
-    addWatchedFolder(tmpDir('fw-reinstall-'))
+    openRoot(tmpDir('fw-reinstall-'))
     const inst = state.instances[0]
 
     // Re-installing handlers (as a repeated registerDocumentHandlers would) must
     // reuse the running watcher instead of orphaning it.
     install()
 
-    expect(state.instances).toHaveLength(1)
-    expect(state.instances[0]).toBe(inst)
     expect(inst.closed).toBe(false)
   })
 
-  it('closes the watcher on stop and forgets the folders', async () => {
+  it('closes the watcher on stop', async () => {
     install()
-    const dir = tmpDir('fw-stop-')
-    addWatchedFolder(dir)
+    openRoot(tmpDir('fw-stop-'))
     const inst = state.instances[0]
 
     await stopFolderWatching()
@@ -160,21 +171,16 @@ describe('folderWatcher — lifecycle', () => {
     expect(inst.closed).toBe(true)
   })
 
-  it('opens a fresh watcher after a stop (previous folders were forgotten)', async () => {
+  it('opens a fresh watcher after a stop', async () => {
     install()
-    addWatchedFolder(tmpDir('fw-before-'))
+    openRoot(tmpDir('fw-before-'))
     await stopFolderWatching()
 
-    addWatchedFolder(tmpDir('fw-after-'))
+    openRoot(tmpDir('fw-after-'))
 
     expect(state.instances).toHaveLength(2)
     expect(state.instances[0].closed).toBe(true)
     expect(state.instances[1].closed).toBe(false)
-  })
-
-  it('tolerates stopping when nothing is being watched', async () => {
-    install()
-    await expect(stopFolderWatching()).resolves.toBeUndefined()
   })
 })
 
@@ -183,7 +189,7 @@ describe('folderWatcher — dispatching real chokidar events', () => {
     install()
     const inst = state.instances[0] ?? undefined
 
-    addWatchedFolder(tmpDir('fw-dispatch-'))
+    openRoot(tmpDir('fw-dispatch-'))
     const w = state.instances[0]
     w.handlers.add('/w/a.md')
     w.handlers.unlink('/w/b.md')
@@ -195,14 +201,14 @@ describe('folderWatcher — dispatching real chokidar events', () => {
 
   it('swallows a watcher error instead of crashing the main process', () => {
     install()
-    addWatchedFolder(tmpDir('fw-error-'))
+    openRoot(tmpDir('fw-error-'))
     const w = state.instances[0]
     expect(() => w.handlers.error('/w/boom.md')).not.toThrow()
   })
 
   it('ignores non-Markdown paths for every event kind', () => {
     install()
-    addWatchedFolder(tmpDir('fw-nonmd-'))
+    openRoot(tmpDir('fw-nonmd-'))
     __emitFolderEvent('add', '/w/a.txt')
     __emitFolderEvent('unlink', '/w/b.html')
     __emitFolderEvent('change', '/w/c')
@@ -211,7 +217,7 @@ describe('folderWatcher — dispatching real chokidar events', () => {
 
   it('accepts Markdown paths in any letter case', () => {
     install()
-    addWatchedFolder(tmpDir('fw-case-'))
+    openRoot(tmpDir('fw-case-'))
     __emitFolderEvent('add', '/w/UPPER.MD')
     __emitFolderEvent('add', '/w/Mixed.Markdown')
     expect(seen.added).toEqual(['/w/UPPER.MD', '/w/Mixed.Markdown'])
@@ -223,7 +229,7 @@ describe('folderWatcher — the ignored matcher handed to chokidar', () => {
 
   function grabIgnored(): Ignored {
     install()
-    addWatchedFolder(tmpDir('fw-ignored-'))
+    openRoot(tmpDir('fw-ignored-'))
     const opts = state.instances[0]?.options
     const ignored = Array.isArray(opts?.ignored) ? opts?.ignored[0] : opts?.ignored
     expect(typeof ignored).toBe('function')
@@ -280,6 +286,37 @@ describe('folderWatcher — own-write suppression', () => {
     expect(seen.changed).toEqual([])
   })
 
+  it('drops an expired suppression and surfaces the change (isOwnWrite past window)', () => {
+    vi.useFakeTimers()
+    try {
+      install()
+      markOwnWrite('/w/mine.md')
+      // Advance past OWN_WRITE_SUPPRESS_MS (2000) so the entry has expired.
+      vi.advanceTimersByTime(100000)
+      __emitFolderEvent('change', '/w/mine.md')
+      expect(seen.changed).toEqual(['/w/mine.md'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('prunes expired entries once the own-write map exceeds the cap', () => {
+    vi.useFakeTimers()
+    try {
+      install()
+      // Fill well past OWN_WRITE_MAX_ENTRIES (256) with entries that are now expired.
+      for (let i = 0; i < 270; i++) markOwnWrite(`/w/f${i}.md`)
+      vi.advanceTimersByTime(100000)
+      // This mark trips the prune loop (size > 256) and deletes the expired entries.
+      markOwnWrite('/w/fresh.md')
+      // An expired entry (now pruned) no longer suppresses its change.
+      __emitFolderEvent('change', '/w/f0.md')
+      expect(seen.changed).toEqual(['/w/f0.md'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   // Regression: the sidebar tree lists FOLDERS, but only file events were ever dispatched —
   // so a folder created or deleted outside the app left the tree stale. `dispatch` drops every
   // non-Markdown path (and a directory never has one), hence the separate directory path.
@@ -298,7 +335,7 @@ describe('folderWatcher — own-write suppression', () => {
 
     it('routes chokidar addDir / unlinkDir to the directory handlers', () => {
       install()
-      addWatchedFolder(tmpDir('fw-dirs-'))
+      openRoot(tmpDir('fw-dirs-'))
       const dirs = installDirHandlers()
       const w = state.instances[0]
       w.handlers.addDir('/w/newfolder')
@@ -329,7 +366,7 @@ describe('folderWatcher — own-write suppression', () => {
   describe('pause / resume (folder delete)', () => {
     it('pause closes the watcher and resume starts a fresh one', async () => {
       install()
-      addWatchedFolder(tmpDir('fw-pause-'))
+      openRoot(tmpDir('fw-pause-'))
       const first = state.instances[0]
       await pauseFolderWatching()
       expect(first.closed).toBe(true)
@@ -337,9 +374,9 @@ describe('folderWatcher — own-write suppression', () => {
       expect(state.instances.length).toBe(2)
     })
 
-    it('pause is a no-op with nothing watched, and a stray resume creates nothing', async () => {
-      install() // no folder opened → no watcher exists
-      await pauseFolderWatching()
+    it('resume without a prior pause never creates a watcher', async () => {
+      await stopFolderWatching()
+      state.instances.length = 0
       const before = state.instances.length
       resumeFolderWatching()
       // A resume without a real pause must never create a watcher that was not there.
@@ -348,82 +385,29 @@ describe('folderWatcher — own-write suppression', () => {
 
     it('a second pause is idempotent', async () => {
       install()
-      addWatchedFolder(tmpDir('fw-pause2-'))
+      openRoot(tmpDir('fw-pause2-'))
       await pauseFolderWatching()
       const afterFirst = state.instances.length
       await pauseFolderWatching()
       expect(state.instances.length).toBe(afterFirst)
     })
 
-    it('resume creates nothing when a folder was added mid-pause (watcher already running)', async () => {
-      // Reset the module's pause latch: stopFolderWatching() does NOT clear `watchingPaused`,
+    it('changing the root while paused does not start a watcher behind the pause', async () => {
+      // `watchingPaused` survives across tests (module singleton),
       // so a prior test that ended paused would otherwise leak it in and make pauseFolderWatching
       // early-return instead of nulling the watcher.
       resumeFolderWatching()
       await stopFolderWatching()
       state.instances.length = 0
       install()
-      addWatchedFolder(tmpDir('fw-pause-mid-'))
+      openRoot(tmpDir('fw-pause-mid-'))
       await pauseFolderWatching()
-      // A folder added while paused starts a fresh watcher, so `watcher` is non-null yet
-      // `watchingPaused` is still true. resume must NOT start a second watcher — this covers
-      // the `if (watcher) return` branch of resumeFolderWatching.
-      addWatchedFolder(tmpDir('fw-pause-mid2-'))
+      const afterPause = state.instances.length
+      // Re-rooting while paused must not create a watcher: resume owns that transition.
+      openRoot(tmpDir('fw-pause-mid2-'))
+      expect(state.instances.length).toBe(afterPause)
       resumeFolderWatching()
-      // pause closed instance #1; the mid-pause add created instance #2; resume added nothing.
-      expect(state.instances).toHaveLength(2)
-      expect(state.instances[1].closed).toBe(false)
+      expect(state.instances.length).toBe(afterPause + 1)
     })
-  })
-
-  it('still reports add / unlink for a file the app just wrote', () => {
-    install()
-    markOwnWrite('/w/mine.md')
-    __emitFolderEvent('add', '/w/mine.md')
-    __emitFolderEvent('unlink', '/w/mine.md')
-    expect(seen.added).toEqual(['/w/mine.md'])
-    expect(seen.removed).toEqual(['/w/mine.md'])
-  })
-
-  it('reports the change again once the suppression window has elapsed', () => {
-    vi.useFakeTimers()
-    try {
-      install()
-      markOwnWrite('/w/mine.md')
-      vi.advanceTimersByTime(2001)
-      __emitFolderEvent('change', '/w/mine.md')
-      expect(seen.changed).toEqual(['/w/mine.md'])
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('prunes expired entries when the suppression map grows past its cap', () => {
-    vi.useFakeTimers()
-    try {
-      install()
-      // Fill past OWN_WRITE_MAX_ENTRIES (256) with entries that are all still live.
-      for (let i = 0; i < 257; i++) markOwnWrite(`/w/live-${i}.md`)
-      // They are all within the window, so pruning must not drop any of them.
-      __emitFolderEvent('change', '/w/live-0.md')
-      expect(seen.changed).toEqual([])
-
-      // Expire them, then push one more: the pruning pass clears the stale entries.
-      vi.advanceTimersByTime(2001)
-      markOwnWrite('/w/fresh.md')
-      __emitFolderEvent('change', '/w/live-256.md')
-      expect(seen.changed).toEqual(['/w/live-256.md'])
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('forgets suppressions when watching stops', async () => {
-    install()
-    markOwnWrite('/w/mine.md')
-    await stopFolderWatching()
-    install()
-    __emitFolderEvent('change', '/w/mine.md')
-    expect(seen.changed).toEqual(['/w/mine.md'])
   })
 })

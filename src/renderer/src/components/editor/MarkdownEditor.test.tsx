@@ -137,7 +137,7 @@ describe('MarkdownEditor', () => {
   })
 })
 
-describe('MarkdownEditor context menu (PLAN §3)', () => {
+describe('MarkdownEditor context menu', () => {
   const onChange = vi.fn()
 
   beforeEach(() => {
@@ -307,7 +307,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs/a.md'))
   })
 
-  it('show-in-folder swallows a rejection without throwing (PLAN §5.3)', async () => {
+  it('show-in-folder swallows a rejection without throwing', async () => {
     const c = setup({ filePath: '/docs/a.md' })
     // Force the underlying IPC to reject (e.g. an externally-deleted file) so the
     // defensive .catch in showInFolder is exercised and the failure is swallowed.
@@ -408,7 +408,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     expect(getView().state.doc.toString()).toBe('# Hello')
   })
 
-  it('bold with no selection parks the cursor between the markers, never inserts "text" (PLAN §3)', async () => {
+  it('bold with no selection parks the cursor between the markers, never inserts "text"', async () => {
     const c = setup()
     const before = getView().state.doc.length // 7 for '# Hello'
     // Collapse the selection at the end of the document (no selected text).

@@ -1,16 +1,16 @@
-// Plan 04 — copy fidelity (R13): turn the preview's bare semantic HTML into a Word /
+// Copy fidelity (R13): turn the preview's bare semantic HTML into a Word /
 // Confluence / Excel / Notion "what you see is what you get" payload.
 //
 // Strategy (D12 = A, recommended): inline a SELECTED subset of computed styles onto every
-// element so the fragment renders correctly without the preview's external CSS (§4.2). Mermaid
+// element so the fragment renders correctly without the preview's external CSS. Mermaid
 // diagrams (D13) are rasterized to PNG `data:` URLs because the target apps don't render inline
 // `<svg>`. Math (D17) is deliberately NOT rasterized: KaTeX emits MathML next to its HTML, and
-// Word / OneNote turn that MathML into real editable equations (§4.8) — a bitmap would be a
+// Word / OneNote turn that MathML into real editable equations — a bitmap would be a
 // downgrade. Dark themes are forced to light (D16) so a dark preview never pastes as
-// grey-on-grey. Excel/Word specific tweaks (§4.6) raise the hit rate further.
+// grey-on-grey. Excel/Word specific tweaks raise the hit rate further.
 //
-// Design note: instead of pairing live DOM ↔ clone (the fragile approach in the plan's early
-// drafts), we attach the to-be-copied fragment to the document (offscreen) and read its OWN
+// Design note: instead of pairing live DOM ↔ clone (the fragile approach in early drafts),
+// we attach the to-be-copied fragment to the document (offscreen) and read its OWN
 // computed style — the fragment is self-describing, so no cross-tree pairing is needed and the
 // canonical/live mismatch risk disappears entirely.
 import lightCssRaw from 'github-markdown-css/github-markdown.css?raw'
@@ -23,7 +23,7 @@ import { mermaidPngCache, mermaidSvgCache, slotHashMap } from './mermaidBake'
 // the payload degrades to "structure only" (no inline styles) instead of stalling the copy.
 const MAX_INLINE_BYTES = 1024 * 1024
 
-// A1 — selected computed-style properties (§4.2). Layout properties that Word/Excel mangle
+// A1 — selected computed-style properties. Layout properties that Word/Excel mangle
 // (display/position/width/height/overflow/float) are deliberately excluded.
 const SIMPLE_PROPS = [
   'font-family',
@@ -146,7 +146,7 @@ function walkAll(work: HTMLElement, forceLight: boolean): void {
  * handler a payload (the clean semantic HTML with internal markers stripped) so it calls
  * preventDefault — otherwise the browser performs its native copy of the raw, un-styled DOM,
  * which pastes with no inline colors and unusable inline `<svg>` (the exact "worse than
- * nothing" failure mode we guard against, §4.5).
+ * nothing" failure mode we guard against).
  */
 export function safeEnhanceForPaste(html: string): string {
   try {
@@ -183,7 +183,7 @@ function makeLightHost(scoped: HTMLElement): HTMLElement {
 // math) that must not be flattened into inline styles.
 function walkInline(node: HTMLElement, parent: HTMLElement): void {
   // Skip mermaid + KaTeX subtrees: the slot is replaced later (replaceMermaid) and the formula
-  // must keep its MathML intact (§4.8).
+  // must keep its MathML intact.
   if (node.hasAttribute('data-mermaid-slot') || node.classList.contains('katex')) return
   const decl = collectInlineStyles(node, parent)
   if (decl) node.setAttribute('style', decl)
@@ -201,7 +201,7 @@ function collectInlineStyles(el: HTMLElement, parent: HTMLElement): string {
   for (const prop of SIMPLE_PROPS) {
     const v = cs.getPropertyValue(prop)
     if (!v) continue
-    // Skip values inherited unchanged from the parent (keeps the payload small, §4.2.3).
+    // Skip values inherited unchanged from the parent.
     // Normalize first: getComputedStyle returns inconsistently-spaced values across engines
     // (e.g. `rgb(0,0,0)` vs `rgb(0, 0, 0)`), so compare normalized forms.
     const cv = norm(v)
@@ -281,7 +281,7 @@ function replaceMermaid(work: HTMLElement): void {
   }
 }
 
-// §4.8 — rewrite appdoc:// images from the pre-inlined map so the SYNCHRONOUS keyboard path also
+// rewrite appdoc:// images from the pre-inlined map so the SYNCHRONOUS keyboard path also
 // embeds the images of a PARTIAL SELECTION (the whole-article cache only covers the full
 // document, and the menu path inlines via embedImages instead). Unmapped sources are left
 // untouched: showing a broken image beats embedding the WRONG one, and the copy never fails.
@@ -295,7 +295,7 @@ function inlineCachedImages(work: HTMLElement): void {
   })
 }
 
-// §4.6 — per-target tweaks that raise the paste hit rate (Excel real tables, etc.).
+// per-target tweaks that raise the paste hit rate (Excel real tables, etc.).
 function postProcess(work: HTMLElement): void {
   const cells = work.querySelectorAll('td, th')
   cells.forEach((cell) => {
@@ -307,7 +307,7 @@ function postProcess(work: HTMLElement): void {
   work.querySelectorAll('table').forEach((t) => t.setAttribute('border', '1'))
 }
 
-// Minimal document envelope improves Word / Outlook HTML parsing stability (§4.6).
+// Minimal document envelope improves Word / Outlook HTML parsing stability.
 function wrapHtml(body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"></head><body class="markdown-body">${body}</body></html>`
 }

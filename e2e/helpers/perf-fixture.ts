@@ -117,8 +117,10 @@ export async function openFolder(
   const imported = await page.evaluate(async (f) => {
     const w = window as any
     const { markdownFiles } = await w.api.files.resolvePaths([f])
+    // Root first: opening replaces the workspace (ADR-0023), so importing before setting the root
+    // would have every document wiped by the reset.
+    await w.api.documents.setWorkspaceRoot(f)
     const docs = await w.api.documents.importMany(markdownFiles)
-    await w.api.documents.setOpenFolder(f)
     const ui = w.__uiStore.getState()
     ui.setActiveFolder(f)
     if (docs.length > 0) ui.setActiveDocumentId(docs[0].id)

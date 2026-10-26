@@ -44,6 +44,23 @@ export function useLocalDocument(
   // (CodeMirror internally uses \n as the line separator).
   const eolRef = useRef<'\r\n' | '\n'>('\n')
 
+  // One place to keep the two dirty signals in step: the global `dirty` boolean the UI reads, and
+  // the per-document unsaved-buffer registry the main process needs (it cannot discover unsaved
+  // edits itself — its store holds the bytes last read from disk). See ADR-0023.
+  // Clearing dirty must clear BOTH signals, or the main process would keep searching / refusing to
+  // replace a document that is in fact saved.
+  //
+  // Declared before the switch effects below, which call it.
+  const clearDirty = useCallback(() => {
+    const ui = useUIStore.getState()
+    ui.setDirty(false)
+    // Defensive: every caller of clearDirty runs after the layout effect has set prevIdRef, so the
+    // falsy branch is unreachable in practice.
+    /* v8 ignore next */
+    if (prevIdRef.current) ui.clearUnsavedBuffer(prevIdRef.current)
+    setDirtyState(false)
+  }, [])
+
   // Switching to a different document: always overwrite the local draft with the
   // authoritative content (disk).
   //
@@ -63,8 +80,7 @@ export function useLocalDocument(
     setLocalTitle(title)
     savedContentRef.current = doc.content
     savedTitleRef.current = title
-    setDirtyState(false)
-    useUIStore.getState().setDirty(false)
+    clearDirty()
     justSwitchedRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.id])
@@ -85,8 +101,7 @@ export function useLocalDocument(
     const title = displayTitle(doc)
     if (dirtyRef.current) {
       if (doc.content === savedContentRef.current && title === savedTitleRef.current) {
-        setDirtyState(false)
-        useUIStore.getState().setDirty(false)
+        clearDirty()
       }
       savedContentRef.current = doc.content
       savedTitleRef.current = title
@@ -97,8 +112,7 @@ export function useLocalDocument(
     setLocalTitle(title)
     savedContentRef.current = doc.content
     savedTitleRef.current = title
-    setDirtyState(false)
-    useUIStore.getState().setDirty(false)
+    clearDirty()
     // `filePath` is part of the dependency set on purpose: a sidebar (or external) rename is a
     // disk-level move that leaves `updatedAt` untouched, so without it the draft title would
     // keep showing the old name forever.
@@ -118,8 +132,7 @@ export function useLocalDocument(
     setLocalTitle(title)
     savedContentRef.current = doc.content
     savedTitleRef.current = title
-    setDirtyState(false)
-    useUIStore.getState().setDirty(false)
+    clearDirty()
   }, [doc?.id, doc?.encoding, doc?.updatedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Trust the on-disk file's own line ending (async, overriding the synchronous inference above):
@@ -139,9 +152,19 @@ export function useLocalDocument(
     }
   }, [doc?.id, doc?.filePath])
 
-  const setDirty = useCallback((d: boolean) => {
+  const setDirty = useCallback((d: boolean, content?: string) => {
     setDirtyState(d)
-    useUIStore.getState().setDirty(d)
+    const ui = useUIStore.getState()
+    ui.setDirty(d)
+    const id = prevIdRef.current
+    if (!id) return
+    if (!d) {
+      ui.clearUnsavedBuffer(id)
+      return
+    }
+    // d === true here. Every caller supplies `content` when marking dirty; the guard is defensive.
+    /* v8 ignore next */
+    if (content !== undefined) ui.reportUnsavedBuffer(id, content)
   }, [])
 
   // Before saving, restore the editor-normalized LF back to the document's original line ending,
@@ -174,7 +197,7 @@ export function useLocalDocument(
   const handleContentChange = useCallback(
     (newContent: string) => {
       setLocalContent(newContent)
-      setDirty(computeDraftDirty(newContent, localTitleRef.current))
+      setDirty(computeDraftDirty(newContent, localTitleRef.current), newContent)
     },
     [setDirty, computeDraftDirty],
   )
@@ -209,23 +232,25 @@ export function useLocalDocument(
       // Blank name: fall back to the saved one. Only the title is reverted content
       // dirtiness is recomputed so an abandoned rename cannot hide unsaved edits.
       setLocalTitle(savedTitleRef.current)
-      setDirty(computeDraftDirty(localContent, savedTitleRef.current))
+      setDirty(computeDraftDirty(localContent, savedTitleRef.current), localContent)
       return
     }
     setLocalTitle(normalized)
-    setDirty(computeDraftDirty(localContent, normalized))
+    setDirty(computeDraftDirty(localContent, normalized), localContent)
   }, [localTitle, localContent, setDirty, computeDraftDirty, normalizeTitle])
 
   // Called after Save / Save As / Reload succeeds: update the "saved" baseline to the latest content/title.
   // `title` must be in DISPLAY form (see displayTitle) the same form the draft uses
-  const markSaved = useCallback((content: string, title: string) => {
-    savedContentRef.current = content
-    savedTitleRef.current = title
-    setLocalContent(content)
-    setLocalTitle(title)
-    setDirtyState(false)
-    useUIStore.getState().setDirty(false)
-  }, [])
+  const markSaved = useCallback(
+    (content: string, title: string) => {
+      savedContentRef.current = content
+      savedTitleRef.current = title
+      setLocalContent(content)
+      setLocalTitle(title)
+      clearDirty()
+    },
+    [clearDirty],
+  )
 
   return {
     localContent,

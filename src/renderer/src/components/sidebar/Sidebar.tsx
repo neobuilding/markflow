@@ -77,6 +77,7 @@ import {
   ContextMenuCheckboxItem,
 } from '../ui/context-menu'
 import type { Document } from '../../types'
+import { relativePath } from '../../../../../shared/fileUtils'
 import { SidebarSearch } from './SidebarSearch'
 
 // Inline folder naming : 'create' adds a subfolder under `parentPath`,
@@ -122,7 +123,9 @@ export function Sidebar(): React.ReactElement | null {
     toggleSidebar,
     activeDocumentId,
     setActiveDocumentId,
-    setSearchOpen,
+    selectDocument,
+    sidebarView,
+    setSidebarView,
     activeFolder,
     setActiveFolder,
     closeWorkspace,
@@ -250,29 +253,31 @@ export function Sidebar(): React.ReactElement | null {
   }, [openFolderMut])
 
   const handleCreate = useCallback(async () => {
+    // Same "ask first" ordering as the inline row below (ADR-0023).
+    const ui = useUIStore.getState()
+    if (ui.dirty) {
+      const discard = await window.api.dialog.confirm({
+        message: t('app.unsavedSwitch', { title: ui.activeDocumentTitle ?? '' }),
+        okText: t('app.confirmDiscard'),
+        cancelText: t('app.confirmKeep'),
+      })
+      if (!discard) return
+    }
     const doc = await createMut.mutateAsync({ title: 'Untitled' })
     setActiveDocumentId(doc.id)
     useUIStore.getState().setEditable(true) // new documents are editable by default
     useUIStore.getState().setIsNewUnsaved(true) // first Save will prompt for a path
-  }, [createMut, setActiveDocumentId])
+  }, [createMut, setActiveDocumentId, t])
 
   // Document select / delete / star / details: reused by the doc tree (including subfolders).
   // Returns whether the switch actually happened (false if the user cancelled the dirty
   // confirm) so callers like the "Rename" menu item can abort
+  // Thin wrapper over the store's guarded entry point (ADR-0023). The guard used to live here,
+  // which left five other switch paths completely unprotected; keeping the boolean return is what
+  // lets the "Rename" menu item abort when the user keeps their edits.
   const handleSelectDoc = useCallback(
-    async (doc: Document): Promise<boolean> => {
-      if (useUIStore.getState().dirty) {
-        const ok = await window.api.dialog.confirm({
-          message: t('app.unsavedSwitch'),
-          okText: t('app.confirmDiscard'),
-          cancelText: t('app.confirmKeep'),
-        })
-        if (!ok) return false
-      }
-      setActiveDocumentId(doc.id)
-      return true
-    },
-    [setActiveDocumentId, t],
+    async (doc: Document): Promise<boolean> => selectDocument(doc.id),
+    [selectDocument],
   )
 
   // deletion is a destructive action and must be gated behind the in-app
@@ -539,6 +544,17 @@ export function Sidebar(): React.ReactElement | null {
       const fileName = resolved.name
       try {
         if (fileEdit.mode === 'create') {
+          // Ask BEFORE creating: creating first and switching second would leave an orphan draft
+          // on disk if the switch was then refused (ADR-0023).
+          const ui = useUIStore.getState()
+          if (ui.dirty) {
+            const discard = await window.api.dialog.confirm({
+              message: t('app.unsavedSwitch', { title: ui.activeDocumentTitle ?? '' }),
+              okText: t('app.confirmDiscard'),
+              cancelText: t('app.confirmKeep'),
+            })
+            if (!discard) return undefined
+          }
           const doc = await createMut.mutateAsync({
             // `ext` drives the real file name in the main process, so the extension the user
             // typed is what lands on disk; the title stays extension-less as stored elsewhere.
@@ -763,21 +779,46 @@ export function Sidebar(): React.ReactElement | null {
       >
         <div className="titlebar-no-drag flex items-center gap-1.5 flex-1 min-w-0">
           <div className="flex items-center gap-0.5 ml-auto">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t('sidebar.search')}
-                  onClick={() => setSearchOpen(true)}
-                >
-                  <Search size={13} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('sidebar.search')} ({formatShortcut('⌘K')})
-              </TooltipContent>
-            </Tooltip>
+            {/* Files / Search are MUTUALLY EXCLUSIVE surfaces: the Search view needs the whole
+                panel for its query, replace, scope rows and hit list, which a 240px sidebar cannot
+                also give to the file tree (ADR-0023). The old "resident panel pinned above the
+                tree" squeezed both and left no room for a visible scope. */}
+            <div
+              role="tablist"
+              aria-label={t('sidebar.search')}
+              className="flex items-center rounded border border-[var(--color-border)] overflow-hidden shrink-0"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sidebarView === 'files'}
+                data-testid="sidebar-view-files"
+                onClick={() => setSidebarView('files')}
+                className={cn(
+                  'px-1.5 py-0.5 text-2xs transition-colors',
+                  sidebarView === 'files'
+                    ? 'bg-[var(--color-accent-muted)] text-accent'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]',
+                )}
+              >
+                {t('sidebar.files')}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sidebarView === 'search'}
+                data-testid="sidebar-view-search"
+                onClick={() => setSidebarView('search')}
+                className={cn(
+                  'px-1.5 py-0.5 text-2xs border-l border-[var(--color-border)] transition-colors',
+                  sidebarView === 'search'
+                    ? 'bg-[var(--color-accent-muted)] text-accent'
+                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]',
+                )}
+              >
+                {t('sidebar.search')}
+              </button>
+            </div>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -979,159 +1020,163 @@ export function Sidebar(): React.ReactElement | null {
         </ContextMenu>
       )}
 
-      {/* Resident "search in files" panel (Phase 4): pinned above the document tree. */}
-      <SidebarSearch />
+      {/* The two surfaces are mutually exclusive: either the Search view or the file tree. */}
+      {sidebarView === 'search' && <SidebarSearch />}
 
       {/* Document list / welcome . The area itself is now right-clickable: while the tree
-          is populated this used to be the one dead zone in the sidebar (G2 kept it silent). */}
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div className="flex-1 overflow-y-auto" data-testid="sidebar-tree-area">
-            {!activeFolder && memoryOnlyDocs.length === 0 ? (
-              // No folder open and no drafts: show the welcome/empty guidance. (G2)
-              <WelcomeState
-                onOpenFile={handleImportFile}
-                onOpenFolder={handleImportFolder}
-                onCreate={handleCreate}
-              />
-            ) : loading ? (
-              <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">
-                {t('editor.loading')}
-              </div>
-            ) : memoryOnlyDocs.length === 0 && tree.length === 0 && !rootCreatePending ? (
-              <EmptyState
-                onNewFile={() =>
-                  activeFolder && setFileEdit({ mode: 'create', parentPath: activeFolder })
-                }
-                onNewFolder={() =>
-                  activeFolder && startFolderEdit({ mode: 'create', parentPath: activeFolder })
-                }
-                showAllFolders={showAllFolders}
-                onToggleShowAllFolders={setShowAllFolders}
-              />
-            ) : (
-              <>
-                {memoryOnlyDocs.length > 0 && (
-                  <>
-                    <div className="px-3 pt-2 pb-1 text-2xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
-                      {t('sidebar.unsavedDrafts')}
-                    </div>
-                    <ul className="pb-1">
-                      {memoryOnlyDocs.map((doc) => (
-                        <TreeRow
-                          key={doc.id}
-                          node={memoryOnlyLeaf(doc)}
-                          depth={0}
-                          activeId={activeDocumentId}
-                          onSelectDoc={handleSelectDoc}
-                          onDeleteDoc={handleDeleteDoc}
-                          onDetailsDoc={handleDetailsDoc}
-                          expanded={expanded}
-                          onToggleExpand={toggleExpand}
-                          onExpandAll={expandAll}
-                          onCopyFolderPath={copyText}
-                          onShowInFolder={revealInFolder}
-                          folderEdit={folderEdit}
-                          onStartFolderEdit={startFolderEdit}
-                          onSubmitFolderName={submitFolderName}
-                          onCancelFolderEdit={cancelFolderEdit}
-                          onDeleteFolder={handleDeleteFolder}
-                          fileEdit={fileEdit}
-                          fileNameHint={fileHint}
-                          folderHint={folderHint}
-                          onStartFileRename={startFileRename}
-                          onSubmitFileName={submitFileName}
-                          onCancelFileEdit={cancelFileEdit}
-                          nameExists={nameExists}
-                        />
-                      ))}
-                    </ul>
-                  </>
-                )}
-                {/* The tree list. The current folder itself has no row, so a row naming an entry
+          is populated this used to be the one dead zone in the sidebar (G2 kept it silent).
+          Unmounted (not just hidden) while the Search view is showing: a hidden tree would still
+          hold its expanded state and keep answering keyboard focus. */}
+      {sidebarView === 'files' && (
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div className="flex-1 overflow-y-auto" data-testid="sidebar-tree-area">
+              {!activeFolder && memoryOnlyDocs.length === 0 ? (
+                // No folder open and no drafts: show the welcome/empty guidance. (G2)
+                <WelcomeState
+                  onOpenFile={handleImportFile}
+                  onOpenFolder={handleImportFolder}
+                  onCreate={handleCreate}
+                />
+              ) : loading ? (
+                <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">
+                  {t('editor.loading')}
+                </div>
+              ) : memoryOnlyDocs.length === 0 && tree.length === 0 && !rootCreatePending ? (
+                <EmptyState
+                  onNewFile={() =>
+                    activeFolder && setFileEdit({ mode: 'create', parentPath: activeFolder })
+                  }
+                  onNewFolder={() =>
+                    activeFolder && startFolderEdit({ mode: 'create', parentPath: activeFolder })
+                  }
+                  showAllFolders={showAllFolders}
+                  onToggleShowAllFolders={setShowAllFolders}
+                />
+              ) : (
+                <>
+                  {memoryOnlyDocs.length > 0 && (
+                    <>
+                      <div className="px-3 pt-2 pb-1 text-2xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                        {t('sidebar.unsavedDrafts')}
+                      </div>
+                      <ul className="pb-1">
+                        {memoryOnlyDocs.map((doc) => (
+                          <TreeRow
+                            key={doc.id}
+                            node={memoryOnlyLeaf(doc)}
+                            depth={0}
+                            activeId={activeDocumentId}
+                            onSelectDoc={handleSelectDoc}
+                            onDeleteDoc={handleDeleteDoc}
+                            onDetailsDoc={handleDetailsDoc}
+                            expanded={expanded}
+                            onToggleExpand={toggleExpand}
+                            onExpandAll={expandAll}
+                            onCopyFolderPath={copyText}
+                            onShowInFolder={revealInFolder}
+                            folderEdit={folderEdit}
+                            onStartFolderEdit={startFolderEdit}
+                            onSubmitFolderName={submitFolderName}
+                            onCancelFolderEdit={cancelFolderEdit}
+                            onDeleteFolder={handleDeleteFolder}
+                            fileEdit={fileEdit}
+                            fileNameHint={fileHint}
+                            folderHint={folderHint}
+                            onStartFileRename={startFileRename}
+                            onSubmitFileName={submitFileName}
+                            onCancelFileEdit={cancelFileEdit}
+                            nameExists={nameExists}
+                          />
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  {/* The tree list. The current folder itself has no row, so a row naming an entry
                 created directly under it is rendered here too — at the folder/file seam, next to
                 the siblings it is about to join. The list renders whenever there is either a real
                 row to show or a temporary one pending, so naming something inside an empty folder
                 cannot look like the menu item did nothing. */}
-                {(tree.length > 0 || rootCreatePending) && (
-                  <ul className="py-1">
-                    {tree.map((node, i) => (
-                      <Fragment key={node.path}>
-                        {i === rootFolderCreateIndex ? rootFolderCreateRows : null}
-                        {i === rootFileCreateIndex ? rootFileCreateRows : null}
-                        <TreeRow
-                          node={node}
-                          depth={0}
-                          activeId={activeDocumentId}
-                          onSelectDoc={handleSelectDoc}
-                          onDeleteDoc={handleDeleteDoc}
-                          onDetailsDoc={handleDetailsDoc}
-                          onEnterFolder={handleEnterFolder}
-                          expanded={expanded}
-                          onToggleExpand={toggleExpand}
-                          onExpandAll={expandAll}
-                          onCopyFolderPath={copyText}
-                          onShowInFolder={revealInFolder}
-                          onNewDocHere={createDocInFolder}
-                          folderEdit={folderEdit}
-                          onStartFolderEdit={startFolderEdit}
-                          onSubmitFolderName={submitFolderName}
-                          onCancelFolderEdit={cancelFolderEdit}
-                          onDeleteFolder={handleDeleteFolder}
-                          fileEdit={fileEdit}
-                          fileNameHint={fileHint}
-                          folderHint={folderHint}
-                          onStartFileRename={startFileRename}
-                          onSubmitFileName={submitFileName}
-                          onCancelFileEdit={cancelFileEdit}
-                          nameExists={nameExists}
-                        />
-                      </Fragment>
-                    ))}
-                    {/* When there is nothing for the splice index to land between, append at the end. */}
-                    {rootFolderCreateIndex === tree.length ? rootFolderCreateRows : null}
-                    {rootFileCreateIndex === tree.length ? rootFileCreateRows : null}
-                  </ul>
-                )}
-              </>
-            )}
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent
-          // See the current-folder bar menu: the create items keep this trigger mounted, so
-          // Radix's focus restore would blur (and thus cancel) the inline input it just opened.
-          onCloseAutoFocus={(e) => e.preventDefault()}
-        >
-          {/* Both create items need an open folder. The guard sits here — while rendering —
+                  {(tree.length > 0 || rootCreatePending) && (
+                    <ul className="py-1">
+                      {tree.map((node, i) => (
+                        <Fragment key={node.path}>
+                          {i === rootFolderCreateIndex ? rootFolderCreateRows : null}
+                          {i === rootFileCreateIndex ? rootFileCreateRows : null}
+                          <TreeRow
+                            node={node}
+                            depth={0}
+                            activeId={activeDocumentId}
+                            onSelectDoc={handleSelectDoc}
+                            onDeleteDoc={handleDeleteDoc}
+                            onDetailsDoc={handleDetailsDoc}
+                            onEnterFolder={handleEnterFolder}
+                            expanded={expanded}
+                            onToggleExpand={toggleExpand}
+                            onExpandAll={expandAll}
+                            onCopyFolderPath={copyText}
+                            onShowInFolder={revealInFolder}
+                            onNewDocHere={createDocInFolder}
+                            folderEdit={folderEdit}
+                            onStartFolderEdit={startFolderEdit}
+                            onSubmitFolderName={submitFolderName}
+                            onCancelFolderEdit={cancelFolderEdit}
+                            onDeleteFolder={handleDeleteFolder}
+                            fileEdit={fileEdit}
+                            fileNameHint={fileHint}
+                            folderHint={folderHint}
+                            onStartFileRename={startFileRename}
+                            onSubmitFileName={submitFileName}
+                            onCancelFileEdit={cancelFileEdit}
+                            nameExists={nameExists}
+                          />
+                        </Fragment>
+                      ))}
+                      {/* When there is nothing for the splice index to land between, append at the end. */}
+                      {rootFolderCreateIndex === tree.length ? rootFolderCreateRows : null}
+                      {rootFileCreateIndex === tree.length ? rootFileCreateRows : null}
+                    </ul>
+                  )}
+                </>
+              )}
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent
+            // See the current-folder bar menu: the create items keep this trigger mounted, so
+            // Radix's focus restore would blur (and thus cancel) the inline input it just opened.
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            {/* Both create items need an open folder. The guard sits here — while rendering —
               rather than inside each click handler: with no folder open this menu is
               unreachable, so an in-handler check could never be exercised. */}
-          {activeFolder && (
-            <>
-              <ContextMenuItem
-                data-testid="side-bg-new-folder"
-                onClick={() => startFolderEdit({ mode: 'create', parentPath: activeFolder })}
-              >
-                <FolderPlus size={13} /> {t('ctx.newFolderHere')}
-              </ContextMenuItem>
-              <ContextMenuItem
-                data-testid="side-bg-new-file"
-                onClick={() => setFileEdit({ mode: 'create', parentPath: activeFolder })}
-              >
-                <Plus size={13} /> {t('sidebar.newFile')}
-              </ContextMenuItem>
-            </>
-          )}
-          <ContextMenuSeparator />
-          {/* Same flag as the toolbar button: one source of truth, never two states. */}
-          <ContextMenuCheckboxItem
-            data-testid="side-bg-show-all-folders"
-            checked={showAllFolders}
-            onCheckedChange={(v) => setShowAllFolders(v === true)}
-          >
-            {t('sidebar.showAllFolders')}
-          </ContextMenuCheckboxItem>
-        </ContextMenuContent>
-      </ContextMenu>
+            {activeFolder && (
+              <>
+                <ContextMenuItem
+                  data-testid="side-bg-new-folder"
+                  onClick={() => startFolderEdit({ mode: 'create', parentPath: activeFolder })}
+                >
+                  <FolderPlus size={13} /> {t('ctx.newFolderHere')}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  data-testid="side-bg-new-file"
+                  onClick={() => setFileEdit({ mode: 'create', parentPath: activeFolder })}
+                >
+                  <Plus size={13} /> {t('sidebar.newFile')}
+                </ContextMenuItem>
+              </>
+            )}
+            <ContextMenuSeparator />
+            {/* Same flag as the toolbar button: one source of truth, never two states. */}
+            <ContextMenuCheckboxItem
+              data-testid="side-bg-show-all-folders"
+              checked={showAllFolders}
+              onCheckedChange={(v) => setShowAllFolders(v === true)}
+            >
+              {t('sidebar.showAllFolders')}
+            </ContextMenuCheckboxItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      )}
 
       {/* Resize handle right-click menu . Widened from `w-1` (4px) to `w-1.5` (6px) so the narrow strip is a realistic right-click target : at 4px it was almost impossible to hit */}
       <ContextMenu>
@@ -1488,6 +1533,12 @@ function DocItem({
           // target to the nearest element carrying these attributes.
           data-kind="doc"
           data-path={doc.filePath ?? ''}
+          // The document's own id, so a row can be addressed by IDENTITY and not by position.
+          // The sidebar sorts newest-first, so "the first row" is not a stable reference to a
+          // particular document — two documents created in the same millisecond even tie, and
+          // the sort is stable, so their relative order is then arbitrary. `data-path` cannot
+          // serve here either: a memory-only draft has no path yet.
+          data-doc-id={doc.id}
           // Rows must be a real tab stop. Without it a click leaves focus on <body>, so the
           // sidebar's F2 / Ctrl+Z handler (bound on the sidebar root) never receives the
           // keypress at all — the shortcut silently did nothing.
@@ -1858,6 +1909,15 @@ function TreeRow({
 }: TreeRowProps) {
   const { t } = useT()
   const open = expanded.has(node.path)
+  const activeFolder = useUIStore((s) => s.activeFolder)
+  const setSearchInclude = useUIStore((s) => s.setSearchInclude)
+  const setSearchDetailsOpen = useUIStore((s) => s.setSearchDetailsOpen)
+  const requestScopeFocus = useUIStore((s) => s.requestScopeFocus)
+  const setSidebarView = useUIStore((s) => s.setSidebarView)
+  // "Search in This Folder" (ADR-0023): scope comes from a PLACE the user pointed at, expressed as
+  // a path relative to the root — the same rule VS Code follows with "Find in Folder…". Disabled
+  // when the folder is not under the root, because there would be no relative path to write.
+  const canSearchInFolder = !!activeFolder && isDirInFolder(node.path, activeFolder)
   if (node.isFolder) {
     const renaming = folderEdit?.mode === 'rename' && folderEdit.targetPath === node.path
     // A folder create row goes to the front of this level; a file create row keeps the seam
@@ -1981,6 +2041,24 @@ function TreeRow({
               onClick={() => onEnterFolder?.(node.path)}
             >
               <ArrowRight size={13} /> {t('ctx.openFolder')}
+            </ContextMenuItem>
+            <ContextMenuItem
+              data-testid="side-search-in-folder"
+              disabled={!canSearchInFolder}
+              onClick={() => {
+                if (!activeFolder) return
+                const rel = relativePath(node.path, activeFolder)
+                // The root itself needs no `include` — an empty scope means the whole root.
+                setSearchInclude(rel ? `./${rel}` : '')
+                setSidebarView('search')
+                // Show the scope the action just wrote: a scope the user cannot see is exactly
+                // what this whole plan exists to prevent (ADR-0023 D8). Focus follows it so the
+                // value can be edited immediately.
+                setSearchDetailsOpen(true)
+                requestScopeFocus()
+              }}
+            >
+              <Search size={13} /> {t('ctx.searchInFolder')}
             </ContextMenuItem>
             <ContextMenuSeparator />
             {open ? (

@@ -87,9 +87,33 @@ export default function App(): React.ReactElement {
         e.preventDefault()
         toggleSidebar()
       }
+      // Find in Files (Ctrl/Cmd+Shift+F) → open the resident Search view (in the sidebar) and focus
+      // its input. It is editor-agnostic and lives in the sidebar so it survives a focused editor
+      // (ADR-0023).
+      //
+      // NOTE: plain Ctrl/Cmd+H is deliberately NOT claimed here. It belongs to the editor's
+      // find/replace widget (VS Code parity: Ctrl+H = Replace in the current document), which is
+      // opened by EditorPane's own guarded window handler. Claiming it here — and doing so from a
+      // capture-phase listener that calls stopPropagation — would win the race and open the sidebar
+      // search-in-files panel instead, stealing the shortcut from the editor.
+      //
+      // Nothing is lost by dropping it: the Search view's cross-file REPLACE is a capability OF
+      // that view, not a shortcut of its own. Ctrl/Cmd+Shift+F opens the view, and the view's own
+      // chevron toggle (`search-toggle-replace`) expands the replace row from there.
+      if (mod && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const st = useUIStore.getState()
+        st.setSidebarOpen(true)
+        st.setSidebarView('search')
+        st.requestSearchFocus()
+        return
+      }
     }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
+    // Capture phase: global shortcuts must fire even when the editor (CodeMirror) has focus and
+    // would otherwise stopPropagation the keydown before it reaches a bubbling window listener.
+    window.addEventListener('keydown', handleKey, true)
+    return () => window.removeEventListener('keydown', handleKey, true)
   }, [setNewDocOpen, toggleSidebar])
 
   // Ctrl/Cmd+A that reaches the renderer (i.e. the native accelerator did not consume it)

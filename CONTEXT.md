@@ -44,10 +44,15 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 
 ## Navigation & workspace
 
-- **Workspace** — the currently open folder plus its loaded documents (tracked via `openFolders`).
-  **Close workspace** returns to an empty state; **Close file** keeps the folder + sidebar.
-- **Active Folder** — the folder whose file tree is shown in the sidebar; renderer-side UI state in the
-  Zustand `ui` store.
+- **Workspace** — the single opened root folder plus its loaded documents, tracked via **`workspaceRoot`**
+  (ADR-0023), which is also the **single** directory the file watcher covers.
+  Opening a folder **replaces** the workspace. **Close workspace** returns to an empty state; **Close file**
+  keeps the folder + sidebar.
+- **Active folder (当前文件夹)** — the folder whose file tree is shown in the sidebar; renderer-side UI
+  state in the Zustand `ui` store, set when you drill into a subfolder. It is **not** the workspace root and
+  **never affects search scope** — glob and relative paths are resolved against **`workspaceRoot`** (ADR-0023
+  decisions 2–3). It stays `null` only for an empty workspace. _Avoid_: conflating with **Opened root folder**
+  / `workspaceRoot`.
 - **Sidebar** — collapsible nested folder tree listing Markdown files; file names include their extension
   and subfolders start collapsed.
 - **File path breadcrumb** — current file path shown above the editor; folder icon reveals it in the system
@@ -77,13 +82,29 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **Document Store** — the in-memory `Map` (`electron/main/model/documentStore.ts`) holding loaded documents;
   the single source of truth in the main process. Replaced the old SQLite `:memory:` layer (see
   `docs/adr/0001-disk-driven-document-model.md`).
-- **minisearch index** — pure-JS full-text search (`electron/main/ipc/search.ts`), rebuilt per query,
-  powering the Command Palette. No native dependency.
-- **folderWatcher (chokidar)** — recursive watcher over `openFolders` that syncs disk changes into the
-  store; ignores non-Markdown and build output (`**/*.html`, `**/*.pdf`, `**/*.docx`, `**/*.tmp`).
+- **minisearch index** — pure-JS full-text search (`electron/main/ipc/search.ts`), rebuilt per query, used
+  to rank **Search view** candidates. Under ADR-0023 it may only rank files that already have a literal
+  body hit, never expand the candidate set; **Quick Open** (file names / paths) does not use it. No native
+  dependency.
+- **folderWatcher (chokidar)** — recursive watcher over the single `workspaceRoot` that syncs disk changes
+  into the store; ignores non-Markdown and build output (`**/*.html`, `**/*.pdf`, `**/*.docx`, `**/*.tmp`).
 - **Markdown dual-write** — Markdown files are written to disk; there is no separate index file.
-- **Full-text search** — minisearch-powered, instant results. Neither search mode returns a body
-  snippet (see **Bounded hit context**); results are presented by title and path only.
+- **Full-text search** — instant cross-document search. The **Search view** groups results per file and
+  renders **hit rows** carrying bounded hit context (line number + offsets + a short excerpt), never the
+  full document body (see **Bounded hit context**); **Quick Open** presents a flat **file name + relative
+  path** list only. Body matching is a **literal phrase** match (see **Literal phrase query**) and
+  includes open documents' **unsaved buffers** (see **Dirty buffer snapshot**).
+- **Literal phrase query (完整字面短语)** — a body query matched as **one literal string**: spaces belong
+  to the query, nothing is split into words, and there is no implicit AND/OR. `Machine Learning`
+  matches only that consecutive phrase, never a file that merely contains both words. The same matcher
+  serves display counts, hit offsets and every replace action, so "4 hits shown" and "4 replacements
+  written" cannot diverge. _Avoid_: "word search", "multi-term query". _See also_: **Full-text search**.
+- **Dirty buffer snapshot (脏缓冲区快照)** — the renderer's current text for every open **unsaved**
+  document, sent with a content query (`dirtyDocumentSnapshots`) together with a monotonic
+  `documentStateRevision`. It exists because the main process only knows the on-disk bytes, so without
+  the snapshot a document with unsaved edits would be searched (and skipped by replace) from a stale
+  version. Replace plans and applies carry the same snapshot plus `unsavedDocumentIds`; an apply whose
+  revision no longer matches is cancelled before any write. _See also_: **Unsaved-changes guard**.
 
 ## Search & find
 
@@ -91,18 +112,38 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   row. Owned by the **editor** (find + replace) and the **preview** (find only). Carries the
   **match-case (`Aa`)**, **whole-word (`ab`)**, **regex (`.*`)** and **preserve-case (`AB`)** toggles.
   _Avoid_: "search panel" when you mean this.
-- **Search panel (搜索面板)** — the cross-document search surface that lists matching documents. It
-  navigates between documents rather than overlaying one. Both the temporary `Ctrl/Cmd+K` palette
-  and the **sidebar's resident panel** are instances of it.
+- **Search panel (搜索面板)** — the cross-document search surface that lists matching documents and
+  navigates between them (rather than overlaying one). It now has **two specialized instances that no
+  longer share one component**: the `Ctrl/Cmd+K` **Quick Open** palette (file **names / paths** only,
+  flat list) and the sidebar **Search view** (Markdown **body content** only, with scope + replace).
+  See **Quick Open** and **Search view**. The old "one `SearchPanel` shared by both" design was
+  superseded by `docs/adr/0023-search-scope-and-specialized-surfaces.md`.
   _Avoid_: "find bar" when you mean this.
-  Note: unlike the Find widget, the Search panel is **MiniSearch-based** and deliberately does **not**
-  expose case-sensitive / whole-word / regex toggles — that is a capability boundary, not an oversight
-  (the same `Aa`/`ab`/`.*`/`AB` set belongs to the Find widget only).
-- **Resident search panel (常驻搜索面板)** — the persistent, collapsible instance of the **Search
-  panel** that lives above the document tree in the sidebar. It is the only surface that renders
-  per-file **hit rows**; the `Ctrl/Cmd+K` palette stays a flat list for quick jumps. Its collapsed
-  state is session-only (see **No persisted settings**). The UI label reads "Search in files".
-  _Avoid_: "search panel" when you need to distinguish it from the palette; "find bar" entirely.
+  Note: unlike the Find widget, the Search view is **literal-match based by default** — the
+  **Match Case (`Aa`)** toggle (default off — ADR-0023) plus the **opt-in regex (`.*`)** and
+  **whole word (`ab`)** toggles (both default off, ADR-0023's 2026-10-17 revision). In regex
+  mode `\n` matches a line break (CRLF included); a real newline typed into the query is still
+  refused (single-line input).
+- **Search view (搜索视图)** — the sidebar surface for cross-document **body-content** search, scope
+  (include/exclude), and cross-file replace. It is **mutually exclusive with the File view** (File
+  view shows the tree; Search view shows the search box, scope, and results — never both), replacing
+  the old "resident panel above the tree" design. It is the only surface that renders per-file **hit
+  rows** and the replace controls; the `Ctrl/Cmd+K` Quick Open stays a flat list for quick jumps. Its
+  collapsed state is session-only (see **No persisted settings**). The UI label reads "Search in
+  files". Content-only, scope, and replace are settled by
+  `docs/adr/0023-search-scope-and-specialized-surfaces.md` (supersedes the earlier _Planned_ note).
+  _Avoid_: "search panel" when you mean this specific sidebar surface; "find bar" entirely.
+
+- **Quick Open (快速打开 / Go to File)** — the `Ctrl/Cmd+K` palette that locates a document by **file
+  name or relative path** only (flat list, no scope, no replace). It is the file-name half of the
+  specialized search split (ADR-0023); the sidebar Search view owns body content. Its only visible
+  entry is the **Command centre** trigger in the **global toolbar**.
+- **Global toolbar (全局工具栏)** — the app's always-present tool row at the top of the **editor
+  pane** (`EditorPane.tsx` `CommonToolbar`), rendered both with and without an active document. It
+  hosts global actions — the sidebar toggle and the **Command centre** trigger — as opposed to the
+  document-scoped file operations to its right. **It is not a separate top bar**: adding one was
+  rejected (ADR-0023 decision 7), so the dead `ui/titlebar.tsx` is deleted rather than revived.
+  _Avoid_: "title bar" / "顶栏" for this — MarkFlow has no dedicated title bar component.
 - **Hit row (命中行)** — one in-document occurrence row inside a search group, carrying the line
   number plus the **document-wide character offsets** of the match, so it can place the editor
   cursor there.
@@ -110,26 +151,89 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   snippet (≤ `MAX_MATCHES_PER_DOC` per document, ≤ `MAX_RESULT_DOCS` documents), each entry being a
   line number, the match offsets and a short excerpt. Returning only this keeps document bodies out
   of the UI and the clipboard (data minimization).
-- **Content mode (正文模式)** — the search mode that matches a document's `title`, `content` and
-  `folderPath`.
-- **Filename mode (文件名模式)** — the search mode that matches the **file name** only; by default the
-  path and the extension are ignored.
-- **Active folder (当前文件夹)** — the folder the workspace is rooted at: the opened folder, or — when a
-  single file is opened instead — that file's parent directory (`useOpenPaths` sets it either way). It is
-  `null` only for an **empty workspace** (start-up, or after closing the workspace), i.e. when there are no
-  documents at all. Glob and relative paths are both resolved against it (Q11).
-- **Relative path (相对路径)** — a document's `filePath` as seen from the **active folder**, forward-slash
-  separated (`2026/notes.md`); this is what a search result row shows. Because any opened file establishes
-  an active folder, there is always a root once a document exists. The "Copy File Path" menu item still
-  copies the **absolute** path — that is the form you can paste into a terminal or file manager.
+- **Content mode (正文模式)** — the Search view's body-content search: it matches a document's
+  `content` field **only** (the `title` and `folderPath` no longer contribute — ADR-0023 decision 4 makes
+  the candidate set content-only; memory-only **drafts** are excluded once any scope pattern is set). The
+  hit line shows a matched snippet from the body and a line number.
+  _Avoid_: "filename mode" — that is now Quick Open's job, not a mode of the Search view.
+  _See also_: **Quick Open**, **Search view**.
+- **Filename mode (文件名模式)** — file-name matching (the historical mode): it matches the **file
+  name** only; by default the path and the extension are ignored. It is now the responsibility of
+  **Quick Open** (`Ctrl/Cmd+K`), not a mode of the sidebar Search view (ADR-0023). The glob behavior is
+  unchanged. _Avoid_: conflating it with the body-content Search view. _See also_: **Quick Open**.
+- **Whole word (`ab`)** — a match counts only when the query forms a **complete word**, judged against
+  **Unicode word boundaries** rather than an ASCII letter/digit boundary. Segmentation follows the
+  text's **script** (independent of locale), so the toggle is meaningful for Chinese and Japanese as
+  well as Latin. It belongs to the **Find widget** toggle set **and the Search view** (`ab`, both
+  implemented — ADR-0023's 2026-10-17 revision). _Avoid_: assuming it is a no-op for CJK — on
+  a full-ICU runtime `中文` matches inside `这是中文文本` while `文文` does not.
+- **Opened root folder (打开的根文件夹)** — the single folder the user opened; the only root of the
+  workspace. Distinct from the **active folder**: drilling into a subfolder in the sidebar changes the
+  active folder, **not** the root. Search **scope** patterns are always resolved against this root.
+- **Search scope (搜索范围)** — the pair of visible, editable path patterns (`include` / `exclude`)
+  that delimit a cross-document search; **empty means the whole opened root folder**. It is expressed
+  as text, never as a mode toggle, so what is being searched is always on screen. An invalid pattern
+  blocks the search rather than being ignored (see **Invalid pattern**). See
+  `docs/adr/0023-search-scope-and-specialized-surfaces.md`.
+- **Include / Exclude pattern (包含 / 排除规则)** — a comma-separated list of patterns resolved
+  against the **opened root folder**. The list is split with a **glob-aware** tokenizer (commas
+  inside `{}` or `[]` do not split, so `*.{md,mdx},./docs` is two patterns and `[ab,c].md` is one).
+  Each pattern is then **classified** before matching — see **Path-type pattern** and **Glob
+  expression**. Excluded wins over included. An **invalid** pattern blocks the whole query and the
+  whole replace plan (nothing is silently dropped): see **Invalid pattern**. _Planned:_ see the plan
+  named below; not yet implemented.
+- **Path-type pattern (路径型 pattern)** — a scope pattern that names a **place**: an absolute path,
+  or one starting with `./`, `../`, `.\`, `..\`. It is matched twice — as written and as
+  `pattern + '/**'` — so `./work` selects that folder and everything under it, and only at that
+  position under the root (VS Code's `isSearchPath`, `queryBuilder.ts:362-364`).
+- **Glob expression (glob 表达式)** — a scope pattern that names a **shape** rather than a place
+  (e.g. `*.md`, `**/*.md`, `*.{md,mdx}`). It is matched as `**/pattern/**` and `**/pattern`, so a
+  bare `docs` matches that folder at any depth and `*.md` matches `a/b.md` — a blanket
+  `pattern + '/**'` would miss both. _Avoid_: applying the path-type double candidate to a glob.
+- **Invalid pattern (无效 pattern)** — a scope pattern that cannot be parsed (unbalanced `[`/`{`, a
+  stray `}`). It **blocks** both search and replace: the query returns a blocking diagnostic naming
+  the field and the pattern and clears previous results, and the replace plan fails with zero
+  writes. Dropping a bad pattern would silently widen the scope the user asked for.
+- **Command centre (命令中心)** — MarkFlow's equivalent of VS Code's Command Centre: a **compact
+  trigger** (not a persistent title-bar input field) that opens the `Ctrl/Cmd+K` Quick
+  Open palette (placeholder "Go to file…", `⌘K` hint). It lives in the **global toolbar** — the
+  editor pane's always-present tool row — right of the sidebar toggle, so it stays visible with the
+  sidebar closed and with no document open. It is the only visible entry for file-name
+  search and deliberately sits in the global toolbar, not as a resident sidebar input. _See also_:
+  **Quick Open**, **Search view**, **Global toolbar**.
+- **Unsaved-changes guard (未保存守卫)** — the single store-level door every document switch must
+  pass through (`selectDocument` / `openDocumentAt`): while the current document has unsaved edits,
+  a confirmation names the document being left and offers discard / keep; "keep" cancels the switch
+  (and writes no pending match) and returns focus to the editor. Side effects such as creating a
+  document happen **after** the prompt. It exists because MarkFlow keeps one active document whose
+  unsaved buffer lives only in the editor, so a switch would otherwise destroy it — VS Code needs no
+  such prompt because it keeps a dirty working copy per editor (ADR-0023 decision 9). The guard
+  governs **switching** only; unsaved text still participates in search (see **Dirty buffer snapshot**)
+  and its document is skipped by cross-file replace.
+  _See also_: **Search view**, **Global toolbar**.
+- **Search entry points (搜索入口)** — every entry must **name its own range** in its visible label or
+  tooltip, because no two of them search the same thing:
+  _go to file_ (`⌘K`, command centre → Quick Open) / _search in files_ (`⌘⇧F`, Search view) /
+  _find in document_ (`⌘F`, editor) / _replace in document_ (`⌘H`, editor — **editor-only**: it is
+  NOT an entry point for the Search view, whose cross-file replace is opened from that view's own
+  toggle) / _find in preview_ (`⌘F` in preview mode, find-only).
+- **Find in folder (在此文件夹中搜索)** — the sidebar tree context-menu action that seeds the **Search
+  view's** search scope (`./<subpath>`) from **where the user is** (VS Code's `Find in Folder`), rather
+  than asking them to pick a mode first. On the root node it clears `include` only, preserving any
+  `exclude`. _See also_: **Search scope**, **Search view**.
+- **Relative path (相对路径)** — a document's `filePath` as seen from the **`workspaceRoot`** (the opened
+  root folder), forward-slash separated (`2026/notes.md`); this is what a search result row shows and what
+  **include / exclude** patterns are matched against. It is **not** relative to the **active folder** (that
+  is UI drill state only — ADR-0023). The "Copy File Path" menu item still copies the **absolute** path —
+  that is the form you can paste into a terminal or file manager.
   _Avoid_: rendering the absolute path in the UI.
 - **File name (文件名)** — `basename(filePath)`, **including** the extension (e.g. `notes.md`).
 - **Document title (`title`)** — the document's derived, **extension-less** file name (e.g. `notes`); what
   the sidebar shows. _Avoid_: using "file name" to mean `title`.
 - **Glob pattern (通配符)** — a file-name pattern in VS Code's glob syntax (`/`, `*`, `?`, `**`, `{}`,
-  `[]`, `[!]`). In **filename mode** a query containing a glob metacharacter switches from plain file-name
-  matching to glob matching; a pattern without `/` matches the file name at any depth, one with `/` matches
-  the path relative to the open folder.
+  `[]`, `[!]`). In **Quick Open** (the historical filename mode) a query containing a glob metacharacter
+  switches from plain file-name matching to glob matching; a pattern without `/` matches the file name at
+  any depth, one with `/` matches the path relative to **`workspaceRoot`**.
 
 ## Rendering & security
 
@@ -142,16 +246,16 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **internal markers（内部标记）** — attributes the pipeline injects for its own bookkeeping; must be stripped
   when content leaves the app (rich-text copy): `data-line` (source-line mapping), `data-mermaid-slot`
   (mermaid placeholder index), `data-lang` (fence language), `data-baked` (runtime-mutated node, e.g. the
-  image-error placeholder). _Removed in plan-03 / plan-02 D9_: `data-mermaid-source` — the "Copy diagram
-  source" menu was deleted in plan-02 D3, so the mermaid source now lives only in the renderer's per-parse
-  mermaid slot, never the DOM.
+  image-error placeholder). _Removed_: `data-mermaid-source` — the "Copy diagram source" menu was
+  deleted, so the mermaid source now lives only in the renderer's per-parse mermaid slot, never the
+  DOM.
 - **github-markdown-css（单一 Markdown 样式源）** — the preview and the exporter share the same
   `github-markdown-css` stylesheet (injected at runtime for the preview, inlined for export), so
-  preview == export == print (WYSIWYG). Replaced the hand-rolled Tailwind Typography `.prose` rules in
-  plan-03 §4.1.
+  preview == export == print (WYSIWYG). It replaced the hand-rolled Tailwind Typography `.prose`
+  rules. See `docs/adr/0018-preview-refactor-03-style-perf-media.md`.
 - **lazy mermaid render（Mermaid 懒渲染）** — mermaid diagrams render in the DOM after the incremental patch,
   via IntersectionObserver + a content-hash SVG cache, instead of being baked into the HTML string. Avoids the
-  ~2.5s first-paint regression and keeps re-parses from re-rendering unchanged diagrams (plan-03 §4.3).
+  ~2.5s first-paint regression and keeps re-parses from re-rendering unchanged diagrams.
 - **complete bake（导出补齐烘焙）** — export / print / rich-text copy render **every** mermaid
   diagram into the canonical HTML before building their output, instead of reusing the
   preview's lazily-rendered DOM. The preview is allowed to be partial (viewport-driven); an
@@ -159,7 +263,7 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   already rendered is never rendered again. ADR 0019.
 - **intrinsic image dimensions（图片固有尺寸）** — local `appdoc://` images get `width`/`height` from
   `image-size` (main process, header-only, cached by path) before sanitize/patch, so the browser reserves
-  space and the first paint doesn't jump (CLS). See plan-03 §4.4 / R9.
+  space and the first paint doesn't jump (CLS). See `docs/adr/0018-preview-refactor-03-style-perf-media.md`.
 - **appdoc:// protocol** — custom scheme for in-app document image / asset rewriting. The sanitize gate
   explicitly whitelists it (`ALLOWED_URI_REGEXP`), otherwise DOMPurify would strip the `src`.
 - **Formula（公式）** — one KaTeX-rendered math node in the preview, inline or display: the unit the UI
@@ -182,8 +286,9 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   changed programmatically. The app **chrome** applies
   `document.documentElement.classList.toggle('dark', …)` only when `theme === 'dark'` — it does **not** track
   `system`. So: preview/export honor the theme, the chrome does not follow the OS `system` preference, and there
-  is no user switch. This is a pre-existing theme-sync gap, out of scope for `plan-03` (D-B only unifies the
-  preview's style source to github-markdown-css; it does not add a toggle). _Avoid_: assuming the app ships a
+  is no user switch. This is a pre-existing theme-sync gap, out of scope for
+  `docs/adr/0018-preview-refactor-03-style-perf-media.md` (it only unifies the preview's style source
+  to github-markdown-css; it does not add a toggle). _Avoid_: assuming the app ships a
   clickable dark-mode switch.
 
 ## Platform & filesystem

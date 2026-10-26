@@ -6,7 +6,7 @@
 //
 // The stored value is typed `SanitizedHtml`, so the brand survives the round-trip:
 // whatever export / stage-2 rich-text copy reads back is provably the output of the
-// single sanitization gate (Plan 01 §5.5 contract #2).
+// single sanitization gate (ADR-0002 contract #2).
 // ADR 0019: the export cache holds the sanitized preview HTML *plus the mermaid slots it
 // was parsed from*, because the preview no longer bakes diagrams into the string — the
 // complete bake (export/print/copy) needs the diagram SOURCE, not just the placeholders.

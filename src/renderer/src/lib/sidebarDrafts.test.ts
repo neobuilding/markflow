@@ -18,7 +18,7 @@ function doc(id: string, filePath: string): Document {
   }
 }
 
-describe('sidebarDrafts (PLAN §6.3 G2)', () => {
+describe('sidebarDrafts', () => {
   it('identifies memory-only documents as those with no filePath', () => {
     expect(isMemoryOnly(doc('a', ''))).toBe(true)
     expect(isMemoryOnly(doc('b', '/x/b.md'))).toBe(false)

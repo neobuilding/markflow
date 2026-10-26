@@ -1,268 +1,371 @@
 import type { IpcMain } from 'electron'
-import MiniSearch from 'minisearch'
-import { getAllDocuments, listDocuments, type Document } from '../model/documentStore'
+import { getAllDocuments, type Document } from '../model/documentStore'
 import { hasGlobMeta, globMatch } from './glob'
+import { buildScope, inScope, relToRoot, scopeDiagnostics } from '../lib/scope-filter'
+import { createScanner, type MatchOptions, type ScanResult } from '../lib/content-match'
+import { getWorkspaceRoot } from '../model/workspaceRoot'
+import { nodeDiskIO, type DiskIO } from '../lib/disk-io'
+import { scanRegexBatch, REGEX_SCAN_TIMEOUT_MS } from '../service/regex-runner'
 import { relativePath } from '../../../shared/fileUtils'
+import type {
+  SearchDiagnostic,
+  SearchQueryOptions,
+  SearchQueryResponse,
+  SearchResult,
+} from '../../../shared/searchTypes'
 
-// The search wire types (SearchMode / SearchMatch / SearchResult) are shared with the renderer and
-// live in `shared/searchTypes.ts` — they used to be declared twice, here and in the renderer's
-// `types/index.ts`, kept in sync only by a "mirrors ..." comment.
-import type { SearchMode, SearchMatch, SearchResult } from '../../../shared/searchTypes'
+// Display caps. They bound what the PANEL shows and nothing else — in particular they must never
+// take part in a replace computation, which is why the replace service carries its own, unrelated
+// safety budget (ADR-0023).
+export const MAX_MATCHES_PER_DOC = 50
+export const MAX_RESULT_DOCS = 200
 
-// Bounds for the resident-panel hit context (Q21 / §3.8): cap per-document occurrences and the
-// number of candidate documents so a broad query over a large library never scans/returns
-// unbounded data.
-const MAX_MATCHES_PER_DOC = 50
-const MAX_RESULT_DOCS = 200
-const EXCERPT_MAX = 120
-
-// ─── Search index (minisearch) ───────────────────────────────────────────────
-// minisearch is a pure-JS inverted index. We rebuild it from the in-memory store
-// on each query; the document set is small (hundreds to low thousands) so a full
-// rebuild per query is negligible and avoids keeping the index in sync with mutations.
-//
-// CJK note: minisearch's default tokenizer splits on whitespace/punctuation, which
-// returns 0 matches for Chinese text. We supply a custom tokenizer that uses
-// Intl.Segmenter (granularity 'word') for CJK and lower-cases ASCII, so both ASCII
-// space-separated words and CJK word sequences are indexed correctly.
-
-// Minimal structural type for Intl.Segmenter (the TS lib may not ship the type on
-// every target; we only rely on `segment()` returning word-like segments).
-interface SegmenterSegment {
-  segment: string
-  isWordLike?: boolean
+interface Scored {
+  result: SearchResult
+  rel: string | null
 }
-interface SegmenterLike {
-  segment(input: string): Iterable<SegmenterSegment>
+
+// Deterministic ordering, and the reason it must be deterministic: the frozen contract dropped
+// `score`/`updatedAt`, and literal phrase matching has no relevance score to sort by. Sorting by
+// the root-relative path gives the same order on Windows and Linux, which is what
+// `docs/agents/testing.md` requires. Drafts (no path) sort last, by title.
+function compare(a: Scored, b: Scored): number {
+  if (a.rel === null && b.rel === null) return a.result.title.localeCompare(b.result.title)
+  if (a.rel === null) return 1
+  if (b.rel === null) return -1
+  return a.rel.localeCompare(b.rel)
 }
-let segmenter: SegmenterLike | null = null
-function getSegmenter(): SegmenterLike | null {
-  const IntlAny = Intl as unknown as {
-    Segmenter?: new (locale: string, opts: { granularity: string }) => SegmenterLike
+
+function emptyResponse(
+  diagnostics: SearchDiagnostic[] = [],
+  root: string | null = null,
+): SearchQueryResponse {
+  return {
+    results: [],
+    diagnostics,
+    appliedScope: { root, include: [], exclude: [] },
+    truncated: false,
   }
-  if (typeof IntlAny.Segmenter === 'undefined') return null
-  if (!segmenter) {
-    segmenter = new IntlAny.Segmenter('zh', { granularity: 'word' })
-  }
-  return segmenter
 }
 
-function tokenize(text: string): string[] {
-  const seg = getSegmenter()
-  if (!seg) {
-    // Fallback for runtimes without Intl.Segmenter: split on whitespace/punctuation.
-    return text
-      .toLowerCase()
-      .split(/[\s\p{P}]+/u)
-      .filter((t) => t.length > 0)
-  }
-  const out: string[] = []
-  for (const { segment, isWordLike } of seg.segment(text)) {
-    if (isWordLike) out.push(segment.toLowerCase())
-  }
-  return out
-}
-
-function buildIndex(
-  docs: Array<{ id: string; title: string; folderPath: string; content: string }>,
-  fields: string[],
-) {
-  const mini = new MiniSearch<{
-    id: string
-    title: string
-    folderPath: string
-    content: string
-  }>({
-    // `folderPath` is indexed in 'content' mode (Q2): searching a path fragment
-    // (e.g. a subfolder name or a file extension) surfaces matching documents, enabling
-    // Ctrl+P-style file/path lookup. In 'filename' mode only `title` is indexed so the
-    // query is matched against file names only.
-    fields,
-    storeFields: ['title', 'folderPath'],
-    tokenize,
-    processTerm: (t) => t.toLowerCase(),
-  })
-  mini.addAll(
-    docs.map((d) => ({
-      id: d.id,
-      title: d.title,
-      folderPath: d.folderPath,
-      content: d.content,
-    })),
-  )
-  return mini
-}
-
-export function registerSearchHandlers(ipcMainInstance: IpcMain): void {
-  ipcMainInstance.handle(
-    'search:query',
-    (_event, params: { query?: string; scopeFolder?: string | null; mode?: SearchMode }) => {
-      const q = (params?.query ?? '').trim()
-      if (!q) return []
-      // Scope: when a folder is supplied, restrict to its markdown documents (the folder
-      // itself plus every descendant sub-folder) via listDocuments' isInFolder filter.
-      // A null/empty scope searches the whole workspace, which keeps the global Ctrl+K
-      // behaviour intact when no folder is active.
-      const scoped = params?.scopeFolder ? listDocuments(params.scopeFolder) : getAllDocuments()
-      if (!scoped.length) return []
-      // Mode: 'filename' matches file names (glob over the path relative to the active
-      // folder); 'content' (default) is full-text across title + body + folder path.
-      const mode: SearchMode = params?.mode === 'filename' ? 'filename' : 'content'
-      return mode === 'filename'
-        ? filenameSearch(scoped, q, params?.scopeFolder)
-        : contentSearch(scoped, q)
-    },
-  )
-}
-
-// Split a content-mode query into the literal terms we scan each line for. Lower-cased and
-// whitespace-stripped, so a query like "Machine Learning" yields ['machine', 'learning']. This
-// is a deliberate, documented simplification of minisearch's fuzzy/prefix matching (Q21): a
-// fuzzy hit whose word does not appear as a literal substring in the body is still listed as a
-// result but contributes no `matches` row — an acceptable degradation, not a correctness bug.
-function splitTerms(query: string): string[] {
-  return query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((t) => t.length > 0)
-}
-
-// Collect bounded in-document occurrences of the query terms. Line offsets are computed against
-// the raw content (so they align with CodeMirror doc positions even on CRLF files — we locate
-// line boundaries via `indexOf('\n')` rather than `split`, which would drop the `\r`). Within a
-// line we find every case-insensitive substring hit for every term, then drop overlaps so an
-// embedded term (e.g. 'he' inside 'the') does not double-count. Capped at `maxPerDoc` occurrences
-// (per-document bound); the cross-document cap (MAX_RESULT_DOCS) is applied by the caller.
-export function extractMatches(content: string, terms: string[], maxPerDoc: number): SearchMatch[] {
-  if (!content || terms.length === 0) return []
-  const matches: SearchMatch[] = []
-  let lineStart = 0
-  let lineNo = 1
-  while (lineStart <= content.length) {
-    const nl = content.indexOf('\n', lineStart)
-    const lineEnd = nl === -1 ? content.length : nl
-    const lineText = content.slice(lineStart, lineEnd)
-    const hits: Array<{ from: number; to: number }> = []
-    const lower = lineText.toLowerCase()
-    for (const term of terms) {
-      let idx = lower.indexOf(term)
-      while (idx !== -1) {
-        hits.push({ from: lineStart + idx, to: lineStart + idx + term.length })
-        idx = lower.indexOf(term, idx + term.length)
-      }
-    }
-    // Sort by start, then keep only non-overlapping hits (a later hit that starts at or after
-    // the previous hit's end wins; an embedded hit is dropped).
-    hits.sort((a, b) => a.from - b.from)
-    let prevEnd = -1
-    for (const h of hits) {
-      if (h.from >= prevEnd) {
-        const excerpt = lineText.slice(0, EXCERPT_MAX)
-        const relFrom = h.from - lineStart
-        const relTo = h.to - lineStart
-        let excerptStart = relFrom
-        let excerptEnd = relTo
-        if (relFrom >= EXCERPT_MAX) {
-          excerptStart = EXCERPT_MAX
-          excerptEnd = EXCERPT_MAX
-        } else if (relTo > EXCERPT_MAX) {
-          excerptEnd = EXCERPT_MAX
-        }
-        matches.push({
-          line: lineNo,
-          start: h.from,
-          end: h.to,
-          excerpt,
-          excerptStart,
-          excerptEnd,
-        })
-        prevEnd = h.to
-        if (matches.length >= maxPerDoc) return matches
-      }
-    }
-    if (nl === -1) break
-    lineStart = nl + 1
-    lineNo += 1
-  }
-  return matches
-}
-
-// File-name search: when the query contains glob metacharacters, match each document's path
-// (relative to the active folder) with picomatch — the same matcher VS Code's file search
-// uses, so `*.md`, `src/**/*.ts`, `note[1-3].md` all work. Otherwise fall back to a
-// case-insensitive substring match over the title and relative path so plain queries still
-// surface files. No body snippet is returned: filename mode is about paths, not content, and
-// it carries no `matches` (hits are shown as flat file rows, not grouped occurrences).
-function filenameSearch(
-  docs: Document[],
-  query: string,
-  scopeFolder?: string | null,
-): SearchResult[] {
+/**
+ * Quick Open (Ctrl/Cmd+K): file names and relative paths only, no scope concept (D11).
+ * Glob support is the ADR-0013 #5 behaviour and is deliberately unchanged (D9).
+ */
+function filenameSearch(docs: Document[], query: string, root: string | null): SearchResult[] {
   const useGlob = hasGlobMeta(query)
   const lower = query.toLowerCase()
   const matched = docs.filter((d) => {
-    const rel = relativePath(d.filePath, scopeFolder)
+    const rel = relativePath(d.filePath, root)
     if (useGlob) return globMatch(rel, query)
     return d.title.toLowerCase().includes(lower) || rel.toLowerCase().includes(lower)
   })
-  // Bounds the result set so a broad glob (`*`, `**`) over a large library never returns an
-  // unbounded list — matches the content-mode cap (§3.8 / Q26(e)).
-  const capped = matched.length > MAX_RESULT_DOCS
-  const top = capped ? matched.slice(0, MAX_RESULT_DOCS) : matched
-  return top
+  return matched
     .map((d) => ({
-      id: d.id,
+      documentId: d.id,
       title: d.title,
-      folderPath: d.folderPath,
+      relPath: relToRoot(d.filePath, root),
       filePath: d.filePath,
-      score: 0,
-      updatedAt: d.updatedAt,
+      matchCount: 0,
+      matchCapped: false,
       matches: [],
-      truncated: capped,
     }))
     .sort((a, b) => a.title.localeCompare(b.title))
 }
 
-// Full-text search across title + body + folder path. Per plan §3.5 the body snippet is no
-// longer returned (to avoid leaking large spans of document text into the UI); the sidebar
-// renders the matched document by title and on-disk path instead. For the resident panel
-// (Phase 4) each hit document also carries bounded `matches`: the in-document occurrences of
-// the query terms, capped per document (MAX_MATCHES_PER_DOC) and across documents
-// (MAX_RESULT_DOCS). Docs whose only match was fuzzy/prefix (no literal term in the body) get an
-// empty `matches` array and are simply not expanded into a group.
-function contentSearch(docs: Document[], query: string): SearchResult[] {
-  const byId = new Map(docs.map((d) => [d.id, d]))
-  const terms = splitTerms(query)
-  const mini = buildIndex(
-    docs.map((d) => ({ id: d.id, title: d.title, folderPath: d.folderPath, content: d.content })),
-    ['title', 'content', 'folderPath'],
-  )
-  const results = mini.search(query, {
-    fuzzy: 0.2,
-    prefix: true,
-    boost: { title: 2, folderPath: 1.5 },
-  })
-  const capped = results.length > MAX_RESULT_DOCS
-  const top = capped ? results.slice(0, MAX_RESULT_DOCS) : results
-  return top
-    .map((r) => {
-      const doc = byId.get(r.id as string)
-      const matches = doc ? extractMatches(doc.content, terms, MAX_MATCHES_PER_DOC) : []
-      return {
-        id: r.id as string,
-        title: (r.title as string) ?? '',
-        folderPath: (r.folderPath as string) ?? '',
-        filePath: doc?.filePath ?? '',
-        score: r.score,
-        updatedAt: doc?.updatedAt ?? 0,
-        matches,
-        truncated: capped,
-      }
+interface Candidate {
+  doc: Document
+  rel: string | null
+  content: string
+}
+
+// Everything up to (but not including) matching a body: scope, drafts, out-of-root documents and
+// the unsaved-buffer override. Split out because regex mode needs the candidate list BEFORE it can
+// scan — the scan happens in a Worker and is handed back as a completed result per document
+// (ADR-0023 D37), so the two steps cannot be one loop any more.
+function collectCandidates(
+  docs: Document[],
+  dirty: Map<string, string>,
+  root: string | null,
+  scope: ReturnType<typeof buildScope>['scope'],
+): { candidates: Candidate[]; drafts: number; outOfRoot: number } {
+  const candidates: Candidate[] = []
+  let drafts = 0
+  let outOfRoot = 0
+
+  for (const d of docs) {
+    const rel = d.memoryOnly ? null : relToRoot(d.filePath, root)
+    // A document with a file that somehow sits outside the single root has no `rel` to match
+    // (D20); it cannot be scoped, so it is reported rather than silently included.
+    if (!d.memoryOnly && rel === null && d.filePath) {
+      outOfRoot += 1
+      continue
+    }
+    if (!inScope(rel, scope)) {
+      if (rel === null) drafts += 1
+      continue
+    }
+    // Unsaved buffers are searched from the renderer's snapshot: the store's `content` IS the
+    // bytes last read from disk, so without this the user would search stale text (ADR-0023).
+    candidates.push({ doc: d, rel, content: dirty.get(d.id) ?? d.content })
+  }
+
+  return { candidates, drafts, outOfRoot }
+}
+
+function buildResults(
+  candidates: Candidate[],
+  scanOf: (c: Candidate, index: number) => ScanResult,
+): { results: SearchResult[]; truncated: boolean; matchCapped: boolean } {
+  let matchCapped = false
+  const scored: Scored[] = []
+
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i]
+    const scan = scanOf(c, i)
+    // D12: Search view results are decided by real body hits ONLY. Title/path hits no longer
+    // produce an empty result group, and no longer inflate the replace count.
+    if (scan.total === 0) continue
+    if (scan.capped) matchCapped = true
+    scored.push({
+      rel: c.rel,
+      result: {
+        documentId: c.doc.id,
+        title: c.doc.title,
+        relPath: c.rel,
+        filePath: c.doc.filePath,
+        matchCount: scan.total,
+        matchCapped: scan.capped,
+        matches: scan.matches,
+      },
     })
-    .sort(
-      (a, b) =>
-        // Plan §3.8 / Q12: minisearch relevance first, title-lexicographic as the tiebreak
-        // (same rule filename mode already applies).
-        b.score - a.score || a.title.localeCompare(b.title),
+  }
+
+  scored.sort(compare)
+  const truncated = scored.length > MAX_RESULT_DOCS
+  return {
+    results: (truncated ? scored.slice(0, MAX_RESULT_DOCS) : scored).map((s) => s.result),
+    truncated,
+    matchCapped,
+  }
+}
+
+// Everything a content query needs before a single body is matched. Both entry points
+// (`runSearchQuery`, `handleSearchQuery`) go through it so the early exits and the diagnostic
+// assembly cannot drift apart.
+type Prepared =
+  | { kind: 'done'; response: SearchQueryResponse }
+  | {
+      kind: 'content'
+      root: string | null
+      q: string
+      opts: MatchOptions
+      compiled: Extract<ReturnType<typeof createScanner>, { ok: true }>
+      collected: ReturnType<typeof collectCandidates>
+      scope: ReturnType<typeof buildScope>['scope']
+    }
+
+function prepareSearchQuery(params: SearchQueryOptions, io: DiskIO): Prepared {
+  const root = getWorkspaceRoot()
+  const q = (params?.query ?? '').trim()
+  if (!q) return { kind: 'done', response: emptyResponse([], root) }
+  const docs = getAllDocuments()
+  if (docs.length === 0) return { kind: 'done', response: emptyResponse([], root) }
+
+  if (params.mode === 'filename') {
+    const results = filenameSearch(docs, q, root)
+    const truncated = results.length > MAX_RESULT_DOCS
+    const diagnostics: SearchDiagnostic[] = truncated
+      ? [
+          {
+            code: 'doc-cap',
+            blocking: false,
+            message: `showing the first ${MAX_RESULT_DOCS} files`,
+          },
+        ]
+      : []
+    return {
+      kind: 'done',
+      response: {
+        results: truncated ? results.slice(0, MAX_RESULT_DOCS) : results,
+        diagnostics,
+        appliedScope: { root, include: [], exclude: [] },
+        truncated,
+      },
+    }
+  }
+
+  // Content mode. The dirty-state fields are part of the frozen contract and are REQUIRED: the
+  // main process cannot discover unsaved edits itself, so a caller that omits them would silently
+  // search stale on-disk text. That is a programming error, not a user error — fail loudly.
+  const snapshots = params.dirtyDocumentSnapshots
+  const revision = params.documentStateRevision
+  if (!Array.isArray(snapshots) || typeof revision !== 'number') {
+    throw new TypeError(
+      'search:query content mode requires dirtyDocumentSnapshots and documentStateRevision',
     )
+  }
+  const dirty = new Map<string, string>()
+  for (const s of snapshots) {
+    if (s && typeof s.documentId === 'string' && typeof s.content === 'string') {
+      dirty.set(s.documentId, s.content)
+    }
+  }
+
+  // A multi-line query is not supported in literal mode (ADR-0023). The renderer blocks it before
+  // the IPC; here it simply matches nothing a single line could contain. (Regex mode reaches
+  // newlines through the `\n` escape instead — D32 — which contains no actual newline character.)
+  if (q.includes('\n') || q.includes('\r')) {
+    return { kind: 'done', response: emptyResponse([], root) }
+  }
+
+  const built = buildScope(params.include, params.exclude, root, io)
+  if (built.blocking) {
+    // A blocking scope never reaches `applyScope` with patterns: both the invalid-pattern and
+    // path-not-found paths return empty include/exclude, so there is nothing to echo here.
+    return {
+      kind: 'done',
+      response: {
+        results: [],
+        diagnostics: built.diagnostics,
+        appliedScope: { root, include: [], exclude: [] },
+        truncated: false,
+      },
+    }
+  }
+
+  const collected = collectCandidates(docs, dirty, root, built.scope)
+
+  const opts: MatchOptions = {
+    matchCase: params.matchCase === true,
+    regexp: params.regexp === true,
+    wholeWord: params.wholeWord === true,
+  }
+  const compiled = createScanner(q, opts)
+  if (!compiled.ok) {
+    // D33: a regex that does not compile is a BLOCKING failure, not a hint. Degrading to a
+    // literal search would silently match something else entirely, which is the same class of
+    // bug as silently widening a scope (D27).
+    return {
+      kind: 'done',
+      response: {
+        results: [],
+        diagnostics: [
+          { code: 'invalid-regex', field: 'query', blocking: true, message: compiled.message },
+        ],
+        appliedScope: { root, include: [], exclude: [] },
+        truncated: false,
+      },
+    }
+  }
+
+  return { kind: 'content', root, q, opts, compiled, collected, scope: built.scope }
+}
+
+function finishSearchQuery(
+  prepared: Extract<Prepared, { kind: 'content' }>,
+  search: ReturnType<typeof buildResults>,
+): SearchQueryResponse {
+  const diagnostics: SearchDiagnostic[] = []
+  if (search.truncated) {
+    diagnostics.push({
+      code: 'doc-cap',
+      blocking: false,
+      message: `showing the first ${MAX_RESULT_DOCS} files`,
+    })
+  }
+  if (search.matchCapped) {
+    diagnostics.push({
+      code: 'match-cap',
+      blocking: false,
+      message: `showing the first ${MAX_MATCHES_PER_DOC} hits per file`,
+    })
+  }
+  diagnostics.push(
+    ...scopeDiagnostics(prepared.scope, prepared.collected.drafts, prepared.collected.outOfRoot),
+  )
+
+  return {
+    results: search.results,
+    diagnostics,
+    appliedScope: {
+      root: prepared.root,
+      include: prepared.scope.include.map((p) => p.raw),
+      exclude: prepared.scope.exclude.map((p) => p.raw),
+    },
+    truncated: search.truncated,
+  }
+}
+
+/**
+ * Synchronous entry point. Used by the unit tests and as the fallback when the regex Worker cannot
+ * be started — in regex mode it runs the pattern on this thread, which is exactly what D37 exists
+ * to avoid, so production traffic goes through `handleSearchQuery` instead.
+ */
+export function runSearchQuery(params: SearchQueryOptions, io: DiskIO): SearchQueryResponse {
+  const prepared = prepareSearchQuery(params, io)
+  if (prepared.kind === 'done') return prepared.response
+  const search = buildResults(prepared.collected.candidates, (c) =>
+    prepared.compiled.factory.scan(c.content, MAX_MATCHES_PER_DOC),
+  )
+  return finishSearchQuery(prepared, search)
+}
+
+/**
+ * The `search:query` handler. Async for one reason only: in regex mode the scan is handed to a
+ * Worker thread so a backtracking pattern can be terminated instead of freezing the app (D37).
+ * Literal mode — the default, and the only mode that runs on every keystroke — never awaits.
+ */
+export async function handleSearchQuery(
+  params: SearchQueryOptions,
+  io: DiskIO,
+  runner: typeof scanRegexBatch = scanRegexBatch,
+): Promise<SearchQueryResponse> {
+  const prepared = prepareSearchQuery(params, io)
+  if (prepared.kind === 'done') return prepared.response
+
+  let scanOf: (c: Candidate, index: number) => ScanResult = (c) =>
+    prepared.compiled.factory.scan(c.content, MAX_MATCHES_PER_DOC)
+
+  if (prepared.opts.regexp) {
+    const candidates = prepared.collected.candidates
+    const outcome = await runner({
+      query: prepared.q,
+      opts: prepared.opts,
+      max: MAX_MATCHES_PER_DOC,
+      contents: candidates.map((c) => c.content),
+    })
+    if (!outcome.ok) {
+      if (outcome.reason === 'timeout') {
+        // Fail closed: the scan did not complete, so there is no trustworthy count to show. The
+        // Worker was terminated, so the run really stopped (D37).
+        return {
+          results: [],
+          diagnostics: [
+            {
+              code: 'regex-timeout',
+              field: 'query',
+              blocking: true,
+              message: `the pattern took longer than ${REGEX_SCAN_TIMEOUT_MS}ms and was stopped`,
+            },
+          ],
+          appliedScope: { root: prepared.root, include: [], exclude: [] },
+          truncated: false,
+        }
+      }
+      // 'unavailable' → no Worker to isolate in; answer the query on this thread rather than
+      // refusing to search at all.
+    } else {
+      const byIndex = outcome.results
+      scanOf = (_c, i) => byIndex[i] ?? { matches: [], total: 0, capped: false }
+    }
+  }
+
+  return finishSearchQuery(prepared, buildResults(prepared.collected.candidates, scanOf))
+}
+
+export function registerSearchHandlers(ipcMainInstance: IpcMain, io: DiskIO = nodeDiskIO): void {
+  ipcMainInstance.handle('search:query', (_event, params: SearchQueryOptions) =>
+    handleSearchQuery(params, io),
+  )
 }

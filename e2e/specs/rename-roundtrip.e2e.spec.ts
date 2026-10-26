@@ -1,4 +1,4 @@
-// TODO-4 regression (docs.local/todo_title-edit.md): renaming a file via the title
+// Regression: renaming a file via the title
 // bar or externally and renaming it back must NEVER close the open document or the
 // workspace. Guards the main-process watcher fixes: the existsSync check in
 // onFileRemoved (stale rename unlink), the missing-flag instead of record deletion,
@@ -21,7 +21,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
 
   /**
    * Open `file` through the same steps useOpenPaths performs (resolvePaths ->
-   * importMany -> set-open-folder -> setActiveFolder/setActiveDocumentId), switch it
+   * importMany -> setWorkspaceRoot -> setActiveFolder/setActiveDocumentId), switch it
    * into edit mode, and instrument the renderer: every main-process push event and
    * every activeDocumentId/activeFolder transition is recorded into window.__trace.
    */
@@ -35,8 +35,9 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
           return i > 0 ? args.file.slice(0, i) : ''
         })()
         const { directories, markdownFiles } = await window.api.files.resolvePaths([args.file])
+        // Opening REPLACES the workspace (ADR-0023), so the root is set BEFORE the import.
+        await window.api.documents.setWorkspaceRoot(directories[0] ?? dir)
         const imported = await window.api.documents.importMany(markdownFiles)
-        await window.api.documents.setOpenFolder(directories[0] ?? dir)
         const ui = w.__uiStore.getState()
         ui.setActiveFolder(dir)
         ui.setActiveDocumentId(imported[0].id)

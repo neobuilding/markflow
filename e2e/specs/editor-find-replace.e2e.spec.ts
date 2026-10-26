@@ -36,9 +36,15 @@ test.describe('find and replace', () => {
     await expect(panel).toBeVisible()
     await expect(page.getByTestId('editor-find-input')).toBeVisible()
     await expect(page.getByTestId('editor-find-replace')).toBeVisible()
-    // Both find surfaces share one floating "card" class (plan §3.1): the editor panel is a
+    // Both find surfaces share one floating "card" class (ADR-0023): the editor panel is a
     // CodeMirror top-panel styled as `.find-surface`, not an inline strip.
     await expect(page.locator('.cm-panels-top .find-surface').first()).toBeVisible()
+    // One shortcut, ONE owner: the sidebar's "search in files" view must stay closed. The app
+    // shell used to claim Ctrl+H for that view from a capture-phase listener that stops the
+    // event, which silently stole the key from the editor's replace panel (the Search view
+    // opened instead, and the editor's panel never appeared).
+    await expect(page.getByTestId('resident-search-input')).toBeHidden()
+    await expect(page.getByTestId('sidebar-view-search')).toHaveAttribute('aria-selected', 'false')
   })
 
   test('the toolbar replace button opens the same panel', async () => {
@@ -142,10 +148,10 @@ test.describe('find and replace', () => {
     await expect(page.getByTestId('editor-find')).toBeVisible()
     // Ctrl/Cmd+F is the find-only shortcut: the replace row must stay hidden (it appears only on
     // Ctrl/Cmd+H or the toolbar replace button). Guards against the two shortcuts collapsing into the
-    // same panel — the deviation first spotted during the §5.9 review.
+    // same panel — the deviation first spotted during the review.
     await expect(page.getByTestId('editor-find-replace')).toBeHidden()
 
-    // §5.10 re-open path, with the focus where real users have it: the panel opened above put focus
+    // re-open path, with the focus where real users have it: the panel opened above put focus
     // in the find input, so these presses ride the panel's own listeners (createPanel only runs on
     // the first open) AND require the cm-panel fields to be exempt from the G5 editable guard.
     await page.keyboard.press(`${mod}+H`)

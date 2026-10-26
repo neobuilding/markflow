@@ -40,7 +40,7 @@ describe('exportStore', () => {
   })
 
   it('keeps the SanitizedHtml brand so the value can go straight back into the preview DOM', () => {
-    // Plan 01 §5.5 contract #2: the export cache IS the canonical sanitized HTML, so
+    // ADR-0002 contract #2: the export cache IS the canonical sanitized HTML, so
     // whatever export (or stage-2 rich-text copy) reads back must still satisfy the
     // single DOM write entry — this is a COMPILE-time assertion; if `getExportHtml`
     // ever degrades to a plain `string` this file stops type-checking.

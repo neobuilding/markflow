@@ -31,8 +31,8 @@ menu` three-way cycle. The entry keeps only module-level side effects and `whenR
 - **i18n:** split into `storage.ts` + `useT.ts`; `index.ts` re-exports `useT` and no longer imports the UI
   store, removing the circular dependency.
 - **Window-focus bug:** the previously attempted `webContents.focus()` IPC was **removed** — it was
-  empirically disproven (no-op when the window is already foreground) and is documented as "do not retry"
-  in `docs.local/troubleshooting-editor-focus*.md`. The real root cause (native `window.confirm` triggering
+  empirically disproven (no-op when the window is already foreground) and is documented here as "do not
+  retry". The real root cause (native `window.confirm` triggering
   an OS-level `WIN-BLUR`) was fixed with `dialog:confirm` (app-modal `dialog.showMessageBox`).
 
 ## Consequences

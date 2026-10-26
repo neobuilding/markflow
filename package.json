@@ -8,6 +8,7 @@
   "scripts": {
     "postinstall": "node scripts/install-eslint-ts6.mjs",
     "prepare": "husky",
+    "precommit": "lint-staged --max-arg-length=4096",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
@@ -150,7 +151,8 @@
       "prettier --write"
     ],
     "*.{ts,tsx,js,jsx,cjs,mjs}": [
-      "node scripts/install-eslint-ts6.mjs && eslint --fix",
+      "node scripts/install-eslint-ts6.mjs",
+      "eslint --fix",
       "prettier --write"
     ],
     "*.{json,json5,html}": [

@@ -26,6 +26,12 @@ afterEach(() => {
 describe('NewDocumentDialog', () => {
   beforeEach(() => {
     useUIStore.getState().setNewDocOpen(false)
+    // Reset the creation hook to its default: a previous test may have left `isPending`
+    // on, which would disable the Create button for every test that follows.
+    vi.mocked(useDocuments.useCreateDocument).mockReturnValue({
+      mutateAsync: mockMutateAsync,
+      isPending: false,
+    } as unknown as ReturnType<typeof useDocuments.useCreateDocument>)
   })
 
   it('does not render the dialog when closed', () => {
@@ -114,5 +120,44 @@ describe('NewDocumentDialog', () => {
     render(<NewDocumentDialog />)
     await screen.findByPlaceholderText('Untitled')
     expect(screen.getByText('Create')).toBeDisabled()
+  })
+
+  // D23 / §5.9: the new document does not exist yet, so the guard cannot go through
+  // `selectDocument` — it must run BEFORE the create, and a decline must leave no orphan.
+  it('guards before creating when the current document has unsaved edits', async () => {
+    const confirm: ReturnType<typeof vi.fn> = vi.fn(async () => false)
+    ;(window as unknown as { api: unknown }).api = { dialog: { confirm } }
+    useUIStore.getState().setActiveDocumentId('open-doc')
+    useUIStore.getState().setActiveDocumentTitle('Open doc')
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().setNewDocOpen(true)
+    render(<NewDocumentDialog />)
+    const input = await screen.findByPlaceholderText('Untitled')
+    fireEvent.change(input, { target: { value: 'My Note' } })
+    fireEvent.click(screen.getByText('Create'))
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
+    // The dialog names the document being left, and cancelling creates NOTHING — no orphan
+    // draft, no switch.
+    expect(confirm.mock.calls[0][0].message).toContain('Open doc')
+    expect(mockMutateAsync).not.toHaveBeenCalled()
+    expect(useUIStore.getState().activeDocumentId).toBe('open-doc')
+  })
+
+  it('creates only after the unsaved-switch guard is confirmed', async () => {
+    const confirm: ReturnType<typeof vi.fn> = vi.fn(async () => true)
+    ;(window as unknown as { api: unknown }).api = { dialog: { confirm } }
+    mockMutateAsync.mockResolvedValue({ id: 'doc-guarded' })
+    useUIStore.getState().setActiveDocumentId('open-doc')
+    useUIStore.getState().setActiveDocumentTitle('Open doc')
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().setNewDocOpen(true)
+    render(<NewDocumentDialog />)
+    const input = await screen.findByPlaceholderText('Untitled')
+    fireEvent.change(input, { target: { value: 'My Note' } })
+    fireEvent.click(screen.getByText('Create'))
+    await waitFor(() =>
+      expect(mockMutateAsync).toHaveBeenCalledWith({ title: 'My Note', ext: '.md' }),
+    )
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-guarded')
   })
 })

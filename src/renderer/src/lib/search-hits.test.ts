@@ -4,22 +4,38 @@ import type { SearchResult } from '../types'
 
 function result(id: string, matches: SearchResult['matches']): SearchResult {
   return {
-    id,
+    documentId: id,
     title: id,
-    folderPath: '',
+    relPath: `${id}.md`,
     filePath: `/docs/${id}.md`,
-    score: 0,
-    updatedAt: 0,
+    matchCount: matches.length,
+    matchCapped: false,
     matches,
   }
 }
 
 const a = result('a', [
-  { line: 1, start: 0, end: 3, excerpt: 'the cat', excerptStart: 0, excerptEnd: 3 },
-  { line: 3, start: 20, end: 23, excerpt: 'and the dog', excerptStart: 4, excerptEnd: 7 },
+  { line: 1, start: 0, end: 3, lineSpan: 1, excerpt: 'the cat', excerptStart: 0, excerptEnd: 3 },
+  {
+    line: 3,
+    start: 20,
+    end: 23,
+    lineSpan: 1,
+    excerpt: 'and the dog',
+    excerptStart: 4,
+    excerptEnd: 7,
+  },
 ])
 const b = result('b', [
-  { line: 2, start: 10, end: 13, excerpt: 'find the fox', excerptStart: 5, excerptEnd: 8 },
+  {
+    line: 2,
+    start: 10,
+    end: 13,
+    lineSpan: 1,
+    excerpt: 'find the fox',
+    excerptStart: 5,
+    excerptEnd: 8,
+  },
 ])
 const empty = result('c', [])
 

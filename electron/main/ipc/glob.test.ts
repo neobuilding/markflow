@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { hasGlobMeta, globMatch } from './glob'
 import { relativePath } from '../../../shared/fileUtils'
+import { buildScope, inScope } from '../lib/scope-filter'
+import { createMemoryDiskIO } from '../lib/disk-io'
 
 describe('hasGlobMeta', () => {
   it('detects glob metacharacters', () => {
@@ -69,5 +71,21 @@ describe('relativePath', () => {
   it('computes a forward-slash relative path from the scope folder', () => {
     expect(relativePath('/abs/work/2026/notes.md', '/abs/work')).toBe('2026/notes.md')
     expect(relativePath('/abs/work/2026/notes.md', '/abs/work/2026')).toBe('notes.md')
+  })
+})
+
+// D26: include/exclude must NOT reuse the filename-mode matchBase. The same string means
+// "path prefix" in a scope but "file name" in Quick Open; if the two ever converge, the scope
+// has silently become a name filter.
+describe('scope vs Quick Open matching (D26)', () => {
+  it('treats a bare folder name as a path prefix, not a file name', () => {
+    const built = buildScope('docs', undefined, '/ws', createMemoryDiskIO())
+    expect(built.blocking).toBe(false)
+    if (built.blocking) return
+    // Scope semantics: `docs` matches files UNDER a docs directory at any depth.
+    expect(inScope('a/docs/readme.md', built.scope)).toBe(true)
+    // Quick Open semantics: the same query matches a document NAMED docs — never a path.
+    expect(globMatch('a/docs/readme.md', 'docs')).toBe(false)
+    expect(globMatch('docs', 'docs')).toBe(true)
   })
 })

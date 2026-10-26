@@ -9,7 +9,7 @@ reference surfaces, and adds glob matching to filename search.
 - **Status:** Accepted
 - **Decided:** 2026-09
 - **Supersedes:** `docs/adr/0012-editor-replace-scope.md` (its "reuse CodeMirror's native search panel" decision)
-- **Related:** `docs.local/plan-unified-search-ui-2026-09.md`
+- **Related:** `docs/adr/0012-editor-replace-scope.md`, `CONTEXT.md`
 
 ## Context
 
@@ -39,7 +39,7 @@ the **Search view** (sidebar: query + toggles + results grouped by file), and **
    one-line shortcut footer. In **filename mode** a row shows the **file name + relative path** (never a
    body snippet); **content mode** also shows file name + relative path only — it does **not** return a body
    snippet (the original "keep grouped body snippets" intent was reversed during implementation for
-   data-minimization; see `docs.local/plan-unified-search-ui-2026-09.md` §2 Q21). The "relative path" is
+   data-minimization). The "relative path" is
    computed by `relativePath()`, single-sourced from `shared/fileUtils.ts` (pure, no `node:path`) so the
    main process (glob filename search) and the renderer (row display) agree. The row's **context menu still
    copies the absolute** path — a relative path is useless once pasted elsewhere.

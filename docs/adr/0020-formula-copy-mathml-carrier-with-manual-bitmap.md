@@ -1,29 +1,29 @@
 ---
 status: accepted
 date: 2026-09-22
-deciders: plan-04 review (grill-with-docs)
+deciders: formula-copy review (grill-with-docs)
 ---
 
 # ADR-0020: A formula keeps MathML as its copy carrier; the bitmap is a manual action
 
 Rich-text copy carries a formula as KaTeX's **MathML** branch, which Word and OneNote turn into a
 real, editable equation. Targets that understand neither MathML nor KaTeX's CSS (有道云笔记) show the
-same formula as three concatenated texts (plan 04 F23). One clipboard cannot tell the targets apart,
+same formula as three concatenated texts. One clipboard cannot tell the targets apart,
 so instead of downgrading every copy to a picture we keep MathML by default and add an explicit
 "Copy formula as image" item to the formula's context menu.
 
 ## Why MathML stays the default
 
 A bitmap would make Word paste a picture instead of an editable equation — a downgrade for the
-targets that work today, and exactly what the rejected plan-04 D17 ("rasterize every formula") would
-have produced. The menu item buys the bitmap for the one target that needs it without taxing the
+targets that work today, and exactly what the rejected "rasterize every formula" option would have
+produced. The menu item buys the bitmap for the one target that needs it without taxing the
 rest.
 
 ## Considered Options
 
 - **MathML by default + opt-in bitmap (adopted).** Keeps "editable in Word", gives 有道云笔记 users a
   picture when they ask for one, and keeps the payload text-searchable.
-- **Bitmap for every copy (plan 04 §0.5 option B).** Rejected: every Word / OneNote user loses
+- **Bitmap for every copy (option B).** Rejected: every Word / OneNote user loses
   editable equations to serve one target, and math disappears from the `text/plain` half entirely.
 - **Strip the redundant branches (option C: drop `.katex-html` and the TeX `annotation`).** Rejected:
   it only turns three concatenated texts into one, which is still not a typeset formula, and it

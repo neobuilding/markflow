@@ -55,7 +55,7 @@
 
 ### 第 6 轮（本轮）：全面排查 + 复审 + 文档
 
-- 用户要求：① 全面排查有无"按 CI 区分阈值"的残留；② 再次复审各轮改动；③ 在 `docs.local/` 写中英文 troubleshooting 文档。
+- 用户要求：① 全面排查有无"按 CI 区分阈值"的残留；② 再次复审各轮改动；③ 在本仓库 `docs/` 下写中英文 troubleshooting 文档。
 - 排查结论：**无残留**。所有 `process.env.CI` 用法只影响 Playwright 运行模式（forbidOnly/retries/reporter），与 perf 阈值无关。
 
 ---
@@ -77,9 +77,10 @@ function shouldIgnore(path: string, stats?: { isDirectory(): boolean }): boolean
 const IGNORED = [shouldIgnore]
 
 function createWatcher(): FSWatcher | null {
-  const folders = getOpenFolders()
-  if (folders.length === 0) return null
-  const w = watch(folders, {
+  // 单根工作区（ADR-0023）：根目录是单个值 `workspaceRoot`，不再是「已打开文件夹集合」。
+  const root = getWorkspaceRoot()
+  if (!root) return null
+  const w = watch(root, {
     ignored: IGNORED,
     ignoreInitial: true,
     ignorePermissionErrors: true,

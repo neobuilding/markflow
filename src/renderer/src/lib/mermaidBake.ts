@@ -1,4 +1,4 @@
-// Mermaid baking — the ONE place mermaid is loaded and rendered (D-E①, plan-03 §4.3).
+// Mermaid baking — the ONE place mermaid is loaded and rendered (D-E①, ADR-0018).
 //
 // Two consumers, two shapes, one cache:
 //
@@ -19,7 +19,7 @@ import type { MermaidSlot } from './markdownPipeline'
 import { getExportMermaidSlots } from './exportStore'
 import type { TranslationKey } from '../../../../shared/i18n/en'
 
-// plan-04 §4.3 — the diagram caches are content-keyed, so they never need invalidation on doc or
+// The diagram caches are content-keyed, so they never need invalidation on doc or
 // theme switches (same source ⇒ same artifact, and D16 already forces a light, white-background
 // rasterization). They are FIFO-capped instead: a long session over many documents would
 // otherwise hold every SVG string and base64 PNG (~tens to hundreds of KB each) for the lifetime
@@ -160,9 +160,9 @@ function renderMermaidSvg(id: string, code: string): Promise<{ svg: string }> {
   return task as Promise<{ svg: string }>
 }
 
-// D-E① (plan-03 §4.3): cache rendered mermaid SVGs by content hash so re-parses / doc
+// D-E① (ADR-0018): cache rendered mermaid SVGs by content hash so re-parses / doc
 // switches never re-render an unchanged diagram. The value also stores the SVG height
-// for scroll-sync stability (plan-03 §7 #6).
+// for scroll-sync stability.
 export interface MermaidCacheEntry {
   svg: string
   height?: number

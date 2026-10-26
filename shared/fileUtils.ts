@@ -67,7 +67,7 @@ export function isDirInFolder(dirPath: string, folder: string): boolean {
 // unchanged rather than producing a `../..` chain.
 //
 // Shared by the main process (glob filename search) and the renderer (search
-// result rows show a folder-relative path, per ADR-0013 §4).
+// result rows show a folder-relative path, per ADR-0013).
 export function relativePath(filePath: string, scopeFolder?: string | null): string {
   const p = filePath.replace(/\\/g, '/')
   if (!scopeFolder) return p

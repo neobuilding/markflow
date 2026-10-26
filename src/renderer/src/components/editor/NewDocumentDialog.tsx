@@ -19,8 +19,14 @@ export function NewDocumentDialog(): React.ReactElement {
   const createMut = useCreateDocument()
 
   const handleCreate = async () => {
+    // Guard BEFORE creating (ADR-0023 §5.9): the new document does not exist yet, so there is no
+    // id to hand to `selectDocument`. Creating first and switching afterwards would drop the
+    // current document's unsaved edits AND leave an orphan draft behind if the user then declines.
+    if (!(await useUIStore.getState().guardUnsavedSwitch())) return
     const finalTitle = title.trim() || 'Untitled'
     const doc = await createMut.mutateAsync({ title: finalTitle, ext })
+    // Raw setter is correct here: the guard has already been obtained (same as Sidebar's inline
+    // create row), and the new document is empty so there is nothing to discard.
     setActiveDocumentId(doc.id)
     setEditable(true) // new documents are editable by default
     setIsNewUnsaved(true) // first Save will prompt for a path

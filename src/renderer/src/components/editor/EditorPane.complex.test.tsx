@@ -77,8 +77,8 @@ beforeEach(() => {
   api = {
     documents: {
       get: vi.fn(async (id: string) => docs[id] ?? null),
-      setOpenFolder: vi.fn(async () => {}),
-      clearOpenFolders: vi.fn(async () => {}),
+      // One root, set in one call; `null` closes the workspace (ADR-0023).
+      setWorkspaceRoot: vi.fn(async () => {}),
       eol: vi.fn(async () => '\n'),
       update: vi.fn(async (id: string, u: { title?: string; content?: string }) => ({
         ...docs[id],
@@ -212,10 +212,9 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     await user.click(screen.getByTestId('save-btn'))
     await waitFor(() => expect(api.documents.update).toHaveBeenCalled())
     expect(useUIStore.getState().justSaved).toBe(true)
-    // Folder watching is owned by the main process and registered once when the folder
-    // is opened; saving must not touch that registration.
-    expect(api.documents.setOpenFolder).not.toHaveBeenCalled()
-    expect(api.documents.clearOpenFolders).not.toHaveBeenCalled()
+    // The workspace root is owned by the main process and set once when a folder is opened;
+    // saving must not touch it.
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
   })
 
   it('read-only mode disables the Save and Save-As buttons', async () => {
@@ -264,6 +263,69 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     await user.click(screen.getByTestId('save-as-btn'))
     await flush()
     expect(api.documents.saveAs).not.toHaveBeenCalled()
+  })
+
+  // §4.3: Save As outside the root re-roots the workspace — asked BEFORE the write, because
+  // refusing after it would leave a file on disk the app refuses to acknowledge as open.
+  it('re-roots the workspace after a confirmed Save As outside the root', async () => {
+    const user = userEvent.setup()
+    useUIStore.getState().setActiveFolder('/old')
+    api.dialog.saveFile = vi.fn(async () => '/new/target.md')
+    api.files.resolvePaths = vi.fn(async (p: string[]) => ({
+      directories: ['/new'],
+      markdownFiles: p,
+    }))
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(container)
+
+    await user.click(screen.getByTestId('save-as-btn'))
+    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
+    expect((api.dialog.confirm as ReturnType<typeof vi.fn>).mock.calls[0][0].message).toContain(
+      'outside',
+    )
+    // The write happens, and only then does the workspace switch to the target's folder.
+    await waitFor(() => expect(api.documents.saveAs).toHaveBeenCalled())
+    await waitFor(() => expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('/new'))
+  })
+
+  it('keeps the old root when the Save As re-root confirmation is declined', async () => {
+    const user = userEvent.setup()
+    useUIStore.getState().setActiveFolder('/old')
+    api.dialog.saveFile = vi.fn(async () => '/new/target.md')
+    api.dialog.confirm = vi.fn(async () => false)
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(container)
+
+    await user.click(screen.getByTestId('save-as-btn'))
+    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
+    // Refused BEFORE the write: nothing is saved, nothing is re-rooted.
+    expect(api.documents.saveAs).not.toHaveBeenCalled()
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
+    expect(useUIStore.getState().activeFolder).toBe('/old')
+  })
+
+  it('does not re-root when Save As itself fails', async () => {
+    const user = userEvent.setup()
+    useUIStore.getState().setActiveFolder('/old')
+    api.dialog.saveFile = vi.fn(async () => '/new/target.md')
+    api.documents.saveAs = vi.fn(async () => {
+      throw new Error('disk full')
+    })
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const { container } = mount()
+    await openDoc()
+    await setEditable(true)
+    await makeDirty(container)
+
+    await user.click(screen.getByTestId('save-as-btn'))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled())
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
+    expect(useUIStore.getState().activeFolder).toBe('/old')
+    alertSpy.mockRestore()
   })
 
   it('surfaces a save failure without crashing', async () => {
@@ -441,7 +503,7 @@ describe('EditorPane — close & open', () => {
     mount()
     await openDoc()
     await flush()
-    expect(api.documents.setOpenFolder).not.toHaveBeenCalled()
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
   })
 
   it('open-folder button hands the chosen path to the open-folder mutation', async () => {
@@ -454,7 +516,7 @@ describe('EditorPane — close & open', () => {
     await waitFor(() => expect(api.dialog.openFolderPath).toHaveBeenCalled())
     // The chosen path is forwarded through useOpenFolder → useOpenPaths, which
     // resolves it and opens the enclosing directory.
-    await waitFor(() => expect(api.documents.setOpenFolder).toHaveBeenCalledWith('/d'))
+    await waitFor(() => expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('/d'))
   })
 
   it('Close with unsaved changes and a confirmed discard closes the document', async () => {
@@ -479,7 +541,7 @@ describe('EditorPane — close & open', () => {
     await waitFor(() => expect(api.dialog.openFolderPath).toHaveBeenCalled())
     await flush()
     // null path → the `if (folderPath)` guard skips the open-folder mutation.
-    expect(api.documents.setOpenFolder).not.toHaveBeenCalled()
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
   })
 
   it('Close is cancelled when the unsaved-changes confirm is declined', async () => {

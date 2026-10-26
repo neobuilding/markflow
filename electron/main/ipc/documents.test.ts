@@ -23,7 +23,8 @@ import {
 } from './documents'
 // Test seam of model/folderWatcher.ts: drives the exact dispatch the real chokidar
 // listeners use, so these tests never depend on filesystem event timing.
-import { __emitFolderEvent, __emitFolderDirEvent } from '../model/folderWatcher'
+import { __emitFolderEvent, __emitFolderDirEvent, stopFolderWatching } from '../model/folderWatcher'
+import { getWorkspaceRoot, setWorkspaceRoot } from '../model/workspaceRoot'
 // In-memory DiskIO: lets a case drive the handlers with paths that need not exist on
 // any real disk (see lib/disk-io.ts).
 import { createMemoryDiskIO, type MemoryDiskIO } from '../lib/disk-io'
@@ -1052,7 +1053,7 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     __emitFolderEvent('add', file)
     // then close the workspace before the coalesce window elapses: the watcher is
     // gone, so the pending refresh must be dropped rather than delivered.
-    await call('documents:clear-open-folders')
+    await call('documents:set-workspace-root', null)
 
     expect(sentFolderChanged).toEqual([])
     // Nothing may be left behind for the afterEach drain to deliver.
@@ -1162,47 +1163,115 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
   })
 })
 
-describe('documents IPC — open folder registration', () => {
+describe('documents IPC — workspace root (ADR-0023)', () => {
   // The most recently created watcher (Array.prototype.at is not in this project's
   // TS target lib, so index into the array directly).
   function latestWatcher() {
     return chokidarState.instances[chokidarState.instances.length - 1]
   }
 
-  it('starts a watcher over the folder the user opened', () => {
+  afterEach(() => {
+    setWorkspaceRoot(null)
+  })
+
+  // The handler awaits the previous watcher's close before rebuilding, so the call must be
+  // awaited — asserting synchronously would read the pre-replacement state.
+  it('starts a watcher over the root the user opened', async () => {
     const dir = mkTestDir('mf-open-a-')
-    call('documents:set-open-folder', dir)
+    await call('documents:set-workspace-root', dir)
     expect(latestWatcher()?.paths).toEqual([dir])
   })
 
-  it('reuses the running watcher when another folder is opened', () => {
+  // Opening REPLACES the workspace: the old folder set could accumulate entries, which silently
+  // produced a multi-root store in an app that advertises one root (F20/F21).
+  it('replaces the watcher instead of extending it when another root is opened', async () => {
+    const previous = latestWatcher()
     const before = chokidarState.instances.length
-    call('documents:set-open-folder', mkTestDir('mf-open-b-'))
-    expect(chokidarState.instances).toHaveLength(before)
-    expect(latestWatcher()?.added.length).toBeGreaterThan(0)
-  })
-
-  it('does not re-register a folder already covered by a broader one', () => {
-    const root = mkTestDir('mf-open-root-')
-    call('documents:set-open-folder', root)
-    const inst = latestWatcher()
-    const before = inst?.added?.length ?? 0
-    call('documents:set-open-folder', join(root, 'nested'))
-    expect(inst?.added).toHaveLength(before)
-  })
-
-  it('closes the watcher when the workspace is closed, and tolerates a second clear', async () => {
-    const inst = latestWatcher()
-    await call('documents:clear-open-folders')
-    expect(inst?.closed).toBe(true)
-    // No watcher left: clearing again must not throw.
-    await expect(call('documents:clear-open-folders')).resolves.toBeUndefined()
-  })
-
-  it('creates a fresh watcher when a folder is opened after a clear', () => {
-    const before = chokidarState.instances.length
-    call('documents:set-open-folder', mkTestDir('mf-open-c-'))
+    await call('documents:set-workspace-root', mkTestDir('mf-open-b-'))
     expect(chokidarState.instances).toHaveLength(before + 1)
+    expect(previous?.closed).toBe(true)
+    // The new handle watches ONLY the new root: nothing was `add`ed to the old one.
+    expect(latestWatcher()?.added.length).toBe(0)
+    expect(latestWatcher()?.closed).toBe(false)
+  })
+
+  it('closes the watcher and clears the root when the workspace is closed', async () => {
+    const inst = latestWatcher()
+    await call('documents:set-workspace-root', null)
+    expect(inst?.closed).toBe(true)
+    expect(getWorkspaceRoot()).toBeNull()
+    // No watcher left: closing again must not throw.
+    await expect(call('documents:set-workspace-root', null)).resolves.toBeUndefined()
+  })
+
+  it('creates a fresh watcher when a root is opened after a close', async () => {
+    const before = chokidarState.instances.length
+    await call('documents:set-workspace-root', mkTestDir('mf-open-c-'))
+    expect(chokidarState.instances).toHaveLength(before + 1)
+  })
+
+  // The store is cleared with the root, otherwise the watcher would report files from the
+  // previous workspace into the new one.
+  it('clears the document store when the root is replaced', async () => {
+    const dir = mkTestDir('mf-open-store-')
+    const file = join(dir, 'a.md')
+    writeFileSync(file, '# A', 'utf-8')
+    await call('documents:set-workspace-root', dir)
+    const imported = (await call('documents:import-many', [file])) as Array<{ id: string }>
+    expect(imported.length).toBe(1)
+    await call('documents:set-workspace-root', mkTestDir('mf-open-store2-'))
+    // The document is gone: a new root means a new workspace, not an extended one.
+    expect(await call('documents:get', imported[0].id)).toBeNull()
+  })
+})
+
+// D20 backstop: the renderer converges every open onto one root, but these IPC entry points
+// are the last line of the single-root invariant — a root-external document has no relative
+// path, which makes scope matching and the replace pipeline meaningless for it.
+describe('documents IPC — single-root invariant backstop (D20)', () => {
+  afterEach(() => {
+    setWorkspaceRoot(null)
+  })
+
+  it('refuses to import a file outside the workspace root', async () => {
+    const dir = mkTestDir('mf-d20-in-')
+    const outside = mkTestDir('mf-d20-out-')
+    const inside = join(dir, 'a.md')
+    const outsideFile = join(outside, 'b.md')
+    writeFileSync(inside, '# A', 'utf-8')
+    writeFileSync(outsideFile, '# B', 'utf-8')
+    await call('documents:set-workspace-root', dir)
+
+    expect(await call('documents:import', outsideFile)).toBeNull()
+    const many = (await call('documents:import-many', [inside, outsideFile])) as Array<{
+      filePath: string
+    }>
+    expect(many.map((d) => d.filePath)).toEqual([inside])
+  })
+
+  it('refuses to create a document outside the workspace root', async () => {
+    const dir = mkTestDir('mf-d20-create-')
+    const outside = mkTestDir('mf-d20-create-out-')
+    await call('documents:set-workspace-root', dir)
+    // The guard fires before any mkdir/write: a refused create has no side effects.
+    expect(() =>
+      call('documents:create', { title: 'X', folderPath: outside, memoryOnly: false }),
+    ).toThrow(/outside the workspace root/)
+  })
+
+  it('does not adopt watcher events for files outside the root', async () => {
+    const dir = mkTestDir('mf-d20-watch-')
+    const outside = mkTestDir('mf-d20-watch-out-')
+    await call('documents:set-workspace-root', dir)
+    const inside = join(dir, 'in.md')
+    const outsideFile = join(outside, 'out.md')
+    writeFileSync(inside, '# In', 'utf-8')
+    writeFileSync(outsideFile, '# Out', 'utf-8')
+    __emitFolderEvent('add', inside)
+    __emitFolderEvent('add', outsideFile)
+    const list = (await call('documents:list')) as Array<{ filePath: string }>
+    expect(list.some((d) => d.filePath === inside)).toBe(true)
+    expect(list.some((d) => d.filePath === outsideFile)).toBe(false)
   })
 })
 
@@ -1907,7 +1976,7 @@ describe('documents IPC — resolve-appdoc (能力 3)', () => {
   })
 })
 
-describe('documents IPC — image-size (R9, plan-03 §4.4)', () => {
+describe('documents IPC — image-size (R9, ADR-0018)', () => {
   const dir = join(stableDocsRoot, 'imgsz')
   const filePath = join(dir, 'note.md')
   beforeEach(() => {
@@ -2062,6 +2131,39 @@ describe('documents IPC — folder ops (能力 7)', () => {
     await call('documents:rename-folder', a, b)
     expect(existsSync(b)).toBe(true)
     expect(existsSync(a)).toBe(false)
+  })
+
+  it('rename-folder re-points the workspace root when the renamed folder IS the root (D20)', async () => {
+    const a = join(stableDocsRoot, `mv-root-a-${Date.now()}`)
+    const b = join(stableDocsRoot, `mv-root-b-${Date.now()}`)
+    mkdirSync(a, { recursive: true })
+    writeFileSync(join(a, 'x.md'), 'x')
+    setWorkspaceRoot(a)
+    try {
+      await call('documents:rename-folder', a, b)
+      // The single root must follow the move, or scope/replace would reason about a stale path.
+      expect(getWorkspaceRoot()).toBe(b)
+    } finally {
+      setWorkspaceRoot(null)
+      stopFolderWatching()
+    }
+  })
+
+  it('rename-folder leaves the root untouched when the renamed folder is NOT the root', async () => {
+    const rootDir = join(stableDocsRoot, `mv-keeproot-${Date.now()}`)
+    const a = join(rootDir, `mv-sub-a-${Date.now()}`)
+    const b = join(rootDir, `mv-sub-b-${Date.now()}`)
+    mkdirSync(a, { recursive: true })
+    writeFileSync(join(a, 'x.md'), 'x')
+    setWorkspaceRoot(rootDir)
+    try {
+      await call('documents:rename-folder', a, b)
+      // Renaming a subfolder must not move the workspace root.
+      expect(getWorkspaceRoot()).toBe(rootDir)
+    } finally {
+      setWorkspaceRoot(null)
+      stopFolderWatching()
+    }
   })
   it('rename-folder re-points tracked documents so no stale duplicates remain', async () => {
     const a = join(stableDocsRoot, `mv-docs-a-${Date.now()}`)
@@ -2411,6 +2513,23 @@ describe('documents IPC — folder ops (能力 7)', () => {
     // A real move back: the folder is under the old name and the new one is gone.
     expect(existsSync(oldP)).toBe(true)
     expect(existsSync(newP)).toBe(false)
+  })
+
+  it('re-points workspaceRoot when the ROOT itself is renamed, and restores it on undo', async () => {
+    // §4.2 step 3: the watcher's stale-entry leak is only fixed if the root follows the rename.
+    const dir = mkTestDir('markflow-undo-root-')
+    // Register the directory itself in the in-memory fs (mkTestDir allocates the path; the
+    // rename below moves the directory entry, so it must exist there).
+    mkdirSync(dir)
+    // A sibling that does NOT exist yet: rename-folder refuses a taken target.
+    const newP = `${dir}-renamed`
+    await call('documents:set-workspace-root', dir)
+    await call('documents:rename-folder', dir, newP)
+    expect(getWorkspaceRoot()).toBe(newP)
+    const back = (await call('documents:undo-rename')) as { ok: boolean }
+    expect(back.ok).toBe(true)
+    expect(getWorkspaceRoot()).toBe(dir)
+    setWorkspaceRoot(null)
   })
 
   it('undo-rename reports "failed" when the disk move throws', async () => {

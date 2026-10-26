@@ -4,7 +4,7 @@ import { setExportHtml, setExportContent } from './exportStore'
 import { sanitizeHtml } from './sanitize'
 
 // The export cache is typed `SanitizedHtml`, so fixtures must go through the real gate
-// exactly like the preview does — that is the point of the brand (Plan 01 §5.5).
+// exactly like the preview does — that is the point of the brand (ADR-0002).
 const clean = (html: string) => sanitizeHtml(html)
 
 describe('resolveTheme', () => {

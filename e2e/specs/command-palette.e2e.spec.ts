@@ -4,13 +4,10 @@ import { writeFileSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
 
-// The Ctrl/Cmd+K command palette is a transient quick-search modal. It reuses the same `SearchPanel`
-// the resident sidebar uses, but stays in flat "file name" view and keeps the text scope label
-// (the resident surface swaps that for icon-only controls). Its behaviour must not regress, so it
-// gets its own e2e surface (previously only covered by a unit test — see plan §5.8 G7).
-// DOM is addressed by testids: search-input (the modal field), search-result (flat rows),
-// search-scope (the text scope label).
-test.describe('command palette (Ctrl+K) modal search', () => {
+// The Ctrl/Cmd+K command palette is a transient "Go to file" modal (ADR-0023): file names and
+// paths only, NO body search and NO scope. It is not the Search view — that is the sidebar's job.
+// DOM is addressed by testids: search-input (the modal field), search-result (flat rows).
+test.describe('command palette (Ctrl+K) — go to file', () => {
   let handle: AppHandle
   let scratch: string
 
@@ -29,10 +26,8 @@ test.describe('command palette (Ctrl+K) modal search', () => {
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, content, 'utf-8')
     const id = await page.evaluate(
-      // `import` resolves to `Document | null`; a null here means the import silently failed, so
-      // fail the test loudly instead of propagating an undefined id into the store assertions.
       (f) =>
-        window.api.documents.import(f).then((d) => {
+        window.api.documents.import(f).then((d: any) => {
           if (!d) throw new Error('documents.import returned null')
           return d.id
         }),
@@ -46,17 +41,20 @@ test.describe('command palette (Ctrl+K) modal search', () => {
     return id
   }
 
-  test('opens via Ctrl+K, lists matches, shows the scope label, and closes on Esc', async () => {
+  test('opens via Ctrl+K, lists filename matches, and closes on Esc', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await importFile(page, 'alpha.md', 'needle in alpha\n')
 
     await page.keyboard.press('Control+k')
     await expect(page.getByTestId('search-input')).toBeVisible()
-    // Modal palette keeps the text scope label (resident surface uses icon-only controls instead).
-    await expect(page.getByTestId('search-scope')).toBeVisible()
 
+    // The palette matches FILE NAMES, not body text: a content word finds nothing here, while a
+    // filename glob does (the separation from the Search view is the whole point).
     await page.getByTestId('search-input').pressSequentially('needle')
+    await expect(page.getByTestId('search-result')).toHaveCount(0)
+
+    await page.getByTestId('search-input').fill('*.md')
     await expect(page.getByTestId('search-result')).toHaveCount(1)
     await expect(page.getByTestId('search-result').first()).toContainText('alpha')
 

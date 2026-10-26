@@ -16,9 +16,9 @@ export function flattenHitOrder(results: SearchResult[], mode: SearchMode): HitI
   if (mode === 'content') {
     return results
       .filter((r) => r.matches.length > 0)
-      .flatMap((r) => r.matches.map((m) => ({ id: r.id, start: m.start, end: m.end })))
+      .flatMap((r) => r.matches.map((m) => ({ id: r.documentId, start: m.start, end: m.end })))
   }
-  return results.map((r) => ({ id: r.id }))
+  return results.map((r) => ({ id: r.documentId }))
 }
 
 // Lookup from an occurrence to its flat index, keyed the same way SearchPanel keys its rows.

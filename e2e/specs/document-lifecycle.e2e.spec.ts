@@ -73,9 +73,26 @@ test.describe('document lifecycle', () => {
     // handleCreate opens the new draft in edit mode.
     await expect(page.locator('.cm-content')).toHaveAttribute('contenteditable', 'true')
 
-    // Click the FIRST sidebar item to switch away from the active doc.
-    const items = page.getByTestId('doc-item')
-    await items.first().click()
+    // Click the OTHER document. It is addressed by its document id, NOT by its position in the
+    // list: the sidebar sorts newest-first, so the first row IS the active document — clicking
+    // it would re-select the active doc, the switch would never happen, and the assertion
+    // below would be vacuous. Two documents created in the same millisecond even tie, and the
+    // sort is stable, so "first row" is not a stable reference to any document at all.
+    const activeId = await page.evaluate(
+      () => (window as any).__uiStore.getState().activeDocumentId as string,
+    )
+    const rowIds = await page
+      .getByTestId('doc-item')
+      .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-doc-id')))
+    const otherIndex = rowIds.findIndex((id) => id !== activeId)
+    expect(otherIndex).toBeGreaterThanOrEqual(0)
+    await page.getByTestId('doc-item').nth(otherIndex).click()
+
+    // The switch must actually have happened, otherwise the read-only assertion below could
+    // pass for the wrong reason (an editor that was never left in edit mode).
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__uiStore.getState().activeDocumentId))
+      .not.toBe(activeId)
 
     // Switching documents must drop back to read-only (the classic bug guard).
     await expect(page.locator('.cm-content')).toHaveAttribute('contenteditable', 'false')

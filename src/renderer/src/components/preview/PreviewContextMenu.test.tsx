@@ -83,7 +83,7 @@ function article() {
   return document.querySelector('.markdown-preview') as HTMLElement
 }
 
-// ── Rich-text copy payload builder (Plan 02 §4.1 / §4.2 / §4.5) ─────────────────────────
+// ── Rich-text copy payload builder ─────────────────────────
 describe('buildPreviewCopyPayload', () => {
   // jsdom's Selection is unreliable (selectAllChildren / anchorNode), so drive the
   // in-preview check through an explicit fake selection — the unit under test is
@@ -119,7 +119,7 @@ describe('buildPreviewCopyPayload', () => {
     expect(html).toContain('<h1')
     expect(html).toContain('<table')
     expect(html).toContain('<svg')
-    // plan-04: build() no longer strips. The internal markers (data-line, data-mermaid-slot,
+    // build() no longer strips. The internal markers (data-line, data-mermaid-slot,
     // data-baked…) stay so the fidelity layer (enhanceForPaste in copyFidelity.ts) can locate
     // mermaid slots and finally strip them — that final strip is asserted in copyFidelity.test.ts.
     // Keeping the markers here guards the contract change from accidentally re-stripping upstream.
@@ -129,7 +129,7 @@ describe('buildPreviewCopyPayload', () => {
 
   it('whole-article copy prefers the canonical export HTML (contract #2)', () => {
     mockSelection(null, true)
-    // The canonical HTML (Phase 1 §5.5) carries data-line / data-lang / data-baked; the stale
+    // The canonical HTML carries data-line / data-lang / data-baked; the stale
     // live innerHTML must be ignored in favour of it.
     setExportHtml(
       sanitizeHtml('<pre data-line="0" data-lang="ts" data-baked="1"><code>x</code></pre>'),
@@ -192,7 +192,7 @@ describe('stripInternalAttrs', () => {
 })
 
 describe('PreviewContextMenu — generic', () => {
-  it('Copy delegates to requestRichCopy (rich-text, Plan 02 §4.3)', async () => {
+  it('Copy delegates to requestRichCopy (rich-text)', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
     fireEvent.click(await screen.findByTestId('preview-copy'))

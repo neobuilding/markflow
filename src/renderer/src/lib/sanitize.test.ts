@@ -88,9 +88,8 @@ describe('sanitizeHtml — mermaid & data attributes', () => {
     expect(out).toContain('data-mermaid-slot="0"')
   })
 
-  // NOTE: `data-mermaid-source` was removed in plan-02 D3/D9 (the "Copy diagram source"
-  // menu item no longer exists), so there is no longer a diagram-source attribute to
-  // retain or strip. The placeholder keeps only `data-mermaid-slot` (tested below).
+  // NOTE: `data-mermaid-source` was removed together with the "Copy diagram source" menu
+  // item, so there is no longer a diagram-source attribute to retain or strip. The placeholder keeps only `data-mermaid-slot` (tested below).
 
   it('retains mermaid SVG structure including <style> and inline styles', () => {
     const mermaid =

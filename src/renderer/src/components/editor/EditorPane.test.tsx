@@ -121,7 +121,36 @@ it('jumps the editor to a pending search hit and then clears it (Phase 4)', asyn
   await waitFor(() => expect(useUIStore.getState().pendingMatch).toBeNull())
 })
 
-describe('EditorPane pendingFileAction rename (PLAN §5.1)', () => {
+// D22 / §6 step 9: the Quick Open trigger lives in the editor's CommonToolbar, next to the
+// sidebar toggle — and the shortcut chip is ALWAYS visible, not just inside the tooltip.
+describe('EditorPane — Quick Open trigger (D22)', () => {
+  it('renders the trigger with its shortcut chip when a document is open', () => {
+    mount()
+    expect(screen.getByTestId('editor-goto-file-btn')).toBeTruthy()
+    expect(screen.getByTestId('editor-goto-file-chip').textContent).toMatch(/K/)
+  })
+
+  it('renders the trigger with NO document open (empty state)', () => {
+    // ⌘K is how you get INTO a keyboard-first app: the entry point cannot depend on a
+    // document already being open (§6 step 9 — the row renders in both states).
+    h.noDoc = true
+    useUIStore.getState().setActiveDocumentId(null)
+    mount()
+    expect(screen.getByTestId('editor-goto-file-btn')).toBeTruthy()
+    expect(screen.getByTestId('editor-goto-file-chip')).toBeTruthy()
+    useUIStore.getState().setActiveDocumentId('a')
+    h.noDoc = false
+  })
+
+  it('opens the Quick Open modal when clicked', () => {
+    mount()
+    expect(useUIStore.getState().searchOpen).toBe(false)
+    fireEvent.click(screen.getByTestId('editor-goto-file-btn'))
+    expect(useUIStore.getState().searchOpen).toBe(true)
+  })
+})
+
+describe('EditorPane pendingFileAction rename', () => {
   it('enters title-edit when rename is requested for the active, loaded, editable doc', async () => {
     mount()
     act(() => {
@@ -210,7 +239,7 @@ describe('EditorPane pendingFileAction save / saveAs / reload (能力 6)', () =>
   })
 })
 
-describe('EditorPane file context menus (PLAN §5.6 / §5.7)', () => {
+describe('EditorPane file context menus', () => {
   it('title-bar right-click shows the shared file menu', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('title-btn'))
@@ -298,7 +327,7 @@ describe('EditorPane file context menus (PLAN §5.6 / §5.7)', () => {
     h.editingTitle = false
   })
 
-  it('title menu covers every file action (PLAN §5.6)', async () => {
+  it('title menu covers every file action', async () => {
     useUIStore.getState().setDirty(true)
     mount()
     const open = () => fireEvent.contextMenu(screen.getByTestId('title-btn'))
@@ -354,7 +383,7 @@ describe('EditorPane file context menus (PLAN §5.6 / §5.7)', () => {
   })
 })
 
-describe('EditorPane empty-state context menu (PLAN §10)', () => {
+describe('EditorPane empty-state context menu', () => {
   it('offers create / search / open actions from the right-click menu', async () => {
     useUIStore.getState().setActiveDocumentId(null)
     mount()
@@ -398,7 +427,7 @@ describe('EditorPane missing-document state context menu', () => {
   })
 })
 
-describe('EditorPane split-divider context menu (PLAN §10)', () => {
+describe('EditorPane split-divider context menu', () => {
   it('resets the split ratio and switches to the editor view', async () => {
     useUIStore.getState().setViewMode('split')
     mount()
@@ -640,7 +669,7 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     expect(screen.queryByTestId('editor-replace-btn')).toBeNull()
   })
 
-  // ── Plan §5.9 G4 / G5 / G6 ──────────────────────────────────────────────────
+  // ── G4 / G5 ─────────────────────────────────────────────────────────────
   it('leaves Ctrl+H a no-op in pure preview mode (editor unmounted — G4)', async () => {
     useUIStore.getState().setViewMode('preview')
     mount()
@@ -742,7 +771,7 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
     // A rich-text (contentEditable) field that is NOT the editor itself — e.g. an inline editor in a
     // dialog. jsdom doesn't reflect `isContentEditable` from the attribute, so force it to exercise
-    // the third arm of the editable-target guard (plan §5.9 / G5).
+    // the third arm of the editable-target guard (ADR-0023 / G5).
     const div = document.createElement('div')
     div.contentEditable = 'true'
     div.tabIndex = 0
@@ -785,7 +814,7 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     mount()
     await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
     // The find/replace widget's own fields live inside a CodeMirror panel, and their Ctrl/Cmd+F/H
-    // belong to that widget (same rule as the .cm-content exemption). Without this arm the §5.10
+    // belong to that widget (same rule as the .cm-content exemption). Without this arm the
     // re-open path was unreachable: focus sits in the find input the moment the panel opens, so
     // the guard swallowed every follow-up shortcut. Modelled with a standalone panel-like input
     // since exercising the real panel needs a full open cycle (pinned in e2e instead).
@@ -819,17 +848,16 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     }
   })
 
-  it('focuses the resident search panel via Ctrl+Shift+F (G6)', async () => {
+  it('stands down from Ctrl+Shift+F (the Search view shortcut belongs to the app shell)', async () => {
     useUIStore.getState().setViewMode('edit')
     mount()
     await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
-    let focused = false
-    const onFocus = () => {
-      focused = true
+    const seen: string[] = []
+    const listener = (e: Event) => {
+      seen.push(e.type)
     }
-    // The handler dispatches the event on `document` (bubbles:false), so listen there — matching the
-    // real sidebar listener in SidebarSearch.tsx.
-    document.addEventListener('sidebar:focusSearch', onFocus)
+    document.addEventListener('markdown:find', listener)
+    document.addEventListener('preview:find', listener)
     const ev = new KeyboardEvent('keydown', {
       key: 'f',
       ctrlKey: true,
@@ -838,8 +866,12 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
       bubbles: true,
     })
     window.dispatchEvent(ev)
-    expect(focused).toBe(true)
-    expect(ev.defaultPrevented).toBe(true)
-    document.removeEventListener('sidebar:focusSearch', onFocus)
+    document.removeEventListener('markdown:find', listener)
+    document.removeEventListener('preview:find', listener)
+    // Ctrl+Shift+F opens the Search view and is owned by the app shell (App.tsx). The editor must
+    // not claim it — and must stand down WITHOUT preventDefault, so the shell's own handler still
+    // receives the key (the same rule as every other shortcut that does not belong here).
+    expect(seen).toEqual([])
+    expect(ev.defaultPrevented).toBe(false)
   })
 })

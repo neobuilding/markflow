@@ -78,26 +78,55 @@ export default defineConfig({
           },
         },
       },
-      preload: {
-        input: 'electron/preload/index.ts',
-        vite: {
-          build: {
-            outDir: 'dist/electron',
-            emptyOutDir: false,
-            rollupOptions: {
-              output: {
-                // Force CommonJS output. Under "type": "module" in package.json,
-                // Node treats bare `.js` files as ESM and `require` is undefined,
-                // so the preload would fail to load ("require is not defined") and
-                // window.api would be undefined crashing the renderer. Emitting
-                // a `.cjs` entry keeps it CommonJS regardless of the package type.
-                entryFileNames: 'preload.cjs',
-                format: 'cjs',
+      // Both entries below go through the same bundling slot. The SECOND one is not a preload
+      // script: it is the regex-scan Worker (`electron/main/service/regex-scan.worker.ts`,
+      // ADR-0023 D37), bundled as a self-contained ESM file that `regex-runner.ts` spawns with
+      // `node:worker_threads`. Reusing this slot keeps `main`'s single-entry build — and
+      // therefore its dev startup path — untouched; the Worker only needs a file on disk next to
+      // `index.js`, which is exactly what this produces (`dist/electron/regex-scan.worker.js`).
+      // It MUST repeat `outDir: 'dist/electron'`: without it the plugin's default preload outDir
+      // (`dist-electron/`) wins and the Worker lands in the wrong directory, so the runner never
+      // finds it and every regex search silently degrades to the in-process fallback.
+      preload: [
+        {
+          input: 'electron/preload/index.ts',
+          vite: {
+            build: {
+              outDir: 'dist/electron',
+              emptyOutDir: false,
+              rollupOptions: {
+                output: {
+                  // Force CommonJS output. Under "type": "module" in package.json,
+                  // Node treats bare `.js` files as ESM and `require` is undefined,
+                  // so the preload would fail to load ("require is not defined") and
+                  // window.api would be undefined crashing the renderer. Emitting
+                  // a `.cjs` entry keeps it CommonJS regardless of the package type.
+                  entryFileNames: 'preload.cjs',
+                  format: 'cjs',
+                },
               },
             },
           },
         },
-      },
+        {
+          input: 'electron/main/service/regex-scan.worker.ts',
+          vite: {
+            build: {
+              outDir: 'dist/electron',
+              emptyOutDir: false,
+              rollupOptions: {
+                output: {
+                  // The main bundle is ESM (`dist/electron/index.js` under "type": "module"), and
+                  // `regex-runner.ts` spawns this file by path, so it must keep the `.js` name the
+                  // runner looks for and be emitted as ESM to match how Node will parse it.
+                  entryFileNames: 'regex-scan.worker.js',
+                  format: 'es',
+                },
+              },
+            },
+          },
+        },
+      ],
       // IMPORTANT: Do NOT add a `renderer` option here.
       // When `renderer` is set (even to {}), vite-plugin-electron/simple
       // auto-loads vite-plugin-electron-renderer, which polyfills Node.js
@@ -124,7 +153,7 @@ export default defineConfig({
       // HMR. The renderer's entire import graph is confined to `src/` (entry:
       // src/renderer/src/main.tsx) and `shared/` (i18n), plus a few root config
       // files. Everything else — user data folders the app can edit/delete
-      // (examples, docs, docs.local, notes, …), build/test output (coverage,
+      // (examples, docs, notes, …), build/test output (coverage,
       // dist/electron, release, out) and standalone Node tooling (actions, scripts,
       // e2e) — must NOT be watched. If Vite's chokidar holds a directory handle on a
       // watched folder, shell.trashItem's recycle rename on Windows is blocked and the

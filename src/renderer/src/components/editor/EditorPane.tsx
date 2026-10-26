@@ -50,6 +50,7 @@ import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useLocalDocument } from '../../hooks/useLocalDocument'
+import { isDirInFolder } from '../../../../../shared/fileUtils'
 import type { ViewMode } from '../../types'
 import { useT } from '../../i18n'
 import {
@@ -95,7 +96,7 @@ function findTargetPane(
 }
 
 // True when keyboard focus sits in a text-entry surface that is NOT the editor's own content, so a
-// window-level find/replace shortcut must stand down and let that surface keep the key (plan §5.9 /
+// window-level find/replace shortcut must stand down and let that surface keep the key (ADR-0023 /
 // G5). `null` / non-HTMLElement active elements (e.g. just the body) are treated as "not editing".
 //
 // The editor's own editing surface (`.cm-content`) is deliberately EXEMPT: its Ctrl/Cmd+F / Ctrl/Cmd+H
@@ -107,7 +108,7 @@ function isEditableTarget(el: Element | null): boolean {
   if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
     // The editor find widget's own fields live inside a CodeMirror panel: their Ctrl/Cmd+F/H
     // belong to that widget (same rule as the .cm-content exemption below), so the shortcuts keep
-    // working while the user is typing in the find/replace inputs. Without this arm the §5.10
+    // working while the user is typing in the find/replace inputs. Without this arm the
     // re-open path (Ctrl+H expanding an already-open panel) was unreachable — focus sits in the
     // find input the moment the panel opens, and the guard swallowed every follow-up shortcut.
     if (el.closest('.cm-panel')) return false
@@ -167,6 +168,25 @@ export function EditorPane(): React.ReactElement {
     getEol,
   } = useLocalDocument(doc, activeDocumentId)
 
+  // Mirror the active document's title into the store: the unsaved-switch guard runs in the store,
+  // which has no access to the document object, and a prompt that cannot name the file it is about
+  // to discard leaves the user guessing.
+  const setActiveDocumentTitle = useUIStore((s) => s.setActiveDocumentTitle)
+  useEffect(() => {
+    setActiveDocumentTitle(doc?.title ?? null)
+  }, [doc?.id, doc?.title, setActiveDocumentTitle])
+
+  // "Keep editing" from the unsaved-switch guard asks for the cursor back. Without this the user
+  // chooses to keep their edits and is left staring at the row they clicked, with their unsaved
+  // text scrolled off-screen — indistinguishable from losing it.
+  useEffect(() => {
+    const onFocusRequest = () => {
+      document.querySelector<HTMLElement>('.cm-content')?.focus()
+    }
+    document.addEventListener('editor:focus-request', onFocusRequest)
+    return () => document.removeEventListener('editor:focus-request', onFocusRequest)
+  }, [])
+
   // Save / Save As / Reload: hold the latest draft in a ref so callbacks don't capture a stale closure.
   // Initialized once; the effect keeps the fields in sync (mutating fields avoids reassigning the ref).
   const draftRef = useRef({ localContent, localTitle })
@@ -211,6 +231,18 @@ export function EditorPane(): React.ReactElement {
       return
     }
     if (!newFilePath) return
+    // Save As to a location OUTSIDE the current root re-roots the workspace (ADR-0023). Asked
+    // BEFORE the write: after it, refusing would leave the user with a file on disk that the app
+    // refuses to acknowledge as open.
+    const currentRoot = useUIStore.getState().activeFolder
+    if (currentRoot && !isDirInFolder(newFilePath, currentRoot)) {
+      const ok = await window.api.dialog.confirm({
+        message: t('app.saveAsReroot'),
+        okText: t('app.confirmContinue'),
+        cancelText: t('app.cancel'),
+      })
+      if (!ok) return
+    }
     useUIStore.getState().setSaving(true)
     try {
       const updated = await saveAsMut.mutateAsync({
@@ -228,6 +260,11 @@ export function EditorPane(): React.ReactElement {
         markSaved(updated.content, displayTitle(updated))
         useUIStore.getState().setJustSaved(true)
         useUIStore.getState().setIsNewUnsaved(false) // document now lives at the chosen path
+        // The re-root itself: setting the root clears the store, so the file is re-opened through
+        // the normal open path (which re-imports it and activates it).
+        if (currentRoot && !isDirInFolder(newFilePath, currentRoot)) {
+          await openPathsMut.mutateAsync([updated.filePath])
+        }
       }
     } catch (e) {
       console.error('Save As failed', e)
@@ -235,7 +272,7 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat, t])
+  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat, t, openPathsMut])
 
   const handleSave = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -353,17 +390,8 @@ export function EditorPane(): React.ReactElement {
       // Ctrl/Cmd+F would open a find panel hidden behind the dialog and look like a dead key.
       if (hasModalSurface(document)) return
       const key = e.key.toLowerCase()
-      // Ctrl/Cmd+Shift+F: focus the resident "search in files" panel. This is a navigation
-      // shortcut (VS Code parity: Ctrl+Shift+F = "Search in Files") and deliberately works from
-      // anywhere — including the editor — so it is EXEMPT from the editable-field guard below and
-      // checked first.
-      if (key === 'f' && e.shiftKey) {
-        e.preventDefault()
-        document.dispatchEvent(new CustomEvent('sidebar:focusSearch'))
-        return
-      }
       // Don't hijack plain find/replace while the caret is in a text field that is NOT the editor's own
-      // content (plan §5.9 / G5): e.g. Ctrl/Cmd+F inside the resident sidebar search box must NOT yank
+      // content (ADR-0023 / G5): e.g. Ctrl/Cmd+F inside the resident sidebar search box must NOT yank
       // focus to the editor find widget. The field keeps the key — return WITHOUT preventDefault so its
       // own behaviour is untouched. The editor's own `.cm-content` is exempt (see isEditableTarget), so
       // Ctrl/Cmd+F/H still opens the editor find widget from within the editor.
@@ -381,7 +409,12 @@ export function EditorPane(): React.ReactElement {
         document.dispatchEvent(
           new CustomEvent(e.shiftKey ? 'markdown:replaceAll' : 'markdown:replace'),
         )
-      } else if (key === 'f') {
+      } else if (key === 'f' && !e.shiftKey) {
+        // Ctrl/Cmd+Shift+F is not this handler's key: it opens the Search view and is owned by the
+        // app shell (App.tsx), which claims it from a capture-phase listener. Excluding shiftKey
+        // EXPLICITLY (rather than relying on the shell's stopPropagation winning the race) keeps that
+        // ownership honest — without it this branch would also fire `markdown:find`, and the two
+        // surfaces would agree only by accident of which listener happened to run first.
         e.preventDefault()
         const target = findTargetPane(useUIStore.getState().viewMode, lastPaneRef.current)
         document.dispatchEvent(
@@ -593,6 +626,33 @@ export function EditorPane(): React.ReactElement {
           {t('editor.toggleSidebarShortcut', { shortcut: formatShortcut('⌘\\') })}
         </TooltipContent>
       </Tooltip>
+      {/* "Go to file…" — the Quick Open trigger (ADR-0023). It lives in the editor toolbar next to
+          the sidebar toggle, and its tooltip NAMES the surface's scope ("Go to file…"), so the
+          entry point says what it searches instead of showing a bare magnifier. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t('sidebar.goToFile')}
+            data-testid="editor-goto-file-btn"
+            onClick={() => useUIStore.getState().setSearchOpen(true)}
+          >
+            <Search size={14} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {t('editor.goToFileShortcut', { shortcut: formatShortcut('⌘K') })}
+        </TooltipContent>
+      </Tooltip>
+      {/* The shortcut chip is always visible, not just inside the tooltip: in a keyboard-first
+          app the ⌘K entry point must be discoverable without hovering (§6 step 9 / §10.2). */}
+      <kbd
+        data-testid="editor-goto-file-chip"
+        className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs text-[var(--color-text-tertiary)]"
+      >
+        {formatShortcut('⌘K')}
+      </kbd>
       {/* Save / Save As / Reload grouped with Open/Close as file operations, kept on the left */}
       {activeDocumentId && (
         <>

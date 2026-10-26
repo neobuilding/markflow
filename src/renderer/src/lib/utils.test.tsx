@@ -401,7 +401,7 @@ describe('useCreateDocument memory-only contract', () => {
   })
 })
 
-describe('useUIStore discards unsaved drafts on close (PLAN §6.5)', () => {
+describe('useUIStore discards unsaved drafts on close', () => {
   it('deletes the draft entry when closing a new-unsaved document', () => {
     act(() => {
       useUIStore.getState().setActiveDocumentId('doc-1')

@@ -10,15 +10,17 @@ import { MD_EXTS, stripMarkdownExt } from '../lib/markdown-ext'
 // below stay pure orchestration and can be driven by an in-memory fake in tests.
 import { nodeDiskIO, type DirEntry, type DiskIO, type ReadHandle } from '../lib/disk-io'
 import {
-  addWatchedFolder,
   markOwnWrite,
   startFolderWatching,
   stopFolderWatching,
   pauseFolderWatching,
   resumeFolderWatching,
+  refreshFolderWatching,
 } from '../model/folderWatcher'
+import { getWorkspaceRoot, setWorkspaceRoot } from '../model/workspaceRoot'
 import {
   type Document,
+  createDocumentStore,
   listDocuments as storeList,
   getDocumentById as storeGet,
   upsertDocument as storeUpsert,
@@ -31,7 +33,7 @@ import { imageSize } from 'image-size'
 // Case-sensitivity rule (pure) and its main-process edge detection. See
 // docs/adr/0014-*.md: the rule lives in shared/fileUtils.ts and takes the detected
 // flag as an argument so no platform check is baked into the rule itself.
-import { arePathsSame } from '../../../shared/fileUtils'
+import { arePathsSame, isDirInFolder } from '../../../shared/fileUtils'
 import { isFileSystemCaseSensitive } from '../lib/disk-io'
 
 // The active platform seam, chosen at handler-registration time (see registerDocumentHandlers).
@@ -368,7 +370,22 @@ function findRenamedDocument(filePath: string, text: string): Document | null {
 // Files we already know about are left alone: our own saves and Save As already
 // upserted them, and their watcher events must not create a second record for the
 // same path (which would show up as a duplicate entry in the sidebar).
+// D20 backstop. The renderer converges every open onto one root, but these IPC entry points are
+// the last line of the single-root invariant: a document stored outside the root has no relative
+// path, which makes scope matching and the replace pipeline meaningless for it — and the plan
+// asserts the invariant absolutely (§9/§12). Lexical, case-insensitive, separator-agnostic — the
+// same containment the renderer's `isDirInFolder` filter uses.
+function outsideWorkspaceRoot(filePath: string): boolean {
+  const root = getWorkspaceRoot()
+  if (!root) return false
+  return !isDirInFolder(filePath, root)
+}
+
 function syncAddedFile(filePath: string, io: DiskIO = nodeDiskIO): void {
+  // D20 backstop: the watcher watches the single workspace root, but a link inside it can still
+  // surface a path outside it. A root-external document has no relative path, which makes scope
+  // matching and the replace pipeline meaningless for it — skip rather than store it.
+  if (outsideWorkspaceRoot(filePath)) return
   const tracked = storeGetByPath(filePath)
   if (tracked) {
     reviveDocument(tracked)
@@ -613,6 +630,13 @@ export function registerDocumentHandlers(
           ? folderPath
           : join(getDefaultDocsDir(io), folderPath)
         : getDefaultDocsDir(io)
+      // D20: with a workspace root open, the new file must land inside it. Refusing is the
+      // documented behaviour ("根外路径拒绝并提示"); the renderer never hits this — it passes the
+      // open folder (activeFolder) as folderPath whenever a root exists.
+      const workspaceRoot = getWorkspaceRoot()
+      if (workspaceRoot && !isDirInFolder(baseDir, workspaceRoot)) {
+        throw new Error(`Cannot create a document outside the workspace root: ${baseDir}`)
+      }
       io.mkdir(baseDir, { recursive: true })
 
       // Create the file atomically with O_EXCL ('wx'): it must NOT already exist. A name
@@ -785,23 +809,25 @@ export function registerDocumentHandlers(
     })
   })
 
-  // Register a folder the user opened so the watcher picks up files created or
-  // deleted anywhere beneath it (at any depth, not just the active subfolder).
-  ipcMain.handle('documents:set-open-folder', (_event, folderPath: string) => {
-    addWatchedFolder(folderPath)
-  })
-
-  // The workspace was closed: stop watching and forget every opened folder.
-  // Never rejects — the renderer fires this call and ignores the result, so a
-  // rejection here would surface as an unhandled promise rejection.
-  ipcMain.handle('documents:clear-open-folders', async () => {
+  // Set (or clear) the single workspace root — ADR-0023.
+  //
+  // Opening a folder REPLACES the workspace: the document store is cleared and the watcher is
+  // rebuilt over the new root. It used to be additive, which silently produced a multi-root store
+  // in an app that advertises a single root (F20), and left watch entries behind for roots that
+  // no longer existed.
+  //
+  // `null` closes the workspace. Never rejects — the renderer fires this and ignores the result.
+  ipcMain.handle('documents:set-workspace-root', async (_event, rootPath: string | null) => {
     try {
       await stopFolderWatching()
     } catch {
       // The watcher is being discarded anyway; a failed close must not propagate.
     }
-    // The watcher is gone: a folder-changed broadcast still pending came from it and
-    // must not reach the renderer as a refresh for a workspace that is already closed.
+    createDocumentStore()
+    setWorkspaceRoot(rootPath || null)
+    refreshFolderWatching()
+    // A folder-changed broadcast still pending came from the previous root and must not reach the
+    // renderer as a refresh for the workspace it just described.
     cancelPendingFolderChanged()
   })
 
@@ -843,7 +869,7 @@ export function registerDocumentHandlers(
     }
   })
 
-  // R9 (plan-03 §4.4): resolve intrinsic image dimensions without decoding the whole
+  // R9 (ADR-0018): resolve intrinsic image dimensions without decoding the whole
   // file — we read only the header (capped at MAX_HEADER_BYTES) and feed it to image-size.
   // Cached by path so repeated keystrokes don't re-read disk. Returns null for malformed /
   // escaping / missing URLs. The read goes through the standard `node:fs` boundary (not
@@ -914,13 +940,14 @@ export function registerDocumentHandlers(
   // the way `recursive: true` would) when the name already exists, so the sidebar's
   // create row can surface the clash. The parent always exists in our flows, so we never
   // need mkdir to create ancestors.
+  // No watcher registration: a new folder is always inside the root, which is watched
+  // recursively, so `addWatchedFolder` here was a no-op (ADR-0023).
   ipcMain.handle('documents:create-folder', (_event, folderPath: string) => {
     io.mkdir(folderPath, { recursive: false })
-    addWatchedFolder(folderPath)
   })
 
   // Single-slot rename history. Only the MOST RECENT rename can be undone (a full stack was
-  // deliberately not built: see docs.local/todo-rename-undo). Owned here, in the main process,
+  // deliberately not built). Owned here, in the main process,
   // because the undo has to re-point the tracked records exactly like the rename did.
   let lastRename: { kind: 'file' | 'folder'; oldPath: string; newPath: string } | null = null
   function rememberRename(kind: 'file' | 'folder', oldPath: string, newPath: string): void {
@@ -945,6 +972,17 @@ export function registerDocumentHandlers(
   // target (Windows already errors), so without this guard a collision is silent data loss —
   // the same "refuse, never silently clobber or renumber" rule create/update already follow.
   // The renderer's live check normally prevents it; this is the backstop for a race.
+  // Keep the single workspace root pointing at a directory that exists (ADR-0023).
+  // Renaming the ROOT used to leave the old path behind forever: the new sibling was added as a
+  // second watched entry and the stale one never expired, because chokidar tolerates missing paths
+  // and therefore stayed silent forever.
+  function repointWorkspaceRoot(oldPath: string, newPath: string): void {
+    const root = getWorkspaceRoot()
+    if (!root || !isSamePath(root, oldPath)) return
+    setWorkspaceRoot(newPath)
+    refreshFolderWatching()
+  }
+
   function guardRenameTarget(io: DiskIO, oldPath: string, newPath: string): void {
     if (isSamePath(oldPath, newPath)) return
     if (!io.exists(newPath)) return
@@ -957,7 +995,9 @@ export function registerDocumentHandlers(
   ipcMain.handle('documents:rename-folder', (_event, oldPath: string, newPath: string) => {
     guardRenameTarget(io, oldPath, newPath)
     io.rename(oldPath, newPath)
-    addWatchedFolder(newPath)
+    // The new path is inside the recursively watched root, so no watcher registration is needed
+    // (D21 step 4) — but when the renamed folder IS the root, the root must follow the move.
+    repointWorkspaceRoot(oldPath, newPath)
     rePointFolderRecords(oldPath, newPath)
     rememberRename('folder', oldPath, newPath)
   })
@@ -992,7 +1032,8 @@ export function registerDocumentHandlers(
       return { ok: false, reason: 'failed' as const }
     }
     if (last.kind === 'folder') {
-      addWatchedFolder(last.oldPath)
+      // Mirror of the rename: the root follows the move back.
+      repointWorkspaceRoot(last.newPath, last.oldPath)
       rePointFolderRecords(last.newPath, last.oldPath)
     } else {
       rePointFileRecord(last.newPath, last.oldPath)
@@ -1069,6 +1110,8 @@ export function registerDocumentHandlers(
 
   // Import markdown file from disk
   ipcMain.handle('documents:import', (_event, filePath: string) => {
+    // D20: never store a document outside the workspace root (see outsideWorkspaceRoot).
+    if (outsideWorkspaceRoot(filePath)) return null
     let text: string
     let encoding: string
     let confidence: number
@@ -1118,6 +1161,8 @@ export function registerDocumentHandlers(
     const now = Date.now()
 
     for (const filePath of filePaths) {
+      // D20: skip rather than store — a root-external document cannot be scope-matched.
+      if (outsideWorkspaceRoot(filePath)) continue
       let parsed: { text: string; encoding: string; confidence: number }
       try {
         parsed = readMarkdownText(filePath, io)

@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Search, X } from 'lucide-react'
 import { useUIStore } from '../../store/ui'
-import { useSearch } from '../../hooks/useSearch'
+import { useQuickOpen } from '../../hooks/useSearch'
 import { useT } from '../../i18n'
 import { InputContextMenu } from '../ui/input-context-menu'
-import { SearchPanel } from './SearchPanel'
+import { SearchResultList } from './SearchResults'
 import { hasModalSurface } from '../../lib/shortcut-scope'
 
 export function CommandPalette(): React.ReactElement | null {
@@ -13,13 +13,13 @@ export function CommandPalette(): React.ReactElement | null {
     setSearchOpen,
     setSearchQuery,
     searchQuery,
-    searchMode,
-    setSearchMode,
-    activeFolder,
-    setActiveDocumentId,
+    selectDocument,
     setFileDetailsId,
   } = useUIStore()
-  const { data: results = [], isFetching } = useSearch()
+  const { data, isFetching } = useQuickOpen()
+  // Memoised: a fresh `[]` on every render would make the effect below re-run (and reset the
+  // highlighted row) even when the results have not changed.
+  const results = useMemo(() => data?.results ?? [], [data])
   const { t } = useT()
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -60,9 +60,12 @@ export function CommandPalette(): React.ReactElement | null {
 
   if (!searchOpen) return null
 
+  // Goes through the guarded entry point: picking a file here is a document switch like any other,
+  // and unsaved edits must not be dropped by a palette click (ADR-0023).
   const handleSelect = (id: string) => {
-    setActiveDocumentId(id)
-    setSearchOpen(false)
+    void selectDocument(id).then((switched) => {
+      if (switched) setSearchOpen(false)
+    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -73,7 +76,7 @@ export function CommandPalette(): React.ReactElement | null {
       e.preventDefault()
       setSelectedIndex((i) => Math.max(i - 1, 0))
     } else if (e.key === 'Enter' && results[selectedIndex]) {
-      handleSelect(results[selectedIndex].id)
+      handleSelect(results[selectedIndex].documentId)
     }
   }
 
@@ -121,19 +124,52 @@ export function CommandPalette(): React.ReactElement | null {
           </kbd>
         </div>
 
-        {/* Results surface (mode segment + scope + list + footer) */}
-        <SearchPanel
-          results={results}
-          isFetching={isFetching}
-          query={searchQuery}
-          searchMode={searchMode}
-          activeFolder={activeFolder}
-          selectedIndex={selectedIndex}
-          onSelectIndex={setSelectedIndex}
-          onSelect={handleSelect}
-          onModeChange={setSearchMode}
-          onShowDetails={setFileDetailsId}
-        />
+        {/* Results: flat file rows only. No mode switch, no scope control — this surface is
+            "go to file" and nothing else (ADR-0023). */}
+        {isFetching && searchQuery && (
+          <div className="px-4 py-3 text-sm text-[var(--color-text-tertiary)]">
+            {t('palette.searching')}
+          </div>
+        )}
+        {!isFetching && searchQuery && results.length === 0 && (
+          <div className="px-4 py-8 text-center text-sm text-[var(--color-text-tertiary)]">
+            {t('search.noResults')}
+          </div>
+        )}
+        {!searchQuery && (
+          <div className="px-4 py-3 text-xs text-[var(--color-text-tertiary)]">
+            {t('palette.startTyping')}
+          </div>
+        )}
+        {results.length > 0 && (
+          <ul>
+            <SearchResultList
+              results={results}
+              selectedIndex={selectedIndex}
+              onSelectIndex={setSelectedIndex}
+              onSelect={handleSelect}
+              onShowDetails={setFileDetailsId}
+            />
+          </ul>
+        )}
+        <div className="flex items-center gap-3 px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-bg)]">
+          <div className="flex items-center gap-1 text-xs text-[var(--color-text-tertiary)]">
+            <kbd className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs">
+              ↑↓
+            </kbd>
+            {t('palette.navigate')}
+          </div>
+          <div className="flex items-center gap-1 text-xs text-[var(--color-text-tertiary)]">
+            <kbd className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs">
+              ↵
+            </kbd>
+            {t('palette.open')}
+          </div>
+          {/* Say what this surface searches: every entry point must name its own scope. */}
+          <span className="ml-auto text-2xs text-[var(--color-text-tertiary)]">
+            {t('sidebar.goToFile')}
+          </span>
+        </div>
       </div>
     </div>
   )

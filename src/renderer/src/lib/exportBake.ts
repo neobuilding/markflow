@@ -1,7 +1,7 @@
 // Complete the canonical export HTML (ADR 0019).
 //
 // The preview bakes mermaid lazily, one placeholder at a time, as each scrolls into view
-// (D-E①, plan-03 §4.3). Export / print / copy must NOT depend on that: they need the whole
+// (D-E①, ADR-0018). Export / print / copy must NOT depend on that: they need the whole
 // document, not whatever happens to be on screen. This module bakes every slot into the
 // canonical HTML MarkdownPreview stashed in `exportStore`, runs it back through the single
 // sanitization gate, and publishes the result — so all three output paths read one
@@ -42,7 +42,7 @@ export function needsExportBake(): boolean {
  * synchronous `copy` event swaps each diagram for a `<img data:png>` from that cache, so an
  * incomplete PNG pass is exactly what made the first copy after opening drop diagrams. We
  * therefore publish the baked SVG HTML first (export / print read it) but only flip the
- * "complete" marker after the PNGs are warm (§4.3 / fix for the missing-diagrams bug).
+ * "complete" marker after the PNGs are warm.
  *
  * Export and print consume only the SVG HTML, never the PNG cache — so a reviewer may ask
  * why they also `await` the PNG rasterization below instead of returning early. We do NOT

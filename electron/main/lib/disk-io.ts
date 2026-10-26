@@ -21,9 +21,12 @@ import {
   writeSync,
   closeSync,
   copyFileSync,
+  unlinkSync,
   promises as fsPromises,
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
+import { dirname, join, basename } from 'node:path'
+import { randomBytes } from 'node:crypto'
 
 // Edge detection of the filesystem's case-sensitivity for the MAIN process.
 //
@@ -71,6 +74,13 @@ export interface DiskIO {
   openForRead(path: string): Promise<ReadHandle>
   /** Copy `src` to `dest` (atomic on real fs; fails if `src` is missing). */
   copyFile(src: string, dest: string): void
+  /**
+   * Write `data` to `path` so that a reader never observes a half-written file: the bytes go to a
+   * temporary file in the same directory and are then moved over the target in one step. Needed by
+   * the cross-file replace pipeline (ADR-0023) — a batch rewrite that truncated a file because
+   * the process died mid-write would be a data-loss bug, not a cosmetic one.
+   */
+  writeFileAtomic(path: string, data: Buffer): void
 }
 
 export const nodeDiskIO: DiskIO = {
@@ -93,6 +103,24 @@ export const nodeDiskIO: DiskIO = {
   openExclusive: (path) => openSync(path, 'wx'),
   writeToFd: (fd, content) => writeSync(fd, content, undefined, 'utf-8'),
   closeFd: (fd) => closeSync(fd),
+  writeFileAtomic: (path, data) => {
+    // Same directory as the target: a rename across devices is a copy, which would not be atomic.
+    const dir = dirname(path)
+    const tmp = join(dir, `.${basename(path)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`)
+    writeFileSync(tmp, data)
+    try {
+      renameSync(tmp, path)
+    } catch (err) {
+      // Never leave the temporary file behind: it would look like a real stray document to the
+      // sidebar's directory listing (and to the Markdown collector).
+      try {
+        unlinkSync(tmp)
+      } catch {
+        /* the original failure is the one worth reporting */
+      }
+      throw err
+    }
+  },
   openForRead: async (path) => {
     const handle = await fsPromises.open(path, 'r')
     return {
@@ -235,6 +263,11 @@ export function createMemoryDiskIO(): MemoryDiskIO {
       const buf = files.get(canon(src))
       if (buf === undefined) fail('ENOENT', canon(src))
       files.set(canon(dest), Buffer.from(buf))
+    },
+    writeFileAtomic(path, data) {
+      // The fake has no crash window to protect, so this is a plain write — what is being
+      // asserted in tests is which bytes end up at which path, not the rename choreography.
+      files.set(canon(path), Buffer.from(data))
     },
     stat(path) {
       const buf = files.get(canon(path))

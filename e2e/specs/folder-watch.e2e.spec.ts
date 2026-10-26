@@ -50,16 +50,17 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
   // in-memory document store actually gets populated (a watcher alone shows
   // nothing in the sidebar chokidar only reports *changes*, it does not
   // back-fill existing files). This is exactly what useOpenPaths does:
-  //   resolvePaths → importMany → setOpenFolder → setActiveFolder/Document.
+  //   setWorkspaceRoot → importMany → setActiveFolder/Document.
   // Sets the active folder on the UI store so the folder-changed handler's
   // activeFolder scoping is exercised.
   async function openFolder(page: Page, folder: string, expectedInitialDocs: number) {
     await page.evaluate(() => (window as any).__uiStore.getState().setActiveFolder(null))
     const firstId = await page.evaluate(async (f) => {
       const { markdownFiles } = await (window as any).api.files.resolvePaths([f])
+      // Set the root FIRST (opening replaces the workspace — ADR-0023), which also starts the
+      // watcher over it; then import, then mirror the real open: activate the folder.
+      await (window as any).api.documents.setWorkspaceRoot(f)
       const imported = await (window as any).api.documents.importMany(markdownFiles)
-      // Start the watcher, then mirror the real open: activate the folder.
-      await (window as any).api.documents.setOpenFolder(f)
       const ui = (window as any).__uiStore.getState()
       ui.setActiveFolder(f)
       if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)

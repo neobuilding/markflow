@@ -16,19 +16,19 @@ import {
 import { safeEnhanceForPaste } from '../../lib/copyFidelity'
 import { extractFrontmatterLang } from '../../lib/lang'
 import type { Document, ThemeMode } from '../../types'
-// D-B (plan-03 §4.1): the single source of truth for markdown styling is github-markdown-css
+// D-B (ADR-0018): the single source of truth for markdown styling is github-markdown-css
 // (the same sheet the exporter uses), injected as a string so we can toggle light/dark by
 // disabling one of the two variant stylesheets — no `.prose` / `.dark` prefix overlay.
 import lightCss from 'github-markdown-css/github-markdown.css?inline'
 import darkCss from 'github-markdown-css/github-markdown-dark.css?inline'
 import { PreviewContextMenu } from './PreviewContextMenu'
-// D-E① (plan-03 §4.3): mermaid lives in lib/mermaidBake.ts so the lazy preview and the
+// D-E① (ADR-0018): mermaid lives in lib/mermaidBake.ts so the lazy preview and the
 // COMPLETE export/print/copy bake share one hash cache (ADR 0019) — export must never
 // depend on which diagrams happen to be on screen.
 import { renderMermaidSlot, mermaidSvgCache, fillMermaidSlot } from '../../lib/mermaidBake'
 import { scheduleExportBake } from '../../lib/exportBake'
 
-// R9 (plan-03 §4.4): resolve intrinsic dimensions of local `appdoc://` images before
+// R9 (ADR-0018): resolve intrinsic dimensions of local `appdoc://` images before
 // sanitize/patch so the browser reserves space and the first paint doesn't jump (CLS).
 async function applyImageDimensions(html: string): Promise<string> {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
@@ -59,9 +59,9 @@ async function applyImageDimensions(html: string): Promise<string> {
   return doc.body.innerHTML
 }
 
-// D-B (plan-03 §4.1): inject the single github-markdown-css source of truth once, and toggle
+// D-B (ADR-0018): inject the single github-markdown-css source of truth once, and toggle
 // light/dark via the `disabled` flag. The two variant files are independent full stylesheets
-// (not a `.dark` prefix overlay), so we never rely on a `.dark` class — plan-03 §4.1.
+// (not a `.dark` prefix overlay), so we never rely on a `.dark` class — ADR-0018.
 let mdBodyStylesInjected = false
 function injectMarkdownBodyStyles(): void {
   if (mdBodyStylesInjected) return
@@ -135,14 +135,14 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
       parseMarkdown(content, docId)
         .then(async (res: RenderResult) => {
           if (cancelled || token !== renderToken.current) return
-          // D-E① (plan-03 §4.3): do NOT bake mermaid into the HTML string. Keep the empty
+          // D-E① (ADR-0018): do NOT bake mermaid into the HTML string. Keep the empty
           // `<div data-mermaid-slot>` placeholders and render them lazily in the DOM after
           // the incremental patch (IntersectionObserver + hash cache). The old "Copy diagram
-          // source" menu item was removed in plan-02 D3, so no `data-mermaid-source` attribute
-          // is needed — plan-03 §4.3's stale reference to it is dropped per plan-02 D9.
+          // source" menu item was removed, so no `data-mermaid-source` attribute
+          // is needed — an earlier design's stale reference to it is dropped.
           mermaidSlotsRef.current = res.mermaid
           let html = res.html
-          // R9 (plan-03 §4.4): resolve intrinsic dimensions of local images before
+          // R9 (ADR-0018): resolve intrinsic dimensions of local images before
           // sanitize/patch so the first paint reserves space and doesn't jump (CLS).
           try {
             html = await applyImageDimensions(html)
@@ -151,7 +151,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
             /* dimension resolution failures are non-fatal: images still load, just without reserved space */
           }
           if (cancelled || token !== renderToken.current) return
-          // Single sanitization gate (plan-01 §5.2): the cleaned HTML is shared by the preview
+          // Single sanitization gate (ADR-0002): the cleaned HTML is shared by the preview
           // DOM patch and the export cache.
           const clean = sanitizeHtml(html)
           // ADR 0019: stash the diagram sources next to the HTML. The preview keeps empty
@@ -170,7 +170,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           scheduleExportBake()
           // Note: no scrollSync.realign() — images are no longer reloaded on every keystroke
           // (the DOM is incrementally patched, not rebuilt), so the preview height is stable and
-          // the ratio-based sync needs no height-jump compensation (Plan 01 §5.4).
+          // the ratio-based sync needs no height-jump compensation.
         })
         .catch((err) => {
           if (cancelled || token !== renderToken.current) return
@@ -229,8 +229,8 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
     /* v8 ignore next */
     if (!el) return
     patchPreviewContent(el, sanitizedHtml)
-    // Plan 04: pre-inline images (§4.8) so the synchronous copy path can paste base64 images
-    // without awaiting. Fire-and-forget. (Math needs no pre-pass: it rides its MathML, §4.8.)
+    // pre-inline images so the synchronous copy path can paste base64 images
+    // without awaiting. Fire-and-forget.
     void warmInlinedImages(el)
     // D-E①: after the incremental patch, fill any cache-hit mermaid immediately (so a
     // re-parse never wipes an already-rendered diagram) and lazily render the rest.
@@ -269,7 +269,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
   }, [])
 
   // D-B: inject the single github-markdown-css source of truth and keep it in sync with
-  // the UI theme (no `.prose` / `.dark` toggle — plan-03 §4.1).
+  // the UI theme (no `.prose` / `.dark` toggle — ADR-0018).
   useEffect(() => {
     injectMarkdownBodyStyles()
   }, [])
@@ -329,7 +329,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
               e.preventDefault()
               return
             }
-            // Plan 04: upgrade the bare HTML to a Word/Confluence/Excel-ready payload
+            // upgrade the bare HTML to a Word/Confluence/Excel-ready payload
             // (inline styles + rasterized mermaid/math + light theme), then strip the
             // pipeline's internal markers as the final step (enhanceForPaste). The `safe`
             // wrapper never throws: a fidelity failure must still preventDefault, never let

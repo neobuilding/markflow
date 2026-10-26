@@ -44,9 +44,11 @@ export const documentsApi = {
   // Directory listing : every folder below the given path, empty ones
   // included, so the sidebar tree is not limited to folders that hold a Markdown file.
   listFolders: (folderPath: string) => ipcRenderer.invoke('documents:list-folders', folderPath),
-  // Folder watching is owned entirely by the main process (chokidar): the renderer
-  // only tells it which folder was opened, and when the workspace is closed.
-  setOpenFolder: (folderPath: string) =>
-    ipcRenderer.invoke('documents:set-open-folder', folderPath),
-  clearOpenFolders: () => ipcRenderer.invoke('documents:clear-open-folders'),
+  // The workspace root is owned entirely by the main process: this is the ONLY way to set it, and
+  // setting it REPLACES the workspace (document store cleared, watcher rebuilt over the new root).
+  // Passing `null` closes the workspace. See ADR-0023 — the old `setOpenFolder` /
+  // `clearOpenFolders` pair appended to and cleared a *set*, which is what allowed an implicitly
+  // multi-root workspace to accumulate.
+  setWorkspaceRoot: (rootPath: string | null) =>
+    ipcRenderer.invoke('documents:set-workspace-root', rootPath),
 }
