@@ -15,7 +15,7 @@ const DIAGRAM_FIXTURE = join(
   'diagrams.md',
 )
 
-// Plan 01 stage 1 (preview render-pipeline refactor) — real-renderer acceptance.
+// Preview render-pipeline refactor, stage 1 — real-renderer acceptance.
 //
 // The unit suite proves the pipeline and the DOM patcher in isolation, but only the real
 // Electron renderer proves the END-TO-END shape produced by markdown-it → sanitize → patch:
@@ -27,7 +27,7 @@ const DIAGRAM_FIXTURE = join(
 // suite; the existing preview e2e specs — mermaid/katex/context-menu/save-export — would fail
 // loudly if the DOM shape or the mermaid baking broke, e.g. this suite is what catches a bad
 // `data-mermaid-slot` placeholder shape that stops the SVG from being baked in.)
-test.describe('preview render pipeline (Plan 01 stage 1)', () => {
+test.describe('preview render pipeline', () => {
   let handle: AppHandle
   let scratch: string
 
@@ -89,7 +89,7 @@ test.describe('preview render pipeline (Plan 01 stage 1)', () => {
     await expect(page.locator('article.markdown-preview > p').first()).toBeVisible()
   })
 
-  // R12① (plan-03 §4.2): the preview article is the document semantic root — role="document"
+  // R12① (ADR-0018): the preview article is the document semantic root — role="document"
   // always, and a leading frontmatter `lang:` flows to the article's lang attribute.
   test('the preview <article> exposes role="document" with no lang by default (R12①)', async () => {
     const { page } = handle

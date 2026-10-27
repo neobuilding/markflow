@@ -29,7 +29,7 @@ import {
 // Right-click menu for the preview surface. The kind is detected from the element under the
 // cursor at open time: a link, an image (bitmap or mermaid SVG), a KaTeX formula, or the generic
 // article.
-// Plan 02 (D3): the old per-object "copy source / copy X" items are gone — a single rich-text
+// The old per-object "copy source / copy X" items are gone — a single rich-text
 // "Copy" now covers headings, code, tables, lists and formulas, so the menu stays small. The one
 // exception is a formula's "Copy as image" (ADR 0020): the payload keeps MathML, and targets that
 // render neither MathML nor KaTeX's CSS need the bitmap as an explicit, separate action.
@@ -95,7 +95,7 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
     }
   }
 
-  // Rich-text copy (Plan 02): drives the article's `copy` event via requestRichCopy, which
+  // Rich-text copy: drives the article's `copy` event via requestRichCopy, which
   // builds a clean { text, html } payload and writes it as text/plain + text/html. Selection
   // priority, whole-article fallback and cross-pane guard all live in previewCopy.ts so the
   // keyboard Ctrl+C and this menu item produce identical output (R3).
@@ -154,7 +154,7 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
   const isRemoteImage = /^https?:\/\//i.test(imgSrc)
   const saveImageAs = async () => {
     if (isSvg) {
-      // Vector image: save the SVG markup to a .svg file (plan §4.6).
+      // Vector image: save the SVG markup to a .svg file (ADR-0023).
       const p = await window.api.dialog.saveFile('diagram.svg')
       if (p) await window.api.export.write(p, mermaidSvg)
     } else {

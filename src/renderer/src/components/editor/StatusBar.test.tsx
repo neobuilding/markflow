@@ -362,7 +362,7 @@ describe('StatusBar', () => {
 // ── : right-click menus on the status-bar segments ──────────────────
 // The whole status bar is `user-select: none`, so these menus are the only way
 // to get the word count / encoding / line ending out of the bar.
-describe('StatusBar — context menus (PLAN §8)', () => {
+describe('StatusBar — context menus', () => {
   beforeEach(() => {
     docState.doc = {
       id: 'd1',

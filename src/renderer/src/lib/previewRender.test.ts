@@ -36,7 +36,7 @@ describe('patchPreviewContent — incremental DOM patch (R4)', () => {
   })
 
   it('reuses the same <img> element across identical patches — the image is not reloaded', () => {
-    // Plan 01 §5.4 deleted `scrollSync.realign()` on the premise that incremental patching
+    // `scrollSync.realign()` was deleted on the premise that incremental patching
     // stops images from being torn down and re-fetched on every keystroke. This locks that
     // premise at the unit level: the SAME <img> node instance must survive a re-patch with
     // identical markup, otherwise the browser re-requests the source (and the height jumps

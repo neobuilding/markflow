@@ -229,7 +229,7 @@ describe('ContextMenu (Radix wrapper)', () => {
     expect(content.classList.contains('custom-wide')).toBe(true)
   })
 
-  it('greys out a disabled item via data-[disabled] (PLAN §1.2/B4)', async () => {
+  it('greys out a disabled item via data-[disabled]', async () => {
     render(
       <ContextMenu open onOpenChange={vi.fn()}>
         <ContextMenuTrigger>Target</ContextMenuTrigger>

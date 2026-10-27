@@ -1,6 +1,6 @@
 // Rasterize an SVG string to a PNG `data:` URL so it can be copied as a bitmap via
-// `clipboard:write-image` (§4.4) or embedded into a rich-text copy payload as an `<img>`
-// (plan 04 D13). Runs entirely on the renderer using an offscreen <img> + <canvas>.
+// `clipboard:write-image` or embedded into a rich-text copy payload as an `<img>`
+//. Runs entirely on the renderer using an offscreen <img> + <canvas>.
 //
 // Extracted from previewCopy.ts so both the copy pipeline and the mermaid bake can share it
 // without creating an import cycle (mermaidBake ⇄ copyFidelity ⇄ previewCopy).

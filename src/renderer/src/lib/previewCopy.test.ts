@@ -125,9 +125,9 @@ describe('whole-article copy payload (ADR 0019)', () => {
     expect(cleaned).not.toContain('data-baked')
   })
 
-  describe('inlined-image cache (§4.8 keyboard path parity)', () => {
+  describe('inlined-image cache', () => {
     it('pre-inlines from the BAKED canonical, not the lazy live DOM (keeps off-screen diagrams)', async () => {
-      // Regression (plan-04): the cache used to be built from `article.innerHTML`, which has
+      // Regression: the cache used to be built from `article.innerHTML`, which has
       // EMPTY placeholders for off-screen diagrams (the preview bakes lazily). Because the
       // whole-article branch prefers this cache, every diagram was dropped on paste.
       const embed = vi.fn(async (h: string) => h.replace(/appdoc:\/\//g, 'data:'))
@@ -194,7 +194,7 @@ describe('whole-article copy payload (ADR 0019)', () => {
       }
     })
 
-    it('also records the src → data: map, so a PARTIAL selection can be inlined (§4.8)', async () => {
+    it('also records the src → data: map, so a PARTIAL selection can be inlined', async () => {
       const embed = vi.fn(async (h: string) =>
         h.replace('appdoc://d/x.png', 'data:image/png;base64,XY'),
       )

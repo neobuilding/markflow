@@ -132,14 +132,21 @@ describe('preload documentsApi', () => {
     expect(invokes[0]).toEqual({ channel: 'documents:list-folders', args: ['/notes'] })
   })
 
-  it('setOpenFolder invokes documents:set-open-folder with the folder path', () => {
-    documentsApi.setOpenFolder('/notes')
-    expect(invokes[0]).toEqual({ channel: 'documents:set-open-folder', args: ['/notes'] })
+  it('setWorkspaceRoot invokes documents:set-workspace-root with the root path', () => {
+    documentsApi.setWorkspaceRoot('/notes')
+    expect(invokes[0]).toEqual({ channel: 'documents:set-workspace-root', args: ['/notes'] })
   })
 
-  it('clearOpenFolders invokes documents:clear-open-folders with no arguments', () => {
-    documentsApi.clearOpenFolders()
-    expect(invokes[0]).toEqual({ channel: 'documents:clear-open-folders', args: [] })
+  it('setWorkspaceRoot(null) closes the workspace', () => {
+    documentsApi.setWorkspaceRoot(null)
+    expect(invokes[0]).toEqual({ channel: 'documents:set-workspace-root', args: [null] })
+  })
+
+  // The old pair is gone on purpose: a *set* of opened folders is what allowed an implicitly
+  // multi-root workspace to accumulate (ADR-0023). Assert the absence so it cannot come back.
+  it('exposes no setOpenFolder / clearOpenFolders any more', () => {
+    expect(documentsApi).not.toHaveProperty('setOpenFolder')
+    expect(documentsApi).not.toHaveProperty('clearOpenFolders')
   })
 
   it('undoRename invokes documents:undo-rename with no arguments', () => {

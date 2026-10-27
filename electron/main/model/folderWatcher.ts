@@ -14,7 +14,7 @@
 // model/folderWatcher.ts) even though documents.ts is also the installer.
 import { watch, type FSWatcher } from 'chokidar'
 import { isMarkdownFile } from '../lib/markdown-ext'
-import { addOpenFolder, clearOpenFolders, getOpenFolders } from './openFolders'
+import { getWorkspaceRoot } from './workspaceRoot'
 
 export type FolderWatchHandlers = {
   // A Markdown file appeared under a watched folder.
@@ -60,7 +60,7 @@ function shouldIgnore(path: string, stats?: { isDirectory(): boolean }): boolean
   return !isMarkdownFile(path)
 }
 
-// Kept as a `Matcher[]` so addOpenFolder-style callers could still extend it;
+// Kept as a `Matcher[]` so callers could still extend it;
 // the function form is supported (chokidar's own example uses
 // `(f, stats) => stats?.isFile() && !f.endsWith('.js')`).
 const IGNORED = [shouldIgnore]
@@ -130,12 +130,13 @@ function dispatchDir(event: DirEvent, dirPath: string): void {
   else h.onDirRemoved?.(dirPath)
 }
 
-// Start chokidar over every opened folder, or return null when there is nothing to
-// watch yet (the user has not opened a folder).
+// Start chokidar over the single workspace root, or return null when there is nothing to watch
+// yet (the user has not opened a folder). The root is ONE path by construction (ADR-0023),
+// so there is no folder set to iterate and no ordering question to answer.
 function createWatcher(): FSWatcher | null {
-  const folders = getOpenFolders()
-  if (folders.length === 0) return null
-  const w = watch(folders, {
+  const root = getWorkspaceRoot()
+  if (!root) return null
+  const w = watch(root, {
     ignored: IGNORED,
     ignoreInitial: true,
     ignorePermissionErrors: true,
@@ -166,18 +167,26 @@ export function startFolderWatching(h: FolderWatchHandlers): void {
   watcher = createWatcher()
 }
 
-// Register a folder the user opened. Ignored when it is already covered by a
-// broader watched folder (e.g. the user drills into a subfolder of an open folder).
-export function addWatchedFolder(folderPath: string): void {
-  if (!addOpenFolder(folderPath)) return
-  if (watcher) {
-    watcher.add(folderPath)
-    return
-  }
+// (Re)build the watcher from the current root. Used when the root is replaced or re-pointed
+// (opening a folder, renaming the root): the previous handle watched a path that is either gone or
+// no longer the whole story, so it is closed rather than extended.
+export function refreshFolderWatching(): void {
+  const previous = watcher
+  watcher = null
+  if (previous)
+    void previous.close().catch(
+      // A close() rejection is not actionable — the watcher is being replaced regardless, so the
+      // handler never does anything and never runs in tests.
+      /* v8 ignore next */
+      () => {},
+    )
+  // A pause is in flight (a folder deletion released the handles on purpose): do not start a
+  // watcher behind the pause's back — `resumeFolderWatching` owns that transition.
+  if (watchingPaused) return
   watcher = createWatcher()
 }
 
-// Temporarily release every watch handle, keeping the open-folder set intact so the
+// Temporarily release every watch handle, keeping the single workspace root intact so the
 // watch can be restored afterwards.
 //
 // Windows cannot move a directory to the Recycle Bin while anything still holds an open
@@ -206,6 +215,8 @@ export async function pauseFolderWatching(): Promise<void> {
 export function resumeFolderWatching(): void {
   if (!watchingPaused) return
   watchingPaused = false
+  // Defensive: a pause always nulls `watcher`, so by the time we resume there is nothing to keep.
+  /* v8 ignore next */
   if (watcher) return
   watcher = createWatcher()
 }
@@ -217,7 +228,6 @@ export function resumeFolderWatching(): void {
 export async function stopFolderWatching(): Promise<void> {
   const w = watcher
   watcher = null
-  clearOpenFolders()
   ownWrites.clear()
   if (w) await w.close()
 }

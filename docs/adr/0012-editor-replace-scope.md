@@ -4,13 +4,13 @@ The search surfaces were reviewed for a "replace" capability, referenced against
 **preview pane is read-only and will never offer replace**, so it is permanently out of scope. The
 decision below covers the editor (implemented now) and the sidebar find-in-files (deferred). The
 editor reuses CodeMirror's native search panel, which already renders a replace field plus Replace /
-Replace All buttons. Deferred items are tracked in `docs.local/plan-unified-search-ui-2026-09.md`.
+Replace All buttons. Deferred items are tracked in `docs/adr/0013-unified-search-ui.md`.
 
 - **Status:** Superseded by `docs/adr/0013-unified-search-ui.md` — its "reuse the native panel" decision is
   replaced (the editor gets a custom Find Widget). The preview-read-only and sidebar-replace-deferred
   decisions below carry over unchanged.
 - **Decided:** 2026-09
-- **Related:** `docs.local/plan-unified-search-ui-2026-09.md`
+- **Related:** `docs/adr/0013-unified-search-ui.md`
 
 ## Context
 

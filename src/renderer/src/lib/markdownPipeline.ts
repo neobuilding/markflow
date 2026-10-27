@@ -100,7 +100,7 @@ for (const name of ['warning', 'note', 'tip', 'caution', 'important', 'info']) {
 // Only enable the dollars delimiter style (not the brackets \(…\) / \[…\] style).
 // [Pure dependency, zero patching] We do not modify texmath internals: keep texmath's default <eq>/<eqn>/<section>
 // wrappers, which are non-standard tags dropped by DOMPurify during sanitization while the inner KaTeX is kept;
-// <section> is a standard HTML tag and is kept, serving only as a harmless block-level semantic wrapper (see the Plan doc's sanitization risk discussion).
+// <section> is a standard HTML tag and is kept, serving only as a harmless block-level semantic wrapper.
 // Formula boundary detection (delimiter recognition, inline/block split, currency $ guard via $_pre/$_post) is 100%
 // from the regex rules injected by texmath; this project writes no $ / $$ boundary-detection code of its own.
 md.use(texmath, {
@@ -118,8 +118,8 @@ const defaultFence = md.renderer.rules.fence!
 // R6 (D-G, extended): the core `source_line` ruler (below) adds `data-line` via
 // `token.attrJoin`, but the fence renderer emits its output as a RAW STRING and the
 // `highlight` option short-circuits markdown-it's token-attribute rendering, so that
-// ruler never reaches a `<pre>` or a mermaid placeholder. To keep the plan's
-// "every top-level block carries data-line" guarantee (§5.1 / Step 1 checklist) we inject
+// ruler never reaches a `<pre>` or a mermaid placeholder. To keep the
+// "every top-level block carries data-line" guarantee we inject
 // it here for level-0 code & mermaid blocks. Non-top-level fences (nested inside a
 // container / blockquote) are deliberately skipped so the attribute count stays minimal
 // and nested structure is never double-tagged.

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
 import { EditorView } from '@codemirror/view'
+import { setSearchQuery, SearchQuery } from '@codemirror/search'
 import { MarkdownEditor } from './MarkdownEditor'
 import '../../i18n'
 
@@ -76,9 +77,67 @@ describe('MarkdownEditor', () => {
     // Must not throw; the handler focuses the underlying CodeMirror view.
     expect(() => fireEvent.pointerDown(div)).not.toThrow()
   })
+
+  it('selects + scrolls to the offset once content is present (Phase 4 jump)', async () => {
+    const onConsumeSelection = vi.fn()
+    render(
+      <MarkdownEditor
+        content={'the cat sat on the mat\nsecond line here'}
+        docId="d1"
+        onChange={() => {}}
+        selectionOffset={{ from: 4, to: 7 }}
+        onConsumeSelection={onConsumeSelection}
+      />,
+    )
+    const view = getView()
+    await waitFor(() => {
+      const sel = view.state.selection.main
+      expect(sel.from).toBe(4)
+      expect(sel.to).toBe(7)
+    })
+    // The offset has been consumed so the store can clear it.
+    expect(onConsumeSelection).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not jump (and does not consume) while the document is still loading (empty content)', async () => {
+    const onConsumeSelection = vi.fn()
+    render(
+      <MarkdownEditor
+        content=""
+        docId="d1"
+        onChange={() => {}}
+        selectionOffset={{ from: 4, to: 7 }}
+        onConsumeSelection={onConsumeSelection}
+      />,
+    )
+    const view = getView()
+    await waitFor(() => expect(view.state.selection.main.from).toBe(0))
+    expect(onConsumeSelection).not.toHaveBeenCalled()
+  })
+
+  it('ignores an out-of-range offset instead of crashing (mid-switch / drifted buffer)', async () => {
+    const onConsumeSelection = vi.fn()
+    // The offset lies past the end of the content that is actually present: dispatching it
+    // would make CodeMirror throw "Selection points outside of document".
+    render(
+      <MarkdownEditor
+        content="tiny"
+        docId="d1"
+        onChange={() => {}}
+        selectionOffset={{ from: 100, to: 120 }}
+        onConsumeSelection={onConsumeSelection}
+      />,
+    )
+    const view = getView()
+    await waitFor(() => expect(view.state.doc.toString()).toBe('tiny'))
+    // Selection is left at the start and the offset is NOT consumed, so it can retry later.
+    expect(view.state.selection.main.from).toBe(0)
+    expect(view.state.selection.main.to).toBe(0)
+    expect(onConsumeSelection).not.toHaveBeenCalled()
+  })
 })
 
-describe('MarkdownEditor context menu (PLAN §3)', () => {
+describe('MarkdownEditor context menu', () => {
   const onChange = vi.fn()
 
   beforeEach(() => {
@@ -248,7 +307,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     await waitFor(() => expect(window.api.app.showInFolder).toHaveBeenCalledWith('/docs/a.md'))
   })
 
-  it('show-in-folder swallows a rejection without throwing (PLAN §5.3)', async () => {
+  it('show-in-folder swallows a rejection without throwing', async () => {
     const c = setup({ filePath: '/docs/a.md' })
     // Force the underlying IPC to reject (e.g. an externally-deleted file) so the
     // defensive .catch in showInFolder is exercised and the failure is swallowed.
@@ -282,6 +341,17 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     const sel = getView().state.selection.main
     expect(sel.from).toBe(0)
     expect(sel.to).toBe(getView().state.doc.length)
+  })
+
+  // Shift+Ctrl+H is routed through the `markdown:replaceAll` DOM event. Seed a real query
+  // first: `replaceAll` needs a non-empty search term to rewrite anything.
+  it('runs replace-all on a markdown:replaceAll event', async () => {
+    setup()
+    getView().dispatch({
+      effects: setSearchQuery.of(new SearchQuery({ search: 'Hello', replace: 'Hi' })),
+    })
+    document.dispatchEvent(new CustomEvent('markdown:replaceAll'))
+    await waitFor(() => expect(getView().state.doc.toString()).toContain('# Hi'))
   })
 
   it('italic wraps the selection with underscores', async () => {
@@ -338,7 +408,7 @@ describe('MarkdownEditor context menu (PLAN §3)', () => {
     expect(getView().state.doc.toString()).toBe('# Hello')
   })
 
-  it('bold with no selection parks the cursor between the markers, never inserts "text" (PLAN §3)', async () => {
+  it('bold with no selection parks the cursor between the markers, never inserts "text"', async () => {
     const c = setup()
     const before = getView().state.doc.length // 7 for '# Hello'
     // Collapse the selection at the end of the document (no selected text).

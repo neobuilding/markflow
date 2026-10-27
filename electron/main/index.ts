@@ -15,6 +15,7 @@ import { setupLifecycle } from './lifecycle'
 import { setupMenu, registerMenuHandlers } from './menu'
 import { registerDocumentHandlers } from './ipc/documents'
 import { registerSearchHandlers } from './ipc/search'
+import { registerReplaceHandlers } from './ipc/replace'
 import { registerExportHandlers } from './ipc/export'
 import { registerThemeHandlers } from './handlers/theme'
 import { registerDialogHandlers } from './handlers/dialog'
@@ -175,6 +176,7 @@ if (!shouldStart) {
 
     registerDocumentHandlers(ipcMain, app, getMainWindow)
     registerSearchHandlers(ipcMain)
+    registerReplaceHandlers(ipcMain)
     registerExportHandlers(ipcMain)
 
     registerThemeHandlers()

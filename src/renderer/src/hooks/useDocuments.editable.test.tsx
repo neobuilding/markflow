@@ -82,14 +82,17 @@ function HookCapture<T>({ useHook, onValue }: { useHook: () => T; onValue: (v: T
 beforeEach(() => {
   const api = {
     files: {
+      // The files must live UNDER the resolved directory: the root is a single-root workspace now
+      // (D20), so anything outside it is not imported at all.
       resolvePaths: vi.fn(async (paths: string[]) => ({
         directories: ['/dir'],
-        markdownFiles: paths,
+        markdownFiles: paths.map((p) => `/dir${p}`),
       })),
     },
     documents: {
+      setWorkspaceRoot: vi.fn(async (_root: string | null) => undefined),
       importMany: vi.fn(async (paths: string[]) =>
-        paths.map((p) => (p === '/b.md' ? fakeDocs.b : fakeDocs.a)),
+        paths.map((p) => (p.endsWith('/b.md') ? fakeDocs.b : fakeDocs.a)),
       ),
       create: vi.fn(async () => ({
         id: 'new',

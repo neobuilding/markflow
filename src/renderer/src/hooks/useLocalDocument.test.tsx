@@ -112,6 +112,37 @@ describe('useLocalDocument — dirty computation', () => {
   })
 })
 
+// The registry below is what the Search view ships as `dirtyDocumentSnapshots` (D28): without it
+// the main process would silently search the stale on-disk bytes. These assert the wiring that an
+// edit actually publishes — the `dirty` flag alone is not enough.
+describe('useLocalDocument — unsaved buffer registry (D28)', () => {
+  beforeEach(() => {
+    act(() => {
+      useUIStore.setState({ unsavedBuffers: {}, documentStateRevision: 0, dirty: false })
+    })
+  })
+
+  it('reports the edited buffer so a content search can use unsaved text', () => {
+    const { result, unmount } = renderLocalDocument(baseDoc)
+    act(() => result.current.handleContentChange('# Hello\nMore text\n'))
+    expect(useUIStore.getState().unsavedBuffers['doc-1']).toEqual({
+      content: '# Hello\nMore text\n',
+      revision: 1,
+    })
+    unmount()
+  })
+
+  it('drops the buffer again once the content returns to the saved baseline', () => {
+    const { result, unmount } = renderLocalDocument(baseDoc)
+    act(() => result.current.handleContentChange('changed\n'))
+    expect(useUIStore.getState().unsavedBuffers['doc-1']).toBeDefined()
+    act(() => result.current.handleContentChange(baseDoc.content))
+    // Back at the baseline the buffer is cleared, so search reads the on-disk bytes again.
+    expect(useUIStore.getState().unsavedBuffers['doc-1']).toBeUndefined()
+    unmount()
+  })
+})
+
 // The draft title is kept in DISPLAY form: the file name WITH its extension.
 const baseDisplayTitle = 'hi.md'
 
@@ -132,6 +163,18 @@ describe('useLocalDocument — title draft is in display form', () => {
   it('shows nothing for a memory-only draft with a blank title', () => {
     const { result, unmount } = renderLocalDocument({ ...baseDoc, filePath: '', title: '' })
     expect(result.current.localTitle).toBe('')
+    unmount()
+  })
+})
+
+// Before a document has ever loaded, `prevIdRef.current` is null: a content change must still flip
+// the dirty flag but must NOT touch the (empty) buffer registry — the `if (id)` guard's falsy branch.
+describe('useLocalDocument — content change before a document is loaded', () => {
+  it('marks dirty without reporting a buffer when no document is loaded yet', () => {
+    const { result, unmount } = renderLocalDocument(null)
+    act(() => result.current.handleContentChange('typed text'))
+    expect(useUIStore.getState().dirty).toBe(true)
+    expect(useUIStore.getState().unsavedBuffers).toEqual({})
     unmount()
   })
 })

@@ -1,4 +1,4 @@
-// Plan 04 — copy fidelity unit coverage (ADR-0004: every lib file 100%).
+// Copy fidelity unit coverage (ADR-0004: every lib file 100%).
 //
 // jsdom does not apply stylesheets to getComputedStyle, so the style values we read in tests
 // come from INLINE styles on the fixtures. That is enough to exercise every branch of the
@@ -51,7 +51,7 @@ describe('enhanceForPaste — style inlining (D12 = A)', () => {
     expect(out).not.toMatch(/<span style="[^"]*">inherited<\/span>/)
   })
 
-  it('inlines borders, handling uniform vs per-side forms (§4.2)', () => {
+  it('inlines borders, handling uniform vs per-side forms', () => {
     const html =
       '<pre style="border:1px solid rgb(0,0,0)">code</pre>' +
       '<blockquote style="border-left:0.25em solid rgb(0,0,0);padding:1em">q</blockquote>'
@@ -179,7 +179,7 @@ describe('enhanceForPaste — math keeps its MathML carrier (R13.9 / D17: NOT ra
   })
 })
 
-describe('safeEnhanceForPaste (§4.5 — never let a failure fall through to the native copy)', () => {
+describe('safeEnhanceForPaste', () => {
   it('degrades to the stripped semantic HTML when enhancement throws', () => {
     // A fidelity failure must NOT throw out of the `copy` handler: that would skip
     // preventDefault and let the browser copy the raw, un-styled DOM.
@@ -200,7 +200,7 @@ describe('safeEnhanceForPaste (§4.5 — never let a failure fall through to the
   })
 })
 
-describe('enhanceForPaste — per-target post-processing (§4.6)', () => {
+describe('enhanceForPaste — per-target post-processing', () => {
   it('double-writes Excel borders and bgcolor on table cells', () => {
     const html =
       '<table><tr>' +
@@ -302,7 +302,7 @@ describe('light-token pinning (D16 — the fragment must be a LIGHT island)', ()
   })
 })
 
-describe('enhanceForPaste — keyboard-path image inlining (§4.8)', () => {
+describe('enhanceForPaste — keyboard-path image inlining', () => {
   // The menu path inlines images via embedImages; the KEYBOARD path has no pending payload, so the
   // whole-article string is pre-inlined by warmInlinedImages and — for a PARTIAL SELECTION — the
   // fragment's own <img>s are rewritten from the src → data: map that same pass produced.

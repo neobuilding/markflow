@@ -381,6 +381,7 @@ svg[id^='mermaid-'] {
   background: transparent !important;
   font-family: var(--font-mono) !important;
   font-size: 14px !important;
+  position: relative;
 }
 .cm-editor.cm-focused {
   outline: none !important;
@@ -432,4 +433,50 @@ svg[id^='mermaid-'] {
 }
 .animate-slide-up {
   animation: slideUp 0.2s ease-out;
+}
+
+/* ── Find highlights (editor + preview) ───────────────────────────────────
+   Current match = solid accent + outline; every other match = semi-transparent
+   accent. This mirrors VS Code's find styling. CodeMirror tags its own matches
+   with `.cm-searchMatch` / `.cm-searchMatch-selected`; the preview uses our own
+   `.preview-find-match` / `.preview-find-active`. */
+.cm-searchMatch,
+.preview-find-match {
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  border-radius: 2px;
+}
+.cm-searchMatch-selected,
+.preview-find-active {
+  background: var(--color-accent);
+  color: var(--color-surface);
+  outline: 1px solid var(--color-accent);
+}
+
+/* ── Shared floating "card" surface for the find widgets ───────────────────
+   Both the editor find panel and the preview find bar use this exact class so
+   the two find surfaces speak one visual language (plan §3.1: the find widget
+   floats in place and never takes a layout row — VS Code style). The editor's
+   CodeMirror panel is positioned via
+   `.cm-panels-top` (below); the preview wraps the class on its own absolute
+   container. Kept out of the component files so both surfaces stay identical
+   without importing CSS-in-JS. */
+.find-surface {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 20;
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+/* The editor's find panel is a CodeMirror `top` panel; float it over the
+   content instead of pushing it down, and strip CM's default panel chrome so
+   only `.find-surface` shows. `.cm-editor` (positioning context, set in the
+   CodeMirror theme overrides above) anchors the absolute find surface. */
+.cm-editor .cm-panels-top {
+  background: transparent;
+  border: 0;
 }

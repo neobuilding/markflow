@@ -79,7 +79,7 @@ all prior changes for mistakes/omissions.
 ### Round 6 (this round): full sweep + review + docs
 
 - User asked: ① full sweep for any "CI-distinguished threshold" residue; ② re-review all
-  changes; ③ write Chinese + English troubleshooting docs under `docs.local/`.
+  changes; ③ write Chinese + English troubleshooting docs under `docs/`.
 - Sweep conclusion: **no residue**. Every `process.env.CI` usage only affects Playwright
   run mode (forbidOnly/retries/reporter), unrelated to perf thresholds.
 
@@ -102,9 +102,11 @@ function shouldIgnore(path: string, stats?: { isDirectory(): boolean }): boolean
 const IGNORED = [shouldIgnore]
 
 function createWatcher(): FSWatcher | null {
-  const folders = getOpenFolders()
-  if (folders.length === 0) return null
-  const w = watch(folders, {
+  // Single-root workspace (ADR-0023): the root is a single value, `workspaceRoot` — no longer a
+  // *set* of opened folders.
+  const root = getWorkspaceRoot()
+  if (!root) return null
+  const w = watch(root, {
     ignored: IGNORED,
     ignoreInitial: true,
     ignorePermissionErrors: true,

@@ -5,6 +5,15 @@
 export const en = {
   // ── Sidebar ────────────────────────────────────────────────────────────
   'sidebar.search': 'Search',
+  // The sidebar switches between these two surfaces; they are mutually exclusive because the
+  // Search view needs the whole panel (ADR-0023).
+  'sidebar.files': 'Files',
+  // Go to file… — the Quick Open trigger and the label that names its scope.
+  'sidebar.goToFile': 'Go to file…',
+  // Accessible name for the resident "search in files" panel toggle in the sidebar, kept
+  // distinct from the toolbar "Search" button (which opens the Ctrl/Cmd+K palette) so
+  // assistive tech and getByRole queries don't collide.
+  'sidebar.searchPanel': 'Search in files',
   'sidebar.openFile': 'Open File…',
   'sidebar.openFolder': 'Open Folder…',
   'sidebar.newDraft': 'New Draft',
@@ -64,13 +73,14 @@ export const en = {
   'editor.fileDetailsShortcut': 'File details ({{shortcut}})',
   'editor.export': 'Export as HTML…',
   'editor.exportShortcut': 'Export as HTML… ({{shortcut}})',
-  'editor.findShortcut': 'Find ({{shortcut}})',
+  'editor.findShortcut': 'Find in document ({{shortcut}})',
   'editor.replace': 'Replace',
-  'editor.replaceShortcut': 'Replace ({{shortcut}})',
+  'editor.replaceShortcut': 'Replace in document ({{shortcut}})',
   'editor.closeFile': 'Close file',
   'editor.renameTitle': 'Rename file',
   'editor.fileDeleted': 'Deleted on disk — save to restore it',
   'editor.toggleSidebarShortcut': 'Toggle Sidebar ({{shortcut}})',
+  'editor.goToFileShortcut': 'Go to file… ({{shortcut}})',
   'editor.switchReadOnly': 'Switch to read-only mode',
   'editor.switchEdit': 'Switch to edit mode',
   'editor.readOnly': 'Read-only',
@@ -125,10 +135,80 @@ export const en = {
   'palette.startTyping': 'Start typing to search your documents…',
   'palette.navigate': 'navigate',
   'palette.open': 'open',
-  'palette.mode.filename': 'File name',
-  'palette.mode.content': 'Content',
-  'palette.scopeFolder': 'Current folder and its sub-folders',
-  'palette.scopeAll': 'All documents',
+
+  // ── Search view: scope ─────────────────────────────────────────────────
+  // The scope is a VISIBLE, path-expressed include/exclude pair (never a hidden mode bit).
+  'search.include': 'Include',
+  'search.includePlaceholder': 'e.g. ./docs, **/*.md',
+  'search.exclude': 'Exclude',
+  'search.excludePlaceholder': 'e.g. ./archive',
+  'search.toggleDetails': 'Search details',
+  // With no workspace root there is no relative path for a scope to match, so the fields are
+  // disabled rather than silently meaningless.
+  'search.scopeDisabledNoRoot': 'Open a folder to use include / exclude',
+  // Match Case (`Aa`). Off by default = case-INSENSITIVE, exactly like VS Code.
+  'search.matchCase': 'Match Case',
+  'search.wholeWord': 'Match Whole Word',
+  'search.regexp': 'Use Regular Expression',
+  'search.regexHint':
+    'In regex mode write \\n to match a line break (CRLF included); ^ and $ anchor the whole document and (?m) is not supported.',
+  'search.invalidRegex': 'Invalid regular expression: {{message}}',
+  'search.regexTimeout': 'The regular expression ran out of time and the search was stopped',
+
+  // ── Search view: replace ───────────────────────────────────────────────
+  'search.toggleReplace': 'Toggle replace',
+  'search.replacePlaceholder': 'Replace with…',
+  'search.replace': 'Replace',
+  'search.replaceHere': 'Here',
+  'search.replaceInFile': 'In file',
+  'search.replaceAll': 'All',
+  'search.replaceAllConfirm':
+    'Replace {{count}} matches across {{files}} files with "{{replacement}}"?',
+  'search.replaceResult': 'Replaced {{count}} matches in {{files}} files',
+  'search.replaceFailures': '{{count}} file(s) could not be replaced — see the report',
+  'search.replaceCancelled': 'Replace cancelled — nothing was written',
+  // The budget is fixed and non-configurable on purpose (ADR-0023).
+  'search.replaceAborted':
+    'Safety limit reached ({{limit}}) — cancelled, no file was written. Offending: {{offending}}',
+  'search.replaceNoRootDrafts': 'Open a folder first: drafts in memory cannot be replaced on disk',
+  // Files with unsaved edits never take part in a cross-file replace (D28): say so instead of
+  // letting the user wonder why the count shrank.
+  'search.dirtyBufferSkipped':
+    'Files with unsaved changes were skipped — save or discard them first',
+  'search.planning': 'Planning replace…',
+  'search.undoReplace': 'Undo last replace',
+  'search.undoResult': 'Restored {{count}} file(s)',
+  'search.undoUnavailable': 'Nothing to undo',
+  'search.invalidPattern': 'Invalid pattern in {{field}}: {{pattern}}',
+  // Blocking diagnostic: an explicit ./path does not exist. A different domain from
+  // "invalid pattern" (§5.8) — it must never be folded into the same copy.
+  'search.pathNotFound': 'Path not found: {{pattern}}',
+  // Non-blocking notices (§5.2 / D19): when a scope is set, drafts are excluded — the result
+  // area must say so rather than silently dropping them.
+  'search.draftsExcluded': 'A scope is set, so drafts in memory are not searched',
+  'search.outOfRootSkipped': 'Skipped document(s) outside the workspace',
+  'search.matchCap': 'Only the first 50 matches are shown per document',
+  'search.docCap': 'Only the first 200 files are shown',
+  'search.multilineUnsupported': 'Multi-line queries are not supported yet',
+
+  // ── Search view: result summary ─────────────────────────────────────
+  // Global hit summary, e.g. "12 matches in 3 files"; and the truncation note shown when
+  // the candidate document set was capped (e.g. "Showing first 200 files").
+  'search.matchCount': '{{count}} matches in {{files}} files',
+  'search.showingFirst': 'Showing first {{n}} files',
+  // Shown in filename mode to advertise the glob syntax the query accepts (ADR-0023).
+  'search.globHint': 'Glob: * ? ** {a,b} [a-z]',
+  // Shown when a (non-empty) resident query returns nothing.
+  'search.noResults': 'No results',
+  // Tooltip for the `Esc` hint chip in the resident search field (ADR-0023): Esc collapses the
+  // panel. The chip itself shows the literal key name, so only the explanation is translated.
+  'search.escHint': 'Collapse the search panel (Esc)',
+  // Accessible name for the clear (✕) button on every search input — must differ from the input's
+  // own label so screen readers can tell "clear the field" apart from "type here" (ADR-0023 / G2).
+  'search.clear': 'Clear search',
+  // Tooltip for the focus-shortcut chip on the resident search field (ADR-0023 / G6): focuses the
+  // panel. The chip shows the literal key combo, so only the explanation is translated.
+  'search.focusHint': 'Focus the search panel (Ctrl/Cmd+Shift+F)',
 
   // ── About dialog ───────────────────────────────────────────────────────
   'about.title': 'About MarkFlow',
@@ -184,7 +264,23 @@ export const en = {
   'new.create': 'Create',
 
   // ── App-level (native confirm / alert strings) ─────────────────────────
-  'app.unsavedSwitch': 'You have unsaved changes. Discard them and switch files?',
+  // `{{title}}` names the document being left: "which unsaved file?" is the first thing a user
+  // asks when this appears.
+  'app.unsavedSwitch': 'You have unsaved changes in "{{title}}". Discard them and switch files?',
+  // Opening a folder/file REPLACES the workspace (ADR-0023), so unsaved edits would be lost.
+  'app.unsavedOpenWorkspace':
+    'You have unsaved changes in "{{title}}". Discard them and open the new workspace?',
+  // Several unrelated directories cannot become one root (D15): refuse and list them.
+  'app.multipleRootsRefused':
+    'These folders do not share a common root, so they cannot be opened together. Open them one at a time:',
+  // Several directories converged on one ancestor (D15): silently re-rooting would clear the
+  // old workspace without the user ever learning what the new root is.
+  'app.commonAncestorRoot':
+    'Multiple folders opened — the workspace root is now their common folder: {{root}}',
+  // Save As to a path outside the current root re-roots the workspace (ADR-0023).
+  'app.saveAsReroot':
+    'That location is outside the current workspace. Saving will close this workspace and switch to the target folder. Continue?',
+  'app.confirmContinue': 'Continue',
   'app.unsavedCloseWorkspace': 'You have unsaved changes. Discard them and close the workspace?',
   'app.unsavedClose': 'You have unsaved changes. Discard them?',
   'app.confirmDiscard': 'Discard',
@@ -302,6 +398,9 @@ export const en = {
   'ctx.discardDraft': 'Discard Draft',
   // Sidebar folder row
   'ctx.openFolder': 'Open This Folder',
+  // Sets the Search view's `include` to this folder's path relative to the root (ADR-0023) — the
+  // same "scope comes from a place" rule VS Code follows with "Find in Folder…".
+  'ctx.searchInFolder': 'Search in This Folder',
   'ctx.expand': 'Expand',
   'ctx.collapse': 'Collapse',
   'ctx.expandAll': 'Expand All',
@@ -337,6 +436,27 @@ export const en = {
   // ── Editor extra ───────────────────────────────────────────────────────
   // Tooltip shown on disabled (read-only) rename/save menu items
   'editor.needsEditMode': 'Switch to edit mode first',
+
+  // ── Find widget (shared by editor & preview) ───────────────────────────
+  'find.placeholder': 'Find',
+  'find.replacePlaceholder': 'Replace',
+  'find.toggle.case': 'Match Case',
+  'find.toggle.wholeWord': 'Match Whole Word',
+  'find.toggle.regex': 'Use Regular Expression',
+  'find.toggle.preserveCase': 'Preserve Case',
+  // Visible glyphs on the toggle group: Aa / ab / .* / AB
+  'find.toggle.caseShort': 'Aa',
+  'find.toggle.wholeWordShort': 'ab',
+  'find.toggle.regexShort': '.*',
+  'find.toggle.preserveCaseShort': 'AB',
+  'find.prev': 'Previous Match',
+  'find.next': 'Next Match',
+  'find.close': 'Close Find',
+  'find.replace': 'Replace',
+  'find.replaceAll': 'Replace All',
+  'find.noResults': 'No match',
+  // aria-live label for the match counter, e.g. "3 of 12"
+  'find.results': '{{current}} of {{total}}',
 } as const
 
 export type TranslationKey = keyof typeof en

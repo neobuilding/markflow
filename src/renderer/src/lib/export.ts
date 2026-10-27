@@ -23,7 +23,7 @@ export function resolveTheme(
 }
 
 // Assemble the standalone HTML (same logic as exporting HTML). PDF and HTML export share this function,
-// and it also settles the D1 naming (the plan originally called it buildStandaloneHtml).
+// and it also settles the naming (it was originally called buildStandaloneHtml).
 // Export is uniformly UTF-8: meta charset is fixed to utf-8, matching writeFileSync(..., 'utf-8') byte-for-byte,
 // so non-UTF-8 documents (GBK/Big5 etc.) won't be misread by the browser under their original encoding and garble (R5 export byte fidelity).
 export async function buildStandaloneHtml(opts: {

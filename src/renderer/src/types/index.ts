@@ -15,28 +15,44 @@ export interface Document {
   missing?: boolean
 }
 
-export interface SearchResult {
-  id: string
-  title: string
-  folderPath: string
-  // Absolute on-disk path of the matching document . Empty for
-  // memory-only drafts that have no file yet.
-  filePath: string
-  snippet: string
-  score: number
-  updatedAt: number
+// The search wire types are shared with the Electron main process (they travel over IPC), so they
+// are declared once in `shared/searchTypes.ts` and re-exported from this barrel. It is a type-only
+// re-export: zero runtime cost, and it keeps every renderer import site (`../../types`) unchanged
+// while making drift between the two processes impossible. Imported first and then re-exported
+// because `SearchOptions` below also needs `SearchMode` as a LOCAL binding — `export type { ... }
+// from` re-exports without binding the name, which left `SearchMode` unresolvable here.
+import type {
+  SearchMode,
+  SearchMatch,
+  SearchResult,
+  SearchQueryOptions,
+  SearchQueryResponse,
+  SearchDiagnostic,
+  DirtyDocumentSnapshot,
+  ReplacePlanOptions,
+  ReplacePlanOutcome,
+  ReplaceApplyOptions,
+  ReplaceApplyOutcome,
+  ReplaceUndoOutcome,
+  ReplaceFileOutcome,
+  ReplaceSkipReason,
+} from '../../../../shared/searchTypes'
+export type {
+  SearchMode,
+  SearchMatch,
+  SearchResult,
+  SearchQueryOptions,
+  SearchQueryResponse,
+  SearchDiagnostic,
+  DirtyDocumentSnapshot,
+  ReplacePlanOptions,
+  ReplacePlanOutcome,
+  ReplaceApplyOptions,
+  ReplaceApplyOutcome,
+  ReplaceUndoOutcome,
+  ReplaceFileOutcome,
+  ReplaceSkipReason,
 }
 
 export type ViewMode = 'edit' | 'preview' | 'split'
 export type ThemeMode = 'light' | 'dark' | 'system'
-
-// Sidebar search mode: 'filename' matches file names only; 'content' is the
-// full-text search across title, body and folder path.
-export type SearchMode = 'filename' | 'content'
-
-// Options for the search IPC: scope to a folder (and its sub-folders) and choose
-// the search mode.
-export interface SearchOptions {
-  scopeFolder?: string | null
-  mode?: SearchMode
-}

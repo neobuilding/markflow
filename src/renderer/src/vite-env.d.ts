@@ -1,6 +1,16 @@
 /// <reference types="vite/client" />
 
-import type { Document, SearchResult, ThemeMode, SearchOptions } from './types'
+import type {
+  Document,
+  ThemeMode,
+  SearchQueryOptions,
+  SearchQueryResponse,
+  ReplacePlanOptions,
+  ReplacePlanOutcome,
+  ReplaceApplyOptions,
+  ReplaceApplyOutcome,
+  ReplaceUndoOutcome,
+} from './types'
 
 // Status information of a file on disk (size / creation time / modification time)
 export interface FileStat {
@@ -78,10 +88,9 @@ export interface Api {
     deleteFolder: (folderPath: string) => Promise<void>
     // Directory listing : folders below the path, empty ones included
     listFolders: (folderPath: string) => Promise<string[]>
-    // Folder watching is owned by the main process (chokidar); the renderer only
-    // reports which folder was opened / that the workspace was closed.
-    setOpenFolder: (folderPath: string) => Promise<void>
-    clearOpenFolders: () => Promise<void>
+    // The single workspace root is owned by the main process. Setting it REPLACES the workspace
+    // (document store cleared, watcher rebuilt); `null` closes it. (ADR-0023)
+    setWorkspaceRoot: (rootPath: string | null) => Promise<void>
   }
   export: {
     embedImages: (html: string) => Promise<string>
@@ -89,7 +98,13 @@ export interface Api {
     print: (html: string) => Promise<void>
   }
   search: {
-    query: (q: string, opts?: SearchOptions) => Promise<SearchResult[]>
+    query: (options: SearchQueryOptions) => Promise<SearchQueryResponse>
+  }
+  replace: {
+    plan: (options: ReplacePlanOptions) => Promise<ReplacePlanOutcome>
+    apply: (options: ReplaceApplyOptions) => Promise<ReplaceApplyOutcome>
+    cancel: (cancelToken: string) => Promise<boolean>
+    undo: () => Promise<ReplaceUndoOutcome>
   }
   app: {
     getTheme: () => Promise<ThemeMode>
@@ -142,6 +157,9 @@ export interface Api {
   onDocumentRefresh: (callback: (data: { id: string }) => void) => () => void
   onOpenPaths: (callback: (paths: string[]) => void) => () => void
   onAppRequestQuit: (callback: () => void) => () => void
+  onReplaceProgress: (
+    callback: (progress: { cancelToken: string; done: number; total: number }) => void,
+  ) => () => void
 }
 
 declare global {

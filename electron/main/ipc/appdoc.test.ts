@@ -26,7 +26,7 @@ describe('resolveAppdocPath', () => {
   const docId = 'd1'
   const doc = { id: docId, filePath: join(dir, 'doc.md') }
 
-  it('returns null for a malformed appdoc URL (PLAN §12-3)', () => {
+  it('returns null for a malformed appdoc URL', () => {
     expect(resolveAppdocPath('appdoc:///im.png')).toBeNull()
   })
 
@@ -72,7 +72,7 @@ describe('registerAppDocProtocol', () => {
 
   const handler = () => protocolHandle.mock.calls[0][1] as (req: Request) => Promise<Response>
 
-  it('serves a valid appdoc request with its content type (PLAN §4.1)', async () => {
+  it('serves a valid appdoc request with its content type', async () => {
     getDocumentById.mockReturnValue(doc)
     registerAppDocProtocol()
     const res = await handler()(new Request('appdoc://d1/im.png'))

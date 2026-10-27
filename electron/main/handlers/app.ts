@@ -93,7 +93,7 @@ export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
     }
   })
 
-  // Copy an SVG as a vector (Plan 02 §4.4 / D4). Writes `image/svg+xml` so Word / vector
+  // Copy an SVG as a vector. Writes `image/svg+xml` so Word / vector
   // editors receive true vector art, and a `text/html` wrapper (`<img src="data:…">`) so plain
   // HTML paste also lands the diagram. A single ClipboardItem carrying both MIME types keeps
   // the two formats together; failures are swallowed.

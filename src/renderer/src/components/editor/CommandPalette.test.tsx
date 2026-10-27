@@ -8,29 +8,52 @@ import '../../i18n'
 
 const results: SearchResult[] = [
   {
-    id: 'a',
+    documentId: 'a',
     title: 'Apple',
-    folderPath: '',
+    relPath: 'apple.md',
     filePath: '/docs/apple.md',
-    snippet: 'a',
-    score: 0,
-    updatedAt: 1,
+    matchCount: 0,
+    matchCapped: false,
+    matches: [],
   },
-  { id: 'b', title: 'Banana', folderPath: '', filePath: '', snippet: 'b', score: 0, updatedAt: 2 },
+  // A memory-only draft: `relPath` is null and there is no path to copy.
+  {
+    documentId: 'b',
+    title: 'Banana',
+    relPath: null,
+    filePath: '',
+    matchCount: 0,
+    matchCapped: false,
+    matches: [],
+  },
 ]
 
 vi.mock('../../hooks/useSearch', () => ({
-  useSearch: () => (globalThis as any).__searchState,
+  useQuickOpen: () => (globalThis as any).__searchState,
 }))
 
 beforeEach(() => {
-  ;(globalThis as any).__searchState = { data: results, isFetching: false }
+  ;(globalThis as any).__searchState = {
+    data: {
+      results,
+      diagnostics: [],
+      appliedScope: { root: null, include: [], exclude: [] },
+      truncated: false,
+    },
+    isFetching: false,
+  }
   useUIStore.getState().setSearchOpen(false)
   useUIStore.getState().setSearchQuery('')
   useUIStore.getState().setActiveDocumentId(null)
 })
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  // The guard tests below install a "keep editing" dialog bridge; without this reset the
+  // dirty flag and the half-mocked bridge leak into the next describe.
+  useUIStore.getState().setDirty(false)
+  useUIStore.getState().setActiveDocumentId(null)
+})
 
 describe('CommandPalette', () => {
   it('renders nothing when closed', () => {
@@ -137,11 +160,13 @@ describe('CommandPalette', () => {
     expect(await screen.findByText(/Searching/i)).toBeInTheDocument()
   })
 
-  it('shows the on-disk file path for results that have one (能力 10)', async () => {
+  // The ROW shows the path relative to the workspace root (it is what disambiguates two documents
+  // with the same title); the context menu copies the ABSOLUTE one — asserted separately below.
+  it('shows the root-relative path for results that have one (能力 10)', async () => {
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('a')
     render(<CommandPalette />)
-    expect(await screen.findByText('/docs/apple.md')).toBeInTheDocument()
+    expect(await screen.findByText('apple.md')).toBeInTheDocument()
   })
 
   it('hides the file path for memory-only drafts', async () => {
@@ -176,6 +201,26 @@ describe('CommandPalette', () => {
     expect(useUIStore.getState().searchOpen).toBe(false)
   })
 
+  it('does not open on Ctrl/Cmd+K while a modal surface owns the keyboard', () => {
+    useUIStore.getState().setSearchOpen(false)
+    render(<CommandPalette />)
+    // A dialog is already open: the palette must not be stacked on top of it.
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+    const ev = new KeyboardEvent('keydown', {
+      key: 'k',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    })
+    window.dispatchEvent(ev)
+    expect(useUIStore.getState().searchOpen).toBe(false)
+    // And it must not swallow a key it does not own.
+    expect(ev.defaultPrevented).toBe(false)
+    modal.remove()
+  })
+
   it('does nothing when Enter is pressed with no selected result', async () => {
     ;(globalThis as any).__searchState = { data: [], isFetching: false }
     useUIStore.getState().setSearchOpen(true)
@@ -188,47 +233,57 @@ describe('CommandPalette', () => {
     expect(useUIStore.getState().searchOpen).toBe(true)
   })
 
-  it('switches to file-name search mode from the toggle', async () => {
+  // Quick Open is a SPECIALIZED surface (ADR-0023): no mode switch and no scope control. If
+  // either ever comes back, this surface has silently become two surfaces again.
+  it('exposes no mode switch and no scope control', async () => {
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('a')
-    useUIStore.getState().setSearchMode('content')
     render(<CommandPalette />)
-    fireEvent.click(await screen.findByTestId('search-mode-filename'))
-    expect(useUIStore.getState().searchMode).toBe('filename')
+    await screen.findByText('Apple')
+    expect(screen.queryByTestId('search-mode-filename')).toBeNull()
+    expect(screen.queryByTestId('search-mode-content')).toBeNull()
+    expect(screen.queryByTestId('search-scope')).toBeNull()
   })
 
-  it('switches back to content search mode from the toggle', async () => {
+  it('names its own scope in the footer ("go to file")', async () => {
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('a')
-    useUIStore.getState().setSearchMode('filename')
     render(<CommandPalette />)
-    fireEvent.click(await screen.findByTestId('search-mode-content'))
-    expect(useUIStore.getState().searchMode).toBe('content')
+    expect(await screen.findByText('Go to file…')).toBeInTheDocument()
   })
 
-  it('shows the current-folder scope label when a folder is active', async () => {
+  // ADR-0023: a palette click is a document switch like any other — the unsaved guard must
+  // fire here too, and "keep editing" must leave the palette open on the same document.
+  it('does not switch when the unsaved guard is declined', async () => {
+    const confirm: ReturnType<typeof vi.fn> = vi.fn(async () => false)
+    ;(window as unknown as { api: unknown }).api = { dialog: { confirm } }
+    useUIStore.getState().setActiveDocumentId('a')
+    useUIStore.getState().setActiveDocumentTitle('Apple')
+    useUIStore.getState().setDirty(true)
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('a')
-    useUIStore.getState().setActiveFolder('/my/folder')
     render(<CommandPalette />)
-    expect(await screen.findByTestId('search-scope')).toHaveTextContent(
-      'Current folder and its sub-folders',
-    )
-  })
-
-  it('shows the all-documents scope label when no folder is active', async () => {
-    useUIStore.getState().setSearchOpen(true)
-    useUIStore.getState().setSearchQuery('a')
-    useUIStore.getState().setActiveFolder(null)
-    render(<CommandPalette />)
-    expect(await screen.findByTestId('search-scope')).toHaveTextContent('All documents')
+    fireEvent.click(await screen.findByText('Banana'))
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
+    expect(confirm.mock.calls[0][0].message).toContain('Apple')
+    expect(useUIStore.getState().activeDocumentId).toBe('a')
+    // Nothing switched, so there is nothing to close over: the palette stays open.
+    expect(useUIStore.getState().searchOpen).toBe(true)
   })
 })
-describe('CommandPalette — result row context menu (PLAN §9)', () => {
+describe('CommandPalette — result row context menu', () => {
   const writeText = vi.fn()
 
   beforeEach(() => {
-    ;(globalThis as any).__searchState = { data: results, isFetching: false }
+    ;(globalThis as any).__searchState = {
+      data: {
+        results,
+        diagnostics: [],
+        appliedScope: { root: null, include: [], exclude: [] },
+        truncated: false,
+      },
+      isFetching: false,
+    }
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('a')
     useUIStore.getState().setActiveDocumentId(null)
@@ -261,7 +316,7 @@ describe('CommandPalette — result row context menu (PLAN §9)', () => {
     expect(useUIStore.getState().searchOpen).toBe(false)
   })
 
-  it('copies the title without closing the palette (PLAN §1.7 bubble guard)', async () => {
+  it('copies the title without closing the palette', async () => {
     render(<CommandPalette />)
     const rows = await screen.findAllByTestId('search-result')
     fireEvent.contextMenu(rows[0])
@@ -292,11 +347,9 @@ describe('CommandPalette — result row context menu (PLAN §9)', () => {
     expect(screen.getByTestId('palette-copy-folder-path')).toHaveAttribute('aria-disabled', 'true')
   })
 
+  // The folder is derived from the result's own absolute path: there is no `folderPath` field any
+  // more (the frozen contract carries `relPath` + `filePath`).
   it('copies the folder path when the result has one', async () => {
-    ;(globalThis as any).__searchState = {
-      data: [{ ...results[0], folderPath: '/docs' }],
-      isFetching: false,
-    }
     render(<CommandPalette />)
     const rows = await screen.findAllByTestId('search-result')
     fireEvent.contextMenu(rows[0])

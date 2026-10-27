@@ -20,7 +20,7 @@ import type { ElectronApplication, Page } from 'playwright'
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /**
- * Self-contained performance fixture (see plan §8 Step 2). The fixture doc `demo-large.en.md`
+ * Self-contained performance fixture (see ADR-0023 Step 2). The fixture doc `demo-large.en.md`
  * is a committed copy of `examples/demo-large.en.md` (produced by `examples/generate-large.mjs`,
  * which also emits the Chinese sibling `examples/demo-large.zh-CN.md`). The whole directory
  * (md + assets, including the R9 big image `pic-tall.png`) is copied to a temp scratch before

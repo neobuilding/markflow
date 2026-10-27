@@ -8,6 +8,7 @@
   "scripts": {
     "postinstall": "node scripts/install-eslint-ts6.mjs",
     "prepare": "husky",
+    "precommit": "lint-staged --max-arg-length=4096",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
@@ -64,6 +65,7 @@
     "mermaid": "^12.0.0",
     "minisearch": "^7.2.0",
     "morphdom": "^2.7.8",
+    "picomatch": "^4.0.7",
     "react-i18next": "^17.0.14"
   },
   "devDependencies": {
@@ -97,6 +99,7 @@
     "@types/markdown-it": "^14.2.0",
     "@types/markdown-it-container": "^4.0.1",
     "@types/node": "^26.5.1",
+    "@types/picomatch": "^4.0.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
@@ -148,7 +151,8 @@
       "prettier --write"
     ],
     "*.{ts,tsx,js,jsx,cjs,mjs}": [
-      "node scripts/install-eslint-ts6.mjs && eslint --fix",
+      "node scripts/install-eslint-ts6.mjs",
+      "eslint --fix",
       "prettier --write"
     ],
     "*.{json,json5,html}": [

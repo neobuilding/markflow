@@ -15,7 +15,7 @@ Enforce **exactly one** sanitization boundary. Rendered Markdown HTML must pass 
 preview.
 
 The guarantee is enforced by the **type system** rather than by a wrapper component (the old
-`SafeHtml` component was removed in the Plan-01 render-pipeline refactor): `sanitizeHtml()` returns
+`SafeHtml` component was removed in the render-pipeline refactor): `sanitizeHtml()` returns
 the branded type `SanitizedHtml`, whose brand is a private `unique symbol`, so the only way to
 produce one is to call `sanitizeHtml()`; and the single DOM write entry
 `patchPreviewContent(root, html: SanitizedHtml)` in `previewRender.ts` accepts nothing else. Feeding

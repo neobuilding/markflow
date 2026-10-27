@@ -1,7 +1,7 @@
 // Rasterize a KaTeX formula from the live preview into a PNG — the "Copy formula as image"
 // right-click item (ADR 0020).
 //
-// Why this exists at all: rich-text copy keeps a formula's **MathML** as its carrier (§4.8) because
+// Why this exists at all: rich-text copy keeps a formula's **MathML** as its carrier because
 // Word / OneNote turn MathML into a real, editable equation — a bitmap would be a downgrade. But
 // targets that understand neither MathML nor KaTeX's CSS (Youdao Note, F23) show the formula as
 // three concatenated texts. One clipboard cannot distinguish targets, so the bitmap is an explicit,

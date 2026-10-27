@@ -140,3 +140,43 @@ describe('App — app:folder-changed handler (integration)', () => {
     expect(invalidateSpy).not.toHaveBeenCalled()
   })
 })
+
+describe('App — window-level shortcut guards (modal owns the keyboard)', () => {
+  beforeEach(() => {
+    useUIStore.getState().setNewDocOpen(false)
+    useUIStore.setState({ sidebarOpen: false })
+  })
+
+  it('does not open the New Document dialog while a modal surface owns the keyboard', () => {
+    mountApp()
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true }),
+    )
+    expect(useUIStore.getState().newDocOpen).toBe(false)
+    modal.remove()
+  })
+
+  it('opens the New Document dialog when no modal owns the keyboard', () => {
+    mountApp()
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true }),
+    )
+    expect(useUIStore.getState().newDocOpen).toBe(true)
+  })
+
+  it('does not toggle the sidebar while a modal surface owns the keyboard', () => {
+    mountApp()
+    const before = useUIStore.getState().sidebarOpen
+    const modal = document.createElement('div')
+    modal.setAttribute('data-modal-surface', '')
+    document.body.appendChild(modal)
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: '\\', ctrlKey: true, cancelable: true }),
+    )
+    expect(useUIStore.getState().sidebarOpen).toBe(before)
+    modal.remove()
+  })
+})

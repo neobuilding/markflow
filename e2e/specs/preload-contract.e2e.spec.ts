@@ -2,8 +2,8 @@ import type {} from '../../src/renderer/src/vite-env.d.ts'
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 
-// Covers the Plan's (preload split into api/* submodules) and the main-process
-// handler groups from The refactor is a pure relocation, so the contract
+// Covers the preload split into api/* submodules and the main-process handler
+// groups. The refactor is a pure relocation, so the contract
 // we must guarantee is: every `window.api.*` group + method the renderer depends on
 // still exists and is callable after the preload/index.ts reassembly, and the
 // per-domain IPC handlers registered by the split main modules still respond.
@@ -21,7 +21,7 @@ test.describe('preload bridge contract (api/* split)', () => {
     await closeApp(handle)
   })
 
-  // Walk the full Api surface that the plan's says must stay byte-identical
+  // Walk the full Api surface that must stay byte-identical
   // to vite-env.d.ts. We assert every method is a function (exists), which is the
   // contract the refactor must preserve.
   test('every api group + method from the Api interface is exposed', async () => {
@@ -36,6 +36,7 @@ test.describe('preload bridge contract (api/* split)', () => {
         documents: collect(a.documents),
         export: collect(a.export),
         search: collect(a.search),
+        replace: collect(a.replace),
         app: collect(a.app),
         files: collect(a.files),
         dialog: collect(a.dialog),
@@ -47,6 +48,7 @@ test.describe('preload bridge contract (api/* split)', () => {
           onFileChanged: typeof a.onFileChanged,
           onOpenPaths: typeof a.onOpenPaths,
           onAppRequestQuit: typeof a.onAppRequestQuit,
+          onReplaceProgress: typeof a.onReplaceProgress,
         },
       }
     })
@@ -66,10 +68,15 @@ test.describe('preload bridge contract (api/* split)', () => {
         setEncoding: 'function',
         stat: 'function',
         eol: 'function',
-        setOpenFolder: 'function',
-        clearOpenFolders: 'function',
+        // One root, set in one call (ADR-0023) — the old append-to-a-set pair is gone.
+        setWorkspaceRoot: 'function',
       }),
     )
+    // Reverse assertion: an additive folder *set* is exactly what made the workspace implicitly
+    // multi-root (ADR-0023). If these ever come back, watch state and search scope diverge
+    // again — so fail loudly rather than tolerate both APIs side by side.
+    expect(surface.documents).not.toHaveProperty('setOpenFolder')
+    expect(surface.documents).not.toHaveProperty('clearOpenFolders')
     // export
     expect(surface.export).toEqual(
       expect.objectContaining({
@@ -80,8 +87,17 @@ test.describe('preload bridge contract (api/* split)', () => {
     )
     // search
     expect(surface.search).toEqual(expect.objectContaining({ query: 'function' }))
+    // replace: four channels, including the real cancel channel (ADR-0023).
+    expect(surface.replace).toEqual(
+      expect.objectContaining({
+        plan: 'function',
+        apply: 'function',
+        cancel: 'function',
+        undo: 'function',
+      }),
+    )
     // app (getInitialPaths / showInFolder / setLanguage / allowQuit are the
-    // easily-omitted four called out in the plan)
+    // easily-omitted four)
     expect(surface.app).toEqual(
       expect.objectContaining({
         getTheme: 'function',
@@ -140,12 +156,13 @@ test.describe('preload bridge contract (api/* split)', () => {
         writeSvg: 'function',
       }),
     )
-    // 4 event subscriptions events.ts
+    // 5 event subscriptions events.ts — `onReplaceProgress` joined in the replace plan.
     expect(surface.events).toEqual({
       onMenuEvent: 'function',
       onFileChanged: 'function',
       onOpenPaths: 'function',
       onAppRequestQuit: 'function',
+      onReplaceProgress: 'function',
     })
   })
 
@@ -153,7 +170,7 @@ test.describe('preload bridge contract (api/* split)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // The plan R1 calls out `dialog:confirm` (dialog.showMessageBox, app-modal)
+    // `dialog:confirm` (dialog.showMessageBox, app-modal) is called out as the
     // as the real fix for the editor-focus bug. It must stay wired after the
     // preload dialog group is moved to api/dialog.ts and the handler to
     // handlers/dialog.ts.
@@ -233,17 +250,45 @@ test.describe('preload bridge contract (api/* split)', () => {
     )
   })
 
-  test('search:query returns an array (handler still registered)', async () => {
+  test('search:query returns the frozen envelope (handler still registered)', async () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // ipc/search.ts is untouched by the plan, but the preload search group moved to
-    // api/search.ts, so confirm the bridge still routes to the handler.
-    const results = await page.evaluate(() => window.api.search.query('anything'))
-    expect(Array.isArray(results)).toBe(true)
+    // The envelope is the frozen contract of ADR-0023: results + diagnostics + appliedScope +
+    // truncated. Asserting "is an array" would still pass if the shape regressed to a bare list.
+    const response = await page.evaluate(() =>
+      window.api.search.query({ query: 'anything', mode: 'filename' }),
+    )
+    expect(Array.isArray(response.results)).toBe(true)
+    expect(Array.isArray(response.diagnostics)).toBe(true)
+    expect(response.appliedScope).toEqual({ root: null, include: [], exclude: [] })
+    expect(typeof response.truncated).toBe('boolean')
   })
 
-  // Plan 02 §4.4 reopened 2026-09-22: this used to assert only "the call does not throw", which
+  test('the replace bridge is registered with all four channels', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    // Cancel is a REAL channel (ADR-0023): a cancelToken in the payload alone cannot stop a
+    // running plan, because IPC is a one-way request.
+    const shape = await page.evaluate(() => ({
+      plan: typeof window.api.replace.plan,
+      apply: typeof window.api.replace.apply,
+      cancel: typeof window.api.replace.cancel,
+      undo: typeof window.api.replace.undo,
+    }))
+    expect(shape).toEqual({
+      plan: 'function',
+      apply: 'function',
+      cancel: 'function',
+      undo: 'function',
+    })
+    // And cancelling an unknown token is a no-op rather than a throw.
+    const cancelled = await page.evaluate(() => window.api.replace.cancel('no-such-token'))
+    expect(cancelled).toBe(false)
+  })
+
+  // Reopened 2026-09-22: this used to assert only "the call does not throw", which
   // stayed green while `clipboard:write-image` / `write-svg` copied NOTHING — the handler built a
   // `new ClipboardItem(...)` from a `declare const` that does not exist at runtime in the main
   // process, and swallowed the resulting ReferenceError. Both handlers are exercised through the

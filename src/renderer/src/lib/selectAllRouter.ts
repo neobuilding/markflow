@@ -1,3 +1,5 @@
+import { hasModalSurface } from './shortcut-scope'
+
 // Route a "Select All" command to the pane the user is actually working in.
 //
 // WHY THIS EXISTS: the native menu used `{ role: 'selectAll' }`, whose Ctrl+A accelerator
@@ -105,7 +107,15 @@ export function routeSelectAll(
     : null
   const activeEl = doc.activeElement instanceof Element ? doc.activeElement : null
   const article = doc.querySelector('article.markdown-preview')
-  switch (resolveSelectAllTarget(anchorEl, activeEl, article)) {
+  const target = resolveSelectAllTarget(anchorEl, activeEl, article)
+  // While a modal surface owns the keyboard the background panes are off-limits: never route a
+  // select-all to the editor/preview behind it (the same modal guard as the other shortcuts —
+  // lib/shortcut-scope). A field INSIDE the modal is still allowed: 'input' resolves to the native
+  // .select(), which must keep working in rename/search fields of a dialog. Note this deliberately
+  // does NOT skip the caller's preventDefault — letting the browser's document-wide select-all run
+  // is precisely what this router exists to prevent.
+  if (target !== 'input' && hasModalSurface(doc)) return
+  switch (target) {
     case 'input': {
       // A real HTMLInputElement/HTMLTextAreaElement always has select(); the cast is safe
       // because the branch is only reached when tagName is INPUT or TEXTAREA.

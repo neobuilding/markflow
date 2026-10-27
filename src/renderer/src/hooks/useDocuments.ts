@@ -1,6 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Document } from '../types'
-import { dirName, normalizePathSegments } from '../lib/utils'
+import { normalizePathSegments } from '../lib/utils'
+import { resolveWorkspaceRoot } from '../lib/workspace-root'
+import { isDirInFolder } from '../../../../shared/fileUtils'
+import { t } from '../i18n/translate'
 import { useUIStore } from '../store/ui'
 import { DOCS_KEY } from '../lib/queryClient'
 
@@ -61,6 +64,10 @@ export function useCreateDocument() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: DOCS_KEY })
+      // A new document changes the document SET, which is part of what the main process validates
+      // against (`documentStateRevision`, ADR-0023 §5.6.1). Bumping here is what invalidates an
+      // in-flight replace plan instead of letting it be applied against a stale document set.
+      useUIStore.getState().bumpDocumentState()
     },
   })
 }
@@ -85,6 +92,9 @@ export function useDeleteDocument() {
     mutationFn: (id: string) => window.api.documents.delete(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: DOCS_KEY })
+      // Same reasoning as create: the document set changed, so any replace plan computed against
+      // the old one must not remain applicable (ADR-0023 §5.6.1).
+      useUIStore.getState().bumpDocumentState()
     },
   })
 }
@@ -178,12 +188,15 @@ export function useImportDocuments() {
   })
 }
 
-// Open a set of file/folder paths:
+// Open a set of file/folder paths. Opening REPLACES the workspace (ADR-0023): the main process
+// clears the document store and rebuilds the watcher over the new root, so exactly one root is
+// ever open — the store used to accumulate folders (F20) and the watcher used to keep only the
+// first one (F21).
+//
 // 1) the main process expands folders into a Markdown file list
-// 2) batch-import them into the in-memory document store
-// 3) set the "current folder" to the opened directory (or the file's parent for a single file)
-//    and activate the first document
-// 4) open in read-only mode by default (editable=false)
+// 2) converge the opened directories into ONE root (refusing unrelated ones, D15)
+// 3) set that root (which clears the old workspace), then import the files under it
+// 4) activate the first document, leaving edit mode alone (see the note below)
 export function useOpenPaths() {
   const importMut = useImportDocuments()
   return useMutation({
@@ -191,23 +204,57 @@ export function useOpenPaths() {
       if (!paths || paths.length === 0) return null
       const { directories, markdownFiles } = await window.api.files.resolvePaths(paths)
       if (markdownFiles.length === 0) return null
-      const imported = await importMut.mutateAsync(markdownFiles)
-      if (imported.length === 0) return null
-      const folder = directories[0] ?? dirName(markdownFiles[0])
-      // Hand the folder to the main process *after* the import above: the watcher
-      // starts with ignoreInitial, so files already imported are not re-reported,
-      // and it only picks up files created or deleted from here on.
-      // Best-effort: the files are already imported, so a watcher that cannot start
-      // must not stop us from opening the folder (it only costs live refresh).
-      // Awaited so the watcher is live before the folder becomes active otherwise a
-      // file created in between would never be reported.
-      try {
-        await window.api.documents.setOpenFolder(folder)
-      } catch {
-        // Watcher unavailable: the folder still opens, just without live refresh.
+
+      const resolution = resolveWorkspaceRoot(directories, markdownFiles[0])
+      if (!resolution.ok) {
+        // Refuse rather than silently adopting one of them: the user gets the list so they can
+        // open them one at a time. Nothing is imported and the current workspace is untouched.
+        // `markdownFiles` is non-empty here, so the only failure reason is `multiple-roots`.
+        /* v8 ignore next */
+        if (resolution.reason === 'multiple-roots') {
+          await window.api.dialog.confirm({
+            message: t('app.multipleRootsRefused'),
+            detail: resolution.candidates.join('\n'),
+            okText: t('app.ok'),
+          })
+        }
+        return null
       }
+      const root = resolution.root
+
+      // Several dropped directories converged on one ancestor: adopting it REPLACES the workspace
+      // (the old store is cleared), so name the new root instead of switching silently (D15 — the
+      // refusal sibling of this case already lists its candidates).
+      if (resolution.note === 'common-ancestor') {
+        await window.api.dialog.confirm({
+          message: t('app.commonAncestorRoot', { root }),
+          okText: t('app.ok'),
+        })
+      }
+
+      // Opening is a workspace switch: unsaved edits live only in the editor buffer and would be
+      // lost, so ask first (ADR-0023 — never discard silently).
+      const ui0 = useUIStore.getState()
+      if (ui0.dirty) {
+        const discard = await window.api.dialog.confirm({
+          message: t('app.unsavedOpenWorkspace', { title: ui0.activeDocumentTitle ?? '' }),
+          okText: t('app.confirmDiscard'),
+          cancelText: t('app.confirmKeep'),
+        })
+        if (!discard) return null
+      }
+
+      // Order matters: setting the root clears the store, so the import must come after it. The
+      // watcher starts with ignoreInitial, so already-imported files are not re-reported.
+      await window.api.documents.setWorkspaceRoot(root)
+      // D20: a document outside the root has no relative path, which would make scope matching and
+      // the replace pipeline meaningless for it.
+      const files = markdownFiles.filter((f) => isDirInFolder(f, root))
+      const imported = await importMut.mutateAsync(files)
+      if (imported.length === 0) return null
+
       const ui = useUIStore.getState()
-      ui.setActiveFolder(folder)
+      ui.setActiveFolder(root)
       ui.setActiveDocumentId(imported[0].id)
       // NOTE: do NOT force `editable` to false here. `editable` is a workspace-wide mode that
       // defaults to false only when there is no document open (store default + closeWorkspace/
@@ -215,7 +262,8 @@ export function useOpenPaths() {
       // edit mode e.g. after switching to edit, opening/switching another file would silently
       // revert to read-only and the editor could not be edited ("switch file -> can't edit" bug).
       ui.setDirty(false) // opening/importing a file clears any stale dirty flag
-      return { folder, documentId: imported[0].id }
+      ui.bumpDocumentState()
+      return { folder: root, documentId: imported[0].id, note: resolution.note }
     },
   })
 }

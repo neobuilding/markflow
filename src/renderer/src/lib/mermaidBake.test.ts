@@ -140,7 +140,7 @@ describe('ensureMermaidPng (D14 awaitable + de-duped PNG cache)', () => {
   })
 })
 
-describe('evictOldest (plan-04 §4.3 FIFO cache cap)', () => {
+describe('evictOldest', () => {
   it('drops the oldest entries until the map fits the cap', () => {
     const map = new Map([
       ['a', 1],

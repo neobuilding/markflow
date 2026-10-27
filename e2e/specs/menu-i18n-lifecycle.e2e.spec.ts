@@ -6,9 +6,9 @@ import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/laun
 //
 // 1. + native menu language sync. `app:set-language` (moved into
 //     registerMenuHandlers() in menu.ts) must keep the native application menu
-// labels in sync with the renderer language. The plan warns ( timing
-//     note) that this handler was originally registered inside whenReady and is
-// now registered before it verify the menu actually re-localizes
+// labels in sync with the renderer language. Note that this handler was
+// originally registered inside whenReady and is now registered before it;
+// verify the menu actually re-localizes
 //
 // 2. + (lifecycle.ts) the unsaved-changes quit guard. The
 //     window close / before-quit handler (now in lifecycle.ts, reading
@@ -75,7 +75,7 @@ test.describe('native menu i18n + quit lifecycle', () => {
     await page.waitForTimeout(200)
     const zhLabels = await menuLabels()
 
-    // The plan guarantees behavior is unchanged: the menu must re-localize.
+    // Behavior is unchanged: the menu must re-localize.
     // At minimum, the label sets must differ (some entry changed language), and
     // both must be non-empty (menu built successfully after the split).
     expect(enLabels.length).toBeGreaterThan(0)

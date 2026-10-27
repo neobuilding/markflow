@@ -8,7 +8,7 @@ import { queryClient, DOCS_KEY } from './queryClient'
 // production build instead. These tests only assert the stable, mode-independent
 // exports of the module.
 
-describe('queryClient (PLAN §6.4)', () => {
+describe('queryClient', () => {
   it('exports a configured TanStack Query client', () => {
     expect(queryClient).toBeDefined()
     expect(typeof queryClient.invalidateQueries).toBe('function')

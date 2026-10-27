@@ -76,7 +76,7 @@ const ALL_TITLE_IDS = [
   'doc-export-html',
 ]
 
-describe('FileMenuItems — title variant (需求 §5.6)', () => {
+describe('FileMenuItems — title variant', () => {
   it('renders the full file menu in order', async () => {
     mount('title', docActions())
     for (const id of ALL_TITLE_IDS) {
@@ -134,7 +134,7 @@ describe('FileMenuItems — title variant (需求 §5.6)', () => {
   })
 })
 
-describe('FileMenuItems — file (last path segment) variant (需求 §5.7)', () => {
+describe('FileMenuItems — file (last path segment) variant', () => {
   it('drops the save / save-as / reload / export block', async () => {
     mount('file', docActions())
     expect(await screen.findByTestId('doc-rename')).toBeInTheDocument()
@@ -146,7 +146,7 @@ describe('FileMenuItems — file (last path segment) variant (需求 §5.7)', ()
   })
 })
 
-describe('FileMenuItems — folder (middle path segment) variant (需求 §5.7)', () => {
+describe('FileMenuItems — folder (middle path segment) variant', () => {
   it('offers open-in-sidebar / reveal / copy folder path', async () => {
     const a = folderActions()
     mountFolder(a)
@@ -167,7 +167,7 @@ describe('FileMenuItems — folder (middle path segment) variant (需求 §5.7)'
   })
 })
 
-describe('FileMenuItems — icon / blank variant (需求 §5.7)', () => {
+describe('FileMenuItems — icon / blank variant', () => {
   it('offers reveal / copy full path / copy file name in that order', async () => {
     const a = docActions()
     mount('icon', a)

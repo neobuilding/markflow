@@ -3,6 +3,7 @@ import { contextBridge } from 'electron'
 import { documentsApi } from './api/documents'
 import { exportApi } from './api/export'
 import { searchApi } from './api/search'
+import { replaceApi, onReplaceProgress } from './api/replace'
 import { appApi } from './api/app'
 import { clipboardApi } from './api/clipboard'
 import { filesApi } from './api/files'
@@ -24,6 +25,7 @@ const api = {
   documents: documentsApi,
   export: exportApi,
   search: searchApi,
+  replace: replaceApi,
   app: appApi,
   clipboard: clipboardApi,
   files: filesApi,
@@ -37,6 +39,7 @@ const api = {
   onDocumentRefresh,
   onOpenPaths,
   onAppRequestQuit,
+  onReplaceProgress,
 }
 
 contextBridge.exposeInMainWorld('api', api)

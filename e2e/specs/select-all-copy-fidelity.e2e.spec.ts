@@ -205,9 +205,9 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // ADR 0019 — the copy payload must carry the diagram at all. D-E① moved mermaid baking
   // out of the HTML string, which made a whole-article copy come out as empty placeholders.
   //
-  // Plan 04 (D13) upgraded this further: the diagram must arrive as a RASTERIZED PNG, not the
-  // inline `<svg>` this test originally asserted (Word does not render inline SVG — plan 04
-  // §2.2 F3). Rasterization is async, so the copy is polled until the PNG lands.
+  // D13 upgraded this further: the diagram must arrive as a RASTERIZED PNG, not the
+  // inline `<svg>` this test originally asserted (Word does not render inline SVG).
+  // Rasterization is async, so the copy is polled until the PNG lands.
   test('preview: menu Copy carries the mermaid diagram as a PNG (ADR 0019 + D13)', async () => {
     const { page, electronApp } = handle
     await waitForAppReady(page)
@@ -250,7 +250,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   })
 
   // BUG 3 — menu Copy must land a styled, Word-ready payload.
-  // Plan 04 (docs.local/plan-preview-refactor-04-copy-fidelity) is implemented: the payload must
+  // Copy fidelity is implemented: the payload must
   // carry the diagram as a RASTERIZED PNG (Word cannot render inline <svg>), inline borders on
   // table/code, inline hljs token colors and a styled blockquote.
   //
@@ -513,7 +513,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     expect(darkHtml).toBe(lightHtml)
   })
 
-  // R13.7 / plan-02 R3 — the OTHER half of the contract. Every other copy case in this spec drives
+  // R13.7 / R3 — the OTHER half of the contract. Every other copy case in this spec drives
   // the right-click menu (which prepares a pending payload asynchronously); the keyboard Ctrl+C path
   // has no pending payload and builds its fragment live, i.e. it is a genuinely different code path
   // that must not diverge. This one presses the real keys and compares the two payloads.
@@ -581,10 +581,10 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     expect(menuHtml).toBe(keyboardHtml)
   })
 
-  // §4.8b — the keyboard path must inline images of a PARTIAL SELECTION too. That path has no
+  // b — the keyboard path must inline images of a PARTIAL SELECTION too. That path has no
   // pending payload (no embedImages call), so the fragment's own appdoc:// sources are rewritten
   // from the src → data: map warmInlinedImages produced. Without it the paste shows a broken image.
-  test('preview: keyboard copy of a selection inlines the local image (§4.8)', async () => {
+  test('preview: keyboard copy of a selection inlines the local image', async () => {
     const { page, electronApp } = handle
     await waitForAppReady(page)
     writeFileSync(join(scratch, 'pic.png'), Buffer.from(PNG_HEX, 'hex'))

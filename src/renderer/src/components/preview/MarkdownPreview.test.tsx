@@ -87,11 +87,11 @@ describe('MarkdownPreview', () => {
     await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())
     const article = container.querySelector('article.markdown-preview') as HTMLElement
     // P8: the parsed <p> is the article's OWN child — the old SafeHtml wrapper <div> is gone,
-    // so rich-text copy reads the content root directly (Plan 01 §5.5 contract #1).
+    // so rich-text copy reads the content root directly (ADR-0002 contract #1).
     expect(article.firstElementChild?.tagName).toBe('P')
   })
 
-  // R12① (plan-03 §4.2): the preview <article> is the document semantics root. role="document"
+  // R12① (ADR-0018): the preview <article> is the document semantics root. role="document"
   // is always set; lang reflects a leading frontmatter `lang:` field (extracted by
   // extractFrontmatterLang) so assistive tech gets the right language. No frontmatter → no lang.
   it('exposes role="document" and omits lang without frontmatter (R12①)', async () => {
@@ -146,12 +146,12 @@ describe('MarkdownPreview', () => {
     expect(screen.queryByText('hello preview')).toBeNull()
   })
 
-  // D-E① (plan-03 §4.3): mermaid renders lazily into the placeholder after the incremental
+  // D-E① (ADR-0018): mermaid renders lazily into the placeholder after the incremental
   // patch (IntersectionObserver mocked to fire immediately). The "Copy diagram source" menu was
-  // removed in plan-02 D3, so the source is NOT written to the DOM as data-mermaid-source —
-  // this guards the cleanup (plan-02 D9): no such attribute is emitted, and extra placeholder
+  // removed, so the source is NOT written to the DOM as data-mermaid-source —
+  // this guards the cleanup: no such attribute is emitted, and extra placeholder
   // attrs (data-line) still survive.
-  it('renders mermaid lazily into the placeholder and emits no data-mermaid-source (D-E① / plan-02 D9)', async () => {
+  it('renders mermaid lazily into the placeholder and emits no data-mermaid-source (D-E①)', async () => {
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
       // Includes the pipeline's R6 `data-line` (as a real top-level mermaid fence does) so
       // this also guards that the lazy renderer preserves extra placeholder attrs.
@@ -348,7 +348,7 @@ describe('MarkdownPreview', () => {
   })
 
   it('does not attach a scroll-compensation listener (no realign after image load)', async () => {
-    // Plan 01 §5.4: the per-keystroke DOM rebuild (and the height jumps it caused) are gone,
+    // the per-keystroke DOM rebuild (and the height jumps it caused) are gone,
     // so there is no `load`-time realign to exercise. Firing `load` on the rendered image must
     // be a harmless no-op that does not throw.
     ;(globalThis as any).__parseMarkdown = vi.fn(async (): Promise<RenderResult> => ({
@@ -480,13 +480,13 @@ describe('MarkdownPreview', () => {
     expect(placeholders).toHaveLength(1)
   })
 
-  it('attaches an onCopy writer that emits text/plain + text/html with internal attrs stripped (Plan 02 §4.3)', async () => {
+  it('attaches an onCopy writer that emits text/plain + text/html with internal attrs stripped', async () => {
     const { container } = render(<MarkdownPreview content={'hello preview'} />)
     const article = container.querySelector('article') as HTMLElement
     expect(article).toBeTruthy()
     // Wait for the async markdown parse + morphdom patch to populate the article.
     await waitFor(() => expect(article.innerHTML).toContain('hello preview'))
-    // Drive the canonical export HTML (Phase 1 §5.5 contract #2) with the pipeline's internal
+    // Drive the canonical export HTML with the pipeline's internal
     // markers so we assert the copy payload strips them (R6) before writing. The whole-article
     // path reads this canonical HTML, not the live innerHTML.
     setExportHtml(
@@ -499,10 +499,10 @@ describe('MarkdownPreview', () => {
     const evt = new Event('copy', { bubbles: true, cancelable: true })
     Object.defineProperty(evt, 'clipboardData', { value: { setData } })
     article.dispatchEvent(evt)
-    // Plan 04: the copy payload is now fidelity-enhanced (wrapped in a light document
+    // the copy payload is now fidelity-enhanced (wrapped in a light document
     // envelope) and its internal markers are stripped as the final step.
     expect(setData).toHaveBeenCalledWith('text/plain', 'Titlebody')
-    // Plan 04 wraps the payload and inlines real github-markdown-css styles (jsdom applies them),
+    // The copy payload is wrapped and inlines real github-markdown-css styles (jsdom applies them),
     // so assert on structural substrings rather than the exact serialized tag.
     expect(setData).toHaveBeenCalledWith('text/html', expect.stringContaining('<h1'))
     expect(setData).toHaveBeenCalledWith('text/html', expect.stringContaining('Title</h1>'))

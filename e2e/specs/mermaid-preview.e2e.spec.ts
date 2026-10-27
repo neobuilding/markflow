@@ -62,7 +62,7 @@ test.describe('mermaid preview', () => {
     // No failure placeholder: the diagram rendered for real — the lazy import, the
     // baking step and the sanitization gate all ran end-to-end in the Electron renderer.
     await expect(page.locator('.mermaid-skeleton')).toHaveCount(0)
-    // The "Copy diagram source" menu item was removed in plan-02 D3/D9, so the placeholder
+    // The "Copy diagram source" menu item was removed, so the placeholder
     // carries NO data-mermaid-source attribute. Asserting its absence guards against an
     // accidental reintroduction (the unit suite makes the same assertion on the DOM).
     await expect(wrapper).not.toHaveAttribute('data-mermaid-source')

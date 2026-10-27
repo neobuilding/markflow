@@ -69,6 +69,11 @@ export default defineConfig({
         'electron/main/handlers/**/*.ts',
         'electron/main/lib/**/*.ts',
         'electron/main/model/**/*.ts',
+        // Pure main-process services, held to the same bar as `lib/` and `model/`: they are
+        // plain modules driven through injected dependencies, so they are unit-testable logic
+        // rather than integration surface. `replace.ts` in particular is where every
+        // "zero writes" guarantee lives, which is exactly what the gate must not miss.
+        'electron/main/service/**/*.ts',
         'electron/main/state.ts',
         'electron/main/window.ts',
         'electron/main/i18n.ts',
@@ -85,6 +90,11 @@ export default defineConfig({
         '**/*.d.ts',
         'src/renderer/src/lib/parseClient.ts',
         'src/renderer/src/lib/scrollSync.ts',
+        // Renderer components: DOM / native integration surface. Per the repo's coverage policy
+        // (CONTRIBUTING.md: "DOM/native excluded") this surface is held out of the 100% gate and is
+        // covered instead by the Playwright e2e suites (sidebar-search, command-palette, editor-pane,
+        // …). The unit-testable logic surface above remains held to 100%.
+        'src/renderer/src/components/**/*.{ts,tsx}',
         // actions/create-pr entry/integration surface that cannot be covered by
         // the in-process test runner: cli-render.mjs is launched as a child
         // process (execFile) so the parent's v8 coverage can't instrument it,

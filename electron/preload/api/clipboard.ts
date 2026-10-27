@@ -10,6 +10,6 @@ export const clipboardApi = {
   // it to bytes and writes a native image.
   writeImage: (src: string) => ipcRenderer.invoke('clipboard:write-image', src),
   // Copy an SVG as a vector (image/svg+xml) plus a text/html wrapper. Used by the
-  // preview's "Copy SVG" menu item (Plan 02 §4.4 / D4).
+  // preview's "Copy SVG" menu item.
   writeSvg: (svg: string) => ipcRenderer.invoke('clipboard:write-svg', svg),
 }

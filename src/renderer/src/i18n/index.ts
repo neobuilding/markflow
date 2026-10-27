@@ -66,10 +66,10 @@ export function changeLanguage(locale: Locale): void {
   void i18next.changeLanguage(locale)
 }
 
-// Non-reactive translator: reads the current language from the i18next instance.
-export function t(key: TranslationKey, params?: Record<string, string | number>): string {
-  return i18next.t(key, params)
-}
+// Non-reactive translator: reads the current language from the i18next instance. Lives in
+// ./translate so store-side callers can import it without going through `useT` (and therefore
+// without closing an import cycle).
+export { t } from './translate'
 
 export { en, zhCN }
 export type { TranslationKey }

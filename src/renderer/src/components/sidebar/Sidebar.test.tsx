@@ -389,6 +389,43 @@ describe('Sidebar — interactions', () => {
     await waitFor(() => expect(useUIStore.getState().activeDocumentId).toBe('a'))
   })
 
+  // D23 / §5.9: the two create paths must ask BEFORE creating — creating first and switching
+  // second would leave an orphan draft on disk if the switch was then refused.
+  it('guards the new-document button when there are unsaved edits', async () => {
+    useUIStore.getState().setActiveDocumentId('b')
+    useUIStore.getState().setActiveDocumentTitle('Note B')
+    useUIStore.getState().setDirty(true)
+    const api = {
+      dialog: { openFiles: vi.fn(), openFolderPath: vi.fn(), confirm: vi.fn(async () => false) },
+    }
+    ;(window as unknown as { api: unknown }).api = api
+    mount()
+    fireEvent.click(screen.getByTestId('new-document-btn'))
+    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
+    expect(createMock).not.toHaveBeenCalled()
+    expect(useUIStore.getState().activeDocumentId).toBe('b')
+  })
+
+  it('guards the inline new-file row when there are unsaved edits', async () => {
+    useUIStore.getState().setActiveDocumentId('b')
+    useUIStore.getState().setActiveDocumentTitle('Note B')
+    useUIStore.getState().setDirty(true)
+    const api = {
+      dialog: { openFiles: vi.fn(), openFolderPath: vi.fn(), confirm: vi.fn(async () => false) },
+    }
+    ;(window as unknown as { api: unknown }).api = api
+    mount()
+    // The tree's folder row offers "New document here" — the inline create path.
+    fireEvent.contextMenu(screen.getByTestId('folder-row'))
+    fireEvent.click(await screen.findByTestId('side-new-doc-here'))
+    const input = await screen.findByTestId('folder-name-input')
+    fireEvent.change(input, { target: { value: 'inline.md' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
+    expect(createMock).not.toHaveBeenCalled()
+    expect(useUIStore.getState().activeDocumentId).toBe('b')
+  })
+
   it('deletes the active document and switches to the next', async () => {
     useUIStore.getState().setActiveDocumentId('a')
     mount()
@@ -496,10 +533,16 @@ describe('Sidebar — interactions', () => {
     )
   })
 
-  it('opens the search palette from the search button', async () => {
+  // The sidebar no longer carries a bare magnifier: it switches between two named surfaces
+  // (ADR-0023). Quick Open is reached from the editor toolbar's "Go to file…" button; the
+  // sidebar tab switches to the Search view.
+  it('switches the sidebar to the Search view instead of opening a modal palette', async () => {
     mount()
-    await userEvent.click(screen.getByRole('button', { name: 'Search' }))
-    await waitFor(() => expect(useUIStore.getState().searchOpen).toBe(true))
+    await userEvent.click(screen.getByTestId('sidebar-view-search'))
+    await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('search'))
+    await waitFor(() => expect(screen.getByTestId('resident-search-input')).toBeTruthy())
+    await userEvent.click(screen.getByTestId('sidebar-view-files'))
+    await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('files'))
   })
 
   it('does nothing when the import-folder dialog returns no path', async () => {
@@ -615,7 +658,7 @@ describe('Sidebar — external deletion (VS Code-style missing document)', () =>
   })
 })
 
-describe('Sidebar document item context menu (PLAN §5)', () => {
+describe('Sidebar document item context menu', () => {
   beforeEach(() => {
     // The shared `allDocs` fixture is mutated across describes (a subfolder describe adds
     // extra docs and an external-deletion test truncates it), so reset it here to a known
@@ -914,7 +957,7 @@ describe('Sidebar document item context menu (PLAN §5)', () => {
     expect(screen.getByTestId('side-rename')).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('prompts for confirmation and removes the document on confirm (PLAN §5-4)', async () => {
+  it('prompts for confirmation and removes the document on confirm', async () => {
     mount()
     fireEvent.contextMenu(await docItem('a.md'))
     fireEvent.click(await screen.findByTestId('side-delete'))
@@ -925,7 +968,7 @@ describe('Sidebar document item context menu (PLAN §5)', () => {
     await waitFor(() => expect(deleteMock).toHaveBeenCalled())
   })
 
-  it('keeps the document when the delete confirmation is cancelled (PLAN §5-4)', async () => {
+  it('keeps the document when the delete confirmation is cancelled', async () => {
     ;(window.api.dialog.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false)
     mount()
     fireEvent.contextMenu(await docItem('a.md'))
@@ -936,7 +979,7 @@ describe('Sidebar document item context menu (PLAN §5)', () => {
     expect(deleteMock).not.toHaveBeenCalled()
   })
 
-  it('discards a draft after confirmation (PLAN §5-4)', async () => {
+  it('discards a draft after confirmation', async () => {
     ;(window.api.dialog.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(true)
     mount()
     fireEvent.contextMenu(await draftItem())
@@ -947,7 +990,7 @@ describe('Sidebar document item context menu (PLAN §5)', () => {
     await waitFor(() => expect(deleteMock).toHaveBeenCalled())
   })
 
-  it('context menu items invoke their file actions (PLAN §5)', async () => {
+  it('context menu items invoke their file actions', async () => {
     mount()
     const api = window.api as unknown as {
       clipboard: { writeText: ReturnType<typeof vi.fn> }
@@ -985,7 +1028,7 @@ describe('Sidebar document item context menu (PLAN §5)', () => {
   })
 })
 
-describe('Sidebar — current folder bar context menu (PLAN §5.5)', () => {
+describe('Sidebar — current folder bar context menu', () => {
   function seed(docs: Document[]) {
     allDocs.length = 0
     allDocs.push(...docs)
@@ -1064,7 +1107,7 @@ describe('Sidebar — current folder bar context menu (PLAN §5.5)', () => {
     await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
   })
 
-  it('disables close-workspace while exporting (PLAN §5.5 lock)', async () => {
+  it('disables close-workspace while exporting', async () => {
     useUIStore.getState().setExportOpen(true)
     mount()
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
@@ -1084,7 +1127,7 @@ describe('Sidebar — current folder bar context menu (PLAN §5.5)', () => {
   })
 })
 
-describe('Sidebar — folder row context menu (PLAN §5.4)', () => {
+describe('Sidebar — folder row context menu', () => {
   function seed(docs: Document[]) {
     allDocs.length = 0
     allDocs.push(...docs)
@@ -1368,7 +1411,7 @@ describe('Sidebar — folder row context menu (PLAN §5.4)', () => {
   })
 })
 
-describe('Sidebar — folder high-order items (PLAN §6.2 coverage)', () => {
+describe('Sidebar — folder high-order items', () => {
   function seed(docs: Document[]) {
     allDocs.length = 0
     allDocs.push(...docs)
@@ -1494,7 +1537,7 @@ describe('Sidebar — folder high-order items (PLAN §6.2 coverage)', () => {
     expect(screen.getByTestId('folder-name-input')).toBeInTheDocument()
   })
 
-  it('renders the rename row with expanded-folder icons (PLAN §6.2)', async () => {
+  it('renders the rename row with expanded-folder icons', async () => {
     mount()
     // Expand 'sub' so renaming it surfaces the open-folder / rotated-chevron branches.
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
@@ -1556,7 +1599,7 @@ describe('Sidebar — folder high-order items (PLAN §6.2 coverage)', () => {
   // rename also re-points the document data so the tree renders the renamed folder; the
   // component re-points the expanded set via repointExpandedSet, and since activeFolder
   // ('/docs') is not inside the renamed folder it stays put.
-  it('keeps a renamed subfolder expanded (expanded-set re-pointing, PLAN §6.2)', async () => {
+  it('keeps a renamed subfolder expanded', async () => {
     mount()
     // Expand /docs/sub via its context-menu "expand" item so its child b.md renders.
     // (DocItem shows baseName(filePath), i.e. "b.md", not the document title.)

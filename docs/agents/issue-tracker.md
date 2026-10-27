@@ -31,6 +31,6 @@ Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
 
 ## Repo-specific notes
 
-- `.scratch/` is the issue tracker. `docs.local/` is **not**: it holds hand-written plans (`PLAN-*.md`) and to-do lists (`todo-*.md`), which are pre-existing planning docs, not tickets.
+- `.scratch/` is the issue tracker. Hand-written plans (`PLAN-*.md`) and to-do lists (`todo-*.md`) live in a separate, git-ignored local directory: they are pre-existing planning docs, **not** tickets. Do not file tickets there, and do not cite planning documents from committed docs or code (they do not travel with the repository).
 - No `gh`/`glab` CLI is installed in this environment; do not shell out to an issue tracker CLI.
 - `.scratch/` is currently untracked by git and is not yet in `.gitignore`. Decide per-project whether tickets should be committed (shared) or ignored (local-only scratch).

@@ -1,4 +1,4 @@
-// Rich-text copy for the preview pane (Plan 02 §4).
+// Rich-text copy for the preview pane.
 //
 import { getExportHtml } from './exportStore'
 import { prepareExportHtml, needsExportBake } from './exportBake'
@@ -19,13 +19,13 @@ import { hasUnresolvedDiagram } from './mermaidBake'
 
 // Attributes that are internal to markflow's render pipeline and must not leak into the
 // rich-text HTML the user pastes into Word / Confluence / Excel / Notion.
-// Phase 1 (§5.5) lists four internal markers: data-line, data-mermaid-slot, data-lang,
+// Phase 1 lists four internal markers: data-line, data-mermaid-slot, data-lang,
 // data-baked. A fifth is `tabindex`: markdown-it-anchor's defaults set `tabIndex: "-1"` on
 // EVERY heading (we call `md.use(anchor)` with no options), purely so permalink anchors can
 // take focus — author-invisible noise that would otherwise be pasted onto every heading.
 // Verified against the real clipboard in e2e/specs/context-menu.e2e.spec.ts ("…lands a clean payload").
-// (data-mermaid-source was removed per plan-02 D3/D9 — the "Copy diagram source" menu item no
-// longer exists, so its attribute must not be reintroduced.)
+// (data-mermaid-source was removed together with the "Copy diagram source" menu item,
+// so its attribute must not be reintroduced.)
 const INTERNAL_ATTRS = ['data-line', 'data-mermaid-slot', 'data-lang', 'data-baked', 'tabindex']
 
 // Remove the pipeline's internal attributes from a copy payload so pasted HTML is clean
@@ -43,7 +43,7 @@ export function stripInternalAttrs(html: string): string {
 // True only when the current selection lives inside the given preview article. A selection
 // made in the *editor* pane (anchor outside the article) must NOT be used for preview copy —
 // otherwise right-clicking the preview with editor text selected would copy the editor text
-// (cross-pane mis-copy, §4.2).
+//.
 function selectionIsInPreview(article: HTMLElement): boolean {
   const sel = window.getSelection()
   return !!(
@@ -59,7 +59,7 @@ function selectionIsInPreview(article: HTMLElement): boolean {
 // returned UN-STRIPPED (internal markers such as data-mermaid-slot still present) because the
 // fidelity layer (enhanceForPaste in copyFidelity.ts) needs them to locate mermaid slots, and
 // stripInternalAttrs runs as the final step of that layer. Selection-priority, whole-article
-// fallback, cross-pane guard (§4.1 / §4.2).
+// fallback, cross-pane guard.
 export function buildPreviewCopyPayload(article: HTMLElement): { text: string; html: string } {
   const selInPreview = selectionIsInPreview(article)
   let text: string
@@ -74,7 +74,7 @@ export function buildPreviewCopyPayload(article: HTMLElement): { text: string; h
     html = tmp.innerHTML
     text = window.getSelection()!.toString()
   } else {
-    // No in-preview selection → whole article. The inlined-image cache (§4.8) is preferred
+    // No in-preview selection → whole article. The inlined-image cache is preferred
     // when warm so the keyboard path pastes base64 images (Word-safe) just like the menu
     // path; otherwise the canonical export HTML (ADR 0019, complete bake) is the source of
     // truth, with article.innerHTML as the last-resort fallback.
@@ -87,18 +87,18 @@ export function buildPreviewCopyPayload(article: HTMLElement): { text: string; h
   return { text, html }
 }
 
-// §4.8 — pre-inlined whole-article HTML cache (appdoc:// → base64) so the synchronous keyboard
+// Pre-inlined whole-article HTML cache (appdoc:// → base64) so the synchronous keyboard
 // Ctrl+C path pastes embedded images too. Warmed by warmInlinedImages after each render; null
-// until then (the keyboard path then degrades to un-inlined images, which is the pre-plan-04
-// behaviour and never breaks the copy).
+// until then (the keyboard path then degrades to un-inlined images, which is how it behaved
+// before inlining existed and never breaks the copy).
 let inlinedWholeArticleHtml: string | null = null
 
-// §4.8 — the same pass also yields an appdoc:// → data: map, so a keyboard copy of a PARTIAL
+// the same pass also yields an appdoc:// → data: map, so a keyboard copy of a PARTIAL
 // SELECTION can rewrite its own <img>s synchronously (that path has no pending payload and the
 // whole-article cache above does not cover a fragment).
 let inlinedImageMap = new Map<string, string>()
 
-/** Read-only view of the pre-inlined image map (consumed by the copy fidelity layer, §4.8). */
+/** Read-only view of the pre-inlined image map. */
 export function getInlinedImageMap(): ReadonlyMap<string, string> {
   return inlinedImageMap
 }
@@ -110,7 +110,7 @@ export function resetInlinedImageCache(): void {
 }
 
 /**
- * Pre-inline every `<img>` in the article to a base64 `data:` URL (§4.8) so the keyboard copy
+ * Pre-inline every `<img>` in the article to a base64 `data:` URL so the keyboard copy
  * path matches the menu path (R13.7). Fire-and-forget: the result is cached and the copy reads
  * it synchronously. No-op when there are no images or the embed IPC is unavailable (tests).
  *
@@ -263,7 +263,7 @@ export async function requestRichCopy(article: HTMLElement): Promise<void> {
   let finalHtml = html
   // Only inline when the fragment actually contains an <img>: avoids needless IPC on text /
   // table / heading copies, and a failed inline falls back to the un-inlined HTML rather than
-  // aborting the copy (§4.4).
+  // aborting the copy.
   if (html.includes('<img')) {
     try {
       finalHtml = await window.api.export.embedImages(html)

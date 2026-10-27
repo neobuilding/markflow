@@ -20,6 +20,9 @@ import {
 } from './useDocuments'
 import { useUIStore } from '../store/ui'
 
+// Initialise i18next: without it `t()` (used by the open-path dialogs) returns undefined.
+import '../i18n'
+
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 function wrapper() {
@@ -59,11 +62,16 @@ const api = {
     stat: vi.fn(async () => ({ size: 1, created: 1, modified: 1 })),
     import: vi.fn(async (_p: string): Promise<Document | null> => doc('imp')),
     importMany: vi.fn(async (paths: string[]) => paths.map((p) => doc(p))),
-    setOpenFolder: vi.fn(async (_folder: string) => undefined),
-    clearOpenFolders: vi.fn(async () => undefined),
+    // Opening REPLACES the workspace (ADR-0023): one root, set in one call.
+    setWorkspaceRoot: vi.fn(async (_root: string | null) => undefined),
   },
   files: {
     resolvePaths: vi.fn(async (paths: string[]) => ({ directories: paths, markdownFiles: paths })),
+  },
+  dialog: {
+    // Used when several unrelated directories cannot converge on one root (D15), and to name
+    // the new root when they DO converge. Wide mock type so tests can inspect the arguments.
+    confirm: vi.fn(async () => true) as unknown as ReturnType<typeof vi.fn>,
   },
 }
 
@@ -331,6 +339,42 @@ describe('useOpenPaths', () => {
     expect(out).toBeNull()
   })
 
+  // Opening a workspace is a switch: unsaved edits live only in the editor buffer, so ask first
+  // (ADR-0023 — never discard silently).
+  it('asks before discarding unsaved edits, then opens when confirmed', async () => {
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: ['/opened'],
+      markdownFiles: ['/opened/a.md'],
+    })
+    useUIStore.getState().setDirty(true)
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    await act(async () => {
+      await result.current.mutateAsync(['/opened'])
+    })
+    expect(api.dialog.confirm).toHaveBeenCalledTimes(1)
+    expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('/opened')
+    useUIStore.getState().setDirty(false)
+  })
+
+  it('aborts the open when the user keeps their edits (nothing is imported)', async () => {
+    api.dialog.confirm.mockResolvedValueOnce(false)
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: ['/opened'],
+      markdownFiles: ['/opened/a.md'],
+    })
+    useUIStore.getState().setDirty(true)
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    let out: unknown = 'unset'
+    await act(async () => {
+      out = await result.current.mutateAsync(['/opened'])
+    })
+    expect(api.dialog.confirm).toHaveBeenCalledTimes(1)
+    expect(out).toBeNull()
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
+    expect(api.documents.importMany).not.toHaveBeenCalled()
+    useUIStore.getState().setDirty(false)
+  })
+
   it('imports the files, sets the active folder to the opened directory and activates the first doc', async () => {
     api.files.resolvePaths.mockResolvedValueOnce({
       directories: ['/opened'],
@@ -341,14 +385,18 @@ describe('useOpenPaths', () => {
     await act(async () => {
       out = await result.current.mutateAsync(['/opened'])
     })
-    expect(out).toEqual({ folder: '/opened', documentId: '/opened/a.md' })
+    expect(out).toEqual({ folder: '/opened', documentId: '/opened/a.md', note: 'directory' })
     expect(useUIStore.getState().activeFolder).toBe('/opened')
     expect(useUIStore.getState().activeDocumentId).toBe('/opened/a.md')
-    // The folder is registered with the main process so it can be watched recursively.
-    expect(api.documents.setOpenFolder).toHaveBeenCalledWith('/opened')
+    // The root is handed to the main process so it can be watched recursively — BEFORE the
+    // import, because setting it clears the store (ADR-0023).
+    expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('/opened')
+    const rootOrder = api.documents.setWorkspaceRoot.mock.invocationCallOrder[0]
+    const importOrder = api.documents.importMany.mock.invocationCallOrder[0]
+    expect(rootOrder).toBeLessThan(importOrder)
   })
 
-  it('registers the fallback parent dir for watching when only a file is opened', async () => {
+  it('uses the parent dir as the root when only a file is opened', async () => {
     api.files.resolvePaths.mockResolvedValueOnce({
       directories: [],
       markdownFiles: ['/only/file.md'],
@@ -357,23 +405,81 @@ describe('useOpenPaths', () => {
     await act(async () => {
       await result.current.mutateAsync(['/only/file.md'])
     })
-    expect(api.documents.setOpenFolder).toHaveBeenCalledWith('/only')
+    expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('/only')
   })
 
-  it('still opens the folder when watcher registration fails', async () => {
+  // Several directories now converge on their common ancestor instead of silently adopting the
+  // first one (D15 — the old `directories[0]` bug, F21).
+  it('converges several directories on their common ancestor', async () => {
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: ['/ws/a', '/ws/b'],
+      markdownFiles: ['/ws/a/1.md', '/ws/b/2.md'],
+    })
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    await act(async () => {
+      await result.current.mutateAsync(['/ws/a', '/ws/b'])
+    })
+    expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('/ws')
+  })
+
+  // Adopting the ancestor REPLACES the workspace (the old store is cleared), so the user must
+  // be told what the new root is — the refusal sibling of this case lists its candidates.
+  it('names the new root when several directories converge on their ancestor (D15)', async () => {
+    useUIStore.getState().setDirty(false)
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: ['/ws/a', '/ws/b'],
+      markdownFiles: ['/ws/a/1.md', '/ws/b/2.md'],
+    })
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    await act(async () => {
+      await result.current.mutateAsync(['/ws/a', '/ws/b'])
+    })
+    expect(api.dialog.confirm).toHaveBeenCalledTimes(1)
+    expect(api.dialog.confirm.mock.calls[0][0].message).toContain('/ws')
+    expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('/ws')
+  })
+
+  // Unrelated roots cannot be one workspace: refuse and leave the current one untouched, rather
+  // than picking one and watching only it.
+  it('refuses unrelated directories instead of silently picking one', async () => {
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: ['/one', '/two'],
+      markdownFiles: ['/one/a.md', '/two/b.md'],
+    })
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    let out: unknown = undefined
+    await act(async () => {
+      out = await result.current.mutateAsync(['/one', '/two'])
+    })
+    expect(out).toBeNull()
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
+    expect(api.documents.importMany).not.toHaveBeenCalled()
+  })
+
+  it('never imports a file that would sit outside the root (D20)', async () => {
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: ['/ws'],
+      markdownFiles: ['/ws/in.md', '/elsewhere/out.md'],
+    })
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    await act(async () => {
+      await result.current.mutateAsync(['/ws'])
+    })
+    expect(api.documents.importMany).toHaveBeenCalledWith(['/ws/in.md'])
+  })
+
+  // Unlike the old additive `setOpenFolder`, setting the root is NOT best-effort: it defines the
+  // scope the whole Search view and replace pipeline reason about, so proceeding with an unknown
+  // root would be worse than failing.
+  it('propagates a failure to set the root instead of opening half a workspace', async () => {
     api.files.resolvePaths.mockResolvedValueOnce({
       directories: ['/opened'],
       markdownFiles: ['/opened/a.md'],
     })
-    api.documents.setOpenFolder.mockRejectedValueOnce(new Error('ipc down'))
+    api.documents.setWorkspaceRoot.mockRejectedValueOnce(new Error('ipc down'))
     const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
-    let out: { folder: string; documentId: string } | null = null
-    await act(async () => {
-      out = await result.current.mutateAsync(['/opened'])
-    })
-    // Registering the watcher is best-effort: the imported files still open.
-    expect(out).toEqual({ folder: '/opened', documentId: '/opened/a.md' })
-    expect(useUIStore.getState().activeFolder).toBe('/opened')
+    await expect(result.current.mutateAsync(['/opened'])).rejects.toThrow('ipc down')
+    expect(api.documents.importMany).not.toHaveBeenCalled()
   })
 
   it('falls back to the file parent dir when no directory is resolved', async () => {
@@ -409,5 +515,27 @@ describe('useOpenFolder', () => {
     })
     expect(api.files.resolvePaths).toHaveBeenCalledWith(['/folder'])
     expect(out).not.toBeNull()
+  })
+})
+
+// §5.6.1: create/delete change the document SET, which is part of what the main process
+// validates a replace plan against — so the success callbacks must bump the revision, or an
+// in-flight plan could be applied against a stale set.
+describe('useDocuments — documentStateRevision bumps', () => {
+  it('bumps when a document is created and again when one is deleted', async () => {
+    const before = useUIStore.getState().documentStateRevision
+
+    const create = renderHook(() => useCreateDocument(), { wrapper: wrapper() })
+    await act(async () => {
+      await create.result.current.mutateAsync({ title: 'X' })
+    })
+    const afterCreate = useUIStore.getState().documentStateRevision
+    expect(afterCreate).toBeGreaterThan(before)
+
+    const del = renderHook(() => useDeleteDocument(), { wrapper: wrapper() })
+    await act(async () => {
+      await del.result.current.mutateAsync('1')
+    })
+    expect(useUIStore.getState().documentStateRevision).toBeGreaterThan(afterCreate)
   })
 })

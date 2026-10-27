@@ -90,6 +90,23 @@ describe('nodeDiskIO', () => {
     expect(nodeDiskIO.isDirectory(join(root, 'isfile.txt'))).toBe(false)
   })
 
+  it('writeFileAtomic lands the bytes at the target and leaves no stray temp file', () => {
+    const p = join(root, 'atomic.txt')
+    nodeDiskIO.writeFileAtomic(p, Buffer.from('atomic-body'))
+    expect(nodeDiskIO.readFile(p).toString('utf-8')).toBe('atomic-body')
+    // The temp file (`.<name>.<pid>.<rand>.tmp`) must not linger next to the target.
+    const siblings = nodeDiskIO.readdir(root).map((e) => e.name)
+    expect(siblings.some((n) => n.includes('.tmp'))).toBe(false)
+  })
+
+  it('writeFileAtomic on the in-memory IO stores the bytes and exposes them via readFile', () => {
+    const mem = createMemoryDiskIO()
+    const p = join(root, 'mem-atomic.txt')
+    mem.writeFileAtomic(p, Buffer.from('mem-atomic'))
+    expect(mem.exists(p)).toBe(true)
+    expect(mem.readFile(p).toString('utf-8')).toBe('mem-atomic')
+  })
+
   it('reads a bounded sample through an async handle and closes it', async () => {
     const p = join(root, 'sample.txt')
     writeFileSync(p, 'ab\r\ncd')
