@@ -1,0 +1,30 @@
+{
+  // Standalone JS that runs OUTSIDE the app bundle, so no other program compiles it:
+  //   - actions/create-pr/**  its own npm package (own package.json + lockfile), bundled by ncc
+  //   - .github/create-pr/**  the user-side block plugin the action loads from the repo
+  //   - examples/**           standalone generators (not read by the app or its tests)
+  //
+  // `checkJs` stays OFF here on purpose: this is plain JS written without types, and turning the
+  // checker on would mean annotating ~200 findings across a package that ships as a JS bundle —
+  // a rewrite, not a type fix. What this program still buys is what actually breaks silently in a
+  // script nobody runs locally: syntax errors, unresolvable imports, and ESM/CJS mistakes. The
+  // parts that carry logic have their own vitest suites (see vitest.config.ts `include`).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo-scripts.json",
+    "noEmit": true,
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": [
+    "actions/create-pr/src/**/*.mjs",
+    "actions/create-pr/blocks/**/*.mjs",
+    ".github/create-pr/blocks/**/*.mjs",
+    "examples/**/*.mjs"
+  ],
+  "exclude": ["**/node_modules/**", "**/dist/**"]
+}

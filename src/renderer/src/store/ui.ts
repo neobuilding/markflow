@@ -182,6 +182,13 @@ interface UIState {
   // the input element, and the row only mounts once the details block is open (ADR-0023 D8).
   searchScopeFocusNonce: number
   requestScopeFocus: () => void
+  // Bumped when a global shortcut (Ctrl/Cmd+Shift+E) switches to the Files view, so the panel can
+  // take focus. Explicit on purpose: an effect that moved focus on EVERY view change would also
+  // fire for switches that already placed focus themselves ("Search in This Folder" parks the
+  // caret in the include row) and for activity-bar clicks, where ARIA APG wants focus to STAY on
+  // the tab. Only a caller that actually wants the panel asks for it.
+  panelFocusNonce: number
+  requestPanelFocus: () => void
 
   // Pending hit to jump to after a document opens. Set when a Search view hit is clicked; the
   // editor consumes it (selects + scrolls to the offset) once the document content has loaded,
@@ -248,6 +255,14 @@ interface UIState {
   exportOpen: boolean
   setExportOpen: (open: boolean) => void
 
+  // Whether the export cache holds a COMPLETE render of the CURRENT document.
+  // The cache itself lives in a non-reactive singleton (lib/exportStore), so the readiness has
+  // to be mirrored here to drive the dialog's button state (C20 补 ⑦ / E12). It flips to false
+  // while a document switch or a parse is in flight — during that window the cache still holds
+  // the PREVIOUS document's HTML, so exporting would silently write the wrong file.
+  exportReady: boolean
+  setExportReady: (v: boolean) => void
+
   // Whether an export write is in progress (hard lock: while exporting or with the dialog open,
   // closing the current file or workspace is forbidden, so even an accidental "Close Workspace"
   // shortcut (Cmd/Ctrl+W) won't lose the workspace).
@@ -272,6 +287,7 @@ const initialSearch = {
   searchDetailsOpen: false,
   searchFocusNonce: 0,
   searchScopeFocusNonce: 0,
+  panelFocusNonce: 0,
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -428,6 +444,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   requestSearchFocus: () => set((s) => ({ searchFocusNonce: s.searchFocusNonce + 1 })),
   searchScopeFocusNonce: 0,
   requestScopeFocus: () => set((s) => ({ searchScopeFocusNonce: s.searchScopeFocusNonce + 1 })),
+  panelFocusNonce: 0,
+  requestPanelFocus: () => set((s) => ({ panelFocusNonce: s.panelFocusNonce + 1 })),
 
   pendingMatch: null,
   setPendingMatch: (m) => set({ pendingMatch: m }),
@@ -488,6 +506,9 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   exportOpen: false,
   setExportOpen: (open) => set({ exportOpen: open }),
+
+  exportReady: false,
+  setExportReady: (v) => set({ exportReady: v }),
 
   exporting: false,
   setExporting: (v) => set({ exporting: v }),

@@ -82,6 +82,14 @@ describe('MarkdownPreview', () => {
     await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())
   })
 
+  it('marks the export cache as ready once the document has parsed (C20 补 ⑦)', async () => {
+    // The export cache is a non-reactive singleton, so its readiness is mirrored in the store:
+    // the export dialog may only be enabled once the CURRENT document has been rendered.
+    useUIStore.getState().setExportReady(false)
+    render(<MarkdownPreview content="# title" />)
+    await waitFor(() => expect(useUIStore.getState().exportReady).toBe(true))
+  })
+
   it('injects parsed content directly into the <article> — no wrapper div (P8)', async () => {
     const { container } = render(<MarkdownPreview content="# title" />)
     await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())

@@ -67,7 +67,7 @@ test.describe('replace skips unsaved buffers and says so (D28)', () => {
     await page.waitForFunction(() => (window as any).__uiStore.getState().dirty === true)
 
     // Search still finds it (§5.2): the hit is visible even though it cannot be replaced.
-    await page.getByTestId('sidebar-view-search').click()
+    await page.getByTestId('activity-bar-search').click()
     await page.getByTestId('resident-search-input').pressSequentially('cat')
     await expect(page.getByTestId('search-match').first()).toBeVisible()
 

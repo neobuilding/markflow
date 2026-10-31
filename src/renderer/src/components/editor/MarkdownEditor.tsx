@@ -14,6 +14,7 @@ import {
   redoDepth,
 } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { useEditorHistory } from '../../store/editorHistory'
 import { languages } from '@codemirror/language-data'
 import {
   searchKeymap,
@@ -382,6 +383,14 @@ export function MarkdownEditor({
           }
           // Refresh the find panel's k/n counter when the cursor moves between matches.
           if (update.selectionSet) panelUpdateRef.current?.(view)
+          // Publish live undo/redo availability so the editor pane bar's buttons track it in real
+          // time (ADR-0024 §10 trade-off 47). Only doc changes alter history depth, so gate there.
+          if (update.docChanged) {
+            useEditorHistory.getState().update({
+              canUndo: undoDepth(update.state) > 0,
+              canRedo: redoDepth(update.state) > 0,
+            })
+          }
         }),
         EditorView.theme({
           '&': {
@@ -389,20 +398,26 @@ export function MarkdownEditor({
             fontSize: '14px',
           },
           '.cm-content': {
-            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            // Follow the theme variable instead of naming fonts that are never shipped —
+            // `.cm-editor { font-family: … !important }` cannot reach this child element anyway.
+            fontFamily: 'var(--font-mono)',
             lineHeight: '1.7',
-            caretColor: '#5e6ad2',
-            color: '#1a1a1a',
+            caretColor: 'var(--color-accent)',
+            color: 'var(--color-text-primary)',
             padding: '24px 0',
           },
           '.cm-line': { padding: '0 32px' },
-          '.cm-activeLine': { backgroundColor: 'rgba(94,106,210,0.04)' },
-          '.cm-gutters': { display: 'none' },
-          '.cm-selectionBackground': { backgroundColor: 'rgba(94,106,210,0.2) !important' },
-          '&.cm-focused .cm-selectionBackground': {
-            backgroundColor: 'rgba(94,106,210,0.2) !important',
+          '.cm-activeLine': {
+            backgroundColor: 'color-mix(in srgb, var(--color-accent) 4%, transparent)',
           },
-          '.cm-cursor': { borderLeftColor: '#5e6ad2' },
+          '.cm-gutters': { display: 'none' },
+          '.cm-selectionBackground': {
+            backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent) !important',
+          },
+          '&.cm-focused .cm-selectionBackground': {
+            backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent) !important',
+          },
+          '.cm-cursor': { borderLeftColor: 'var(--color-accent)' },
         }),
         EditorView.lineWrapping,
       ],
@@ -414,6 +429,12 @@ export function MarkdownEditor({
     })
 
     viewRef.current = view
+
+    // A fresh CodeMirror instance starts with an EMPTY history. The editor pane bar's undo/redo
+    // buttons read their disabled state from the editorHistory store, which outlives this view
+    // (the editor pane is unmounted in preview-only mode), so clear it here — otherwise the
+    // buttons would stay enabled while `undo()` had nothing to undo.
+    useEditorHistory.getState().reset()
 
     // Register with the scroll-sync controller: the source pane acts as the "editor" side
     // (ratio mapping, no getView needed).
@@ -508,12 +529,21 @@ export function MarkdownEditor({
     }
     document.addEventListener('markdown:replaceAll', handleReplaceAll)
 
+    // Undo/redo entry points for the editor pane bar (ADR-0024 §10 trade-off 47). They call the
+    // same CodeMirror commands the right-click menu uses, so both surfaces share one history.
+    const handleUndo = () => doUndo()
+    const handleRedo = () => doRedo()
+    document.addEventListener('markdown:undo', handleUndo)
+    document.addEventListener('markdown:redo', handleRedo)
+
     return () => {
       document.removeEventListener('markdown:insert', handleInsert)
       document.removeEventListener('markdown:select-all', handleSelectAll)
       document.removeEventListener('markdown:find', handleFind)
       document.removeEventListener('markdown:replace', handleReplace)
       document.removeEventListener('markdown:replaceAll', handleReplaceAll)
+      document.removeEventListener('markdown:undo', handleUndo)
+      document.removeEventListener('markdown:redo', handleRedo)
       scrollSync.unregister('editor')
       view.destroy()
       viewRef.current = null
@@ -720,9 +750,11 @@ export function MarkdownEditor({
           <List size={13} /> {t('ctx.selectAll')}
         </ContextMenuItem>
         <ContextMenuSeparator />
+        {/* No `shortcut` on the four formatting items: ⌘B/⌘I/⌘E/⌘K were never wired up, and two of
+            them are taken by other commands (⌘B = toggle sidebar, ⌘K = Quick Open, ⌘I = file
+            details). A label promising a binding that does something else is worse than none. */}
         <ContextMenuItem
           data-testid="me-bold"
-          shortcut={formatShortcut('⌘B')}
           disabled={!editable}
           onClick={() => wrap('**', '**')}
         >
@@ -730,7 +762,6 @@ export function MarkdownEditor({
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-italic"
-          shortcut={formatShortcut('⌘I')}
           disabled={!editable}
           onClick={() => wrap('_', '_')}
         >
@@ -738,7 +769,6 @@ export function MarkdownEditor({
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-inline-code"
-          shortcut={formatShortcut('⌘E')}
           disabled={!editable}
           onClick={() => wrap('`', '`')}
         >
@@ -746,7 +776,6 @@ export function MarkdownEditor({
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-link"
-          shortcut={formatShortcut('⌘K')}
           disabled={!editable}
           onClick={() => wrap('[', '](url)')}
         >

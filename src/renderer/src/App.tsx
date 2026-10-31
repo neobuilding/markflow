@@ -109,6 +109,28 @@ export default function App(): React.ReactElement {
         st.requestSearchFocus()
         return
       }
+      // ⌘⇧E — the Files view, symmetric with ⌘⇧F above (VS Code `workbench.view.explorer`).
+      // `requestPanelFocus` hands focus to the tree afterwards (WCAG 2.4.3); the app shell cannot
+      // reach the panel element itself, so it bumps the nonce the Sidebar watches.
+      if (mod && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const st = useUIStore.getState()
+        st.setSidebarOpen(true)
+        st.setSidebarView('files')
+        st.requestPanelFocus()
+        return
+      }
+      // ⌘B — collapse/expand the sidebar's content panel, alongside the existing ⌘\.
+      // Deliberately renderer-only: the native menu does NOT carry a `CmdOrCtrl+B` accelerator,
+      // so there is exactly one handler and no double-fire to reason about. (VS Code registers
+      // such commands once in its own keybinding service for the same reason.)
+      if (mod && !e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleSidebar()
+        return
+      }
     }
     // Capture phase: global shortcuts must fire even when the editor (CodeMirror) has focus and
     // would otherwise stopPropagation the keydown before it reaches a bubbling window listener.
@@ -405,7 +427,7 @@ export default function App(): React.ReactElement {
         <ExportDialog />
         {printing && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 shadow-lg">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 shadow-linear-lg">
               <span className="text-sm text-[var(--color-text-secondary)]">
                 {rt('app.preparingPrint')}
               </span>

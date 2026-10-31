@@ -139,8 +139,9 @@ describe('SidebarSearch (Search view)', () => {
 
   it('exposes whole word and regexp toggles, both OFF by default', () => {
     renderPanel()
-    const ab = screen.getByTestId('search-match-case-ab')
-    const re = screen.getByTestId('search-match-case-.*')
+    // `ab` / `.*` live on the always-visible SECONDARY row now, not in the primary row's group.
+    const ab = screen.getByTestId('search-advanced-toggles-ab')
+    const re = screen.getByTestId('search-advanced-toggles-.*')
     expect(ab.getAttribute('aria-pressed')).toBe('false')
     expect(re.getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(ab)
@@ -154,7 +155,7 @@ describe('SidebarSearch (Search view)', () => {
   it('shows the regex hint only while regexp is on', () => {
     renderPanel()
     expect(screen.queryByTestId('search-regex-hint')).toBeNull()
-    fireEvent.click(screen.getByTestId('search-match-case-.*'))
+    fireEvent.click(screen.getByTestId('search-advanced-toggles-.*'))
     expect(screen.getByTestId('search-regex-hint').textContent).toContain('\\n')
   })
 
@@ -209,7 +210,9 @@ describe('SidebarSearch (Search view)', () => {
     const input = screen.getByTestId('resident-search-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: 'the' } })
     await screen.findAllByTestId('search-match')
-    fireEvent.click(screen.getByTestId('resident-search-clear'))
+    // The clear button now belongs to the shared `SearchInput`, which names it `${testId}-clear`
+    // — the same rule the editor/preview find widgets already follow.
+    fireEvent.click(screen.getByTestId('resident-search-input-clear'))
     await waitFor(() => expect(useUIStore.getState().searchQuery).toBe(''))
   })
 

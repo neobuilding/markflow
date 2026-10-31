@@ -48,7 +48,7 @@ test.describe('document lifecycle', () => {
     // button (data-testid) is always present; we drive it through real clicks
     // and verify the contenteditable attribute on the editor content reflects
     // the resulting mode.
-    const toggle = page.getByTestId('toggle-editable-btn')
+    const toggle = page.getByTestId('editor-readonly-btn')
 
     // Initial state after creating a draft: editable. The button is reachable.
     await expect(toggle).toBeVisible()

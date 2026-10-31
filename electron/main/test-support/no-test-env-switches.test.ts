@@ -18,7 +18,14 @@ const REPO_ROOT = join(HERE, '..', '..', '..')
 const SELF = fileURLToPath(import.meta.url)
 
 /** Variables that used to let production code sniff out "am I being tested?". */
-const BANNED_SWITCHES = ['MARKFLOW_E2E', 'MARKFLOW_CLEANUP_DEBUG']
+const BANNED_SWITCHES = [
+  'MARKFLOW_E2E',
+  'MARKFLOW_CLEANUP_DEBUG',
+  // Removed when the clipboard specs moved into their own Playwright project: an environment
+  // variable hides what a run is allowed to do, and the project + `clipboardE2e` option
+  // (e2e/helpers/fixtures.ts) says it in the config instead. Banned so it cannot drift back.
+  'MARKFLOW_CLIPBOARD_E2E',
+]
 
 /** Test files may legitimately *mention* these names to explain why they are gone. */
 const IS_TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/

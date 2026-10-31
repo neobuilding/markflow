@@ -1,0 +1,161 @@
+/* Shared between the live preview (imported in main.tsx) and the standalone HTML export
+   (inlined via `?raw` in lib/export.ts). This is the single source of truth for the
+   `.markdown-body` overrides + dark syntax-highlight palette, so preview and export stay
+   byte-for-byte identical (C33a).
+
+   IMPORTANT: this file MUST stay pure CSS — no Tailwind directives, no @apply, no nesting —
+   because export.ts reads it raw while the preview side runs it through PostCSS. If either
+   side saw a different transform the "single source" guarantee would break.
+
+   The code-block box reads from --md-pre-bg / --md-pre-border. In the app those are mapped to
+   the app tokens (see globals.css :root); in the export document buildStandaloneHtml injects
+   the ADR-0024 §1.1 values directly. Same text, two value sources. */
+
+/* Disable github-markdown-css's decorative quotes auto-added to inline code / blockquotes */
+.markdown-body code::before,
+.markdown-body code::after {
+  content: none;
+}
+.markdown-body blockquote p:first-of-type::before,
+.markdown-body blockquote p:last-of-type::after {
+  content: none;
+}
+.markdown-body .katex {
+  font-size: 1.05em;
+  background: none;
+  padding: 0;
+}
+
+/* Badge / inline-img horizontal layout: github-markdown-css (and Tailwind Typography before it)
+   stacks badges vertically and inflates line height; restore inline + zero vertical margin. */
+.markdown-body p > a > img,
+.markdown-body p[align='center'] > img {
+  display: inline-block;
+  vertical-align: middle;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* Code block background/padding. github-markdown-css also styles `pre`; this is the unified box
+   shared by preview and export via --md-pre-* so the two can never drift. */
+.markdown-body pre {
+  background: var(--md-pre-bg, var(--color-surface-overlay));
+  border: 1px solid var(--md-pre-border, var(--color-border));
+  border-radius: 8px;
+  padding: 1rem;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.875rem;
+}
+
+/* highlight.js marks the <pre> itself with `.hljs`, and highlight.js/styles/github.css sets a
+   background on `.hljs`. Re-state the box here so the code block reads identically in the preview
+   and in the export regardless of which sheet happens to be injected last. */
+.markdown-body pre.hljs {
+  background: var(--md-pre-bg, var(--color-surface-overlay));
+  border: 1px solid var(--md-pre-border, var(--color-border));
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+/* GFM task lists: github-markdown-css ships `.task-list-item { list-style-type: none }` (so the
+   bullet is already gone), but it does not align the checkbox itself. We keep the list tidy and
+   the checkbox vertically centred — in BOTH the preview and the export, hence here. */
+.markdown-body ul:has(> li > input[type='checkbox']) {
+  list-style: none;
+  padding-left: 0;
+}
+.markdown-body li:has(> input[type='checkbox']) {
+  list-style: none;
+}
+.markdown-body li > input[type='checkbox'] {
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
+
+/* highlight.js dark token palette (github-dark). Scoped to the resolved theme (data-theme on the
+   .markdown-body element) so it follows github-markdown-css's dark sheet without dragging the app
+   chrome into dark mode. light theme uses highlight.js/styles/github.css, inlined by export.ts.
+   NOTE: no `background` here on purpose. The code-block box is painted by `.markdown-body pre` /
+   `.markdown-body pre.hljs` above; a `background: transparent` in this rule has the SAME
+   specificity (0,2,1) as `.markdown-body pre.hljs` and comes later, so it used to WIN and left
+   the dark code block with a transparent background. The light highlight.js sheet's `.hljs`
+   background is already overridden by the more specific `pre.hljs` rule. */
+.markdown-body[data-theme='dark'] .hljs {
+  color: #c9d1d9;
+}
+.markdown-body[data-theme='dark'] .hljs-doctag,
+.markdown-body[data-theme='dark'] .hljs-keyword,
+.markdown-body[data-theme='dark'] .hljs-meta .hljs-keyword,
+.markdown-body[data-theme='dark'] .hljs-template-tag,
+.markdown-body[data-theme='dark'] .hljs-template-variable,
+.markdown-body[data-theme='dark'] .hljs-type,
+.markdown-body[data-theme='dark'] .hljs-variable.language_ {
+  color: #ff7b72;
+}
+.markdown-body[data-theme='dark'] .hljs-title,
+.markdown-body[data-theme='dark'] .hljs-title.class_,
+.markdown-body[data-theme='dark'] .hljs-title.class_.inherited__,
+.markdown-body[data-theme='dark'] .hljs-title.function_ {
+  color: #d2a8ff;
+}
+.markdown-body[data-theme='dark'] .hljs-attr,
+.markdown-body[data-theme='dark'] .hljs-attribute,
+.markdown-body[data-theme='dark'] .hljs-literal,
+.markdown-body[data-theme='dark'] .hljs-meta,
+.markdown-body[data-theme='dark'] .hljs-number,
+.markdown-body[data-theme='dark'] .hljs-operator,
+.markdown-body[data-theme='dark'] .hljs-variable,
+.markdown-body[data-theme='dark'] .hljs-selector-attr,
+.markdown-body[data-theme='dark'] .hljs-selector-class,
+.markdown-body[data-theme='dark'] .hljs-selector-id {
+  color: #79c0ff;
+}
+.markdown-body[data-theme='dark'] .hljs-regexp,
+.markdown-body[data-theme='dark'] .hljs-string,
+.markdown-body[data-theme='dark'] .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+.markdown-body[data-theme='dark'] .hljs-built_in,
+.markdown-body[data-theme='dark'] .hljs-symbol {
+  color: #ffa657;
+}
+.markdown-body[data-theme='dark'] .hljs-comment,
+.markdown-body[data-theme='dark'] .hljs-code,
+.markdown-body[data-theme='dark'] .hljs-formula {
+  color: #8b949e;
+}
+.markdown-body[data-theme='dark'] .hljs-name,
+.markdown-body[data-theme='dark'] .hljs-quote,
+.markdown-body[data-theme='dark'] .hljs-selector-tag,
+.markdown-body[data-theme='dark'] .hljs-selector-pseudo {
+  color: #7ee787;
+}
+.markdown-body[data-theme='dark'] .hljs-subst {
+  color: #c9d1d9;
+}
+.markdown-body[data-theme='dark'] .hljs-section {
+  color: #1f6feb;
+  font-weight: bold;
+}
+.markdown-body[data-theme='dark'] .hljs-bullet {
+  color: #f2cc60;
+}
+.markdown-body[data-theme='dark'] .hljs-emphasis {
+  color: #c9d1d9;
+  font-style: italic;
+}
+.markdown-body[data-theme='dark'] .hljs-strong {
+  color: #c9d1d9;
+  font-weight: bold;
+}
+.markdown-body[data-theme='dark'] .hljs-addition {
+  color: #aff5b4;
+  background-color: #033a16;
+}
+.markdown-body[data-theme='dark'] .hljs-deletion {
+  color: #ffdcd7;
+  background-color: #67060c;
+}

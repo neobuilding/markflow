@@ -1,6 +1,7 @@
 import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   FileText,
+  Files,
   Plus,
   Search,
   MoreHorizontal,
@@ -117,6 +118,165 @@ function resolveTypedFileName(typed: string): { name: string; refused?: string; 
   }
 }
 
+/** Width of the always-present icon column (VS Code-style activity bar). */
+const ACTIVITY_BAR_W = 48
+
+/**
+ * The leftmost icon column (R4). Replaces the old Files/Search text tablist.
+ *
+ * ARIA model: a vertical `tablist` of `role="tab"` buttons controlling the single visible
+ * content panel (`role="tabpanel"`). `aria-selected` and `aria-expanded` are per-item and both
+ * derive from "this view is selected AND the panel is actually open" — when the sidebar is
+ * collapsed neither tab owns a visible panel, so both must report false rather than lying to a
+ * screen reader. VS Code's own activity bar uses the same tab model (`role="tab"` +
+ * `aria-selected` + `aria-expanded`); `aria-pressed` (plain toggle buttons) would be a step away
+ * from both VS Code and the ARIA APG.
+ */
+type ActivityView = 'files' | 'search'
+
+/** One icon in the activity bar. Hoisted out of `ActivityBar` so it is a real component type
+ *  (defining it inside the parent makes React remount the subtree on every parent render). */
+function ActivityItem({
+  id,
+  icon: Icon,
+  label,
+  selected,
+  tabStop,
+  other,
+  onSelect,
+}: {
+  id: ActivityView
+  icon: typeof Files
+  label: string
+  selected: boolean
+  tabStop: boolean
+  other: ActivityView
+  onSelect: (v: ActivityView) => void
+}): React.ReactElement {
+  // ↑/↓ moves between tabs and auto-activates, keeping focus ON the bar (APG automatic
+  // activation; VS Code's ActionBar does the same). Entering the panel is one more Tab press.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    onSelect(other)
+    requestAnimationFrame(() => document.getElementById(`activity-bar-tab-${other}`)?.focus())
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          role="tab"
+          id={`activity-bar-tab-${id}`}
+          aria-selected={selected}
+          aria-expanded={selected}
+          // Only the selected tab may point at a panel: exactly one panel is mounted (its id
+          // follows `sidebarView`), so gating on `open` would emit a dangling IDREF.
+          aria-controls={selected ? `sidebar-panel-${id}` : undefined}
+          tabIndex={tabStop ? 0 : -1}
+          onKeyDown={onKeyDown}
+          aria-label={label}
+          data-testid={`activity-bar-${id}`}
+          onClick={() => onSelect(id)}
+          className={cn(
+            'relative flex items-center justify-center w-9 h-9 my-1 rounded-md transition-colors focus-ring',
+            selected
+              ? 'bg-[var(--color-accent-muted)] text-accent'
+              : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-overlay)] hover:text-[var(--color-text-primary)]',
+          )}
+        >
+          {selected && (
+            <span
+              className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-accent"
+              aria-hidden
+            />
+          )}
+          <Icon size={18} />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function ActivityBar({
+  view,
+  open,
+  onSelect,
+  onResetWidth,
+  onToggle,
+}: {
+  view: ActivityView
+  open: boolean
+  onSelect: (v: ActivityView) => void
+  onResetWidth: () => void
+  onToggle: () => void
+}): React.ReactElement {
+  const { t } = useT()
+
+  return (
+    // The bar carries the recovery entries (reset width / collapse) in its context menu, which is
+    // the only place they stay reachable while the content panel is collapsed — the panel's own
+    // resize-handle menu unmounts with it. VS Code does the same on its activity bar.
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="shrink-0 h-full">
+          {/* A plain container with `role="tablist"`: not `<aside>` (a collapsed sidebar must not
+              leave an `<aside>` behind) and not `<nav>` (the navigation landmark would be silently
+              overridden by the role anyway, and a 2-item switcher is not worth a landmark). */}
+          <div
+            aria-label={t('sidebar.activityBar')}
+            role="tablist"
+            aria-orientation="vertical"
+            className={cn(
+              'flex flex-col items-center w-12 shrink-0 h-full border-r border-[var(--color-border)] bg-[var(--color-surface-overlay)] py-2',
+            )}
+            // macOS: the window traffic lights sit over the content's top-left corner
+            // (trafficLightPosition {x:16,y:16}), so the first icon has to clear them.
+            // Windows/Linux use a native frame and need no offset.
+            style={isMac() ? { paddingTop: 'calc(var(--titlebar-height) + 0.5rem)' } : undefined}
+          >
+            {/* "Selected and my panel is visible" — collapsed ⇒ false for BOTH tabs.
+                Roving tabindex: only the selected tab is a Tab stop, and when nothing is
+                selected (collapsed) the first tab takes over, otherwise the whole bar would
+                become unreachable by keyboard (WCAG 2.1.1). */}
+            <ActivityItem
+              id="files"
+              icon={Files}
+              label={t('sidebar.activityFiles')}
+              selected={open && view === 'files'}
+              tabStop={open ? view === 'files' : true}
+              other="search"
+              onSelect={onSelect}
+            />
+            <ActivityItem
+              id="search"
+              icon={Search}
+              label={t('sidebar.activitySearch')}
+              selected={open && view === 'search'}
+              tabStop={open && view === 'search'}
+              other="files"
+              onSelect={onSelect}
+            />
+          </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem data-testid="activity-reset-sidebar-width" onClick={onResetWidth}>
+          <PanelLeft size={13} /> {t('ctx.resetSidebarWidth')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          data-testid="activity-collapse-sidebar"
+          disabled={!open}
+          onClick={onToggle}
+        >
+          <PanelLeftClose size={13} /> {t('ctx.collapseSidebar')}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
 export function Sidebar(): React.ReactElement | null {
   const {
     sidebarOpen,
@@ -137,7 +297,9 @@ export function Sidebar(): React.ReactElement | null {
     clearCreatedFolder,
   } = useUIStore()
   const { t } = useT()
-  const [sidebarWidth, setSidebarWidth] = useState(240)
+  // Total sidebar width = activity bar (48px) + content panel. The 48px column is new (R4), so
+  // the default grows 240 → 288 and the floor 180 → 240 to keep the content panel at 240/192.
+  const [sidebarWidth, setSidebarWidth] = useState(288)
   const isResizing = useRef(false)
   // The aside is sized from React state; mirror it into the CSS variable so the drag and
   // the width reset stay consistent (the variable used to be written by the drag handler
@@ -617,7 +779,7 @@ export function Sidebar(): React.ReactElement | null {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return
-      const newWidth = Math.max(180, Math.min(480, e.clientX))
+      const newWidth = Math.max(240, Math.min(480, e.clientX))
       setSidebarWidth(newWidth)
     }
     const handleMouseUp = () => {
@@ -716,7 +878,34 @@ export function Sidebar(): React.ReactElement | null {
     return () => cancelAnimationFrame(frame)
   }, [focusPath])
 
-  if (!sidebarOpen) return null
+  // Clicking / arrow-keying the activity bar keeps focus ON the tab (APG automatic activation,
+  // so ↑↓ can be pressed repeatedly). Only programmatic switches (⌘⇧E / ⌘⇧F) hand focus to the
+  // panel. Without this flag the effect below would yank focus off the tab that was just focused,
+  // making a second arrow press land nowhere.
+  const handleActivitySelect = (v: 'files' | 'search') => {
+    // Clicking the ALREADY ACTIVE view collapses the sidebar (VS Code's default
+    // `workbench.activityBar.iconClickBehavior: 'toggle'`); anything else opens the panel and
+    // switches to it.
+    if (sidebarOpen && sidebarView === v) {
+      toggleSidebar()
+      return
+    }
+    setSidebarView(v)
+    if (!sidebarOpen) toggleSidebar()
+    // Focus deliberately stays on the tab: ARIA APG automatic activation keeps focus in the
+    // tablist so ↑/↓ can be pressed again, and the panel is one more Tab away.
+  }
+
+  // Hand focus to the panel when a shortcut asks for it (⌘⇧E → Files). Explicit nonce rather than
+  // "move focus on every view change": some switches already place focus themselves ("Search in
+  // This Folder" parks the caret in the include row) and must not be overridden.
+  const panelFocusNonce = useUIStore((s) => s.panelFocusNonce)
+  useEffect(() => {
+    if (panelFocusNonce <= 0) return
+    if (!sidebarOpen) return
+    // The panel is conditionally rendered — wait a frame for it to mount before focusing it.
+    requestAnimationFrame(() => asideRef.current?.focus())
+  }, [panelFocusNonce, sidebarOpen])
 
   const folderName = activeFolder
     ? (activeFolder.split(/[\\/]/).filter(Boolean).pop() ?? activeFolder)
@@ -759,453 +948,435 @@ export function Sidebar(): React.ReactElement | null {
   ) : null
 
   return (
-    <aside
-      className="relative flex flex-col h-full border-r border-[var(--color-border)] bg-[var(--color-bg)] shrink-0 animate-slide-in-left"
-      style={{ width: sidebarWidth }}
-      onKeyDown={handleSidebarKeyDown}
-      ref={asideRef}
-      // Makes the whole sidebar a focus target: clicking a row, the tree background or any
-      // non-focusable part of it focuses the SIDEBAR itself (the nearest focusable ancestor),
-      // so Ctrl+Z counts as "focus is in the sidebar" without needing a specific row focused.
-      tabIndex={-1}
+    <div
+      className="flex h-full shrink-0"
+      style={{ width: sidebarOpen ? sidebarWidth : ACTIVITY_BAR_W }}
     >
-      {/* Header (titlebar drag region) */}
-      <div
-        className="titlebar-drag flex items-center border-b border-[var(--color-border)] shrink-0 pr-2"
-        style={{
-          height: 'var(--titlebar-height)',
-          paddingLeft: isMac() ? '5rem' : '0.75rem',
-        }}
-      >
-        <div className="titlebar-no-drag flex items-center gap-1.5 flex-1 min-w-0">
-          <div className="flex items-center gap-0.5 ml-auto">
-            {/* Files / Search are MUTUALLY EXCLUSIVE surfaces: the Search view needs the whole
-                panel for its query, replace, scope rows and hit list, which a 240px sidebar cannot
-                also give to the file tree (ADR-0023). The old "resident panel pinned above the
-                tree" squeezed both and left no room for a visible scope. */}
-            <div
-              role="tablist"
-              aria-label={t('sidebar.search')}
-              className="flex items-center rounded border border-[var(--color-border)] overflow-hidden shrink-0"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sidebarView === 'files'}
-                data-testid="sidebar-view-files"
-                onClick={() => setSidebarView('files')}
-                className={cn(
-                  'px-1.5 py-0.5 text-2xs transition-colors',
-                  sidebarView === 'files'
-                    ? 'bg-[var(--color-accent-muted)] text-accent'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]',
-                )}
-              >
-                {t('sidebar.files')}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sidebarView === 'search'}
-                data-testid="sidebar-view-search"
-                onClick={() => setSidebarView('search')}
-                className={cn(
-                  'px-1.5 py-0.5 text-2xs border-l border-[var(--color-border)] transition-colors',
-                  sidebarView === 'search'
-                    ? 'bg-[var(--color-accent-muted)] text-accent'
-                    : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]',
-                )}
-              >
-                {t('sidebar.search')}
-              </button>
-            </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t('sidebar.openFile')}
-                  onClick={handleImportFile}
-                  disabled={openPathsMut.isPending}
-                >
-                  <FolderOpen size={13} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('sidebar.openFile')} ({formatShortcut('⌘O')})
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t('sidebar.openFolder')}
-                  data-testid="import-folder-btn"
-                  onClick={handleImportFolder}
-                  disabled={openFolderMut.isPending}
-                >
-                  <Folder size={13} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('sidebar.openFolder')} ({formatShortcut('⌘⇧O')})
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t('sidebar.newDraft')}
-                  onClick={handleCreate}
-                  disabled={createMut.isPending}
-                  data-testid="new-document-btn"
-                >
-                  <Plus size={13} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('sidebar.newDraft')} ({formatShortcut('⌘N')})
-              </TooltipContent>
-            </Tooltip>
-            {/* "Show All Folders": opt-in reveal of folders that hold no Markdown. Only
-                meaningful while a folder is open. Shares one store flag with the
-                background right-click menu, so the two can never disagree. */}
-            {activeFolder && (
+      <ActivityBar
+        view={sidebarView}
+        open={sidebarOpen}
+        onSelect={handleActivitySelect}
+        onResetWidth={() => setSidebarWidth(288)}
+        onToggle={toggleSidebar}
+      />
+      {sidebarOpen && (
+        <aside
+          role="tabpanel"
+          id={`sidebar-panel-${sidebarView}`}
+          aria-labelledby={`activity-bar-tab-${sidebarView}`}
+          className="relative flex flex-col h-full flex-1 min-w-0 border-r border-[var(--color-border)] bg-[var(--color-bg)] animate-slide-in-left"
+          onKeyDown={handleSidebarKeyDown}
+          ref={asideRef}
+          // Focusable so the activity bar's focus hand-off has somewhere to land, and so clicking
+          // a row / the tree background / any non-focusable part still focuses the SIDEBAR itself
+          // (the nearest focusable ancestor) — that is what makes Ctrl+Z count as "focus is in the
+          // sidebar" without needing a specific row focused.
+          tabIndex={0}
+        >
+          {/* Header (titlebar drag region) */}
+          <div
+            className="titlebar-drag flex items-center border-b border-[var(--color-border)] shrink-0 pr-2"
+            style={{
+              height: 'var(--titlebar-height)',
+              // macOS: 5rem clears the window traffic lights (trafficLightPosition {x:16,y:16}).
+              paddingLeft: isMac() ? '5rem' : '0.75rem',
+            }}
+          >
+            {/* The activity bar is icons only, so the header repeats which surface this is. */}
+            <span className="text-xs font-medium text-[var(--color-text-secondary)] flex-1 min-w-0 truncate">
+              {sidebarView === 'files' ? t('sidebar.files') : t('sidebar.searchPanel')}
+            </span>
+            {/* Must sit inside `titlebar-no-drag`, or pressing a button would drag the window. */}
+            <div className="titlebar-no-drag flex items-center gap-0.5 shrink-0">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    aria-label={t('sidebar.showAllFolders')}
-                    aria-pressed={showAllFolders}
-                    data-testid="show-all-folders-btn"
-                    onClick={toggleShowAllFolders}
-                    className={cn(showAllFolders && 'text-accent')}
+                    aria-label={t('sidebar.openFile')}
+                    onClick={handleImportFile}
+                    disabled={openPathsMut.isPending}
                   >
-                    <Eye size={13} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('sidebar.showAllFoldersHint')}</TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Current folder bar right-click menu . The sidebar top bar and the empty list area deliberately stay silent (G2) */}
-      {activeFolder && (
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div
-              className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--color-border)] shrink-0"
-              data-testid="current-folder-bar"
-            >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    aria-label={t('sidebar.up')}
-                    data-testid="up-folder-btn"
-                    disabled={!parentFolder}
-                    onClick={() => parentFolder && setActiveFolder(parentFolder)}
-                  >
-                    <ArrowUp size={12} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t('sidebar.up')}</TooltipContent>
-              </Tooltip>
-              <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
-              {folderEdit?.mode === 'rename' && folderEdit.targetPath === activeFolder ? (
-                <FolderNameInput
-                  initial={folderName}
-                  size="folder"
-                  placeholder={t('sidebar.folderNamePlaceholder')}
-                  hint={folderHint}
-                  onSubmit={submitFolderName}
-                  onCancel={cancelFolderEdit}
-                  validate={(raw) =>
-                    nameExists(
-                      'folder',
-                      dirName(folderEdit.targetPath),
-                      baseName(folderEdit.targetPath),
-                      raw,
-                    )
-                  }
-                />
-              ) : (
-                <span
-                  className="text-2xs text-[var(--color-text-tertiary)] truncate flex-1"
-                  title={activeFolder}
-                >
-                  {folderName}
-                </span>
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    data-testid="close-workspace-btn"
-                    onClick={confirmCloseWorkspace}
-                  >
-                    <X size={12} />
+                    <FolderOpen size={16} />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {t('sidebar.close')} ({formatShortcut('⌘⇧W')})
+                  {t('sidebar.openFile')} ({formatShortcut('⌘O')})
                 </TooltipContent>
               </Tooltip>
-            </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent
-            // Radix returns focus to the trigger as the menu closes. For the create items that
-            // is fatal: unlike rename (which swaps the row out), the trigger row STAYS mounted,
-            // so the restore blurs the freshly opened inline input and blur-cancel closes it.
-            onCloseAutoFocus={(e) => e.preventDefault()}
-          >
-            <ContextMenuItem
-              data-testid="side-copy-folder-path"
-              onClick={() => copyText(activeFolder)}
-            >
-              <Copy size={13} /> {t('ctx.copyFolderPath')}
-            </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="side-show-in-folder"
-              onClick={() => revealInFolder(activeFolder)}
-            >
-              <FolderOpen size={13} /> {t('editor.showInFolder')}
-            </ContextMenuItem>
-            {/* Folder rows offer "New Subfolder", but the current folder itself has no row,
-                so creating one directly under it needs an entry here too. */}
-            <ContextMenuItem
-              data-testid="side-new-folder-here"
-              onClick={() => startFolderEdit({ mode: 'create', parentPath: activeFolder })}
-            >
-              <FolderPlus size={13} /> {t('ctx.newFolderHere')}
-            </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="side-rename-folder"
-              onClick={() => startFolderEdit({ mode: 'rename', targetPath: activeFolder })}
-            >
-              <PenLine size={13} /> {t('ctx.renameFolder')}
-            </ContextMenuItem>
-            <ContextMenuItem
-              data-testid="side-delete-folder"
-              onClick={() => void handleDeleteFolder(activeFolder)}
-            >
-              <Trash2 size={13} /> {t('ctx.deleteFolder')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              data-testid="side-go-up"
-              disabled={!parentFolder}
-              onClick={() => parentFolder && setActiveFolder(parentFolder)}
-            >
-              <ArrowUp size={13} /> {t('ctx.goUp')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              data-testid="side-close-workspace"
-              disabled={workspaceLocked}
-              onClick={() => void confirmCloseWorkspace()}
-            >
-              <X size={13} /> {t('menu.closeWorkspace')}
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
-      )}
-
-      {/* The two surfaces are mutually exclusive: either the Search view or the file tree. */}
-      {sidebarView === 'search' && <SidebarSearch />}
-
-      {/* Document list / welcome . The area itself is now right-clickable: while the tree
-          is populated this used to be the one dead zone in the sidebar (G2 kept it silent).
-          Unmounted (not just hidden) while the Search view is showing: a hidden tree would still
-          hold its expanded state and keep answering keyboard focus. */}
-      {sidebarView === 'files' && (
-        <ContextMenu>
-          <ContextMenuTrigger asChild>
-            <div className="flex-1 overflow-y-auto" data-testid="sidebar-tree-area">
-              {!activeFolder && memoryOnlyDocs.length === 0 ? (
-                // No folder open and no drafts: show the welcome/empty guidance. (G2)
-                <WelcomeState
-                  onOpenFile={handleImportFile}
-                  onOpenFolder={handleImportFolder}
-                  onCreate={handleCreate}
-                />
-              ) : loading ? (
-                <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">
-                  {t('editor.loading')}
-                </div>
-              ) : memoryOnlyDocs.length === 0 && tree.length === 0 && !rootCreatePending ? (
-                <EmptyState
-                  onNewFile={() =>
-                    activeFolder && setFileEdit({ mode: 'create', parentPath: activeFolder })
-                  }
-                  onNewFolder={() =>
-                    activeFolder && startFolderEdit({ mode: 'create', parentPath: activeFolder })
-                  }
-                  showAllFolders={showAllFolders}
-                  onToggleShowAllFolders={setShowAllFolders}
-                />
-              ) : (
-                <>
-                  {memoryOnlyDocs.length > 0 && (
-                    <>
-                      <div className="px-3 pt-2 pb-1 text-2xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
-                        {t('sidebar.unsavedDrafts')}
-                      </div>
-                      <ul className="pb-1">
-                        {memoryOnlyDocs.map((doc) => (
-                          <TreeRow
-                            key={doc.id}
-                            node={memoryOnlyLeaf(doc)}
-                            depth={0}
-                            activeId={activeDocumentId}
-                            onSelectDoc={handleSelectDoc}
-                            onDeleteDoc={handleDeleteDoc}
-                            onDetailsDoc={handleDetailsDoc}
-                            expanded={expanded}
-                            onToggleExpand={toggleExpand}
-                            onExpandAll={expandAll}
-                            onCopyFolderPath={copyText}
-                            onShowInFolder={revealInFolder}
-                            folderEdit={folderEdit}
-                            onStartFolderEdit={startFolderEdit}
-                            onSubmitFolderName={submitFolderName}
-                            onCancelFolderEdit={cancelFolderEdit}
-                            onDeleteFolder={handleDeleteFolder}
-                            fileEdit={fileEdit}
-                            fileNameHint={fileHint}
-                            folderHint={folderHint}
-                            onStartFileRename={startFileRename}
-                            onSubmitFileName={submitFileName}
-                            onCancelFileEdit={cancelFileEdit}
-                            nameExists={nameExists}
-                          />
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                  {/* The tree list. The current folder itself has no row, so a row naming an entry
-                created directly under it is rendered here too — at the folder/file seam, next to
-                the siblings it is about to join. The list renders whenever there is either a real
-                row to show or a temporary one pending, so naming something inside an empty folder
-                cannot look like the menu item did nothing. */}
-                  {(tree.length > 0 || rootCreatePending) && (
-                    <ul className="py-1">
-                      {tree.map((node, i) => (
-                        <Fragment key={node.path}>
-                          {i === rootFolderCreateIndex ? rootFolderCreateRows : null}
-                          {i === rootFileCreateIndex ? rootFileCreateRows : null}
-                          <TreeRow
-                            node={node}
-                            depth={0}
-                            activeId={activeDocumentId}
-                            onSelectDoc={handleSelectDoc}
-                            onDeleteDoc={handleDeleteDoc}
-                            onDetailsDoc={handleDetailsDoc}
-                            onEnterFolder={handleEnterFolder}
-                            expanded={expanded}
-                            onToggleExpand={toggleExpand}
-                            onExpandAll={expandAll}
-                            onCopyFolderPath={copyText}
-                            onShowInFolder={revealInFolder}
-                            onNewDocHere={createDocInFolder}
-                            folderEdit={folderEdit}
-                            onStartFolderEdit={startFolderEdit}
-                            onSubmitFolderName={submitFolderName}
-                            onCancelFolderEdit={cancelFolderEdit}
-                            onDeleteFolder={handleDeleteFolder}
-                            fileEdit={fileEdit}
-                            fileNameHint={fileHint}
-                            folderHint={folderHint}
-                            onStartFileRename={startFileRename}
-                            onSubmitFileName={submitFileName}
-                            onCancelFileEdit={cancelFileEdit}
-                            nameExists={nameExists}
-                          />
-                        </Fragment>
-                      ))}
-                      {/* When there is nothing for the splice index to land between, append at the end. */}
-                      {rootFolderCreateIndex === tree.length ? rootFolderCreateRows : null}
-                      {rootFileCreateIndex === tree.length ? rootFileCreateRows : null}
-                    </ul>
-                  )}
-                </>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t('sidebar.openFolder')}
+                    data-testid="import-folder-btn"
+                    onClick={handleImportFolder}
+                    disabled={openFolderMut.isPending}
+                  >
+                    <Folder size={16} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t('sidebar.openFolder')} ({formatShortcut('⌘⇧O')})
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t('sidebar.newDraft')}
+                    onClick={handleCreate}
+                    disabled={createMut.isPending}
+                    data-testid="new-document-btn"
+                  >
+                    <Plus size={16} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t('sidebar.newDraft')} ({formatShortcut('⌘N')})
+                </TooltipContent>
+              </Tooltip>
+              {/* "Show All Folders": opt-in reveal of folders that hold no Markdown. Only
+                meaningful while a folder is open. Shares one store flag with the
+                background right-click menu, so the two can never disagree. */}
+              {activeFolder && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t('sidebar.showAllFolders')}
+                      aria-pressed={showAllFolders}
+                      data-testid="show-all-folders-btn"
+                      onClick={toggleShowAllFolders}
+                      className={cn(showAllFolders && 'text-accent')}
+                    >
+                      <Eye size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('sidebar.showAllFoldersHint')}</TooltipContent>
+                </Tooltip>
               )}
             </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent
-            // See the current-folder bar menu: the create items keep this trigger mounted, so
-            // Radix's focus restore would blur (and thus cancel) the inline input it just opened.
-            onCloseAutoFocus={(e) => e.preventDefault()}
-          >
-            {/* Both create items need an open folder. The guard sits here — while rendering —
-              rather than inside each click handler: with no folder open this menu is
-              unreachable, so an in-handler check could never be exercised. */}
-            {activeFolder && (
-              <>
+          </div>
+
+          {/* Current folder bar right-click menu . The sidebar top bar and the empty list area deliberately stay silent (G2) */}
+          {activeFolder && (
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div
+                  className="flex items-center gap-1.5 px-2 py-1.5 border-b border-[var(--color-border)] shrink-0"
+                  data-testid="current-folder-bar"
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        aria-label={t('sidebar.up')}
+                        data-testid="up-folder-btn"
+                        disabled={!parentFolder}
+                        onClick={() => parentFolder && setActiveFolder(parentFolder)}
+                      >
+                        <ArrowUp size={12} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t('sidebar.up')}</TooltipContent>
+                  </Tooltip>
+                  <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
+                  {folderEdit?.mode === 'rename' && folderEdit.targetPath === activeFolder ? (
+                    <FolderNameInput
+                      initial={folderName}
+                      size="folder"
+                      placeholder={t('sidebar.folderNamePlaceholder')}
+                      hint={folderHint}
+                      onSubmit={submitFolderName}
+                      onCancel={cancelFolderEdit}
+                      validate={(raw) =>
+                        nameExists(
+                          'folder',
+                          dirName(folderEdit.targetPath),
+                          baseName(folderEdit.targetPath),
+                          raw,
+                        )
+                      }
+                    />
+                  ) : (
+                    <span
+                      className="text-xs text-[var(--color-text-tertiary)] truncate flex-1"
+                      title={activeFolder}
+                    >
+                      {folderName}
+                    </span>
+                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        data-testid="close-workspace-btn"
+                        onClick={confirmCloseWorkspace}
+                      >
+                        <X size={12} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t('sidebar.close')} ({formatShortcut('⌘⇧W')})
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent
+                // Radix returns focus to the trigger as the menu closes. For the create items that
+                // is fatal: unlike rename (which swaps the row out), the trigger row STAYS mounted,
+                // so the restore blurs the freshly opened inline input and blur-cancel closes it.
+                onCloseAutoFocus={(e) => e.preventDefault()}
+              >
                 <ContextMenuItem
-                  data-testid="side-bg-new-folder"
+                  data-testid="side-copy-folder-path"
+                  onClick={() => copyText(activeFolder)}
+                >
+                  <Copy size={13} /> {t('ctx.copyFolderPath')}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  data-testid="side-show-in-folder"
+                  onClick={() => revealInFolder(activeFolder)}
+                >
+                  <FolderOpen size={13} /> {t('editor.showInFolder')}
+                </ContextMenuItem>
+                {/* Folder rows offer "New Subfolder", but the current folder itself has no row,
+                so creating one directly under it needs an entry here too. */}
+                <ContextMenuItem
+                  data-testid="side-new-folder-here"
                   onClick={() => startFolderEdit({ mode: 'create', parentPath: activeFolder })}
                 >
                   <FolderPlus size={13} /> {t('ctx.newFolderHere')}
                 </ContextMenuItem>
                 <ContextMenuItem
-                  data-testid="side-bg-new-file"
-                  onClick={() => setFileEdit({ mode: 'create', parentPath: activeFolder })}
+                  data-testid="side-rename-folder"
+                  onClick={() => startFolderEdit({ mode: 'rename', targetPath: activeFolder })}
                 >
-                  <Plus size={13} /> {t('sidebar.newFile')}
+                  <PenLine size={13} /> {t('ctx.renameFolder')}
                 </ContextMenuItem>
-              </>
-            )}
-            <ContextMenuSeparator />
-            {/* Same flag as the toolbar button: one source of truth, never two states. */}
-            <ContextMenuCheckboxItem
-              data-testid="side-bg-show-all-folders"
-              checked={showAllFolders}
-              onCheckedChange={(v) => setShowAllFolders(v === true)}
-            >
-              {t('sidebar.showAllFolders')}
-            </ContextMenuCheckboxItem>
-          </ContextMenuContent>
-        </ContextMenu>
-      )}
+                <ContextMenuItem
+                  data-testid="side-delete-folder"
+                  onClick={() => void handleDeleteFolder(activeFolder)}
+                >
+                  <Trash2 size={13} /> {t('ctx.deleteFolder')}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  data-testid="side-go-up"
+                  disabled={!parentFolder}
+                  onClick={() => parentFolder && setActiveFolder(parentFolder)}
+                >
+                  <ArrowUp size={13} /> {t('ctx.goUp')}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  data-testid="side-close-workspace"
+                  disabled={workspaceLocked}
+                  onClick={() => void confirmCloseWorkspace()}
+                >
+                  <X size={13} /> {t('menu.closeWorkspace')}
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          )}
 
-      {/* Resize handle right-click menu . Widened from `w-1` (4px) to `w-1.5` (6px) so the narrow strip is a realistic right-click target : at 4px it was almost impossible to hit */}
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <div
-            className="absolute top-0 right-0 bottom-0 w-1.5 cursor-col-resize z-10 hover:bg-accent/30 active:bg-accent/50 transition-colors"
-            onMouseDown={startResize}
-            title={t('sidebar.resizeHint')}
-            data-testid="sidebar-resize-handle"
-          >
-            <GripVertical
-              size={12}
-              className="absolute right-0 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 hover:opacity-100 transition-opacity"
-            />
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem
-            data-testid="side-reset-sidebar-width"
-            onClick={() => setSidebarWidth(240)}
-          >
-            <PanelLeft size={13} /> {t('ctx.resetSidebarWidth')}
-          </ContextMenuItem>
-          <ContextMenuItem data-testid="side-collapse-sidebar" onClick={toggleSidebar}>
-            <PanelLeftClose size={13} /> {t('ctx.collapseSidebar')}
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-    </aside>
+          {/* The two surfaces are mutually exclusive: either the Search view or the file tree. */}
+          {sidebarView === 'search' && <SidebarSearch />}
+
+          {/* Document list / welcome . The area itself is now right-clickable: while the tree
+          is populated this used to be the one dead zone in the sidebar (G2 kept it silent).
+          Unmounted (not just hidden) while the Search view is showing: a hidden tree would still
+          hold its expanded state and keep answering keyboard focus. */}
+          {sidebarView === 'files' && (
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div className="flex-1 overflow-y-auto" data-testid="sidebar-tree-area">
+                  {!activeFolder && memoryOnlyDocs.length === 0 ? (
+                    // No folder open and no drafts: show the welcome/empty guidance. (G2)
+                    <WelcomeState
+                      onOpenFile={handleImportFile}
+                      onOpenFolder={handleImportFolder}
+                      onCreate={handleCreate}
+                    />
+                  ) : loading ? (
+                    <div className="px-3 py-8 text-center text-xs text-[var(--color-text-tertiary)]">
+                      {t('editor.loading')}
+                    </div>
+                  ) : memoryOnlyDocs.length === 0 && tree.length === 0 && !rootCreatePending ? (
+                    <EmptyState
+                      onNewFile={() =>
+                        activeFolder && setFileEdit({ mode: 'create', parentPath: activeFolder })
+                      }
+                      onNewFolder={() =>
+                        activeFolder &&
+                        startFolderEdit({ mode: 'create', parentPath: activeFolder })
+                      }
+                      showAllFolders={showAllFolders}
+                      onToggleShowAllFolders={setShowAllFolders}
+                    />
+                  ) : (
+                    <>
+                      {memoryOnlyDocs.length > 0 && (
+                        <>
+                          <div className="px-3 pt-2 pb-1 text-xs font-medium uppercase tracking-wide text-[var(--color-text-tertiary)]">
+                            {t('sidebar.unsavedDrafts')}
+                          </div>
+                          <ul className="pb-1">
+                            {memoryOnlyDocs.map((doc) => (
+                              <TreeRow
+                                key={doc.id}
+                                node={memoryOnlyLeaf(doc)}
+                                depth={0}
+                                activeId={activeDocumentId}
+                                onSelectDoc={handleSelectDoc}
+                                onDeleteDoc={handleDeleteDoc}
+                                onDetailsDoc={handleDetailsDoc}
+                                expanded={expanded}
+                                onToggleExpand={toggleExpand}
+                                onExpandAll={expandAll}
+                                onCopyFolderPath={copyText}
+                                onShowInFolder={revealInFolder}
+                                folderEdit={folderEdit}
+                                onStartFolderEdit={startFolderEdit}
+                                onSubmitFolderName={submitFolderName}
+                                onCancelFolderEdit={cancelFolderEdit}
+                                onDeleteFolder={handleDeleteFolder}
+                                fileEdit={fileEdit}
+                                fileNameHint={fileHint}
+                                folderHint={folderHint}
+                                onStartFileRename={startFileRename}
+                                onSubmitFileName={submitFileName}
+                                onCancelFileEdit={cancelFileEdit}
+                                nameExists={nameExists}
+                              />
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                      {/* The tree list. The current folder itself has no row, so a row naming an entry
+                created directly under it is rendered here too — at the folder/file seam, next to
+                the siblings it is about to join. The list renders whenever there is either a real
+                row to show or a temporary one pending, so naming something inside an empty folder
+                cannot look like the menu item did nothing. */}
+                      {(tree.length > 0 || rootCreatePending) && (
+                        <ul className="py-1">
+                          {tree.map((node, i) => (
+                            <Fragment key={node.path}>
+                              {i === rootFolderCreateIndex ? rootFolderCreateRows : null}
+                              {i === rootFileCreateIndex ? rootFileCreateRows : null}
+                              <TreeRow
+                                node={node}
+                                depth={0}
+                                activeId={activeDocumentId}
+                                onSelectDoc={handleSelectDoc}
+                                onDeleteDoc={handleDeleteDoc}
+                                onDetailsDoc={handleDetailsDoc}
+                                onEnterFolder={handleEnterFolder}
+                                expanded={expanded}
+                                onToggleExpand={toggleExpand}
+                                onExpandAll={expandAll}
+                                onCopyFolderPath={copyText}
+                                onShowInFolder={revealInFolder}
+                                onNewDocHere={createDocInFolder}
+                                folderEdit={folderEdit}
+                                onStartFolderEdit={startFolderEdit}
+                                onSubmitFolderName={submitFolderName}
+                                onCancelFolderEdit={cancelFolderEdit}
+                                onDeleteFolder={handleDeleteFolder}
+                                fileEdit={fileEdit}
+                                fileNameHint={fileHint}
+                                folderHint={folderHint}
+                                onStartFileRename={startFileRename}
+                                onSubmitFileName={submitFileName}
+                                onCancelFileEdit={cancelFileEdit}
+                                nameExists={nameExists}
+                              />
+                            </Fragment>
+                          ))}
+                          {/* When there is nothing for the splice index to land between, append at the end. */}
+                          {rootFolderCreateIndex === tree.length ? rootFolderCreateRows : null}
+                          {rootFileCreateIndex === tree.length ? rootFileCreateRows : null}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent
+                // See the current-folder bar menu: the create items keep this trigger mounted, so
+                // Radix's focus restore would blur (and thus cancel) the inline input it just opened.
+                onCloseAutoFocus={(e) => e.preventDefault()}
+              >
+                {/* Both create items need an open folder. The guard sits here — while rendering —
+              rather than inside each click handler: with no folder open this menu is
+              unreachable, so an in-handler check could never be exercised. */}
+                {activeFolder && (
+                  <>
+                    <ContextMenuItem
+                      data-testid="side-bg-new-folder"
+                      onClick={() => startFolderEdit({ mode: 'create', parentPath: activeFolder })}
+                    >
+                      <FolderPlus size={13} /> {t('ctx.newFolderHere')}
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      data-testid="side-bg-new-file"
+                      onClick={() => setFileEdit({ mode: 'create', parentPath: activeFolder })}
+                    >
+                      <Plus size={13} /> {t('sidebar.newFile')}
+                    </ContextMenuItem>
+                  </>
+                )}
+                <ContextMenuSeparator />
+                {/* Same flag as the toolbar button: one source of truth, never two states. */}
+                <ContextMenuCheckboxItem
+                  data-testid="side-bg-show-all-folders"
+                  checked={showAllFolders}
+                  onCheckedChange={(v) => setShowAllFolders(v === true)}
+                >
+                  {t('sidebar.showAllFolders')}
+                </ContextMenuCheckboxItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          )}
+
+          {/* Resize handle right-click menu . Widened from `w-1` (4px) to `w-1.5` (6px) so the narrow strip is a realistic right-click target : at 4px it was almost impossible to hit */}
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <div
+                className="absolute top-0 right-0 bottom-0 w-1.5 cursor-col-resize z-10 hover:bg-accent/30 active:bg-accent/50 transition-colors"
+                onMouseDown={startResize}
+                title={t('sidebar.resizeHint')}
+                data-testid="sidebar-resize-handle"
+              >
+                <GripVertical
+                  size={12}
+                  className="absolute right-0 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)] opacity-0 hover:opacity-100 transition-opacity"
+                />
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem
+                data-testid="side-reset-sidebar-width"
+                onClick={() => setSidebarWidth(288)}
+              >
+                <PanelLeft size={13} /> {t('ctx.resetSidebarWidth')}
+              </ContextMenuItem>
+              <ContextMenuItem data-testid="side-collapse-sidebar" onClick={toggleSidebar}>
+                <PanelLeftClose size={13} /> {t('ctx.collapseSidebar')}
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
+        </aside>
+      )}
+    </div>
   )
 }
 
@@ -1581,13 +1752,14 @@ function DocItem({
               )}
             </div>
             <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-2xs text-[var(--color-text-tertiary)]">
+              <span className="text-xs text-[var(--color-text-tertiary)]">
                 {formatDate(doc.updatedAt)}
               </span>
               {doc.wordCount > 0 && (
                 <>
+                  {/* Purely decorative separator — the 11px floor is enough for it. */}
                   <span className="text-2xs text-[var(--color-border-strong)]">·</span>
-                  <span className="text-2xs text-[var(--color-text-tertiary)]">
+                  <span className="text-xs text-[var(--color-text-tertiary)]">
                     {doc.wordCount}w
                   </span>
                 </>
@@ -1765,6 +1937,7 @@ function FolderNameInput({
       <input
         ref={inputRef}
         data-testid="folder-name-input"
+        aria-invalid={error ? 'true' : undefined}
         value={value}
         placeholder={placeholder}
         onFocus={(e) => e.target.select()}
@@ -1796,8 +1969,8 @@ function FolderNameInput({
           }
         }}
         className={cn(
-          'w-full min-w-0 bg-[var(--color-bg)] rounded px-1 py-0.5 outline-none',
-          error ? 'border border-red-500' : 'border border-accent',
+          'w-full min-w-0 bg-[var(--color-bg)] rounded px-1 py-0.5 focus-ring',
+          error ? 'border border-[var(--color-danger)]' : 'border border-accent',
           size === 'folder' ? 'text-base' : 'text-xs',
         )}
       />
@@ -1805,11 +1978,17 @@ function FolderNameInput({
         <span
           data-testid="file-name-hint"
           className={cn(
-            'mt-0.5 block text-[10px] leading-tight',
-            error ? 'text-red-500' : 'text-[var(--color-text-tertiary)]',
+            'mt-0.5 block text-2xs leading-tight',
+            error ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-tertiary)]',
           )}
         >
-          {message}
+          {error ? (
+            <>
+              <span className="text-[var(--color-danger)]">⚠</span> {message}
+            </>
+          ) : (
+            message
+          )}
         </span>
       ) : null}
     </div>

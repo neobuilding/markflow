@@ -190,6 +190,21 @@ describe('MarkdownEditor context menu', () => {
     fireEvent.contextMenu(c)
   })
 
+  // PLAN C5: the formatting items must NOT advertise ⌘B/⌘I/⌘E/⌘K — those combinations
+  // belong to other commands (⌘B = toggle sidebar, ⌘K = Quick Open, ⌘I = file details). A
+  // label promising a binding that does something else is worse than no label at all.
+  it('does not advertise shortcuts that other commands own', async () => {
+    const c = setup({ editable: true })
+    fireEvent.contextMenu(c)
+    for (const id of ['me-bold', 'me-italic', 'me-inline-code', 'me-link']) {
+      const item = await screen.findByTestId(id)
+      expect(item.textContent).not.toMatch(/⌘|Ctrl/)
+    }
+    // The items that DO own a binding still show it — the rule is "no false promises",
+    // not "no shortcuts".
+    expect((await screen.findByTestId('me-undo')).textContent).toMatch(/⌘Z|Ctrl\+Z/)
+  })
+
   it('disables history/edit commands in read-only mode', async () => {
     const c = setup({ editable: false })
     fireEvent.contextMenu(c)

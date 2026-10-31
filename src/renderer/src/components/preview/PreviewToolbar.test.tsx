@@ -2,34 +2,27 @@ import React from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import '../../i18n'
-import { PreviewFindBar } from './PreviewFindBar'
+import { PreviewToolbar } from './PreviewToolbar'
+import { TooltipProvider } from '../ui/tooltip'
 
 function setup(content: React.ReactNode) {
   const ref = React.createRef<HTMLDivElement>()
   render(
-    <div className="relative">
-      <div ref={ref}>{content}</div>
-      <PreviewFindBar containerRef={ref} />
-    </div>,
+    <TooltipProvider>
+      <div className="relative">
+        <div ref={ref}>{content}</div>
+        <PreviewToolbar containerRef={ref} previewVisible onExport={() => {}} />
+      </div>
+    </TooltipProvider>,
   )
   return ref
 }
 
-describe('PreviewFindBar', () => {
-  it('opens the find bar from the search button', () => {
+describe('PreviewToolbar', () => {
+  it('opens the find panel from the search button', () => {
     setup(<p>hello</p>)
     fireEvent.click(screen.getByTestId('preview-find-btn'))
     expect(screen.getByTestId('preview-find-bar')).toBeInTheDocument()
-  })
-
-  it('floats the search button over the content instead of leaving it in flow', () => {
-    setup(<p>hello</p>)
-    // Regression guard: the trigger used to be a plain flow element placed after an `h-full`
-    // content div inside an `overflow-hidden` parent, so it was laid out below the visible area and
-    // clipped away — the pane had no reachable button. `click()` never caught it because a clipped
-    // element still has a bounding box, so the e2e asserts real geometry. jsdom has no layout, so
-    // lock the structural contract here: the trigger must be absolutely positioned.
-    expect(screen.getByTestId('preview-find-btn')).toHaveClass('absolute')
   })
 
   it('highlights every match and shows the 1 / N count', async () => {
@@ -334,7 +327,11 @@ describe('PreviewFindBar', () => {
   it('reports no match when the preview container is not mounted', () => {
     // A ref that is never attached to an element stays null, exercising the `!container` guard.
     const ref = React.createRef<HTMLDivElement>()
-    render(<PreviewFindBar containerRef={ref} />)
+    render(
+      <TooltipProvider>
+        <PreviewToolbar containerRef={ref} previewVisible onExport={() => {}} />
+      </TooltipProvider>,
+    )
     fireEvent.click(screen.getByTestId('preview-find-btn'))
     fireEvent.change(screen.getByTestId('preview-find-input'), { target: { value: 'hello' } })
     expect(screen.getByTestId('preview-find-count')).toHaveTextContent('No match')
@@ -377,5 +374,37 @@ describe('PreviewFindBar', () => {
     await waitFor(() =>
       expect(screen.getByTestId('preview-find-count')).toHaveTextContent('No match'),
     )
+  })
+
+  it('renders the export button only when the preview is visible and forwards the click', () => {
+    const onExport = vi.fn()
+    const ref = React.createRef<HTMLDivElement>()
+    const { rerender } = render(
+      <TooltipProvider>
+        <div className="relative">
+          <div ref={ref}>
+            <p>hello</p>
+          </div>
+          <PreviewToolbar containerRef={ref} previewVisible onExport={onExport} />
+        </div>
+      </TooltipProvider>,
+    )
+    const btn = screen.getByTestId('export-btn')
+    expect(btn).toBeInTheDocument()
+    fireEvent.click(btn)
+    expect(onExport).toHaveBeenCalledTimes(1)
+    // When the preview is hidden (edit-only mode), the export button leaves the preview bar; it is
+    // re-shown on the global header instead.
+    rerender(
+      <TooltipProvider>
+        <div className="relative">
+          <div ref={ref}>
+            <p>hello</p>
+          </div>
+          <PreviewToolbar containerRef={ref} previewVisible={false} onExport={onExport} />
+        </div>
+      </TooltipProvider>,
+    )
+    expect(screen.queryByTestId('export-btn')).toBeNull()
   })
 })

@@ -17,8 +17,9 @@
 import { defineConfig } from '@playwright/test'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { ClipboardOptions } from './e2e/helpers/fixtures'
 
-export default defineConfig({
+export default defineConfig<ClipboardOptions>({
   testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'specs'),
   testMatch: /.*\.e2e\.spec\.ts/,
   fullyParallel: false, // Electron app is a single shared instance per worker
@@ -49,6 +50,19 @@ export default defineConfig({
   projects: [
     {
       name: 'e2e-app',
+    },
+    // ── Clipboard: its own project, because it is destructive ────────────────
+    //
+    // These six specs write the REAL system clipboard — Playwright cannot intercept it, and mocking
+    // it would defeat the point ("no throw" is not a clipboard write). They overwrite whatever the
+    // user copied and put it back afterwards, so a plain `npm run e2e:app` must not run them: they
+    // read the `clipboardE2e` option (e2e/helpers/fixtures.ts), which only this project sets.
+    // `npm run e2e:full` includes it, so CI runs them for real.
+    {
+      name: 'e2e-clipboard',
+      use: { clipboardE2e: true },
+      testMatch:
+        /(?:select-all-copy-fidelity|pane-toolbars|preload-contract|formula-copy-image|copy-once-no-drop-diagrams|context-menu)\.e2e\.spec\.ts$/,
     },
     // ── Performance: one CI gate + one on-demand diagnostic ──────────────────
     //

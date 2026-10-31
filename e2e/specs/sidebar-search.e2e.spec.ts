@@ -8,8 +8,8 @@ import { mkTempDir } from '../helpers/temp'
 // view. Content search lives in the Search view — there is no mode switch any more, so filename
 // globs are the Ctrl/Cmd+K "Go to file" palette's job (see command-palette.e2e.spec.ts).
 // The Search view's own state is session-only and never persisted (Q20).
-// DOM is addressed by testids: sidebar-view-{files,search}, resident-search-{input,box},
-// search-{include,exclude,match,group,summary,diagnostic}.
+// DOM is addressed by testids: activity-bar-{files,search}, resident-search-{input,box},
+// search-{include,exclude,match,group,summary,diagnostic}, search-advanced-toggles-{ab,.*}.
 test.describe('sidebar Search view (ADR-0023)', () => {
   let handle: AppHandle
   let scratch: string
@@ -58,7 +58,7 @@ test.describe('sidebar Search view (ADR-0023)', () => {
   }
 
   async function openSearchView(page: Page): Promise<void> {
-    await page.getByTestId('sidebar-view-search').click()
+    await page.getByTestId('activity-bar-search').click()
     await expect(page.getByTestId('resident-search-input')).toBeVisible()
   }
 
@@ -66,12 +66,15 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // The tree is the default surface; the Search tab is the other one.
-    await expect(page.getByTestId('sidebar-view-files')).toHaveAttribute('aria-selected', 'true')
+    // The tree is the default surface; the Search tab is the other one. `aria-expanded` is
+    // asserted alongside `aria-selected`: both must agree that a panel is actually showing.
+    await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-expanded', 'true')
     await expect(page.getByTestId('resident-search-input')).toHaveCount(0)
 
     await openSearchView(page)
-    await expect(page.getByTestId('sidebar-view-search')).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('activity-bar-search')).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('activity-bar-search')).toHaveAttribute('aria-expanded', 'true')
 
     // Nothing about the chosen surface is written to persistent storage (Q20).
     const persisted = await page.evaluate(() =>
@@ -80,7 +83,7 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     expect(persisted).toHaveLength(0)
 
     // Switching back is possible, which is the whole point of a mutually exclusive pair.
-    await page.getByTestId('sidebar-view-files').click()
+    await page.getByTestId('activity-bar-files').click()
     await expect(page.getByTestId('resident-search-input')).toHaveCount(0)
   })
 
@@ -223,12 +226,12 @@ test.describe('sidebar Search view (ADR-0023)', () => {
 
     await openSearchView(page)
     // Turn on regex FIRST, then type a pattern whose `e+` only makes sense as a regex.
-    await page.getByTestId('search-match-case-.*').click()
+    await page.getByTestId('search-advanced-toggles-.*').click()
     await page.getByTestId('resident-search-input').pressSequentially('ne+dle')
     await expect(page.getByTestId('search-match')).toHaveCount(2)
 
     // Turn it back off: the same text is now a literal phrase with a plus and matches nothing.
-    await page.getByTestId('search-match-case-.*').click()
+    await page.getByTestId('search-advanced-toggles-.*').click()
     await expect(page.getByTestId('search-match')).toHaveCount(0)
   })
 
@@ -246,7 +249,7 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     await expect(page.getByTestId('search-match')).toHaveCount(2)
 
     // Whole-word: neither is a standalone word → zero hits.
-    await page.getByTestId('search-match-case-ab').click()
+    await page.getByTestId('search-advanced-toggles-ab').click()
     await expect(page.getByTestId('search-match')).toHaveCount(0)
   })
 
@@ -259,7 +262,7 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     await importFile(page, 'cn.md', '这是中文文本，中文很重要\n')
 
     await openSearchView(page)
-    await page.getByTestId('search-match-case-ab').click()
+    await page.getByTestId('search-advanced-toggles-ab').click()
     // Both occurrences of 中文 are standalone word segments.
     await page.getByTestId('resident-search-input').pressSequentially('中文')
     await expect(page.getByTestId('search-match')).toHaveCount(2)
@@ -274,7 +277,7 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     await importFile(page, 'alpha.md', 'needle in alpha\n')
 
     await openSearchView(page)
-    await page.getByTestId('search-match-case-.*').click()
+    await page.getByTestId('search-advanced-toggles-.*').click()
     await page.getByTestId('resident-search-input').pressSequentially('(unclosed')
 
     // Fail-closed: the diagnostic is shown (role=alert) and no results leak through.
@@ -291,7 +294,7 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     await importFile(page, 'cross.md', 'first\nsecond line\n')
 
     await openSearchView(page)
-    await page.getByTestId('search-match-case-.*').click()
+    await page.getByTestId('search-advanced-toggles-.*').click()
     // Single-line regex: `.` does not cross the newline → no hit.
     await page.getByTestId('resident-search-input').pressSequentially('first.second')
     await expect(page.getByTestId('search-match')).toHaveCount(0)

@@ -33,43 +33,72 @@
 
 :root {
   --scrollbar-size: 10px;
+  color-scheme: light;
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  /* System stacks only. Inter / JetBrains Mono / Fira Code / Cascadia Code used to be listed but
+     were never bundled (no @font-face, no font package, no .woff in the repo), so they only ever
+     applied on machines that happened to have them installed. OS-provided faces are the honest
+     contract: zero bytes shipped, zero licence question, and per-platform correct fallbacks. */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Light theme */
-  --color-bg: #f7f7f7;
+  /* Light theme — cool-blue system (ADR-0024 §1.1, from C21 palette migration) */
+  --color-bg: #f5f7fb;
   --color-surface: #ffffff;
-  --color-surface-overlay: #f0f0f0;
-  --color-border: #e5e5e5;
-  --color-border-strong: #d0d0d0;
-  --color-accent: #5e6ad2;
-  --color-accent-hover: #4f5abf;
-  --color-accent-muted: #eef0fb;
-  --color-text-primary: #1a1a1a;
-  --color-text-secondary: #6b6b6b;
-  --color-text-tertiary: #9b9b9b;
-  --color-danger: #e5484d;
-  --color-success: #30a46c;
-  --color-warning: #f76b15;
+  --color-surface-overlay: #edf2f9;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-muted: #eaf2ff;
+  --color-text-primary: #1f2937;
+  /* Tertiary is folded into secondary: no lighter-but-compliant third step exists in the light
+     theme (the lightest passing value is ≈#616d7f, visually identical to secondary #536176).
+     Both clear 4.5:1 on every surface in §1.2 — #536176 measures 5.86/6.29/5.59/5.58 on
+     bg/surface/surface-overlay/accent-muted. */
+  --color-text-secondary: #536176;
+  --color-text-tertiary: #536176;
+  --color-danger: #c63d45;
+  --color-danger-text: #b03039; /* destructive menu item text (WCAG 1.4.3 ≥4.5:1 incl. hover fill) */
+  --color-danger-tint: color-mix(
+    in srgb,
+    var(--color-danger) 12%,
+    transparent
+  ); /* destructive hover/focus fill */
+  --color-success: #16845b;
+  --color-warning: #b66a00;
+  /* Export-parity bridge: markdownExport.css references these export-scoped vars. In the app they
+     map to the live app tokens; buildStandaloneHtml injects ADR-0024 §1.1 values directly.
+     Keeps preview and exported HTML on the exact same code-block box (C33a). */
+  --md-pre-bg: var(--color-surface-overlay);
+  --md-pre-border: var(--color-border);
 
   --titlebar-height: 38px;
-  --sidebar-width: 240px;
+  --sidebar-width: 288px;
 }
 
 .dark {
-  --color-bg: #111111;
-  --color-surface: #1a1a1a;
-  --color-surface-overlay: #222222;
-  --color-border: #2e2e2e;
-  --color-border-strong: #3e3e3e;
-  --color-accent: #5e6ad2;
-  --color-accent-hover: #6c77d9;
-  --color-accent-muted: #1e2048;
-  --color-text-primary: #ededed;
-  --color-text-secondary: #a0a0a0;
-  --color-text-tertiary: #6b6b6b;
+  color-scheme: dark;
+  --color-bg: #0f1419;
+  --color-surface: #171d24;
+  --color-surface-overlay: #1e252d;
+  --color-border: #2a323b;
+  --color-border-strong: #3a4450;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #60a5fa;
+  --color-accent-muted: #16233a;
+  --color-text-primary: #e6edf3;
+  --color-text-secondary: #a0adbd;
+  /* Same fold as the light theme: tertiary collapses into secondary. #8893a2 (5.94:1 on bg)
+     carries the muted step on the dark theme. */
+  --color-text-tertiary: #8893a2;
   --color-danger: #e5484d;
+  --color-danger-text: #f87171; /* destructive menu item text (WCAG 1.4.3 ≥4.5:1 incl. hover fill) */
+  --color-danger-tint: color-mix(
+    in srgb,
+    var(--color-danger) 12%,
+    transparent
+  ); /* destructive hover/focus fill */
   --color-success: #30a46c;
   --color-warning: #f76b15;
 }
@@ -146,155 +175,17 @@ body {
   width: 100%;
 }
 
-/* Disable github-markdown-css's decorative quotes auto-added to inline code / blockquotes */
-.markdown-body code::before,
-.markdown-body code::after {
-  content: none;
-}
-.markdown-body blockquote p:first-of-type::before,
-.markdown-body blockquote p:last-of-type::after {
-  content: none;
-}
-.markdown-body .katex {
-  font-size: 1.05em;
-  background: none;
-  padding: 0;
-}
-
-/* Badge / inline-img horizontal layout: Tailwind Typography defaults .prose img to display:block with
-   2em vertical margin, which makes shields.io badges inside <p align="center"> stack vertically and inflate line height.
-   Here we only restore inline + zero vertical margin for "badge-style" inline images:
-     - p > a > img: badges are almost always wrapped in <a> (shields.io / linked images)
-     - p[align="center"] > img: centered standalone images (e.g. a README logo)
-   Deliberately skip standalone illustrations in normal paragraphs (no align, no <a> wrap) to keep their block layout,
-   avoiding turning common `![alt](x.png)` standalone-line images into inline thumbnails (regression). */
-.markdown-body p > a > img,
-.markdown-body p[align='center'] > img {
-  display: inline-block;
-  vertical-align: middle;
-  margin-top: 0;
-  margin-bottom: 0;
-}
-
-/* Code block background/padding. github-markdown-css also styles `pre`; this is a defensive
-   fallback so the box reads as a code block even if its sheet order changes (plan-03 §4.1). */
-.markdown-body pre {
-  background: var(--color-surface-overlay);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 1rem;
-}
-.markdown-body pre code {
-  background: transparent;
-  padding: 0;
-  font-size: 0.875rem;
-}
-
-/* GFM task lists: github-markdown-css doesn't ship checkbox styles, explicitly restore them to avoid leftover bullets */
-.markdown-body ul:has(> li > input[type='checkbox']) {
-  list-style: none;
-  padding-left: 0;
-}
-.markdown-body li:has(> input[type='checkbox']) {
-  list-style: none;
-}
-.markdown-body li > input[type='checkbox'] {
-  margin-right: 0.4rem;
-  vertical-align: middle;
-}
+/* C33a: every `.markdown-body` override (decorative-quote suppression, .katex sizing, badge /
+   inline-image layout, the code-block box incl. `.hljs`, the GFM task-list rules and the dark
+   highlight.js palette) lives in `styles/markdownExport.css` — ONE file, imported by the app
+   (main.tsx) and inlined verbatim into the standalone HTML export (lib/export.ts via ?raw).
+   Do NOT re-add those rules here: a second copy in this file would silently become a second
+   source of truth, which is exactly the drift C33 exists to remove.
+   The only thing this file contributes is the VALUE bridge (--md-pre-* above), which maps the
+   export-scoped variables to the live app tokens. */
 
 /* D-B (plan-03 §4.1): the Typography plugin is gone, so the --tw-prose-* variable mapping is
    dead. github-markdown-css supplies its own Primer variables and is the single source of truth. */
-
-/* highlight.js code blocks: github.css provides the light token palette (already imported in main.tsx).
-   Here we hand the .hljs box to prose theme variables for unified management (background/border/padding), avoiding double padding. */
-.markdown-body pre.hljs {
-  background: var(--color-surface-overlay);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 1rem;
-}
-
-/* highlight.js dark token palette (github-dark palette). Scoped to the preview's resolved
-   theme (data-theme on the <article>) so it follows the github-markdown-css dark sheet without
-   dragging the app chrome into dark mode (D-B, plan-03 §4.1). */
-.markdown-body[data-theme='dark'] .hljs {
-  color: #c9d1d9;
-  background: transparent;
-}
-.markdown-body[data-theme='dark'] .hljs-doctag,
-.markdown-body[data-theme='dark'] .hljs-keyword,
-.markdown-body[data-theme='dark'] .hljs-meta .hljs-keyword,
-.markdown-body[data-theme='dark'] .hljs-template-tag,
-.markdown-body[data-theme='dark'] .hljs-template-variable,
-.markdown-body[data-theme='dark'] .hljs-type,
-.markdown-body[data-theme='dark'] .hljs-variable.language_ {
-  color: #ff7b72;
-}
-.markdown-body[data-theme='dark'] .hljs-title,
-.markdown-body[data-theme='dark'] .hljs-title.class_,
-.markdown-body[data-theme='dark'] .hljs-title.class_.inherited__,
-.markdown-body[data-theme='dark'] .hljs-title.function_ {
-  color: #d2a8ff;
-}
-.markdown-body[data-theme='dark'] .hljs-attr,
-.markdown-body[data-theme='dark'] .hljs-attribute,
-.markdown-body[data-theme='dark'] .hljs-literal,
-.markdown-body[data-theme='dark'] .hljs-meta,
-.markdown-body[data-theme='dark'] .hljs-number,
-.markdown-body[data-theme='dark'] .hljs-operator,
-.markdown-body[data-theme='dark'] .hljs-variable,
-.markdown-body[data-theme='dark'] .hljs-selector-attr,
-.markdown-body[data-theme='dark'] .hljs-selector-class,
-.markdown-body[data-theme='dark'] .hljs-selector-id {
-  color: #79c0ff;
-}
-.markdown-body[data-theme='dark'] .hljs-regexp,
-.markdown-body[data-theme='dark'] .hljs-string,
-.markdown-body[data-theme='dark'] .hljs-meta .hljs-string {
-  color: #a5d6ff;
-}
-.markdown-body[data-theme='dark'] .hljs-built_in,
-.markdown-body[data-theme='dark'] .hljs-symbol {
-  color: #ffa657;
-}
-.markdown-body[data-theme='dark'] .hljs-comment,
-.markdown-body[data-theme='dark'] .hljs-code,
-.markdown-body[data-theme='dark'] .hljs-formula {
-  color: #8b949e;
-}
-.markdown-body[data-theme='dark'] .hljs-name,
-.markdown-body[data-theme='dark'] .hljs-quote,
-.markdown-body[data-theme='dark'] .hljs-selector-tag,
-.markdown-body[data-theme='dark'] .hljs-selector-pseudo {
-  color: #7ee787;
-}
-.markdown-body[data-theme='dark'] .hljs-subst {
-  color: #c9d1d9;
-}
-.markdown-body[data-theme='dark'] .hljs-section {
-  color: #1f6feb;
-  font-weight: bold;
-}
-.markdown-body[data-theme='dark'] .hljs-bullet {
-  color: #f2cc60;
-}
-.markdown-body[data-theme='dark'] .hljs-emphasis {
-  color: #c9d1d9;
-  font-style: italic;
-}
-.markdown-body[data-theme='dark'] .hljs-strong {
-  color: #c9d1d9;
-  font-weight: bold;
-}
-.markdown-body[data-theme='dark'] .hljs-addition {
-  color: #aff5b4;
-  background-color: #033a16;
-}
-.markdown-body[data-theme='dark'] .hljs-deletion {
-  color: #ffdcd7;
-  background-color: #67060c;
-}
 
 /* ─── GitHub-style alerts (remark-github-alerts → .markdown-alert) ───
    After sanitization .markdown-alert / .markdown-alert-note etc. classes are kept; here we add visual styles.
@@ -396,7 +287,7 @@ svg[id^='mermaid-'] {
   padding: 0 24px !important;
 }
 .cm-activeLine {
-  background: rgba(94, 106, 210, 0.04) !important;
+  background: color-mix(in srgb, var(--color-accent) 4%, transparent) !important;
 }
 .cm-gutters {
   background: transparent !important;
@@ -407,6 +298,16 @@ svg[id^='mermaid-'] {
 .focus-ring:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/* High-contrast (forced-colors) mode: keep our focus indicator visible. Our menu
+   primitives convey keyboard focus by swapping the item background; forced-colors
+   flattens that background, so we re-assert a system outline (WCAG 2.4.7 still applies). */
+@media (forced-colors: active) {
+  .focus-ring:focus-visible,
+  [role='menuitem']:focus-visible {
+    outline: 2px solid Highlight;
+  }
 }
 
 /* Animations */
@@ -479,4 +380,24 @@ svg[id^='mermaid-'] {
 .cm-editor .cm-panels-top {
   background: transparent;
   border: 0;
+}
+
+/* ── prefers-reduced-motion ──────────────────────────────────────────────
+   The single authoritative degradation for every decorative animation/transition
+   (WCAG 2.3.3). Catch-all form recommended by MDN / the A11Y Project / web.dev.
+   Durations are 0.01ms rather than 0s on purpose: a zero duration never fires
+   `animationend` / `transitionend`, which would leave any JS that cleans up on
+   those events hanging forever. Negative/zero delays make an already-running
+   animation land on its end state immediately instead of flashing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-delay: -0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -129,6 +129,9 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
     if (isDocSwitch) {
       setSanitizedHtml(sanitizeHtml(''))
       setLoading(true)
+      // C20 补 ⑦: during a document switch the export cache still holds the PREVIOUS
+      // document's HTML, so the export must be disabled until this document has parsed.
+      useUIStore.getState().setExportReady(false)
     }
 
     const run = () => {
@@ -160,6 +163,9 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           setExportMermaidSlots(res.mermaid)
           setExportHtml(clean)
           setExportContent(content)
+          // C20 补 ⑦: the cache now holds THIS document's complete render — the export
+          // dialog may be enabled (E12).
+          useUIStore.getState().setExportReady(true)
           setSanitizedHtml(clean)
           hasContentRef.current = true
           setLoading(false)

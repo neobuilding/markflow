@@ -183,9 +183,23 @@ export function StatusBar(): React.ReactElement {
       <span className="text-2xs text-[var(--color-text-tertiary)]">{t('status.saving')}</span>
     )
   } else if (dirty) {
-    status = <span className="text-2xs text-amber-500">● {t('status.unsaved')}</span>
+    status = (
+      <span data-testid="status-unsaved" className="text-2xs text-[var(--color-text-secondary)]">
+        <span data-testid="status-unsaved-dot" className="text-[var(--color-warning)]">
+          ●
+        </span>{' '}
+        {t('status.unsaved')}
+      </span>
+    )
   } else if (justSaved) {
-    status = <span className="text-2xs text-[var(--color-success)]">✓ {t('status.saved')}</span>
+    status = (
+      <span data-testid="status-saved" className="text-2xs text-[var(--color-text-secondary)]">
+        <span data-testid="status-saved-check" className="text-[var(--color-success)]">
+          ✓
+        </span>{' '}
+        {t('status.saved')}
+      </span>
+    )
   }
 
   return (
@@ -196,7 +210,7 @@ export function StatusBar(): React.ReactElement {
           <span
             tabIndex={0}
             data-testid="status-word-count"
-            className="text-2xs text-[var(--color-text-tertiary)] outline-none"
+            className="text-2xs text-[var(--color-text-tertiary)] focus-ring"
           >
             {doc ? t('status.words', { wordCount: doc.wordCount }) : ''}
           </span>
@@ -243,7 +257,7 @@ export function StatusBar(): React.ReactElement {
                 className={
                   'text-2xs px-1.5 py-0.5 rounded border transition-colors ' +
                   (lowConfidence
-                    ? 'border-amber-500/60 text-amber-500 hover:bg-amber-500/10'
+                    ? 'border-[var(--color-warning)] text-[var(--color-text-secondary)] hover:bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)]'
                     : 'border-[var(--color-border)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]')
                 }
               >
@@ -280,7 +294,7 @@ export function StatusBar(): React.ReactElement {
             </ContextMenuContent>
           </ContextMenu>
           {encOpen && (
-            <div className="absolute bottom-full left-0 mb-1 z-50 min-w-[120px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg py-1">
+            <div className="absolute bottom-full left-0 mb-1 z-50 min-w-[120px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-linear-lg py-1">
               {ENCODINGS.map((enc) => (
                 <button
                   key={enc}
@@ -354,7 +368,7 @@ export function StatusBar(): React.ReactElement {
             </ContextMenuContent>
           </ContextMenu>
           {eolOpen && (
-            <div className="absolute bottom-full left-0 mb-1 z-50 min-w-[120px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg py-1">
+            <div className="absolute bottom-full left-0 mb-1 z-50 min-w-[120px] rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-linear-lg py-1">
               <button
                 onClick={() => void handleSwitchEol('\r\n')}
                 disabled={eol === '\r\n'}
@@ -388,7 +402,7 @@ export function StatusBar(): React.ReactElement {
           <div
             tabIndex={0}
             data-testid="status-save-region"
-            className="flex items-center gap-3 ml-3 flex-1 outline-none"
+            className="flex items-center gap-3 ml-3 flex-1 focus-ring"
           >
             {status}
           </div>

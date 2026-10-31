@@ -220,6 +220,16 @@ npm run e2e:full        # End-to-end: drives the REAL Electron app via Playwrigh
   `e2e:full` — `e2e-app` + `e2e-perf-gate` in a **single** Playwright run, which is what CI
   executes. One run matters: it keeps a single global setup (one Vite dev server) and a single
   report (`playwright-report/`, `reports/e2e/junit.xml`) covering both suites.
+- **Clipboard specs are their own project**: the tests that write the _real_ system clipboard
+  (`select-all-copy-fidelity`, `pane-toolbars`, `preload-contract`, `formula-copy-image`,
+  `copy-once-no-drop-diagrams`, `context-menu`) are destructive — they overwrite whatever you had
+  copied and only put it back afterwards — so they belong to the `e2e-clipboard` project instead of
+  `e2e-app`. `npm run e2e:app` reports them as skipped (they read the `clipboardE2e` option, which
+  only that project sets); `npm run e2e:clipboard` runs them for real, and CI does too through
+  `npm run e2e:full`. A single spec still runs, e.g.
+  `npm run e2e:clipboard -- e2e/specs/context-menu.e2e.spec.ts`. See `e2e/helpers/clipboard.ts` for
+  why, and `electron/main/handlers/app.test.ts` for the same OS boundary covered without touching a
+  real clipboard.
 - **Performance**: `npm run e2e:full` composes two Playwright projects — `e2e-app` (functional) and
   `e2e-perf-gate`. The gate asserts that opening a folder buried in non-Markdown build output
   and immediately switching documents does not stall the main-process event loop, which is the

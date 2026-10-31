@@ -111,6 +111,17 @@ describe('NewDocumentDialog', () => {
     )
   })
 
+  it('the extension select comes from the shared Select primitive (one focus ring, 36px)', async () => {
+    useUIStore.getState().setNewDocOpen(true)
+    render(<NewDocumentDialog />)
+    const select = await screen.findByDisplayValue('.md')
+    expect(select.className).toContain('focus-ring')
+    expect(select.className).toContain('h-9')
+    // The hand-rolled 2px ring + `outline-none` this used to carry.
+    expect(select.className).not.toContain('focus:ring-2')
+    expect(select.className).not.toContain('outline-none')
+  })
+
   it('disables the Create button while a creation is pending', async () => {
     vi.mocked(useDocuments.useCreateDocument).mockReturnValue({
       mutateAsync: mockMutateAsync,

@@ -65,7 +65,7 @@ export async function parseMarkdown(content: string, docId: string | null): Prom
       console.error('[MarkFlow] Main-thread parse also failed:', e)
       const msg = e instanceof Error ? e.message : String(e)
       return {
-        html: `<p class="text-[var(--color-danger)]">Error rendering preview: ${msg}</p>`,
+        html: `<p class="text-[var(--color-text-primary)]"><span class="text-[var(--color-danger)]">⚠</span> Error rendering preview: ${msg}</p>`,
         mermaid: [],
       }
     }

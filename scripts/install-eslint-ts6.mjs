@@ -70,7 +70,8 @@ try {
   // Never break `npm ci` / `postinstall`: warn and continue. The `lint` script also
   // calls this, so a later attempt (after `npm ci` releases its cache lock) will retry.
   cleanupTmp()
-  console.warn('[eslint-ts6] warning: could not install TypeScript 6 API:', err?.message || err)
+  const message = err instanceof Error ? err.message : String(err)
+  console.warn('[eslint-ts6] warning: could not install TypeScript 6 API:', message)
   process.exit(0)
 }
 
