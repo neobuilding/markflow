@@ -54,13 +54,19 @@ test.describe('tree context menu — search in folder (D8)', () => {
     await importFile(page, 'docs/guide.md', 'needle in the guide\n')
     await importFile(page, 'readme.md', 'needle in the readme\n')
 
+    // The Files view is the DEFAULT surface, so the tree is already showing. Do NOT click
+    // `activity-bar-files` to "make sure": clicking the ALREADY ACTIVE activity icon COLLAPSES
+    // the sidebar (C4 / VS Code's `iconClickBehavior: 'toggle'`), which unmounts the tree and
+    // makes the folder row unreachable.
+    await expect(page.getByRole('tabpanel')).toBeVisible()
+    await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-selected', 'true')
+
     // Right-click the `docs` folder row in the tree → "Search in This Folder".
-    await page.getByTestId('sidebar-view-files').click()
     await page.getByTestId('folder-row').filter({ hasText: 'docs' }).click({ button: 'right' })
     await page.getByTestId('side-search-in-folder').click()
 
     // The Search view takes over, with the scope WRITTEN, VISIBLE, and focused.
-    await expect(page.getByTestId('sidebar-view-search')).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByTestId('activity-bar-search')).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByTestId('search-include')).toHaveValue('./docs')
     await expect(page.getByTestId('search-include')).toBeFocused()
 

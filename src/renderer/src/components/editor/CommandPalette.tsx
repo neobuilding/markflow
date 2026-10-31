@@ -106,7 +106,7 @@ export function CommandPalette(): React.ReactElement | null {
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={t('palette.placeholder')}
-              className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
+              className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus-ring"
             />
           </InputContextMenu>
           {searchQuery && (

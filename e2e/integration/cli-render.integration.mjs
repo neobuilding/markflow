@@ -26,6 +26,11 @@ const CLI = join(__dirname, '..', '..', 'actions', 'create-pr', 'src', 'cli-rend
 const REPO_ROOT = join(__dirname, '..', '..')
 const DEFAULT_TEMPLATE = join(REPO_ROOT, '.github', 'pull-request-template.md')
 
+/**
+ * @param {string[]} args
+ * @param {string} [cwd]
+ * @returns {Promise<{ code: number | string, stdout: string, stderr: string }>}
+ */
 function runCli(args, cwd = REPO_ROOT) {
   return new Promise((resolve) => {
     execFile('node', [CLI, ...args], { cwd }, (err, stdout, stderr) => {
@@ -36,6 +41,7 @@ function runCli(args, cwd = REPO_ROOT) {
 
 // This spec owns every temp dir it allocates, so it reclaims them itself rather
 // than leaving them for whoever cleans %TEMP%.
+/** @type {string[]} */
 const tempDirs = []
 
 describe('cli-render — local preview CLI (integration)', () => {

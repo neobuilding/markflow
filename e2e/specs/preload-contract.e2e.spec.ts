@@ -1,6 +1,14 @@
 import type {} from '../../src/renderer/src/vite-env.d.ts'
-import { test, expect } from '@playwright/test'
+import { expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { test } from '../helpers/fixtures'
+import {
+  snapshotClipboard,
+  restoreClipboard,
+  clipboardSkipMessage,
+  CLIPBOARD_SPEC_SKIP_REASON,
+  type ClipboardSnapshot,
+} from '../helpers/clipboard'
 
 // Covers the preload split into api/* submodules and the main-process handler
 // groups. The refactor is a pure relocation, so the contract
@@ -14,10 +22,17 @@ import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/laun
 // surfacing as a runtime crash in the renderer.
 test.describe('preload bridge contract (api/* split)', () => {
   let handle: AppHandle
-  test.beforeEach(async () => {
+  // One test here writes the REAL system clipboard (that is the point — "no throw" is not a
+  // write). Capture the user's content so it can be put back; outside the `e2e-clipboard` project
+  // the whole clipboard concern is off, so nothing is captured and nothing is written back (see
+  // helpers/clipboard).
+  let snap: ClipboardSnapshot | undefined
+  test.beforeEach(async ({ clipboardE2e }) => {
     handle = await launchApp()
+    snap = clipboardE2e ? await snapshotClipboard(handle) : undefined
   })
   test.afterEach(async () => {
+    await restoreClipboard(handle, snap)
     await closeApp(handle)
   })
 
@@ -293,7 +308,13 @@ test.describe('preload bridge contract (api/* split)', () => {
   // `new ClipboardItem(...)` from a `declare const` that does not exist at runtime in the main
   // process, and swallowed the resulting ReferenceError. Both handlers are exercised through the
   // real system clipboard here: "no throw" is not a clipboard write.
-  test('clipboard:writeSvg and writeImage really land on the system clipboard', async () => {
+  test('clipboard:writeSvg and writeImage really land on the system clipboard', async ({
+    clipboardE2e,
+  }) => {
+    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
+    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
+    // Never overwrite a clipboard we cannot put back.
+    test.skip(!snap?.restorable, clipboardSkipMessage(snap))
     const { page } = handle
     await waitForAppReady(page)
 

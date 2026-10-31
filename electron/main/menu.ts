@@ -153,7 +153,9 @@ export function setupMenu(): void {
         {
           id: 'export-html',
           label: menuT('menu.exportHtml'),
-          accelerator: 'CmdOrCtrl+Shift+E',
+          // Shift+E is now ⌘⇧E = Files view (VS Code parity). Export moves to Shift+X; the id and
+          // the IPC channel name are unchanged, so no renderer wiring moves with it.
+          accelerator: 'CmdOrCtrl+Shift+X',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => getMainWindow()?.webContents.send('menu:export-html'),
         },

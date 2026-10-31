@@ -10,12 +10,22 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vitest/globals", "node"],
     "moduleResolution": "Bundler",
+    // The scripts and integration hooks are plain JS, and they used to sit in `include` below
+    // while `allowJs` was off — silently unchecked (an include pattern without a program reaches
+    // nothing). On, they are really checked; the handful of them carry JSDoc types where the
+    // compiler cannot infer (see scripts/*.mjs, e2e/integration/*.mjs).
+    "allowJs": true,
+    "checkJs": true,
     "paths": {
       "@renderer/*": ["./src/renderer/src/*"],
       "@main/*": ["./electron/main/*"],
       "@/*": ["./src/renderer/src/*"]
     }
   },
+  // `files` (not `include`): TypeScript 7's include expansion silently drops a `*.tsx` that has a
+  // same-named `*.ts` sibling, which is exactly `store/ui.test.tsx` + `store/ui.test.ts`. An
+  // explicit path in `files` is added without that expansion step. Verified with a two-file repro.
+  "files": ["src/renderer/src/store/ui.test.tsx"],
   "include": [
     "src/renderer/src/**/*.ts",
     "src/renderer/src/**/*.tsx",
@@ -25,6 +35,12 @@
     "scripts/**/*.mjs",
     "scripts/**/*.ts",
     "test-setup.ts",
-    "e2e/**/*.ts"
+    "e2e/**/*.ts",
+    "e2e/integration/**/*.mjs",
+    // Tooling: root-level configs are Node-side programs that nothing else compiles. eslint
+    // ignores `**/*.config.ts` for linting, so this program is their only gate.
+    "*.config.ts",
+    "*.config.cjs",
+    "eslint.config.mjs"
   ]
 }

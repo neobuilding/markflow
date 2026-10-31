@@ -9,7 +9,9 @@ import { relative, join } from 'node:path'
 import { afterAllArtifactBuild } from './after-all-artifact-build.mjs'
 
 // Capture everything the hook prints so we can assert on the announced paths.
+/** @returns {string[]} */
 function captureLog() {
+  /** @type {string[]} */
   const lines = []
   vi.spyOn(console, 'log').mockImplementation((...args) => {
     lines.push(args.join(' '))

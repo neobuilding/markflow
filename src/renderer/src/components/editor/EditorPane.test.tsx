@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, waitFor, act, fireEvent, screen } from '@testing-library/react'
+import { FileText, Search } from 'lucide-react'
 import { TooltipProvider } from '../ui/tooltip'
 import { EditorPane } from './EditorPane'
 import { useUIStore } from '../../store/ui'
@@ -147,6 +148,62 @@ describe('EditorPane — Quick Open trigger (D22)', () => {
     expect(useUIStore.getState().searchOpen).toBe(false)
     fireEvent.click(screen.getByTestId('editor-goto-file-btn'))
     expect(useUIStore.getState().searchOpen).toBe(true)
+  })
+
+  // PLAN C6 (R5): Quick Open must NOT wear a magnifier — it sits one icon away from the
+  // in-document find button (⌘F), and two adjacent magnifiers read as the same action.
+  // Compared against the icon library's OWN output rather than a class name, so a lucide
+  // upgrade cannot quietly turn this into a no-op assertion.
+  it('uses a document glyph, not a magnifier, for the Quick Open trigger', () => {
+    const magnifier = render(<Search size={16} />).container.querySelector('svg')!
+    const docGlyph = render(<FileText size={16} />).container.querySelector('svg')!
+    mount()
+    const icon = screen.getByTestId('editor-goto-file-btn').querySelector('svg')!
+    expect(icon.outerHTML).toBe(docGlyph.outerHTML)
+    expect(icon.outerHTML).not.toBe(magnifier.outerHTML)
+    // PLAN C23 / ADR-0024 §1.3: chrome main controls wear 16px icons.
+    expect(icon.getAttribute('width')).toBe('16')
+    expect(icon.getAttribute('height')).toBe('16')
+  })
+})
+
+// PLAN C8: with no document open, the read-only / edit choice has no meaning — and the
+// divider that precedes it must be wrapped with it, or the empty state ends in a lone
+// vertical line.
+describe('EditorPane — read-only toggle', () => {
+  it('hides the read-only / edit toggle while no document is open', () => {
+    h.noDoc = true
+    useUIStore.getState().setActiveDocumentId(null)
+    mount()
+    expect(screen.queryByTestId('editor-readonly-btn')).toBeNull()
+  })
+
+  it('shows the read-only / edit toggle once a document is open', () => {
+    mount()
+    expect(screen.getByTestId('editor-readonly-btn')).toBeTruthy()
+  })
+})
+
+// C20 / ADR-0024 §10 trade-off 46: "Export HTML" is ONE action whose entry point follows the
+// preview's visibility — preview visible ⇒ preview bar; edit-only ⇒ global bar. Only one export
+// button is ever on screen: two peer toolbars must not carry the same button side by side.
+describe('EditorPane — export button placement (C20)', () => {
+  it('shows exactly one export button and moves it with the preview visibility', () => {
+    act(() => {
+      useUIStore.getState().setViewMode('edit')
+    })
+    mount()
+    expect(screen.getAllByTestId('export-btn')).toHaveLength(1)
+    // Edit-only has no visible preview to inspect, so the entry stays on the global bar.
+    expect(screen.getByTestId('export-btn').closest('[data-testid="preview-pane"]')).toBeNull()
+
+    act(() => {
+      useUIStore.getState().setViewMode('split')
+    })
+    const btn = screen.getByTestId('export-btn')
+    // Preview visible ⇒ the action sits next to the live rendering it exports.
+    expect(screen.getAllByTestId('export-btn')).toHaveLength(1)
+    expect(btn.closest('[data-testid="preview-pane"]')).not.toBeNull()
   })
 })
 
@@ -559,7 +616,7 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     expect(reopened.defaultPrevented).toBe(true)
   })
 
-  it('does not open find via CodeMirror’s own Mod-f while a modal owns the keyboard', async () => {
+  it("does not open find via CodeMirror's own Mod-f while a modal owns the keyboard", async () => {
     useUIStore.getState().setViewMode('edit')
     mount()
     await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
@@ -873,5 +930,21 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     // receives the key (the same rule as every other shortcut that does not belong here).
     expect(seen).toEqual([])
     expect(ev.defaultPrevented).toBe(false)
+  })
+})
+
+// PLAN C32 U5 / ADR-0024 §7.2: the title input is a focusable control, so it must show a
+// visible focus indicator. It used to carry `focus:ring-0`, i.e. NO indicator at all — the one
+// genuine WCAG 2.4.7 failure in the app.
+describe('EditorPane focus indicators (C32 U5)', () => {
+  it('gives the title input exactly one visible focus indicator', async () => {
+    h.editingTitle = true
+    mount()
+    const input = await screen.findByTestId('title-input')
+    expect(input.className).toContain('focus-ring')
+    expect(input.className).not.toContain('focus:ring-0')
+    expect(input.className).not.toContain('focus:ring-1')
+    expect(input.className).not.toContain('focus:ring-2')
+    expect(input.className).not.toContain('focus:border-accent')
   })
 })

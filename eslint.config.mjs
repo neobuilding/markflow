@@ -14,8 +14,10 @@ export default tseslint.config(
       'release',
       'node_modules',
       'coverage',
-      '**/*.config.ts',
-      '**/*.config.js',
+      // Declaration files are generated or ambient (shims for untyped packages); there is no
+      // code to judge. Everything else — including `*.config.ts` (vite / vitest / playwright /
+      // postcss) and `*.config.cjs` — is linted: those files used to be ignored here and were
+      // then covered by NO gate at all.
       '**/*.d.ts',
       'electron/main/jschardet-ultra.d.ts',
     ],

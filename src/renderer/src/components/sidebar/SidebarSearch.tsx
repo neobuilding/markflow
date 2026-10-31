@@ -8,6 +8,7 @@ import { ContentResultList } from '../editor/SearchResults'
 import { flattenHitOrder } from '../../lib/search-hits'
 
 import { IconToggleGroup } from '../ui/icon-toggle-group'
+import { SearchInput } from '../ui/search-input'
 import type { HitItem } from '../../lib/search-hits'
 import type { ReplaceSkipReason } from '../../types'
 
@@ -295,43 +296,44 @@ export function SidebarSearch(): React.ReactElement {
   return (
     <div className="flex flex-col min-h-0 flex-1">
       <div className="px-3 pt-2 pb-2 shrink-0">
+        {/* One bordered box for the whole primary row: magnifier, query, Aa, replace chevron.
+            No `focus-within:border-accent` here — the input inside now carries `.focus-ring`, and
+            two indicators on the same box is noise (WCAG 2.4.7 wants exactly one).
+
+            The row's gap is `gap-1` (4px), not `gap-1.5` (6px): at the 240px sidebar floor the
+            content panel is 192px, and the 6px gaps cost the query field ~6px — which put the
+            input at 78.3px, just under the 80px floor PLAN C9 requires. Reclaiming the gap
+            keeps the field usable at the floor WITHOUT touching the type size (PLAN C9
+            explicitly forbids shrinking the font as the remedy). */}
         <div
           data-testid="resident-search-box"
-          className="flex items-center gap-1.5 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] focus-within:border-accent transition-colors"
+          className="flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] transition-colors"
         >
-          <Search size={13} className="text-[var(--color-text-tertiary)] shrink-0" />
+          {/* The shared `SearchInput` (same component the editor and preview find widgets use) so
+              the three surfaces cannot drift apart again. `InputContextMenu` wraps it from outside,
+              exactly like FindWidget does — the component itself stays context-menu-agnostic. */}
           <InputContextMenu targetRef={inputRef}>
-            <input
-              ref={inputRef}
-              data-testid="resident-search-input"
+            <SearchInput
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={onKeyDown}
+              onChange={setSearchQuery}
               placeholder={t('sidebar.searchPanel')}
-              aria-label={t('sidebar.searchPanel')}
-              className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none min-w-0"
+              ariaLabel={t('sidebar.searchPanel')}
+              testId="resident-search-input"
+              inputRef={inputRef}
+              onKeyDown={onKeyDown}
+              onClear={() => setSearchQuery('')}
+              leadingIcon={
+                <Search size={13} className="text-[var(--color-text-tertiary)] shrink-0" />
+              }
             />
           </InputContextMenu>
-          {searchQuery && (
-            <button
-              type="button"
-              data-testid="resident-search-clear"
-              onClick={() => setSearchQuery('')}
-              className="text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)] shrink-0"
-              aria-label={t('find.close')}
-            >
-              <X size={13} />
-            </button>
-          )}
-          {/* Match Case (`Aa`) / Whole word (`ab`) / Regexp (`.*`). All three default OFF and all
-              three go through the shared toggle atom, so the Search view speaks the same visual and
-              aria language as the editor and preview find widgets (ADR-0013 Q1, §13.9). */}
+          {/* Primary row keeps only Match Case (`Aa`). Whole word (`ab`) and regexp (`.*`) move to
+              the always-visible secondary row below: they are too easy to miss inside a 192px
+              content panel otherwise, and the primary row needs the width for the query. */}
           <IconToggleGroup
             testId="search-match-case"
             onToggle={(key) => {
               if (key === 'Aa') setSearchMatchCase(!searchMatchCase)
-              else if (key === 'ab') setSearchWholeWord(!searchWholeWord)
-              else if (key === '.*') setSearchRegexp(!searchRegexp)
             }}
             items={[
               {
@@ -340,20 +342,6 @@ export function SidebarSearch(): React.ReactElement {
                 active: searchMatchCase,
                 title: t('search.matchCase'),
                 ariaLabel: t('search.matchCase'),
-              },
-              {
-                key: 'ab',
-                label: 'ab',
-                active: searchWholeWord,
-                title: t('search.wholeWord'),
-                ariaLabel: t('search.wholeWord'),
-              },
-              {
-                key: '.*',
-                label: '.*',
-                active: searchRegexp,
-                title: t('search.regexp'),
-                ariaLabel: t('search.regexp'),
               },
             ]}
           />
@@ -370,6 +358,34 @@ export function SidebarSearch(): React.ReactElement {
           </button>
         </div>
 
+        {/* Secondary row: `ab` / `.*`, always rendered — never hidden behind the details
+            disclosure, because discoverability was the whole point of pulling them out. */}
+        <div className="flex items-center gap-1.5 mt-1.5">
+          <IconToggleGroup
+            testId="search-advanced-toggles"
+            onToggle={(key) => {
+              if (key === 'ab') setSearchWholeWord(!searchWholeWord)
+              else if (key === '.*') setSearchRegexp(!searchRegexp)
+            }}
+            items={[
+              {
+                key: 'ab',
+                label: 'ab',
+                active: searchWholeWord,
+                title: t('search.wholeWord'),
+                ariaLabel: t('search.wholeWord'),
+              },
+              {
+                key: '.*',
+                label: '.*',
+                active: searchRegexp,
+                title: t('search.regexp'),
+                ariaLabel: t('search.regexp'),
+              },
+            ]}
+          />
+        </div>
+
         {searchReplaceOpen && (
           <div className="flex items-center gap-1.5 mt-1.5">
             <input
@@ -378,14 +394,14 @@ export function SidebarSearch(): React.ReactElement {
               onChange={(e) => setSearchReplaceText(e.target.value)}
               placeholder={t('search.replacePlaceholder')}
               aria-label={t('search.replacePlaceholder')}
-              className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-sm outline-none min-w-0"
+              className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-sm focus-ring min-w-0"
             />
             <button
               type="button"
               data-testid="search-replace-here"
               disabled={planning || !searchQuery}
               onClick={() => void replaceHere()}
-              className="shrink-0 px-1.5 h-7 rounded border border-[var(--color-border)] text-2xs text-[var(--color-text-secondary)] disabled:opacity-40"
+              className="shrink-0 px-1.5 h-7 rounded border border-[var(--color-border)] text-xs text-[var(--color-text-secondary)] disabled:opacity-40"
             >
               {t('search.replaceHere')}
             </button>
@@ -394,7 +410,7 @@ export function SidebarSearch(): React.ReactElement {
               data-testid="search-replace-in-file"
               disabled={planning || !searchQuery}
               onClick={() => void replaceInFile()}
-              className="shrink-0 px-1.5 h-7 rounded border border-[var(--color-border)] text-2xs text-[var(--color-text-secondary)] disabled:opacity-40"
+              className="shrink-0 px-1.5 h-7 rounded border border-[var(--color-border)] text-xs text-[var(--color-text-secondary)] disabled:opacity-40"
             >
               {t('search.replaceInFile')}
             </button>
@@ -403,7 +419,7 @@ export function SidebarSearch(): React.ReactElement {
               data-testid="search-replace-all"
               disabled={planning || !searchQuery}
               onClick={() => void replaceAll()}
-              className="shrink-0 px-1.5 h-7 rounded border border-[var(--color-border)] text-2xs text-[var(--color-text-secondary)] disabled:opacity-40"
+              className="shrink-0 px-1.5 h-7 rounded border border-[var(--color-border)] text-xs text-[var(--color-text-secondary)] disabled:opacity-40"
             >
               {t('search.replaceAll')}
             </button>
@@ -415,7 +431,7 @@ export function SidebarSearch(): React.ReactElement {
           data-testid="search-toggle-details"
           aria-expanded={detailsVisible}
           onClick={() => setSearchDetailsOpen(!detailsVisible)}
-          className="flex items-center gap-1 mt-1.5 text-2xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
+          className="flex items-center gap-1 mt-1.5 text-xs text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
         >
           {detailsVisible ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
           {t('search.toggleDetails')}
@@ -451,7 +467,7 @@ export function SidebarSearch(): React.ReactElement {
       {multiline && (
         <div
           data-testid="search-multiline"
-          className="px-3 pb-2 text-2xs text-[var(--color-text-tertiary)]"
+          className="px-3 pb-2 text-xs text-[var(--color-text-tertiary)]"
         >
           {t('search.multilineUnsupported')}
         </div>
@@ -462,7 +478,7 @@ export function SidebarSearch(): React.ReactElement {
         // different engine would get wrong, so they are stated inline (§13.9).
         <div
           data-testid="search-regex-hint"
-          className="px-3 pb-2 text-2xs text-[var(--color-text-tertiary)]"
+          className="px-3 pb-2 text-xs text-[var(--color-text-tertiary)]"
         >
           {t('search.regexHint')}
         </div>
@@ -472,7 +488,7 @@ export function SidebarSearch(): React.ReactElement {
         <div
           data-testid="search-diagnostic"
           role="alert"
-          className="mx-3 mb-2 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs text-[var(--color-text-secondary)]"
+          className="mx-3 mb-2 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-xs text-[var(--color-text-secondary)]"
         >
           {blocking.code === 'invalid-regex'
             ? t('search.invalidRegex', { message: blocking.message })
@@ -491,7 +507,7 @@ export function SidebarSearch(): React.ReactElement {
         <div
           data-testid="search-diagnostic-info"
           role="status"
-          className="mx-3 mb-2 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs text-[var(--color-text-tertiary)] space-y-0.5"
+          className="mx-3 mb-2 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-xs text-[var(--color-text-tertiary)] space-y-0.5"
         >
           {nonBlocking.map((d, i) => (
             <div key={`${d.code}-${i}`} title={d.message}>
@@ -513,7 +529,7 @@ export function SidebarSearch(): React.ReactElement {
         <div
           data-testid="search-notice"
           role="status"
-          className="mx-3 mb-2 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs text-[var(--color-text-secondary)]"
+          className="mx-3 mb-2 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-xs text-[var(--color-text-secondary)]"
         >
           {notice}
         </div>
@@ -522,7 +538,7 @@ export function SidebarSearch(): React.ReactElement {
       {planning && (
         <div
           data-testid="search-replace-progress"
-          className="mx-3 mb-2 flex items-center gap-2 text-2xs text-[var(--color-text-tertiary)]"
+          className="mx-3 mb-2 flex items-center gap-2 text-xs text-[var(--color-text-tertiary)]"
         >
           <span>{progress ? `${progress.done}/${progress.total}` : t('search.planning')}</span>
           <button
@@ -541,7 +557,7 @@ export function SidebarSearch(): React.ReactElement {
       {plan && !planning && (
         <div
           data-testid="search-replace-plan"
-          className="mx-3 mb-2 text-2xs text-[var(--color-text-tertiary)]"
+          className="mx-3 mb-2 text-xs text-[var(--color-text-tertiary)]"
         >
           {t('search.replaceAllConfirm', {
             count: plan.matchCount,
@@ -584,7 +600,7 @@ export function SidebarSearch(): React.ReactElement {
         )}
       </div>
 
-      <div className="flex items-center gap-2 px-3 py-1.5 border-t border-[var(--color-border)] text-2xs text-[var(--color-text-tertiary)] shrink-0">
+      <div className="flex items-center gap-2 px-3 py-1.5 border-t border-[var(--color-border)] text-xs text-[var(--color-text-tertiary)] shrink-0">
         <Replace size={11} />
         <button
           type="button"
@@ -622,7 +638,7 @@ function ScopeRow({
 }): React.ReactElement {
   return (
     <div className="flex items-center gap-1.5" title={title}>
-      <span className="w-8 shrink-0 text-2xs text-[var(--color-text-tertiary)]">{label}</span>
+      <span className="w-8 shrink-0 text-xs text-[var(--color-text-tertiary)]">{label}</span>
       <input
         ref={inputRef ?? undefined}
         data-testid={testId}
@@ -631,7 +647,7 @@ function ScopeRow({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={label}
-        className="flex-1 h-6 px-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-2xs outline-none min-w-0 disabled:opacity-50"
+        className="flex-1 h-6 px-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-2xs focus-ring min-w-0 disabled:opacity-50"
       />
       {value && (
         <button

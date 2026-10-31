@@ -57,6 +57,76 @@ suite was green while the machine slowly filled up. A `try/finally` + `rmSync` a
 it is skipped when a test fails mid-way, so prefer the helper. Production code follows the same
 rule (`mf-print-*` in `export.ts` removes its temp dir in `finally`).
 
+## The OS clipboard is its own Playwright project
+
+Playwright cannot intercept the real clipboard, and mocking it would defeat the point of the specs
+that use it (a real copy event producing a real payload). That makes those tests destructive by
+nature: they overwrite whatever the user has copied and write it back afterwards, and a run
+interrupted mid-test leaves the test payload behind.
+
+So they run only where that cost buys something. The six specs that touch the clipboard
+(`select-all-copy-fidelity`, `pane-toolbars`, `preload-contract`, `formula-copy-image`,
+`copy-once-no-drop-diagrams`, `context-menu`) are matched by the **`e2e-clipboard`** project in
+`playwright.config.ts` — the only project that sets the `clipboardE2e` option
+(`e2e/helpers/fixtures.ts`). Every other project leaves it false:
+
+```bash
+npm run e2e:app        # those specs are reported as skipped, with a reason
+npm run e2e:clipboard  # the project runs them for real; CI does too via `e2e:full`
+```
+
+A spec reads the option from `helpers/fixtures.ts` and gates itself before it touches the
+clipboard:
+
+```ts
+test.beforeEach(async ({ clipboardE2e }) => {
+  test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
+  // … launch, snapshot, run
+})
+```
+
+It captures its snapshot only when the option is set — `restoreClipboard` treats `undefined` as
+"nothing to do", so a run in any other project performs no clipboard write at all (not even putting
+back what was already there).
+
+Why an option and not an environment variable: what a run is allowed to do stays visible in the
+config, next to the project that allows it, instead of hiding in a variable a developer has to know
+about. And a test switch must never reach the app either (ADR 0016,
+`electron/main/test-support/no-test-env-switches.test.ts`).
+
+Coverage of the same handler boundary that needs no real clipboard lives in
+`electron/main/handlers/app.test.ts` (mocked `clipboard`, `ClipboardItem` from the electron export).
+
+## What the gates cover — and what they deliberately don't
+
+`npm run typecheck` runs four programs. Between them, every `.ts`, `.tsx`, `.mjs` and `.cjs` file in
+the repo belongs to exactly one:
+
+| Program                 | Owns                                                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `tsconfig.web.json`     | renderer production code (`src/renderer/src`, no tests)                                                                       |
+| `tsconfig.node.json`    | main process + preload                                                                                                        |
+| `tsconfig.tests.json`   | unit/e2e tests, `scripts/`, the root tooling configs (`*.config.ts`, `*.config.cjs`, `eslint.config.mjs`), `e2e/integration/` |
+| `tsconfig.scripts.json` | the standalone JS islands: `actions/create-pr/**` (its own npm package), `.github/create-pr/blocks/**`, `examples/**`         |
+
+`allowJs` + `checkJs` are ON in `tsconfig.tests.json`, so its `.mjs` files are really type-checked
+(they carry JSDoc where inference runs out). They are OFF in `tsconfig.scripts.json`: that code is
+plain JS shipped as a bundle, so annotating it would be a rewrite — what is still checked there is
+syntax, import resolution and ESM/CJS shape, which is what breaks silently in a script nobody runs
+locally.
+
+Two traps that let files escape the gates, both closed — keep them in mind before moving files:
+
+- **An `include` pattern with no program behind it checks nothing.** `tsconfig.tests.json` listed
+  `scripts/**/*.mjs` while `allowJs` was off, so those files were parsed by nobody.
+- **TypeScript 7 drops a `*.tsx` that has a same-named `*.ts` sibling** during include expansion
+  (verified with a two-file repro). That is why `store/ui.test.tsx` is listed in `files` rather than
+  reached by the `**/*.tsx` pattern. Avoid creating same-basename `.ts`/`.tsx` pairs.
+
+On the lint side, `eslint .` covers every JS/TS file except `*.d.ts` (ambient or generated
+declarations). Config files used to be ignored wholesale via `**/*.config.ts`; they are linted now,
+with `tsconfig.tests.json` as their type gate.
+
 ## Terminology
 
 Test doubles, as defined in Meszaros' _xUnit Test Patterns_:

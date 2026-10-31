@@ -3,28 +3,20 @@ import {
   Edit3,
   Eye,
   Columns,
-  Hash,
-  Bold,
-  Italic,
-  Code,
-  Link,
-  List,
-  CheckSquare,
   GripVertical,
-  PenLine,
-  Lock,
   PanelLeft,
   X,
   FolderOpen,
-  Replace,
-  Search,
   Plus,
   Save,
   SaveAll,
   RotateCcw,
   Info,
   FileOutput,
+  FileText,
   Copy,
+  Search,
+  PenLine,
 } from 'lucide-react'
 import {
   cn,
@@ -45,7 +37,8 @@ import {
 } from '../../hooks/useDocuments'
 import { MarkdownEditor } from './MarkdownEditor'
 import { MarkdownPreview } from '../preview/MarkdownPreview'
-import { PreviewFindBar } from '../preview/PreviewFindBar'
+import { PreviewToolbar } from '../preview/PreviewToolbar'
+import { EditorPaneBar } from './EditorPaneBar'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
@@ -127,7 +120,6 @@ export function EditorPane(): React.ReactElement {
     viewMode,
     setViewMode,
     editable,
-    toggleEditable,
     toggleSidebar,
     closeDocument,
     externalChange,
@@ -603,10 +595,6 @@ export function EditorPane(): React.ReactElement {
     document.body.style.userSelect = 'none'
   }, [])
 
-  const insertMarkdown = useCallback((before: string, after: string = '') => {
-    document.dispatchEvent(new CustomEvent('markdown:insert', { detail: { before, after } }))
-  }, [])
-
   // Shared toolbar: open/close/sidebar/edit-mode toggle (used by both empty and document states)
   const CommonToolbar = (
     <div className="titlebar-no-drag flex items-center gap-0.5">
@@ -619,11 +607,14 @@ export function EditorPane(): React.ReactElement {
             data-testid="sidebar-toggle-btn"
             onClick={toggleSidebar}
           >
-            <PanelLeft size={14} />
+            <PanelLeft size={16} />
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          {t('editor.toggleSidebarShortcut', { shortcut: formatShortcut('⌘\\') })}
+          {t('editor.toggleSidebarShortcut', {
+            primary: formatShortcut('⌘\\'),
+            secondary: formatShortcut('⌘B'),
+          })}
         </TooltipContent>
       </Tooltip>
       {/* "Go to file…" — the Quick Open trigger (ADR-0023). It lives in the editor toolbar next to
@@ -638,7 +629,11 @@ export function EditorPane(): React.ReactElement {
             data-testid="editor-goto-file-btn"
             onClick={() => useUIStore.getState().setSearchOpen(true)}
           >
-            <Search size={14} />
+            {/* A document glyph, not a magnifier: Quick Open sits one icon away from the in-document
+                find button (⌘F), and two adjacent magnifiers read as the same action. `FileText`
+                rather than `List` because `List` already means "bullet list" in the format
+                cluster of this very toolbar. */}
+            <FileText size={16} />
           </Button>
         </TooltipTrigger>
         <TooltipContent>
@@ -656,6 +651,10 @@ export function EditorPane(): React.ReactElement {
       {/* Save / Save As / Reload grouped with Open/Close as file operations, kept on the left */}
       {activeDocumentId && (
         <>
+          {/* Cluster boundary: navigation/search ↔ file operations. It lives INSIDE the
+              `activeDocumentId` gate on purpose — otherwise the empty state would show a lone
+              divider floating between the ⌘K chip and Close. */}
+          <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -666,7 +665,7 @@ export function EditorPane(): React.ReactElement {
                 className={editable && dirty ? 'text-accent' : ''}
                 data-testid="save-btn"
               >
-                <Save size={13} />
+                <Save size={16} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -686,7 +685,7 @@ export function EditorPane(): React.ReactElement {
                 disabled={!editable || saveAsMut.isPending}
                 data-testid="save-as-btn"
               >
-                <SaveAll size={13} />
+                <SaveAll size={16} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -704,7 +703,7 @@ export function EditorPane(): React.ReactElement {
                 disabled={reloadMut.isPending}
                 data-testid="reload-btn"
               >
-                <RotateCcw size={13} />
+                <RotateCcw size={16} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -720,7 +719,7 @@ export function EditorPane(): React.ReactElement {
                 onClick={() => doc && useUIStore.getState().setFileDetailsId(doc.id)}
                 data-testid="file-details-btn"
               >
-                <Info size={13} />
+                <Info size={16} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>
@@ -728,56 +727,23 @@ export function EditorPane(): React.ReactElement {
             </TooltipContent>
           </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => useUIStore.getState().setExportOpen(true)}
-                data-testid="export-btn"
-              >
-                <FileOutput size={13} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧E') })}
-            </TooltipContent>
-          </Tooltip>
-
-          {viewMode !== 'preview' && (
+          {/* Export follows the preview's visibility (ADR-0024 §10 trade-off 46): when the preview is
+              visible the export button lives on the preview pane bar; in edit-only mode it stays here.
+              Exactly one export button is on screen at a time. */}
+          {viewMode === 'edit' && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => document.dispatchEvent(new CustomEvent('markdown:find'))}
-                  data-testid="editor-find-btn"
-                  aria-label={t('editor.findShortcut', { shortcut: formatShortcut('⌘F') })}
+                  onClick={() => useUIStore.getState().setExportOpen(true)}
+                  data-testid="export-btn"
                 >
-                  <Search size={13} />
+                  <FileOutput size={16} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                {t('editor.findShortcut', { shortcut: formatShortcut('⌘F') })}
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          {viewMode !== 'preview' && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => document.dispatchEvent(new CustomEvent('markdown:replace'))}
-                  data-testid="editor-replace-btn"
-                  aria-label={t('editor.replaceShortcut', { shortcut: formatShortcut('⌘H') })}
-                >
-                  <Replace size={13} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('editor.replaceShortcut', { shortcut: formatShortcut('⌘H') })}
+                {t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧X') })}
               </TooltipContent>
             </Tooltip>
           )}
@@ -789,46 +755,11 @@ export function EditorPane(): React.ReactElement {
       <Tooltip>
         <TooltipTrigger asChild>
           <Button variant="ghost" size="icon" onClick={handleClose} data-testid="close-btn">
-            <X size={13} />
+            <X size={16} />
           </Button>
         </TooltipTrigger>
         <TooltipContent>{t('editor.closeFile')}</TooltipContent>
       </Tooltip>
-
-      <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
-
-      {/* Read-only / edit mode toggle */}
-      {editable ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleEditable}
-              className="gap-1"
-              data-testid="toggle-editable-btn"
-            >
-              <Lock size={12} /> {t('editor.readOnly')}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('editor.switchReadOnly')}</TooltipContent>
-        </Tooltip>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="accent"
-              size="sm"
-              onClick={toggleEditable}
-              className="gap-1"
-              data-testid="toggle-editable-btn"
-            >
-              <PenLine size={12} /> {t('editor.edit')}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('editor.switchEdit')}</TooltipContent>
-        </Tooltip>
-      )}
     </div>
   )
 
@@ -836,6 +767,7 @@ export function EditorPane(): React.ReactElement {
     return (
       <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface)]">
         <div
+          data-testid="global-bar"
           className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] shrink-0"
           style={{ height: 'var(--titlebar-height)' }}
         >
@@ -967,6 +899,7 @@ export function EditorPane(): React.ReactElement {
     <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface)]">
       {/* Toolbar */}
       <div
+        data-testid="global-bar"
         className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] shrink-0"
         style={{ height: 'var(--titlebar-height)' }}
       >
@@ -990,7 +923,7 @@ export function EditorPane(): React.ReactElement {
                     if (e.key === 'Enter') handleTitleSave()
                     if (e.key === 'Escape') cancelTitleEdit()
                   }}
-                  className="w-full text-sm font-semibold bg-transparent border-none outline-none text-[var(--color-text-primary)] focus:ring-0"
+                  className="w-full text-sm font-semibold bg-transparent border-none focus-ring text-[var(--color-text-primary)]"
                   autoFocus
                 />
               </InputContextMenu>
@@ -1030,12 +963,12 @@ export function EditorPane(): React.ReactElement {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 shrink-0"
+                        className="shrink-0"
                         onClick={startTitleEdit}
                         aria-label={t('editor.renameTitle')}
                         data-testid="rename-title-btn"
                       >
-                        <PenLine size={12} />
+                        <PenLine size={16} />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>{t('editor.renameTitle')}</TooltipContent>
@@ -1046,72 +979,23 @@ export function EditorPane(): React.ReactElement {
           </div>
 
           <div className="flex items-center gap-0.5">
-            {/* Formatting toolbar (only available in edit mode) */}
-            {viewMode !== 'preview' && editable && (
-              <div className="hidden md:flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-[var(--color-border)]">
-                {[
-                  { icon: <Hash size={12} />, before: '# ', after: '', tip: t('editor.fmt.h1') },
-                  {
-                    icon: <Bold size={12} />,
-                    before: '**',
-                    after: '**',
-                    tip: t('editor.fmt.bold'),
-                  },
-                  {
-                    icon: <Italic size={12} />,
-                    before: '_',
-                    after: '_',
-                    tip: t('editor.fmt.italic'),
-                  },
-                  { icon: <Code size={12} />, before: '`', after: '`', tip: t('editor.fmt.code') },
-                  {
-                    icon: <Link size={12} />,
-                    before: '[',
-                    after: '](url)',
-                    tip: t('editor.fmt.link'),
-                  },
-                  { icon: <List size={12} />, before: '- ', after: '', tip: t('editor.fmt.list') },
-                  {
-                    icon: <CheckSquare size={12} />,
-                    before: '- [ ] ',
-                    after: '',
-                    tip: t('editor.fmt.task'),
-                  },
-                ].map(({ icon, before, after, tip }) => (
-                  <Tooltip key={tip}>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => insertMarkdown(before, after)}
-                        data-testid={`fmt-${before}-${after}`}
-                      >
-                        {icon}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{tip}</TooltipContent>
-                  </Tooltip>
-                ))}
-              </div>
-            )}
-
             {/* View mode */}
             <div className="flex items-center rounded border border-[var(--color-border)] overflow-hidden ml-1">
               {(
                 [
                   {
                     mode: 'edit' as ViewMode,
-                    icon: <Edit3 size={12} />,
+                    icon: <Edit3 size={16} />,
                     tip: t('editor.view.editor'),
                   },
                   {
                     mode: 'split' as ViewMode,
-                    icon: <Columns size={12} />,
+                    icon: <Columns size={16} />,
                     tip: t('editor.view.split'),
                   },
                   {
                     mode: 'preview' as ViewMode,
-                    icon: <Eye size={12} />,
+                    icon: <Eye size={16} />,
                     tip: t('editor.view.preview'),
                   },
                 ] as const
@@ -1122,7 +1006,7 @@ export function EditorPane(): React.ReactElement {
                       onClick={() => setViewMode(mode)}
                       data-testid={`view-${mode}`}
                       className={cn(
-                        'px-2 py-1 text-xs transition-colors',
+                        'h-8 px-2 text-xs transition-colors',
                         viewMode === mode
                           ? 'bg-[var(--color-accent-muted)] text-accent'
                           : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]',
@@ -1262,19 +1146,24 @@ export function EditorPane(): React.ReactElement {
               lastPaneRef.current = 'editor'
             }}
             className={
-              viewMode === 'split' ? 'min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'
+              viewMode === 'split'
+                ? 'min-w-0 overflow-hidden flex flex-col'
+                : 'flex-1 min-w-0 overflow-hidden flex flex-col'
             }
             style={viewMode === 'split' ? { width: `${splitRatio * 100}%` } : undefined}
           >
-            <MarkdownEditor
-              content={editorContent}
-              onChange={handleContentChange}
-              editable={editable}
-              docId={activeDocumentId}
-              filePath={doc?.filePath ?? null}
-              selectionOffset={selectionOffset}
-              onConsumeSelection={consumeMatch}
-            />
+            <EditorPaneBar editable={editable} />
+            <div className="flex-1 min-h-0">
+              <MarkdownEditor
+                content={editorContent}
+                onChange={handleContentChange}
+                editable={editable}
+                docId={activeDocumentId}
+                filePath={doc?.filePath ?? null}
+                selectionOffset={selectionOffset}
+                onConsumeSelection={consumeMatch}
+              />
+            </div>
           </div>
         )}
 
@@ -1316,14 +1205,20 @@ export function EditorPane(): React.ReactElement {
           onPointerDown={() => {
             lastPaneRef.current = 'preview'
           }}
-          className={viewMode === 'edit' ? 'hidden' : 'relative flex-1 min-w-0 overflow-hidden'}
+          className={
+            viewMode === 'edit' ? 'hidden' : 'relative flex-1 min-w-0 overflow-hidden flex flex-col'
+          }
         >
-          {/* The content container is separate from the find bar so the bar's own labels are
+          <PreviewToolbar
+            containerRef={previewContentRef}
+            previewVisible={viewMode !== 'edit'}
+            onExport={() => useUIStore.getState().setExportOpen(true)}
+          />
+          {/* The content container is separate from the toolbar so the toolbar's own labels are
               never matched by the in-preview search. */}
-          <div ref={previewContentRef} className="h-full w-full">
+          <div ref={previewContentRef} className="w-full flex-1 min-h-0">
             <MarkdownPreview content={editorContent} doc={doc} />
           </div>
-          <PreviewFindBar containerRef={previewContentRef} />
         </div>
 
         {/* Switch overlay: an OPAQUE cover over both panes while the document is in flight. This replaces the old `if (isLoading)` early return, which unmounted this whole subtree and destroyed the CodeMirror view. The panes stay mounted (their content is '' see editorContent), so when the document lands only a content swap happens, not a rebuild */}
@@ -1347,7 +1242,7 @@ export function EditorPane(): React.ReactElement {
             <p className="text-sm text-[var(--color-text-secondary)] mb-5">
               {dirty ? t('editor.diskChangedDirty') : t('editor.diskChangedClean')}
             </p>
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex items-center justify-end gap-3">
               <Button
                 variant="ghost"
                 size="sm"

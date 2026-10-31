@@ -9,6 +9,11 @@ export const zhCN: Record<TranslationKey, string> = {
   'sidebar.files': '文件',
   // 「转到文件…」——Quick Open 的触发按钮，同时点明它的搜索范围（）。
   'sidebar.goToFile': '转到文件…',
+  // 最左侧常驻的 48px 图标列（R4），取代了旧的「文件 / 搜索」文字 tablist。
+  // 每个图标是 role="tab"，右侧内容面板即它的 tabpanel。
+  'sidebar.activityBar': '侧边活动栏',
+  'sidebar.activityFiles': '文件 / 资源管理器',
+  'sidebar.activitySearch': '在文件内搜索',
   'sidebar.searchPanel': '在文件内搜索',
   'sidebar.openFile': '打开文件…',
   'sidebar.openFolder': '打开文件夹…',
@@ -67,7 +72,8 @@ export const zhCN: Record<TranslationKey, string> = {
   'editor.closeFile': '关闭文件',
   'editor.renameTitle': '重命名文件',
   'editor.fileDeleted': '文件已在磁盘上删除 —— 保存即可恢复',
-  'editor.toggleSidebarShortcut': '切换侧边栏 ({{shortcut}})',
+  // 同一个动作有两个绑定（⌘\ 为原有，⌘B 对齐 VS Code），故提示同时插值两者。
+  'editor.toggleSidebarShortcut': '切换侧边栏 ({{primary}} 或 {{secondary}})',
   'editor.goToFileShortcut': '转到文件… ({{shortcut}})',
   'editor.switchReadOnly': '切换到只读模式',
   'editor.switchEdit': '切换到编辑模式',
@@ -84,6 +90,8 @@ export const zhCN: Record<TranslationKey, string> = {
   'editor.fmt.link': '链接',
   'editor.fmt.list': '列表',
   'editor.fmt.task': '任务',
+  'editor.format': '格式',
+  'editor.more': '更多',
   'editor.view.editor': '编辑',
   'editor.view.split': '分屏',
   'editor.view.preview': '预览',
@@ -132,11 +140,11 @@ export const zhCN: Record<TranslationKey, string> = {
   // 无工作区根时没有可匹配的相对路径，因此禁用而非让它静默失效。
   'search.scopeDisabledNoRoot': '请先打开文件夹，才能使用「包含 / 排除」',
   // Match Case（Aa）。默认关闭 = 不区分大小写，与 VS Code 一致。
-  'search.matchCase': '区分大小写',
+  'search.matchCase': '区分大小写（工作区全文搜索）',
   // 全词（ab）。默认关闭。判定标准是 UAX #29 词边界，因此中文、日文同样真实生效。
-  'search.wholeWord': '全词匹配',
+  'search.wholeWord': '全词匹配（工作区全文搜索）',
   // 正则（.*）。默认关闭——关闭时查询是完整字面短语（D24）。
-  'search.regexp': '使用正则表达式',
+  'search.regexp': '使用正则表达式（工作区全文搜索）',
   // 正则模式开启时的内联说明：换行写法与锚定语义。
   'search.regexHint':
     '正则模式下用 \\n 匹配换行（含 CRLF）；^ 与 $ 锚定整篇，不支持 (?m) 行级锚定。',
@@ -203,8 +211,12 @@ export const zhCN: Record<TranslationKey, string> = {
   'export.choose': '选择…',
   'export.imageNote':
     '未内联时，本地图片会改写为相对路径（与 .html 一同分发），而远程 https 图片则保留。',
+  'export.previewTitle': '预览',
+  'export.previewNote': '预览按单文件渲染（图片已内联），并显示全文所有图表。',
+  'export.previewUnavailable': '无法生成预览。',
   'export.failed': '导出失败，请重试。',
-  'export.previewNotReady': '预览尚未就绪。请先切换到预览或分屏视图。',
+  'export.previewNotReady': '文档尚未完成渲染，请稍候重试。',
+  'export.preparing': '准备中…',
   'export.overwritePrompt': '文件“{{path}}”已存在。确定要覆盖它吗？此操作无法撤销。',
   'export.cancel': '取消',
   'export.overwrite': '覆盖',
@@ -282,6 +294,9 @@ export const zhCN: Record<TranslationKey, string> = {
   'preview.findNext': '下一个匹配',
   'preview.findClose': '关闭查找',
   'preview.findNone': '无匹配',
+  'preview.copyRendered': '复制渲染内容',
+  'preview.copyHtml': '复制渲染 HTML',
+  'preview.more': '更多',
 
   // ── Native menu (Electron main process) ────────────────────────────────
   'menu.file': '文件',
@@ -398,10 +413,10 @@ export const zhCN: Record<TranslationKey, string> = {
   // ── Find widget（编辑器与预览共用）───────────────────────────────────
   'find.placeholder': '查找',
   'find.replacePlaceholder': '替换',
-  'find.toggle.case': '区分大小写',
-  'find.toggle.wholeWord': '全字匹配',
-  'find.toggle.regex': '使用正则表达式',
-  'find.toggle.preserveCase': '保留大小写',
+  'find.toggle.case': '区分大小写（当前文档）',
+  'find.toggle.wholeWord': '全字匹配（当前文档）',
+  'find.toggle.regex': '使用正则表达式（当前文档）',
+  'find.toggle.preserveCase': '保留大小写（当前文档）',
   // 切换组上的可见字形：Aa / ab / .* / AB
   'find.toggle.caseShort': 'Aa',
   'find.toggle.wholeWordShort': 'ab',

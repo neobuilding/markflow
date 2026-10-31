@@ -111,6 +111,23 @@ if (
     IntersectionObserverMock
 }
 
+// The editor pane bar (EditorPaneBar) collapses its 7-button format cluster into a Format dropdown
+// when the editor column is too narrow, measured with a ResizeObserver. jsdom does not implement
+// ResizeObserver, so any suite that mounts the editor pane throws "ResizeObserver is not defined".
+// Provide a no-op mock: the bar initialises in its default (expanded) layout, and since jsdom has
+// no real layout, no resize ever fires — matching the static-render assumption under test.
+if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === 'undefined') {
+  class ResizeObserverMock {
+    // jsdom performs no layout, so the column width never actually changes; the mock only needs to
+    // accept observers without throwing. A real browser would fire `observe` callbacks with the
+    // measured width, but nothing in the unit suites depends on the collapsed state triggering.
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverMock
+}
+
 // The suite creates real temp dirs under %TEMP% (folder-watcher / open-folder / document
 // / export fixtures). Vitest never cleans %TEMP%, so reclaim every path allocated through
 // mkTestDir() when each test file finishes. Registering the hook in this setup file means

@@ -4,8 +4,17 @@
 //   3. Rich-text copy from the preview loses mermaid / table borders / code colors /
 //      blockquote styling / fonts (payload is bare semantic HTML with no styles).
 // Each test asserts the DESIRED post-fix behavior, so it is red now and green once fixed.
-import { test, expect, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { test } from '../helpers/fixtures'
+import {
+  readClipboardHtml,
+  snapshotClipboard,
+  restoreClipboard,
+  clipboardSkipMessage,
+  CLIPBOARD_SPEC_SKIP_REASON,
+  type ClipboardSnapshot,
+} from '../helpers/clipboard'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
@@ -19,11 +28,24 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   let handle: AppHandle
   let scratch: string
 
-  test.beforeEach(async () => {
+  // EVERY test in this file reads the system clipboard, so the whole file stands down when the
+  // clipboard holds something we could not put back (a file list, a private app format) — a
+  // skipped test is always better than destroying the user's content. It also stands down in every
+  // project except `e2e-clipboard` (see helpers/clipboard).
+  let snap: ClipboardSnapshot | undefined
+
+  test.beforeEach(async ({ clipboardE2e }) => {
+    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
+    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
     handle = await launchApp()
     scratch = mkTempDir('markflow-repro-')
+    snap = await snapshotClipboard(handle)
+    test.skip(!snap.restorable, clipboardSkipMessage(snap))
   })
   test.afterEach(async () => {
+    // The gate above aborts before the app is launched, so there is nothing to put back.
+    if (!handle) return
+    await restoreClipboard(handle, snap)
     await closeApp(handle)
   })
 
@@ -117,13 +139,13 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // 'select-all' menu item, so driving that item IS the real-user path. The renderer's
   // selectAllRouter must pick the focused pane.
   test('editor: the menu select-all item selects the whole CodeMirror document', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(page, 'alpha line\nbeta line\ngamma line\n')
     await page.locator('.cm-content').click()
     await page.keyboard.press('ArrowUp')
     // Trigger the REAL menu item — exactly what the Ctrl+A accelerator executes.
-    await electronApp.evaluate(({ Menu }) => {
+    await handle.electronApp.evaluate(({ Menu }) => {
       Menu.getApplicationMenu()?.getMenuItemById('select-all')?.click()
     })
     // The routed select-all arrives over IPC — wait for it to land before reading the
@@ -143,14 +165,14 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   })
 
   test('preview: the menu select-all item scopes the selection to the preview article', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(page, '# Title\n\nfirst paragraph\n\nsecond paragraph\n')
     await page.getByTestId('view-split').click()
     const article = page.locator('.markdown-preview')
     await expect(article).toBeVisible()
     await article.locator('p').first().click()
-    await electronApp.evaluate(({ Menu }) => {
+    await handle.electronApp.evaluate(({ Menu }) => {
       Menu.getApplicationMenu()?.getMenuItemById('select-all')?.click()
     })
     // The menu click routes through IPC — wait until the routed select-all has landed
@@ -173,7 +195,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // select-all must then act on the pane the menu belonged to (its Radix trigger owns the
   // focus again once the menu unmounts) — never on the menu itself.
   test('menu select-all dismisses an open context menu then acts on the pane behind it', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(page, '# Title\n\nfirst paragraph\n\nsecond paragraph\n')
     await page.getByTestId('view-split').click()
@@ -183,7 +205,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     await article.locator('p').first().click({ button: 'right' })
     await expect(page.getByTestId('preview-copy')).toBeVisible()
     // Ctrl+A (routed through the app menu) while the menu is open.
-    await electronApp.evaluate(({ Menu }) => {
+    await handle.electronApp.evaluate(({ Menu }) => {
       Menu.getApplicationMenu()?.getMenuItemById('select-all')?.click()
     })
     // 1) the menu is gone…
@@ -209,7 +231,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // inline `<svg>` this test originally asserted (Word does not render inline SVG).
   // Rasterization is async, so the copy is polled until the PNG lands.
   test('preview: menu Copy carries the mermaid diagram as a PNG (ADR 0019 + D13)', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(page, '# T\n\nA paragraph.\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n')
 
@@ -222,14 +244,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     const article = page.locator('.markdown-preview')
     await expect(article).toBeVisible()
 
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
 
     let html = ''
     await expect
@@ -258,7 +273,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // stayed green while rasterization was completely broken (a blob: src blocked by the app CSP)
   // and diagrams pasted as unusable SVG text. It now requires the PNG.
   test('preview: menu Copy carries a mermaid PNG, borders, code colors and blockquote styles', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(
       page,
@@ -293,14 +308,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     await expect(article).toBeVisible()
 
     // Read the REAL system clipboard back from the main process (Electron 44 API).
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
     // Right-click a blockquote → generic menu → Copy.
     const menuCopy = async (): Promise<string> => {
       await article.locator('blockquote').click({ button: 'right' })
@@ -341,7 +349,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // that made this test flake on CI — slot 0 starts below the preview fold and must bake via scroll
   // before menu Copy can rasterize all four diagrams.
   test('preview: menu Copy of the demo document keeps every diagram as a PNG', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await page.setViewportSize({ width: 800, height: 600 })
     await openDoc(
@@ -359,14 +367,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     const article = page.locator('.markdown-preview')
     await expect(article).toBeVisible()
 
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
     const menuCopy = async (): Promise<string> => {
       await article.locator('p').first().click({ button: 'right' })
       await page.getByTestId('preview-copy').click()
@@ -400,7 +401,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // re-serialization would silently drop <math> and leave only KaTeX's HTML spans, which no target
   // app can render — the same "silent failure" pattern this plan hit twice already.
   test('preview: menu Copy keeps the MathML carrier for formulas (R13.9 / D17)', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(
       page,
@@ -412,14 +413,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     const article = page.locator('.markdown-preview')
     await expect(article).toBeVisible()
 
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
 
     let html = ''
     await expect
@@ -447,7 +441,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // the preview's own computed style per theme, so a github-markdown-css bump cannot make this test
   // pass vacuously (it would simply follow the new values).
   test('preview: the copy payload stays light while the app is dark (D16)', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(page, '# Heading\n\nbody copy\n\n```js\nconst x = 1\n```\n')
     await page.getByTestId('view-preview').click()
@@ -462,14 +456,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
         const pre = document.querySelector('article.markdown-preview pre')
         return pre ? getComputedStyle(pre).backgroundColor : ''
       })
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
     const menuCopy = async (): Promise<string> => {
       await article.locator('p').first().click({ button: 'right' })
       await page.getByTestId('preview-copy').click()
@@ -518,7 +505,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // has no pending payload and builds its fragment live, i.e. it is a genuinely different code path
   // that must not diverge. This one presses the real keys and compares the two payloads.
   test('preview: keyboard Ctrl+C carries the same fidelity payload as the menu (R13.7)', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(
       page,
@@ -543,14 +530,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     const article = page.locator('.markdown-preview')
     await expect(article).toBeVisible()
 
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
 
     // Real keys: click into the preview (focus) → the preview's own Ctrl+A → Ctrl+C.
     await article.locator('p').first().click()
@@ -585,7 +565,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // pending payload (no embedImages call), so the fragment's own appdoc:// sources are rewritten
   // from the src → data: map warmInlinedImages produced. Without it the paste shows a broken image.
   test('preview: keyboard copy of a selection inlines the local image', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     writeFileSync(join(scratch, 'pic.png'), Buffer.from(PNG_HEX, 'hex'))
     await openDoc(page, '# Img\n\nintro\n\n![pic](pic.png)\n\nafter\n')
@@ -594,14 +574,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     const article = page.locator('.markdown-preview')
     await expect(article).toBeVisible()
 
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
 
     let html = ''
     await expect
@@ -637,7 +610,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // browser's 300×150 default for mermaid's `width="100%"` + viewBox SVGs), so pasted diagrams were
   // both blurry and too small.
   test('preview: menu Copy carries the diagram as a high-res bitmap at its display size (D13)', async () => {
-    const { page, electronApp } = handle
+    const { page } = handle
     await waitForAppReady(page)
     await openDoc(page, '# T\n\n```mermaid\ngraph TD\n  A[Start] --> B[End]\n```\n')
     const svg = page.locator('[data-mermaid-slot="0"] svg')
@@ -658,14 +631,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     })
     expect(display.width).toBeGreaterThan(10)
 
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
 
     let html = ''
     await expect

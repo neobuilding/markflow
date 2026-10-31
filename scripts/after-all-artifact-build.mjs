@@ -4,6 +4,10 @@
 // app-builder-lib's resolveFunction → dynamicImportMaybe (import, with require fallback).
 import { relative, join } from 'node:path'
 
+/**
+ * @param {{ artifactPaths?: string[] } | undefined} buildResult
+ * @returns {Promise<void>}
+ */
 export async function afterAllArtifactBuild(buildResult) {
   const artifacts = buildResult?.artifactPaths ?? []
   console.log('\n✅ Packaged app written to: release/')
