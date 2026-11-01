@@ -15,7 +15,16 @@ import { formatShortcut, isMac } from '../../lib/utils'
 // Every constructed observer is collected, not just the last one: Radix's Popper (used by the
 // Format dropdown) also constructs a ResizeObserver, so keeping only the newest callback would
 // hand the test someone else's observer.
-type ResizeCallback = (entries: Array<{ contentRect: { width: number } }>) => void
+//
+// The mock reports the COLUMN width through `borderBoxSize`, exactly what the production code reads
+// (EditorPaneBar.tsx measures the bar's border box). `contentRect` is reported alongside only so
+// Radix's Popper gets a sane size; production deliberately ignores it.
+type ResizeCallback = (
+  entries: Array<{
+    borderBoxSize: ReadonlyArray<{ inlineSize: number }>
+    contentRect: { width: number }
+  }>,
+) => void
 const observers: ResizeCallback[] = []
 
 class MockResizeObserver {
@@ -27,10 +36,17 @@ class MockResizeObserver {
   disconnect(): void {}
 }
 
-// Report a width to every live observer.
+// Report a column width to every live observer.
 function reportWidth(width: number) {
   act(() => {
-    observers.forEach((cb) => cb([{ contentRect: { width } }]))
+    observers.forEach((cb) =>
+      cb([
+        {
+          borderBoxSize: [{ inlineSize: width }],
+          contentRect: { width },
+        },
+      ]),
+    )
   })
 }
 
@@ -233,5 +249,26 @@ describe('EditorPaneBar', () => {
     fireEvent.click(undoItem)
     expect(onUndo).toHaveBeenCalledTimes(1)
     document.removeEventListener('markdown:undo', onUndo)
+  })
+
+  it('treats FOLD_AT as the inclusive upper bound of the folded range', () => {
+    renderBar(true)
+    // At exactly FOLD_AT (420) the bar is wide; one pixel under it folds. The boundary being
+    // inclusive (`w < FOLD_AT`) is what the e2e environments are calibrated against.
+    reportWidth(420)
+    expect(screen.queryByTestId('fmt-dropdown-btn')).toBeNull()
+    expect(screen.getByTestId('fmt-**-**')).toBeInTheDocument()
+    reportWidth(419)
+    expect(screen.getByTestId('fmt-dropdown-btn')).toBeInTheDocument()
+  })
+
+  it('treats MINIMAL_AT as the inclusive upper bound of the minimal range', () => {
+    renderBar(true)
+    // At exactly MINIMAL_AT (240) the bar is folded; one pixel under it collapses to minimal.
+    reportWidth(240)
+    expect(screen.getByTestId('fmt-dropdown-btn')).toBeInTheDocument()
+    expect(screen.queryByTestId('editor-overflow-btn')).toBeNull()
+    reportWidth(239)
+    expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
   })
 })

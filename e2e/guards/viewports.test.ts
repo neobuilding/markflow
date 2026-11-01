@@ -82,6 +82,9 @@ describe('the named e2e environments', () => {
   })
 
   it('has `narrow` stay out of the minimal toolbar mode', () => {
+    // The app measures the bar's border box, which equals this column width (see EditorPaneBar.tsx
+    // reading `borderBoxSize`), so comparing the column width to MINIMAL_AT is exactly the quantity
+    // the real layout compares against — not the content box, which would subtract the bar's padding.
     expect(splitPaneWidth(VIEWPORTS.narrow)).toBeGreaterThanOrEqual(MINIMAL_AT)
   })
 

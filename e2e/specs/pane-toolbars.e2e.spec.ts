@@ -100,6 +100,31 @@ test.describe('pane toolbars', () => {
     await expect(page.getByTestId(/^fmt-/)).toHaveCount(7)
   })
 
+  test('narrow editor column folds the format cluster but stays out of the minimal overflow', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+    // Narrow (800 content area) leaves each split column at (800 - 288) / 2 = 256px. The bar measures
+    // the COLUMN width (its border box, via ResizeObserver `borderBoxSize`), so 256 >= MINIMAL_AT (240):
+    // folded, NOT minimal. This locks the "narrow stays out of the minimal mode" contract that
+    // e2e/guards/viewports.test.ts asserts against the layout constants.
+    await page.setViewportSize(VIEWPORTS.narrow)
+    await page.getByTestId('view-split').click()
+    const editorBar = page.getByTestId('editor-pane-bar')
+    // Guard the premise before asserting the result: boundingBox() is the border box == the column
+    // width the app measures, so it must be < FOLD_AT for the fold to be meaningful.
+    await expect
+      .poll(async () => (await editorBar.boundingBox())?.width ?? 0, {
+        message: 'the editor column must be narrow enough (< 420px) to fold',
+      })
+      .toBeLessThan(420)
+    // Format cluster folds into the single dropdown...
+    await expect(page.getByTestId('editor-pane').getByTestId('fmt-dropdown-btn')).toBeVisible()
+    // ...but undo / redo / read-only stay INLINE: the `…` overflow must NOT appear.
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-undo-btn')).toBeVisible()
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-overflow-btn')).toHaveCount(0)
+  })
+
   test('the export button follows the preview visibility — exactly one is on screen', async () => {
     const { page } = handle
     await waitForAppReady(page)

@@ -68,13 +68,22 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
   //   folded  — the format cluster becomes one `Format` dropdown (7 → 1), leaving 6 items.
   //   minimal — even 6 items do not fit a very narrow column, so undo / redo / read-only move into
   //             a VS Code-style `…` overflow (3 → 1), leaving 4.
+  //
+  // The width is the bar's BORDER box, which equals the COLUMN width it fills (ADR-0024 §10). We read
+  // `borderBoxSize` rather than `contentRect`: the latter is the content box and would subtract the
+  // bar's own horizontal padding (`px-3`), silently shifting every threshold by that padding and
+  // disagreeing with the column-width arithmetic the e2e environments are derived from
+  // (e2e/helpers/viewports.ts, e2e/guards/viewports.test.ts). `el.getBoundingClientRect().width`
+  // is the fallback for engines without `borderBoxSize`.
   const [mode, setMode] = useState<BarMode>('wide')
 
   useEffect(() => {
     const el = barRef.current
     if (!el) return
     const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? el.clientWidth
+      const borderBox = entries[0]?.borderBoxSize as unknown as
+        ReadonlyArray<{ inlineSize: number }> | undefined
+      const w = borderBox?.[0]?.inlineSize ?? el.getBoundingClientRect().width
       setMode(w < MINIMAL_AT ? 'minimal' : w < FOLD_AT ? 'folded' : 'wide')
     })
     ro.observe(el)

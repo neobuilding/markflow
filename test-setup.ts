@@ -118,9 +118,13 @@ if (
 // no real layout, no resize ever fires — matching the static-render assumption under test.
 if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === 'undefined') {
   class ResizeObserverMock {
-    // jsdom performs no layout, so the column width never actually changes; the mock only needs to
-    // accept observers without throwing. A real browser would fire `observe` callbacks with the
-    // measured width, but nothing in the unit suites depends on the collapsed state triggering.
+    // jsdom performs no layout, so the callback is never invoked — but the parameter is still
+    // declared so this mock's signature mirrors the real `(callback)` one, exactly as
+    // IntersectionObserverMock does above. A zero-arg default constructor here makes CodeQL resolve
+    // the global `ResizeObserver` to THIS class, and it then reports every real
+    // `new ResizeObserver(cb)` in marked code as passing a superfluous trailing argument
+    // (false alert on EditorPaneBar.tsx). Do not "simplify" this constructor away.
+    constructor(_callback: ResizeObserverCallback) {}
     observe(): void {}
     unobserve(): void {}
     disconnect(): void {}
