@@ -401,4 +401,11 @@ describe('SidebarSearch (Search view)', () => {
     const note = await screen.findByTestId('search-replace-skipped')
     expect(note.textContent).toMatch(/工作区|workspace/i)
   })
+
+  // ADR-0024 §8 (C9): the query field keeps a ≥80px floor at the 240px sidebar floor. The floor is
+  // enforced in CSS via `min-w-[80px]` on the field, so it must be present on the rendered input.
+  it('keeps the query field at the 80px C9 floor via the CSS min-width', () => {
+    renderPanel()
+    expect(screen.getByTestId('resident-search-input')).toHaveClass('min-w-[80px]')
+  })
 })

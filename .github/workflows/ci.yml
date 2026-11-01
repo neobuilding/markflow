@@ -267,8 +267,10 @@ jobs:
                   key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
                   restore-keys: |
                       ${{ runner.os }}-electron-
-            # `npm run e2e:full` composes exactly two Playwright projects: e2e-app
-            # (functional) and e2e-perf-gate — the main-process stall
+            # `npm run e2e:full` composes exactly three Playwright projects: e2e-app
+            # (functional), e2e-clipboard (the specs that write the real system
+            # clipboard — they are destructive, so they live in their own project)
+            # and e2e-perf-gate — the main-process stall
             # regression gate that stops the folder watcher from going back to
             # watching every file instead of markdown only.
             # It deliberately does NOT run quality/coverage/build here: those are

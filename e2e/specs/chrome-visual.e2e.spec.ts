@@ -15,6 +15,7 @@
 // run the spec with `--update-snapshots` on that platform once, then widen BASELINE_PLATFORMS.
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { VIEWPORTS } from '../helpers/viewports'
 
 const BASELINE_PLATFORMS = ['win32']
 
@@ -37,6 +38,12 @@ test.describe('chrome visual baseline (E9)', () => {
       `baselines exist for ${BASELINE_PLATFORMS.join(', ')} only`,
     )
     handle = await launchApp()
+    // The baselines are pixel-exact, so the environment has to be pinned as well: they were
+    // captured in a 2560px window (the global bar is 2272px = 2560 - 288, a pane bar one column of
+    // that). Without this the spec inherited whatever width the host monitor maximized to, so it
+    // failed on every machine that was not the one that captured the images. The named environment
+    // and the committed PNGs are kept in step by e2e/guards/viewports.test.ts.
+    await handle.page.setViewportSize(VIEWPORTS.baseline)
   })
 
   test.afterAll(async () => {

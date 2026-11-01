@@ -94,6 +94,17 @@ config, next to the project that allows it, instead of hiding in a variable a de
 about. And a test switch must never reach the app either (ADR 0016,
 `electron/main/test-support/no-test-env-switches.test.ts`).
 
+Two unit tests guard the arrangement (they live in `e2e/`, and `vitest.config.ts` picks up
+`e2e/**/*.test.ts` — a pattern that cannot match a `*.e2e.spec.ts` spec):
+
+- `e2e/guards/clipboard-project.test.ts` — the project claims exactly the specs that touch the
+  clipboard, each of them imports the extended `test` and gates itself on the option, and no other
+  project may set it. It also asserts that the option is _wired_ to the exported
+  `CLIPBOARD_E2E_DEFAULT` constant: checking the constant alone would stay green if the fixture
+  were hard-wired to `true`. The failure it prevents is silent: a clipboard spec missing from the
+  project would write the user's clipboard inside `npm run e2e:app`, and nothing would fail.
+- `e2e/helpers/clipboard.test.ts` — the skip reasons a developer reads in a report.
+
 Coverage of the same handler boundary that needs no real clipboard lives in
 `electron/main/handlers/app.test.ts` (mocked `clipboard`, `ClipboardItem` from the electron export).
 
@@ -111,9 +122,11 @@ the repo belongs to exactly one:
 
 `allowJs` + `checkJs` are ON in `tsconfig.tests.json`, so its `.mjs` files are really type-checked
 (they carry JSDoc where inference runs out). They are OFF in `tsconfig.scripts.json`: that code is
-plain JS shipped as a bundle, so annotating it would be a rewrite — what is still checked there is
-syntax, import resolution and ESM/CJS shape, which is what breaks silently in a script nobody runs
-locally.
+plain JS shipped as a bundle, so annotating it would be a rewrite (~270 findings). Measured
+behaviour: with `checkJs: false` only PARSE errors are reported (a bad import is not), so that
+program is a syntax gate for the scripts that would otherwise have no gate at all — e.g. the
+create-pr action's entry point, which no unit test imports. The parts that carry logic have their
+own vitest suites.
 
 Two traps that let files escape the gates, both closed — keep them in mind before moving files:
 
@@ -126,6 +139,61 @@ Two traps that let files escape the gates, both closed — keep them in mind bef
 On the lint side, `eslint .` covers every JS/TS file except `*.d.ts` (ambient or generated
 declarations). Config files used to be ignored wholesale via `**/*.config.ts`; they are linted now,
 with `tsconfig.tests.json` as their type gate.
+
+The coverage gate has its own version of the same trap: `coverage.include` is a list of globs, and a
+`*.ts`-only glob silently drops a future `.tsx` module from the 100%-per-file gate. Every renderer
+pattern therefore uses `{ts,tsx}` (`lib/`, `hooks/`, `components/`, `store/`, `i18n/`).
+
+## Width-coupled e2e specs enter a named environment
+
+Determinism comes from ONE fixed environment, not from asserting every condition combination. The
+e2e suite runs in a single pinned **content-area** viewport (`VIEWPORTS.standard`, applied by
+`e2e/helpers/launch.ts` before the app is driven) — the app measures its own DOM, so pinning the
+content area (the web layout viewport, not the OS window frame) is what makes the layout
+deterministic. The same assertion therefore behaves the same on a laptop and on the CI runner — the
+"passes on my big monitor, fails on the CI runner" class dies here, not in the assertions.
+
+A spec that is _about_ a particular width enters a named environment instead of typing its own
+numbers (`e2e/helpers/viewports.ts`):
+
+| Environment | Size        | What it exercises                                           |
+| ----------- | ----------- | ----------------------------------------------------------- |
+| `standard`  | 1024 × 768  | the default: the editor toolbar is FOLDED (pane 368 < 420)  |
+| `wide`      | 1280 × 900  | the editor toolbar is EXPANDED (pane 496 >= 420)            |
+| `narrow`    | 800 × 600   | the narrow fixture size (at the app's window floor)         |
+| `baseline`  | 2560 × 1440 | the E9 visual baselines (the bars are 2272px / 1136px wide) |
+
+Entering an environment is per CASE, not per file: a spec that needs a different window gets its own
+test case for it, while the case that stays in the default environment keeps asserting the default
+layout. `e2e/specs/pane-toolbars.e2e.spec.ts` has both — one case asserts the split-mode ownership in
+the default (folded) environment, and a second, dedicated case enters `wide` to assert the expanded
+format cluster.
+
+The sizes are not free choices: they follow from the window floor (800), the sidebar default (288)
+and the toolbar's fold threshold (`FOLD_AT` 420), so in split mode the pane is `(width - 288) / 2`.
+`e2e/guards/viewports.test.ts` parses those constants out of the sources of truth and asserts the
+contract — that `standard` really folds, `wide` really expands, `narrow` stays out of the minimal
+mode, and no environment is narrower than the app can be. A layout change that invalidates an
+environment therefore fails a unit test, not an e2e timeout far from the cause. The same guard also
+protects the convention itself: that `e2e/helpers/launch.ts` still pins the standard environment for
+every spec (deleting that call would silently make the whole suite host-dependent again, with
+nothing else failing), that no spec types a viewport size of its own instead of entering a named
+environment, and that the committed E9 visual baselines still match the geometry of the `baseline`
+environment.
+
+## Glossary
+
+Test-infrastructure terms used above.
+
+- **viewport (e2e)**: the web **content area** the app renders into — what `page.setViewportSize()`
+  sets. Distinct from the OS window's outer frame (title bar + borders). All width-coupled layout is
+  driven by the content area, never the OS frame. _Avoid_: window size, OS window.
+- **named environment**: one of the `VIEWPORTS` entries in `e2e/helpers/viewports.ts`
+  (`standard`, `wide`, `narrow`, `baseline`) — a shared, reviewed width decision a spec enters by name
+  instead of typing a literal pixel size. _Avoid_: custom size, magic number.
+- **content area vs OS window**: the content area is the layout viewport (`setViewportSize` controls
+  it); the OS window is the outer frame around it. Pinning the content area is deterministic; pinning
+  the OS window is not, because the frame varies by platform, theme, and DPI.
 
 ## Terminology
 

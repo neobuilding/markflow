@@ -17,9 +17,14 @@ export interface ClipboardOptions {
   clipboardE2e: boolean
 }
 
+/**
+ * The default: no project may touch the OS clipboard unless it opts in. Exported so the guard
+ * test (e2e/guards/clipboard-project.test.ts) can assert that the default stays "off" — that
+ * value is what keeps `npm run e2e:app` away from the user's clipboard.
+ */
+export const CLIPBOARD_E2E_DEFAULT = false
+
 export const test = base.extend<ClipboardOptions>({
   // `{ option: true }` makes this settable from a project's `use` in the config.
-  clipboardE2e: [false, { option: true }],
+  clipboardE2e: [CLIPBOARD_E2E_DEFAULT, { option: true }],
 })
-
-export { expect } from '@playwright/test'

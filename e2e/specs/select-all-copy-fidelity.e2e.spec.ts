@@ -7,6 +7,7 @@
 import { expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { test } from '../helpers/fixtures'
+import { VIEWPORTS } from '../helpers/viewports'
 import {
   readClipboardHtml,
   snapshotClipboard,
@@ -351,7 +352,7 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   test('preview: menu Copy of the demo document keeps every diagram as a PNG', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    await page.setViewportSize({ width: 800, height: 600 })
+    await page.setViewportSize(VIEWPORTS.narrow)
     await openDoc(
       page,
       readFileSync(join('e2e', 'fixtures', 'preview-render-pipeline', 'diagrams.md'), 'utf-8'),

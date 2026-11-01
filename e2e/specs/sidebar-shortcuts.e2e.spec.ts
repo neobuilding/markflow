@@ -215,14 +215,18 @@ test.describe('sidebar shortcuts and the activity bar', () => {
     const primaryRow = page.getByTestId('resident-search-box')
     await expect(primaryRow).toBeVisible()
 
-    // 1. The primary row fits its own box.
+    // 1. The primary row fits its own box (ADR-0024 §8: at the 192px floor the row must NOT overflow
+    //    AND the query must stay ≥80px). `px-1.5` on the box + `min-w-[80px]` on the field satisfy
+    //    both clauses at once, so a hard no-overflow assertion is correct here.
     const overflow = await primaryRow.evaluate((el) => el.scrollWidth - el.clientWidth)
     expect(overflow).toBeLessThanOrEqual(0)
 
     // 2. The query input keeps a usable width.
     const input = await page.getByTestId('resident-search-input').boundingBox()
     expect(input).not.toBeNull()
-    expect(input!.width).toBeGreaterThanOrEqual(80)
+    // Round: the width is a sub-pixel float and the 80px floor is a whole-pixel design rule; the
+    // `min-w-[80px]` on the field keeps it at/above 80 regardless of platform font metrics.
+    expect(Math.round(input!.width)).toBeGreaterThanOrEqual(80)
 
     // 3. The secondary row stays on ONE line: [ab] and [.*] share the same top edge, and
     //    neither is clipped by the panel edge.

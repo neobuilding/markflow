@@ -17,6 +17,9 @@ interface SearchInputProps {
   // Icon rendered before the input (the magnifier every search surface shares). Optional because
   // the editor/preview find widgets render theirs as a sibling of the whole group.
   leadingIcon?: React.ReactNode
+  // Extra classes for the inner <input> (e.g. a minimum width the sidebar search field must keep
+  // at the 240px sidebar floor — PLAN C9). Optional so the find widgets are unaffected.
+  inputClassName?: string
 }
 
 // Shared single-line search input with a clear (✕) button that appears only when there is
@@ -33,6 +36,7 @@ export function SearchInput({
   mainField = false,
   onClear,
   leadingIcon,
+  inputClassName,
 }: SearchInputProps): React.ReactElement {
   const { t } = useT()
   return (
@@ -47,7 +51,7 @@ export function SearchInput({
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         aria-label={ariaLabel}
-        className="w-full bg-transparent text-sm focus-ring text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
+        className={`w-full bg-transparent text-sm focus-ring text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] ${inputClassName ?? ''}`}
       />
       {value && onClear && (
         <button

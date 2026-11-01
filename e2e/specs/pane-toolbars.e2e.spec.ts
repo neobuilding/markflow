@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { test } from '../helpers/fixtures'
+import { VIEWPORTS } from '../helpers/viewports'
 import {
   expectClipboardAfter,
   readClipboardText,
@@ -48,8 +49,10 @@ test.describe('pane toolbars', () => {
     await expect(page.getByTestId('editor-pane')).toBeVisible()
     await expect(page.getByTestId('preview-pane')).toBeVisible()
 
-    // The editor column owns the editor-only clusters (ADR-0024 §10 trade-off 52).
-    await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toBeVisible()
+    // The editor column owns the editor-only clusters (ADR-0024 §10 trade-off 52). In the default
+    // environment the column is 368px wide, so the format cluster is the folded `Format` dropdown
+    // (EditorPaneBar folds it below FOLD_AT = 420); the expanded form has its own case below.
+    await expect(page.getByTestId('editor-pane').getByTestId('fmt-dropdown-btn')).toBeVisible()
     await expect(page.getByTestId('editor-pane').getByTestId('editor-find-btn')).toBeVisible()
     await expect(page.getByTestId('editor-pane').getByTestId('editor-replace-btn')).toBeVisible()
     await expect(page.getByTestId('editor-pane').getByTestId('editor-undo-btn')).toBeVisible()
@@ -71,8 +74,30 @@ test.describe('pane toolbars', () => {
     // duplicated there.
     await expect(page.getByTestId('editor-find-btn')).toHaveCount(1)
     await expect(page.getByTestId('editor-replace-btn')).toHaveCount(1)
-    await expect(page.getByTestId('fmt-**-**')).toHaveCount(1)
+    await expect(page.getByTestId('fmt-dropdown-btn')).toHaveCount(1)
     await expect(page.getByTestId('editor-readonly-btn')).toHaveCount(1)
+  })
+
+  test('a wide editor column expands the format cluster into its seven entries', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    // Its own case, because it needs its own window: the cluster only expands when the COLUMN is
+    // wide enough (EditorPaneBar folds it below FOLD_AT = 420), and the column is half the content
+    // area. The wide environment puts it at (1280 - sidebar 288) / 2 = 496 — see
+    // e2e/helpers/viewports.ts for the arithmetic, and e2e/guards/viewports.test.ts for the
+    // contract that keeps the two numbers in sync with the app's own constants.
+    await page.setViewportSize(VIEWPORTS.wide)
+    await createDocAndType(page, 'hello world')
+    await page.getByTestId('view-split').click()
+    await expect(page.getByTestId('editor-pane')).toBeVisible()
+
+    // The seven format entries (heading, bold, italic, code, link, list, task) sit inline.
+    await expect(page.getByTestId('editor-pane').getByTestId(/^fmt-/)).toHaveCount(7)
+    await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toBeVisible()
+    // The folded dropdown is replaced by them, never shown alongside them.
+    await expect(page.getByTestId('fmt-dropdown-btn')).toHaveCount(0)
+    // And the cluster lives in the editor column only — the global bar does not carry a copy.
+    await expect(page.getByTestId(/^fmt-/)).toHaveCount(7)
   })
 
   test('the export button follows the preview visibility — exactly one is on screen', async () => {

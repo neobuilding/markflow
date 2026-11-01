@@ -82,11 +82,6 @@ export async function readClipboardHtml(app: AppHandle): Promise<string> {
   })
 }
 
-/** Whether any clipboard item carries the given MIME type. */
-export async function clipboardHasType(app: AppHandle, mime: string): Promise<boolean> {
-  return (await readClipboardTypes(app)).includes(mime)
-}
-
 // ── Preserve the user's clipboard ──────────────────────────────────────────────────────────────
 //
 // Usage in a spec (`test` from helpers/fixtures.ts, so `clipboardE2e` is available):
@@ -209,8 +204,11 @@ let seedSeq = 0
  * could pass on a leftover from an earlier test. A recognisable sentinel is strictly better than
  * `clear()`: when the app fails to write, the failure message shows `<markflow-e2e-clipboard-…>`
  * instead of an empty string, which says "the copy never happened" rather than "something odd".
+ *
+ * Internal: only `expectClipboardAfter` seeds, and a spec that seeds by hand loses the sentinel
+ * discipline (and the attempt budget) that the helper provides.
  */
-export async function seedClipboard(app: AppHandle): Promise<string> {
+async function seedClipboard(app: AppHandle): Promise<string> {
   const marker = `<markflow-e2e-clipboard-${process.pid}-${++seedSeq}>`
   await app.electronApp.evaluate(({ clipboard }, text: string) => clipboard.writeText(text), marker)
   return marker

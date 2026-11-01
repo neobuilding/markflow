@@ -215,11 +215,12 @@ npm run e2e:full        # End-to-end: drives the REAL Electron app via Playwrigh
   shared Vite dev server and waits for `dist/electron/index.js`, so the main process must be built
   first (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you
   must run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e:full`.
-- **E2E script family**: `e2e:app` (functional/behavioral specs only), `e2e:perf-gate` (performance
-  regression gate only), `e2e:perf-diag` (threshold-free diagnostics, on demand), and
-  `e2e:full` — `e2e-app` + `e2e-perf-gate` in a **single** Playwright run, which is what CI
-  executes. One run matters: it keeps a single global setup (one Vite dev server) and a single
-  report (`playwright-report/`, `reports/e2e/junit.xml`) covering both suites.
+- **E2E script family**: `e2e:app` (functional/behavioral specs only), `e2e:clipboard` (the specs that
+  write the _real_ system clipboard), `e2e:perf-gate` (performance regression gate only),
+  `e2e:perf-diag` (threshold-free diagnostics, on demand), and `e2e:full` — `e2e-app` +
+  `e2e-clipboard` + `e2e-perf-gate` in a **single** Playwright run, which is what CI executes. One
+  run matters: it keeps a single global setup (one Vite dev server) and a single report
+  (`playwright-report/`, `reports/e2e/junit.xml`) covering all suites.
 - **Clipboard specs are their own project**: the tests that write the _real_ system clipboard
   (`select-all-copy-fidelity`, `pane-toolbars`, `preload-contract`, `formula-copy-image`,
   `copy-once-no-drop-diagrams`, `context-menu`) are destructive — they overwrite whatever you had

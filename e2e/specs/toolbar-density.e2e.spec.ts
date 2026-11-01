@@ -13,6 +13,7 @@
 // 13px inline glyphs on purpose (PLAN C23 "menu item icons stay 13px").
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { VIEWPORTS } from '../helpers/viewports'
 
 const MIN_HIT_PX = 32
 const ICON_PX = 16
@@ -75,8 +76,17 @@ async function assertBarsHitArea(page: Page, ids: readonly string[]): Promise<vo
       0,
     )
     for (const b of bar.buttons) {
-      expect(b.h, `${id} > button "${b.label}" is ${b.h}px tall`).toBeGreaterThanOrEqual(MIN_HIT_PX)
-      expect(b.w, `${id} > button "${b.label}" is ${b.w}px wide`).toBeGreaterThanOrEqual(MIN_HIT_PX)
+      // Round before comparing: `getBoundingClientRect` returns sub-pixel floats (e.g. 31.99998px
+      // for a 32px target), and the design sizes are whole pixels. Rounding keeps the assertion on
+      // the real requirement while ignoring float noise — a genuine 30.125px target still fails.
+      expect(
+        Math.round(b.h),
+        `${id} > button "${b.label}" is ${b.h}px tall`,
+      ).toBeGreaterThanOrEqual(MIN_HIT_PX)
+      expect(
+        Math.round(b.w),
+        `${id} > button "${b.label}" is ${b.w}px wide`,
+      ).toBeGreaterThanOrEqual(MIN_HIT_PX)
     }
   }
 }
@@ -130,16 +140,12 @@ test.describe('toolbar density (E8)', () => {
     const { page } = handle
     await openSplitWithDoc(page)
 
-    // Narrow the window until the editor column drops below the 420px fold threshold, which
-    // collapses the seven format buttons into one dropdown (ADR-0024 §10 trade-off 54).
-    // `setSize` is a no-op on a MAXIMIZED window, so un-maximize first; the window's minWidth is
-    // 800 (electron/main/window.ts), which still leaves each split column under 420px.
-    await handle.electronApp.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows().find((w) => w.isVisible())
-      if (!win) throw new Error('no visible window')
-      if (win.isMaximized()) win.unmaximize()
-      win.setSize(800, 760)
-    })
+    // Drive the editor column below the 420px fold threshold (ADR-0024 §10 trade-off 54) by entering
+    // the named `narrow` environment: its 800px content area leaves each split column at
+    // (800 - 288) / 2 = 256px, collapsing the seven format buttons into one dropdown. We enter a
+    // named environment rather than sizing the OS window by hand, so the width is a shared, reviewed
+    // decision and the no-magic-number guard covers it (see ADR-0026).
+    await page.setViewportSize(VIEWPORTS.narrow)
     // Guard the premise before asserting the result: a window that refused to shrink would
     // otherwise surface as an opaque "element not found" timeout instead of this message.
     const editorBar = page.getByTestId('editor-pane-bar')
@@ -159,12 +165,16 @@ test.describe('toolbar density (E8)', () => {
     for (let i = 0; i < count; i++) {
       const box = await items.nth(i).boundingBox()
       expect(box, `format menu item #${i} has no box`).not.toBeNull()
-      expect(box!.height, `format menu item #${i} is ${box!.height}px tall`).toBeGreaterThanOrEqual(
-        MIN_HIT_PX,
-      )
-      expect(box!.width, `format menu item #${i} is ${box!.width}px wide`).toBeGreaterThanOrEqual(
-        MIN_HIT_PX,
-      )
+      // Round: a 32px menu item can measure 31.99998px under sub-pixel layout, which still meets
+      // the >= 32px intent. A real shortfall (e.g. 30px) is caught.
+      expect(
+        Math.round(box!.height),
+        `format menu item #${i} is ${box!.height}px tall`,
+      ).toBeGreaterThanOrEqual(MIN_HIT_PX)
+      expect(
+        Math.round(box!.width),
+        `format menu item #${i} is ${box!.width}px wide`,
+      ).toBeGreaterThanOrEqual(MIN_HIT_PX)
     }
   })
 

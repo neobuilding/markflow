@@ -67,8 +67,9 @@ export default defineConfig<ClipboardOptions>({
     // ── Performance: one CI gate + one on-demand diagnostic ──────────────────
     //
     // These are separate projects because Playwright runs EVERY project when no
-    // --project is given, so `npm run e2e:full` names both projects explicitly
-    // (see package.json): e2e-app + e2e-perf-gate, in ONE playwright run.
+    // --project is given, so `npm run e2e:full` names the three CI projects explicitly
+    // (see package.json): e2e-app + e2e-clipboard + e2e-perf-gate, in ONE playwright run.
+    // e2e-perf-diag is the fourth project and is deliberately NOT in that list.
     //
     //   e2e-perf-gate  → runs in CI on every PR, has hard thresholds.
     //   e2e-perf-diag  → diagnostic only, no thresholds, run by hand.

@@ -302,12 +302,19 @@ export function SidebarSearch(): React.ReactElement {
 
             The row's gap is `gap-1` (4px), not `gap-1.5` (6px): at the 240px sidebar floor the
             content panel is 192px, and the 6px gaps cost the query field ~6px — which put the
-            input at 78.3px, just under the 80px floor PLAN C9 requires. Reclaiming the gap
-            keeps the field usable at the floor WITHOUT touching the type size (PLAN C9
-            explicitly forbids shrinking the font as the remedy). */}
+            input at 78.3px, just under the 80px floor PLAN C9 requires. Reclaiming the gap keeps
+            the field usable at the floor WITHOUT touching the type size (PLAN C9 explicitly forbids
+            shrinking the font as the remedy).
+
+            The field itself carries `min-w-[80px]` so the 80px floor is enforced in CSS, not left to
+            emergent pixel math. The row box is `px-1.5`, not `px-2`: that 4px of reclaimed padding,
+            on top of the `gap-1` already forced above, is what keeps the primary row INSIDE its box at
+            the 240px sidebar floor (192px content). ADR-0024 §8 requires the row to NOT overflow AND
+            the query to stay ≥80px — both at once. `min-w-[80px]` holds the floor; `px-1.5` holds the
+            no-overflow clause. We do not shrink the type to make room (§8 forbids that). */}
         <div
           data-testid="resident-search-box"
-          className="flex items-center gap-1 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] transition-colors"
+          className="flex items-center gap-1 h-7 px-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] transition-colors"
         >
           {/* The shared `SearchInput` (same component the editor and preview find widgets use) so
               the three surfaces cannot drift apart again. `InputContextMenu` wraps it from outside,
@@ -322,6 +329,7 @@ export function SidebarSearch(): React.ReactElement {
               inputRef={inputRef}
               onKeyDown={onKeyDown}
               onClear={() => setSearchQuery('')}
+              inputClassName="min-w-[80px]"
               leadingIcon={
                 <Search size={13} className="text-[var(--color-text-tertiary)] shrink-0" />
               }

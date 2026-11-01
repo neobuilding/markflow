@@ -12,7 +12,7 @@ describe('Button (RTL example)', () => {
 
   it('applies the icon size class', () => {
     render(<Button size="icon">★</Button>)
-    expect(screen.getByRole('button', { name: '★' })).toHaveClass('h-8', 'w-8', 'p-0')
+    expect(screen.getByRole('button', { name: '★' })).toHaveClass('h-8', 'w-8', 'p-0', 'shrink-0')
   })
 
   // PLAN C23 / ADR-0024 §1.3: hit areas move into the mandated 32-36px band and the toolbar

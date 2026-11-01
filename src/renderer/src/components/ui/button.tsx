@@ -40,7 +40,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
             // E8 ("toolbar buttons >= 32px") true.
             'h-8 px-2.5 text-xs': size === 'sm',
             'h-9 px-3 text-sm': size === 'md',
-            'h-8 w-8 p-0': size === 'icon',
+            'h-8 w-8 p-0 shrink-0': size === 'icon',
           },
           className,
         )}

@@ -96,4 +96,18 @@ describe('SearchInput', () => {
     expect(clear.getAttribute('aria-label')).toBe(t('search.clear'))
     expect(clear.getAttribute('aria-label')).not.toBe('Find in editor')
   })
+
+  it('forwards inputClassName to the inner <input>', () => {
+    render(
+      <SearchInput
+        value=""
+        onChange={() => {}}
+        placeholder="Find"
+        ariaLabel="Find"
+        testId="editor-find-input"
+        inputClassName="min-w-[80px]"
+      />,
+    )
+    expect(screen.getByTestId('editor-find-input')).toHaveClass('min-w-[80px]')
+  })
 })
