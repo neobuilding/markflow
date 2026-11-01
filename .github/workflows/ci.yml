@@ -214,18 +214,28 @@ jobs:
                   fail_ci_if_error: false
                   token: ${{ secrets.CODECOV_TOKEN }}
 
-    # ── E2E: drive the REAL Electron app via Playwright (fully parallel) ─────────
-    # global-setup.ts starts a shared Vite dev server and waits for
-    # dist/electron/index.js (globalSetup + launch.ts consume it), so the
-    # main process must be built first. Electron runs headful, so a virtual
-    # display (xvfb) is required on headless Linux runners. This job is a separate
-    # runner from `ut` (it needs its own `npm ci` + one `npm run build`), which is
-    # the trade-off for running unit tests and e2e concurrently instead of chained.
-    # Like `ut`, it does not wait on `quality`, so a lint / type failure cannot hide
-    # the e2e result.
-    e2e:
-        name: E2E (Electron)
+    # ── E2E: drive the REAL Electron app via Playwright (sharded + parallel) ──────
+    # Why shard: e2e-app is the long pole (~37 functional specs, each launching its
+    # own Electron against the shared Vite dev server from global-setup.ts). Running
+    # it as ONE job serializes ~17 min of wall-clock. We split it across 4 jobs
+    # (matrix) so each shard owns a dedicated 2-core runner. The parallelism comes
+    # from the N shards running on N runners, NOT from --workers inside one job — the
+    # shard command omits --workers so the config's adaptive formula (see
+    # playwright.config.ts) stays the single source of truth. Clipboard + perf-gate
+    # stay in a separate SERIAL job (the per-project workers cap is set in playwright.config.ts)
+    # because they are destructive (real system clipboard) and timing-sensitive (perf
+    # thresholds) respectively. See ADR-0027.
+    # Every job is a separate runner (own npm ci + npm run build) — the setup tax of
+    # sharding, accepted in exchange for the wall-clock win. Like `ut`, none of these
+    # wait on `quality`, so a lint / type failure cannot hide the e2e result.
+    e2e-app-shard:
+        name: E2E App (shard ${{ matrix.shard }}/${{ strategy.job-total }})
         runs-on: ubuntu-latest
+        # fail-fast:false so one flaky shard does not cancel the others.
+        strategy:
+            fail-fast: false
+            matrix:
+                shard: [1, 2, 3, 4]
         # Elevated for dorny/test-reporter (e2e JUnit) + Codecov annotations.
         permissions:
             contents: read
@@ -236,11 +246,8 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
             - run: npm ci
-            # Install Playwright browsers + OS deps for the Electron-driven specs.
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
-            # The main process must be built before e2e (global-setup waits for
-            # dist/electron/index.js). This build is local to the e2e runner.
             - name: Build main process (e2e)
               run: |
                   echo "::group::npm run build (e2e runner)"
@@ -267,17 +274,12 @@ jobs:
                   key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
                   restore-keys: |
                       ${{ runner.os }}-electron-
-            # `npm run e2e:full` composes exactly three Playwright projects: e2e-app
-            # (functional), e2e-clipboard (the specs that write the real system
-            # clipboard — they are destructive, so they live in their own project)
-            # and e2e-perf-gate — the main-process stall
-            # regression gate that stops the folder watcher from going back to
-            # watching every file instead of markdown only.
-            # It deliberately does NOT run quality/coverage/build here: those are
-            # separate jobs in this pipeline.
-            # The diagnostic project (e2e-perf-diag) has no thresholds and is slow
-            # by design, so it is NOT part of this run; use `npm run e2e:perf-diag`.
-            - name: Run e2e (functional + performance gate)
+            # Shard the e2e-app project across the matrix — parallelism comes from
+            # running N shards on N runners (each a dedicated 2-core machine), NOT from
+            # --workers inside one job. The shard command deliberately omits --workers, so
+            # the worker count is whatever playwright.config.ts sets (see that file /
+            # ADR-0027). This keeps the config the single source of truth for concurrency.
+            - name: Run e2e app shard
               # Hard wall-clock cap on the whole step. A bad/unexecutable Electron
               # binary is already caught fast in e2e/global-setup.ts
               # (verifyElectronBinary) — which fails the run at globalSetup BEFORE any
@@ -288,20 +290,19 @@ jobs:
               # permission error means --no-sandbox is missing from the launch args).
               timeout-minutes: 20
               run: |
-                  echo "::group::E2E (functional + performance gate) via Playwright"
-                  xvfb-run --auto-servernum -- npm run e2e:full
+                  echo "::group::E2E app shard ${{ matrix.shard }}/${{ strategy.job-total }}"
+                  xvfb-run --auto-servernum -- npx playwright test --project=e2e-app --shard=${{ matrix.shard }}/${{ strategy.job-total }}
                   echo "::endgroup::"
             - name: Upload e2e report
               if: always()
               uses: actions/upload-artifact@v7
               with:
-                  name: playwright-report
+                  name: playwright-report-app-${{ matrix.shard }}
                   path: |
                       playwright-report/
                       test-results/
                   if-no-files-found: warn
                   retention-days: 7
-
             # ── Scheme 1: render e2e (Playwright JUnit) results into the PR/Checks UI ──
             # Mirrors the unit-test report above for the end-to-end suite. (Playwright's
             # own `github` reporter already adds a native Checks view; this adds the
@@ -311,11 +312,103 @@ jobs:
               continue-on-error: true # Reporting must never block the pipeline; a missing/failed report is non-fatal.
               uses: dorny/test-reporter@v3
               with:
-                  name: E2E Tests (Playwright)
+                  name: E2E App Shard ${{ matrix.shard }}
                   path: reports/e2e/junit.xml
                   reporter: java-junit
                   fail-on-error: false
+            # ── Scheme 2 (E2E): upload Playwright test results to Codecov too ──
+            # Feed the E2E JUnit XML into Codecov Test Analytics so end-to-end
+            # run times / failures / flaky detection are tracked alongside unit tests.
+            - name: Upload e2e results to Codecov
+              if: always()
+              continue-on-error: true # Test Analytics is diagnostic; never fail CI on its account.
+              uses: codecov/codecov-action@v7
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
+                  report_type: test_results
+                  files: reports/e2e/junit.xml
 
+    # Clipboard (writes the REAL system clipboard) + perf-gate (hard timing thresholds)
+    # must NEVER run in parallel — kept serial by the per-project workers cap in
+    # playwright.config.ts. They share this one job; the app specs are sharded above,
+    # so this job stays short. e2e-perf-diag is excluded on purpose (run by hand).
+    e2e-serial:
+        name: E2E Clipboard + Perf Gate (serial)
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: write
+            checks: write
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-node@v7
+              with: { node-version: 22, cache: npm }
+            - run: npm ci
+            - name: Install Playwright browsers + OS deps
+              run: npx playwright install --with-deps
+            - name: Build main process (e2e)
+              run: |
+                  echo "::group::npm run build (e2e runner)"
+                  npm run build
+                  echo "::endgroup::"
+            # Reuse the Electron download cache (~/.cache/electron) so the
+            # first-time lazy install (electron/index.js's install.js, triggered by
+            # the first `import('electron')` in e2e) does not re-download the
+            # artifact on every run. This only speeds up that download; it does NOT
+            # affect the chrome-sandbox permission error that previously broke e2e
+            # under the non-root CI runner. That is fixed by passing --no-sandbox in
+            # e2e/helpers/launch.ts (and the global-setup probe). The fail-fast guard
+            # lives in e2e/global-setup.ts (verifyElectronBinary).
+            - name: Cache Electron binaries (e2e)
+              uses: actions/cache@v6
+              with:
+                  path: |
+                      ~/.cache/electron
+                      ~/.cache/electron-builder
+                      ~/Library/Caches/electron
+                      ~/Library/Caches/electron-builder
+                      %LOCALAPPDATA%\electron\Cache
+                      %LOCALAPPDATA%\electron-builder\Cache
+                  key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+                  restore-keys: |
+                      ${{ runner.os }}-electron-
+            - name: Run e2e (clipboard + performance gate)
+              # Hard wall-clock cap on the whole step. A bad/unexecutable Electron
+              # binary is already caught fast in e2e/global-setup.ts
+              # (verifyElectronBinary) — which fails the run at globalSetup BEFORE any
+              # spec runs. This timeout is only the last-resort backstop for silent
+              # hangs (stuck Electron spawn, zombie child, etc.) that never surface as
+              # an error. If verifyElectronBinary fails, its error message shows the
+              # raw probe stderr — use that to diagnose (e.g. a chrome-sandbox
+              # permission error means --no-sandbox is missing from the launch args).
+              timeout-minutes: 25
+              run: |
+                  echo "::group::E2E clipboard + perf-gate (serial)"
+                  xvfb-run --auto-servernum -- npx playwright test --project=e2e-clipboard --project=e2e-perf-gate
+                  echo "::endgroup::"
+            - name: Upload e2e report
+              if: always()
+              uses: actions/upload-artifact@v7
+              with:
+                  name: playwright-report-serial
+                  path: |
+                      playwright-report/
+                      test-results/
+                  if-no-files-found: warn
+                  retention-days: 7
+            # ── Scheme 1: render e2e (Playwright JUnit) results into the PR/Checks UI ──
+            # Mirrors the unit-test report above for the end-to-end suite. (Playwright's
+            # own `github` reporter already adds a native Checks view; this adds the
+            # PR comment + historical run list in the test-reporter UI.)
+            - name: Publish e2e report
+              if: always()
+              continue-on-error: true # Reporting must never block the pipeline; a missing/failed report is non-fatal.
+              uses: dorny/test-reporter@v3
+              with:
+                  name: E2E Clipboard + Perf Gate
+                  path: reports/e2e/junit.xml
+                  reporter: java-junit
+                  fail-on-error: false
             # ── Scheme 2 (E2E): upload Playwright test results to Codecov too ──
             # Feed the E2E JUnit XML into Codecov Test Analytics so end-to-end
             # run times / failures / flaky detection are tracked alongside unit tests.
@@ -447,7 +540,7 @@ jobs:
         # Needs build, ut, e2e, quality and version directly.
         # Note: the needs context only exposes outputs of *directly* depended-on jobs; version is an indirect
         # dependency of build, so if it were not listed here, needs.version.* would resolve to undefined (invalid CI context error).
-        needs: [build, ut, e2e, quality, version]
+        needs: [build, ut, e2e-app-shard, e2e-serial, quality, version]
         if: needs.version.outputs.tag != ''
         permissions:
             contents: write # Push tag + create draft release needs write permission.
