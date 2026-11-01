@@ -1,6 +1,6 @@
 {
   "name": "markflow",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "description": "A cross-platform Markdown editor with Linear-style UI",
   "main": "dist/electron/index.js",
   "type": "module",
