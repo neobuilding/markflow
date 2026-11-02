@@ -271,4 +271,40 @@ describe('EditorPaneBar', () => {
     reportWidth(239)
     expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
   })
+
+  it('renders the pane bar on the subtle base surface, matching the design image (fig 02 pane bars = #F4F7FB ≈ --color-bg)', () => {
+    renderBar(true)
+    // The design image uses a SUBTLE tint for the pane (editor/preview) bars (#F4F7FB ≈ --color-bg),
+    // distinct from the clearly blue-gray GLOBAL bar (--color-surface-overlay). Assert the pane bar is
+    // the base surface — not the white panel, and not the overlay global-bar tint.
+    expect(screen.getByTestId('editor-pane-bar')).toHaveClass(/bg-\[var\(--color-bg\)\]/)
+    expect(screen.getByTestId('editor-pane-bar')).not.toHaveClass(/surface-overlay/)
+  })
+
+  it('renders toolbar icons as contained white tiles with a subtle border (design fig 02/04)', () => {
+    renderBar(true)
+    const btn = screen.getByTestId('editor-find-btn')
+    // Rest state: white tile (--color-surface) + subtle cool-blue border. The blue-gray overlay is
+    // only a HOVER variant (`hover:bg-...`), never the rest background.
+    expect(btn).toHaveClass(/bg-\[var\(--color-surface\)\]/)
+    expect(btn).toHaveClass(/border-\[var\(--color-border\)\]/)
+    expect(btn).not.toHaveClass('bg-[var(--color-surface-overlay)]')
+  })
+
+  it('shows the read-only toggle in the pressed/active tile state when read-only', () => {
+    renderBar(false) // editable=false → read-only active
+    const btn = screen.getByTestId('editor-readonly-btn')
+    expect(btn).toHaveAttribute('aria-pressed', 'true')
+    expect(btn).toHaveClass(/bg-\[var\(--color-accent-muted\)\]/)
+    expect(btn).toHaveClass(/border-\[var\(--color-accent\)\]/)
+    expect(btn).toHaveClass(/text-accent/)
+  })
+
+  it('shows the read-only toggle as an unpressed white tile when editable', () => {
+    renderBar(true) // editable=true → not pressed
+    const btn = screen.getByTestId('editor-readonly-btn')
+    expect(btn).not.toHaveAttribute('aria-pressed', 'true')
+    expect(btn).toHaveClass(/bg-\[var\(--color-surface\)\]/)
+    expect(btn).toHaveClass(/border-\[var\(--color-border\)\]/)
+  })
 })

@@ -46,7 +46,9 @@
   --color-bg: #f5f7fb;
   --color-surface: #ffffff;
   --color-surface-overlay: #edf2f9;
-  --color-border: #e2e8f0;
+  /* Single cool-blue border (#D9E2EF) per the design image — unified across bars, cards, dividers
+     and toolbar icon tiles. Replaces the previous cooler-gray #e2e8f0 to match the design exactly. */
+  --color-border: #d9e2ef;
   --color-border-strong: #cbd5e1;
   --color-accent: #2563eb;
   --color-accent-hover: #1d4ed8;
@@ -82,7 +84,10 @@
   --color-bg: #0f1419;
   --color-surface: #171d24;
   --color-surface-overlay: #1e252d;
-  --color-border: #2a323b;
+  /* Border nudged from #2a323b to #30363d to align with GitHub Primer's dark
+     --color-border-default (industry reference for a dark-mode hairline). Same
+     single-opaque-token system as the light theme; border-strong keeps its step. */
+  --color-border: #30363d;
   --color-border-strong: #3a4450;
   --color-accent: #3b82f6;
   --color-accent-hover: #60a5fa;
@@ -101,6 +106,14 @@
   ); /* destructive hover/focus fill */
   --color-success: #30a46c;
   --color-warning: #f76b15;
+}
+
+/* Toolbar icon buttons (Button variant 'toolbar', and the raw source/split/preview mode switches
+   which carry the `toolbar-btn` class): the design image draws toolbar icons with a 1.8px stroke,
+   while lucide-react defaults to 2px. Scope the thinner stroke to toolbar tiles only — other icon
+   contexts keep lucide's default. */
+.toolbar-btn svg {
+  stroke-width: 1.8;
 }
 
 html,

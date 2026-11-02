@@ -407,4 +407,23 @@ describe('PreviewToolbar', () => {
     )
     expect(screen.queryByTestId('export-btn')).toBeNull()
   })
+
+  it('renders the pane bar on the subtle base surface, matching the design image (fig 02 pane bars = #F4F7FB ≈ --color-bg)', () => {
+    setup(<p>hello</p>)
+    // The design image uses a SUBTLE tint for the pane (preview) bar (#F4F7FB ≈ --color-bg), distinct
+    // from the clearly blue-gray GLOBAL bar (--color-surface-overlay). Assert base surface — not white
+    // panel, not overlay.
+    expect(screen.getByTestId('preview-pane-bar')).toHaveClass(/bg-\[var\(--color-bg\)\]/)
+    expect(screen.getByTestId('preview-pane-bar')).not.toHaveClass(/surface-overlay/)
+  })
+
+  it('renders toolbar icons as contained white tiles with a subtle border (design fig 02/04)', () => {
+    setup(<p>hello</p>)
+    const btn = screen.getByTestId('preview-find-btn')
+    // Rest state: white tile (--color-surface) + subtle cool-blue border. The blue-gray overlay is
+    // only a HOVER variant (`hover:bg-...`), never the rest background.
+    expect(btn).toHaveClass(/bg-\[var\(--color-surface\)\]/)
+    expect(btn).toHaveClass(/border-\[var\(--color-border\)\]/)
+    expect(btn).not.toHaveClass('bg-[var(--color-surface-overlay)]')
+  })
 })

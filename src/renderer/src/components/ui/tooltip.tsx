@@ -15,12 +15,13 @@ const TooltipContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        // Linear-style tooltip: dark charcoal bg, crisp white text,
-        // subtle shadow, smooth animation no more "black blob"
-        // Uses dark: variant so dark theme gets a slightly lighter bg.
+        // Inverted tooltip per design fig 02: dark-navy bubble (#1F2937 == --color-text-primary)
+        // + white text + NO visible border (the SVG has stroke == fill). PLAN C22 forbids inline hex,
+        // so both themes are pure tokens: bubble = --color-text-primary, text = --color-bg. This
+        // matches the diagram in light and keeps a token-only, C22-compliant bubble in dark.
         'z-50 overflow-hidden rounded-md border px-2.5 py-1.5 text-xs font-medium leading-none shadow-linear-lg animate-fade-in',
-        'bg-[#1a1a1a] border-black/40 text-white',
-        'dark:bg-[#2a2a2a] dark:border-[var(--color-border-strong)]',
+        'bg-[var(--color-text-primary)] border-[var(--color-text-primary)] text-white',
+        'dark:bg-[var(--color-text-primary)] dark:border-[var(--color-text-primary)] dark:text-[var(--color-bg)]',
         className,
       )}
       {...props}

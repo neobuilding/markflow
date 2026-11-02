@@ -33,15 +33,15 @@ export default defineConfig<ClipboardOptions>({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  // Concurrency budget = (available CPU parallelism − 1), capped at 8, never below 1.
+  // Concurrency budget = (available CPU parallelism − 2), capped at 8, never below 1.
   // `os.availableParallelism()` (Node ≥ 18.14; the repo's toolchain requires Node ≥ 20.19)
   // honours the CPU affinity mask AND the container's cgroup CPU quota, so it stays honest on a
   // CI runner that is limited to fewer cores than its host — `os.cpus().length` would report
   // the HOST's core count there and over-subscribe the runner.
-  // Local (many cores) → up to 7 workers; CI (2-core runner) → 1.
+  // Local (many cores) → up to 7 workers; CI (2-core runner) → 2.
   // The clipboard / perf projects below override this to 1: they are destructive
   // (real system clipboard) or timing-sensitive (perf thresholds).
-  workers: Math.max(1, Math.min(availableParallelism(), 8) - 1),
+  workers: Math.max(1, Math.min(availableParallelism(), 8) - 2),
   reporter: process.env.CI
     ? [
         ['github'],

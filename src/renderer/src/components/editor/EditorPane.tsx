@@ -114,6 +114,15 @@ function isEditableTarget(el: Element | null): boolean {
   return false
 }
 
+/**
+ * The three exclusive view modes, in the order the toolbar renders them.
+ *
+ * They are an ARIA **radio group**, not three independent toggles: exactly one is active at a
+ * time, so the group is a single Tab stop (roving tabindex) and the arrow keys move AND select
+ * (ARIA APG, radio group pattern). The order here is also the arrow-key order.
+ */
+const VIEW_MODE_ORDER: ViewMode[] = ['edit', 'split', 'preview']
+
 export function EditorPane(): React.ReactElement {
   const {
     activeDocumentId,
@@ -121,11 +130,35 @@ export function EditorPane(): React.ReactElement {
     setViewMode,
     editable,
     toggleSidebar,
+    sidebarOpen,
     closeDocument,
     externalChange,
     clearExternalChange,
   } = useUIStore()
   const { t } = useT()
+  // Radio-group plumbing for the view-mode control: the refs let the arrow handler move DOM focus
+  // to the radio it just selected (the roving tabindex alone moves the *tab stop*, not the focus).
+  const viewModeRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const onViewModeKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const cur = VIEW_MODE_ORDER.indexOf(viewMode)
+      let next = -1
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        next = (cur + 1) % VIEW_MODE_ORDER.length
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        next = (cur - 1 + VIEW_MODE_ORDER.length) % VIEW_MODE_ORDER.length
+      } else if (e.key === 'Home') {
+        next = 0
+      } else if (e.key === 'End') {
+        next = VIEW_MODE_ORDER.length - 1
+      }
+      if (next < 0) return
+      e.preventDefault()
+      setViewMode(VIEW_MODE_ORDER[next])
+      viewModeRefs.current[next]?.focus()
+    },
+    [viewMode, setViewMode],
+  )
   // Resident search jump (Phase 4): when a search hit is clicked, openDocumentWithMatch stores
   // the target offset here; we hand it to the editor, which selects + scrolls once the document
   // content has loaded, then calls back to clear it.
@@ -597,13 +630,14 @@ export function EditorPane(): React.ReactElement {
 
   // Shared toolbar: open/close/sidebar/edit-mode toggle (used by both empty and document states)
   const CommonToolbar = (
-    <div className="titlebar-no-drag flex items-center gap-0.5">
+    <div className="titlebar-no-drag flex items-center gap-1.5">
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="toolbar"
             size="icon"
             aria-label={t('menu.toggleSidebar')}
+            aria-pressed={sidebarOpen}
             data-testid="sidebar-toggle-btn"
             onClick={toggleSidebar}
           >
@@ -623,7 +657,7 @@ export function EditorPane(): React.ReactElement {
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="toolbar"
             size="icon"
             aria-label={t('sidebar.goToFile')}
             data-testid="editor-goto-file-btn"
@@ -640,14 +674,9 @@ export function EditorPane(): React.ReactElement {
           {t('editor.goToFileShortcut', { shortcut: formatShortcut('⌘K') })}
         </TooltipContent>
       </Tooltip>
-      {/* The shortcut chip is always visible, not just inside the tooltip: in a keyboard-first
-          app the ⌘K entry point must be discoverable without hovering (§6 step 9 / §10.2). */}
-      <kbd
-        data-testid="editor-goto-file-chip"
-        className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs text-[var(--color-text-tertiary)]"
-      >
-        {formatShortcut('⌘K')}
-      </kbd>
+      {/* The ⌘K shortcut is surfaced in the button's TOOLTIP, not as a persistent chip: the
+          diagram's own rule is "toolbar shows icons only; persistent text is reserved for the
+          title / breadcrumb / input / mode state" (fig 02). A bare ⌘K chip would violate that. */}
       {/* Save / Save As / Reload grouped with Open/Close as file operations, kept on the left */}
       {activeDocumentId && (
         <>
@@ -658,7 +687,7 @@ export function EditorPane(): React.ReactElement {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="ghost"
+                variant="toolbar"
                 size="icon"
                 onClick={handleSave}
                 disabled={!editable || !dirty || updateMut.isPending || saveAsMut.isPending}
@@ -679,7 +708,7 @@ export function EditorPane(): React.ReactElement {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="ghost"
+                variant="toolbar"
                 size="icon"
                 onClick={handleSaveAs}
                 disabled={!editable || saveAsMut.isPending}
@@ -697,7 +726,7 @@ export function EditorPane(): React.ReactElement {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="ghost"
+                variant="toolbar"
                 size="icon"
                 onClick={handleReload}
                 disabled={reloadMut.isPending}
@@ -714,7 +743,7 @@ export function EditorPane(): React.ReactElement {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant="ghost"
+                variant="toolbar"
                 size="icon"
                 onClick={() => doc && useUIStore.getState().setFileDetailsId(doc.id)}
                 data-testid="file-details-btn"
@@ -734,7 +763,7 @@ export function EditorPane(): React.ReactElement {
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
-                  variant="ghost"
+                  variant="toolbar"
                   size="icon"
                   onClick={() => useUIStore.getState().setExportOpen(true)}
                   data-testid="export-btn"
@@ -754,7 +783,7 @@ export function EditorPane(): React.ReactElement {
 
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" onClick={handleClose} data-testid="close-btn">
+          <Button variant="toolbar" size="icon" onClick={handleClose} data-testid="close-btn">
             <X size={16} />
           </Button>
         </TooltipTrigger>
@@ -768,7 +797,7 @@ export function EditorPane(): React.ReactElement {
       <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface)]">
         <div
           data-testid="global-bar"
-          className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] shrink-0"
+          className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] bg-[var(--color-surface-overlay)] shrink-0"
           style={{ height: 'var(--titlebar-height)' }}
         >
           {CommonToolbar}
@@ -900,7 +929,7 @@ export function EditorPane(): React.ReactElement {
       {/* Toolbar */}
       <div
         data-testid="global-bar"
-        className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] shrink-0"
+        className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] bg-[var(--color-surface-overlay)] shrink-0"
         style={{ height: 'var(--titlebar-height)' }}
       >
         <div className="titlebar-no-drag flex items-center gap-1 flex-1 min-w-0">
@@ -961,7 +990,7 @@ export function EditorPane(): React.ReactElement {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
-                        variant="ghost"
+                        variant="toolbar"
                         size="icon"
                         className="shrink-0"
                         onClick={startTitleEdit}
@@ -979,8 +1008,18 @@ export function EditorPane(): React.ReactElement {
           </div>
 
           <div className="flex items-center gap-0.5">
-            {/* View mode */}
-            <div className="flex items-center rounded border border-[var(--color-border)] overflow-hidden ml-1">
+            {/* View mode — an EXCLUSIVE choice (editor / split / preview), so it is an ARIA radio
+                group: exactly one checked radio, ONE Tab stop for the whole group (roving
+                tabindex) and arrow keys that move AND select (ARIA APG radio group). The design
+                image (fig 02) draws the three as SEPARATE 40x32 tiles with a 6px gap — the active
+                one filled with the accent tint and an accent edge — not as a joined segmented
+                control, so the group itself carries no border or clipping. */}
+            <div
+              role="radiogroup"
+              aria-label={t('editor.view.label')}
+              className="flex items-center gap-1.5 ml-1"
+              onKeyDown={onViewModeKeyDown}
+            >
               {(
                 [
                   {
@@ -999,17 +1038,23 @@ export function EditorPane(): React.ReactElement {
                     tip: t('editor.view.preview'),
                   },
                 ] as const
-              ).map(({ mode, icon, tip }) => (
+              ).map(({ mode, icon, tip }, i) => (
                 <Tooltip key={mode}>
                   <TooltipTrigger asChild>
                     <button
+                      role="radio"
+                      aria-checked={viewMode === mode}
+                      tabIndex={viewMode === mode ? 0 : -1}
+                      ref={(el) => {
+                        viewModeRefs.current[i] = el
+                      }}
                       onClick={() => setViewMode(mode)}
                       data-testid={`view-${mode}`}
                       className={cn(
-                        'h-8 px-2 text-xs transition-colors',
+                        'toolbar-btn flex h-8 w-10 shrink-0 items-center justify-center transition-colors border rounded',
                         viewMode === mode
-                          ? 'bg-[var(--color-accent-muted)] text-accent'
-                          : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]',
+                          ? 'bg-[var(--color-accent-muted)] text-accent border-[var(--color-accent)]'
+                          : 'bg-[var(--color-surface)] text-[var(--color-text-tertiary)] border-[var(--color-border)] hover:bg-[var(--color-surface-overlay)] hover:text-[var(--color-text-secondary)]',
                       )}
                     >
                       {icon}

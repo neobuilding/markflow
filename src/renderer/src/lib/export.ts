@@ -197,7 +197,7 @@ export async function buildExportParts(opts: {
   }
   // C33a: the shared .markdown-body overrides + dark hljs palette, with the export-scoped --md-pre-*
   // tokens injected (ADR-0024 §1.1) so the exported code-block box matches the live preview exactly.
-  const rootVars = `  --md-pre-bg: ${opts.theme === 'dark' ? '#1e252d' : '#edf2f9'};\n  --md-pre-border: ${opts.theme === 'dark' ? '#2a323b' : '#e2e8f0'};`
+  const rootVars = `  --md-pre-bg: ${opts.theme === 'dark' ? '#1e252d' : '#edf2f9'};\n  --md-pre-border: ${opts.theme === 'dark' ? '#30363d' : '#d9e2ef'};`
   return {
     theme: opts.theme,
     lang,

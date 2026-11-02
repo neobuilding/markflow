@@ -77,6 +77,28 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   in-memory only, never persisted. See `docs/adr/0010-sidebar-folder-filter-toggle.md`.
   _Avoid_: "show empty folders" (a valid checkbox synonym, but the canonical toggle name is 显示所有文件夹)
 
+## UI surfaces
+
+- **Quick Open (⌘K)** — the global-bar command that opens a document by name/path (Goto File). Its ⌘K
+  shortcut is surfaced through the button's Tooltip / aria-label. It is **not** a persistent chip on
+  the toolbar: the design diagram (fig 02) shows ⌘K only as a Tooltip example, so there is no
+  always-visible "⌘K" chip element.
+- **Tooltip** — the popover shown on hover/focus for icon-only controls. It carries the control's full
+  name and any keyboard shortcut. Its bubble is the theme's text colour with the theme's background as
+  text, and has no visible border (border colour equals the fill).
+- **Activity bar** — the always-present ~48px vertical icon column at the left of the sidebar (Files /
+  Search switch). It is **permanent**: collapsing the sidebar (⌘B) hides only the content panel, never
+  the activity bar.
+- **Content panel** — the sidebar region (file tree or search) that sits to the right of the activity
+  bar and unmounts when the sidebar is collapsed.
+- **Global bar** — the single toolbar mounted above the content area in every view mode (sidebar
+  toggle, Quick Open, save, file details, close, the source/split/preview switch, title + path).
+- **Editor pane bar** — the per-pane toolbar attached to the editor pane, holding the editor-only
+  clusters (Markdown formatting, find/replace, undo/redo, read-only toggle). One per column in split
+  mode.
+- **Preview pane bar** — the per-pane toolbar attached to the preview pane (find, export HTML, copy,
+  more).
+
 ## Storage & search (main process)
 
 - **Document Store** — the in-memory `Map` (`electron/main/model/documentStore.ts`) holding loaded documents;

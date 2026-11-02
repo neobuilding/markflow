@@ -39,4 +39,49 @@ describe('Button (RTL example)', () => {
     fireEvent.click(btn)
     expect(onClick).not.toHaveBeenCalled()
   })
+
+  // The `toolbar` variant is the design image's CONTAINED ICON TILE (fig 02/04 + ADR-0024 §1.4):
+  // a white tile carrying the `--color-border` edge, and -- for a real toggle -- an accent-tinted
+  // tile with an accent edge and accent glyph when it is pressed. The pressed look is driven by
+  // `aria-pressed`, so it exists only where a control really has an on/off state.
+  it('paints the toolbar variant as a white tile with the border edge and the muted glyph', () => {
+    render(
+      <Button variant="toolbar" size="icon" aria-label="Save">
+        ★
+      </Button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Save' })
+    expect(btn).toHaveClass('bg-[var(--color-surface)]')
+    expect(btn).toHaveClass('border-[var(--color-border)]')
+    expect(btn).toHaveClass('text-[var(--color-text-secondary)]')
+    // The focus ring and the disabled treatment come from the base class list, not from the variant.
+    expect(btn).toHaveClass('focus-visible:ring-2')
+    expect(btn).toHaveClass('disabled:opacity-50')
+  })
+
+  it('paints the pressed toolbar tile with the accent fill, edge and glyph', () => {
+    render(
+      <Button variant="toolbar" size="icon" aria-label="Read-only" aria-pressed="true">
+        ★
+      </Button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Read-only' })
+    expect(btn).toHaveAttribute('aria-pressed', 'true')
+    expect(btn).toHaveClass('aria-[pressed=true]:bg-[var(--color-accent-muted)]')
+    expect(btn).toHaveClass('aria-[pressed=true]:border-[var(--color-accent)]')
+    expect(btn).toHaveClass('aria-[pressed=true]:text-accent')
+  })
+
+  it('leaves an unpressed toolbar tile on the rest look', () => {
+    render(
+      <Button variant="toolbar" size="icon" aria-label="Read-only" aria-pressed="false">
+        ★
+      </Button>,
+    )
+    const btn = screen.getByRole('button', { name: 'Read-only' })
+    expect(btn).toHaveAttribute('aria-pressed', 'false')
+    // The rest look is the tile itself, not the accent fill.
+    expect(btn).toHaveClass('bg-[var(--color-surface)]')
+    expect(btn).toHaveClass('border-[var(--color-border)]')
+  })
 })

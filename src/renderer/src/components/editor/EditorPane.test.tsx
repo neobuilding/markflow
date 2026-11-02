@@ -123,12 +123,13 @@ it('jumps the editor to a pending search hit and then clears it (Phase 4)', asyn
 })
 
 // D22 / §6 step 9: the Quick Open trigger lives in the editor's CommonToolbar, next to the
-// sidebar toggle — and the shortcut chip is ALWAYS visible, not just inside the tooltip.
+// sidebar toggle. Per the diagram's own rule ("toolbar shows icons only; persistent text is
+// reserved for the title / breadcrumb / input / mode state"), the ⌘K shortcut is surfaced in the
+// button's TOOLTIP, not as a persistent chip — so the bar stays icon-only like the mockup.
 describe('EditorPane — Quick Open trigger (D22)', () => {
-  it('renders the trigger with its shortcut chip when a document is open', () => {
+  it('renders the trigger when a document is open', () => {
     mount()
     expect(screen.getByTestId('editor-goto-file-btn')).toBeTruthy()
-    expect(screen.getByTestId('editor-goto-file-chip').textContent).toMatch(/K/)
   })
 
   it('renders the trigger with NO document open (empty state)', () => {
@@ -138,7 +139,6 @@ describe('EditorPane — Quick Open trigger (D22)', () => {
     useUIStore.getState().setActiveDocumentId(null)
     mount()
     expect(screen.getByTestId('editor-goto-file-btn')).toBeTruthy()
-    expect(screen.getByTestId('editor-goto-file-chip')).toBeTruthy()
     useUIStore.getState().setActiveDocumentId('a')
     h.noDoc = false
   })
@@ -946,5 +946,72 @@ describe('EditorPane focus indicators (C32 U5)', () => {
     expect(input.className).not.toContain('focus:ring-1')
     expect(input.className).not.toContain('focus:ring-2')
     expect(input.className).not.toContain('focus:border-accent')
+  })
+})
+
+// The view mode is an EXCLUSIVE choice (editor / split / preview), so it is an ARIA radio group
+// (APG radio group): exactly one checked radio, ONE Tab stop for the whole group (roving
+// tabindex) and arrow keys that move AND select. Before this it was three plain buttons whose
+// active state was VISUAL ONLY -- nothing told a screen reader which mode was on.
+describe('EditorPane — view mode radio group', () => {
+  it('exposes the three modes as one radio group with exactly one checked radio', () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    const group = screen.getByRole('radiogroup', { name: 'View mode' })
+    const radios = screen.getAllByRole('radio')
+    expect(radios).toHaveLength(3)
+    expect(group).toContainElement(radios[1])
+    expect(radios.filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(1)
+    expect(screen.getByTestId('view-split')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('view-edit')).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByTestId('view-preview')).toHaveAttribute('aria-checked', 'false')
+    // Every mode is a CONTAINED TILE (design fig 02): the unchecked ones are white tiles with the
+    // border edge, the checked one is the accent-tinted tile with an accent edge.
+    expect(screen.getByTestId('view-edit')).toHaveClass('bg-[var(--color-surface)]')
+    expect(screen.getByTestId('view-preview')).toHaveClass('bg-[var(--color-surface)]')
+    expect(screen.getByTestId('view-split')).toHaveClass('bg-[var(--color-accent-muted)]')
+    expect(screen.getByTestId('view-split')).toHaveClass('border-[var(--color-accent)]')
+  })
+
+  it('keeps a roving tabindex: only the checked radio is a Tab stop', () => {
+    useUIStore.getState().setViewMode('preview')
+    mount()
+    expect(screen.getByTestId('view-preview')).toHaveAttribute('tabindex', '0')
+    expect(screen.getByTestId('view-edit')).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByTestId('view-split')).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('moves and selects with the arrow keys, and jumps with Home/End', () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    const group = screen.getByRole('radiogroup', { name: 'View mode' })
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(useUIStore.getState().viewMode).toBe('split')
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(useUIStore.getState().viewMode).toBe('preview')
+    // Wraps around to the first mode.
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(useUIStore.getState().viewMode).toBe('edit')
+    fireEvent.keyDown(group, { key: 'ArrowLeft' })
+    expect(useUIStore.getState().viewMode).toBe('preview')
+    fireEvent.keyDown(group, { key: 'Home' })
+    expect(useUIStore.getState().viewMode).toBe('edit')
+    fireEvent.keyDown(group, { key: 'End' })
+    expect(useUIStore.getState().viewMode).toBe('preview')
+  })
+})
+
+// The sidebar toggle is a real toggle, so it must expose its state: the design image draws the
+// global bar's active control as an accent-tinted tile (fig 02), and `aria-pressed` is what both
+// the screen reader and the pressed styling read.
+describe('EditorPane — global bar toggles', () => {
+  it('reports the sidebar state on the sidebar toggle', () => {
+    useUIStore.getState().setSidebarOpen(true)
+    mount()
+    const toggle = screen.getByTestId('sidebar-toggle-btn')
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(toggle)
+    expect(useUIStore.getState().sidebarOpen).toBe(false)
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
   })
 })

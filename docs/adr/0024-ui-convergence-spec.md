@@ -40,7 +40,7 @@ backgrounds `#f4f7fb`–`#f8fafd`, slate text steps `#1f2937` / `#637083` / `#68
 | `--color-bg`              | `#f5f7fb` | `#0f1419` | cool-tinted base, **not** neutral grey                                                                                         |
 | `--color-surface`         | `#ffffff` | `#171d24` |                                                                                                                                |
 | `--color-surface-overlay` | `#edf2f9` | `#1e252d` | hover fill, activity bar                                                                                                       |
-| `--color-border`          | `#e2e8f0` | `#2a323b` |                                                                                                                                |
+| `--color-border`          | `#d9e2ef` | `#30363d` |                                                                                                                                |
 | `--color-border-strong`   | `#cbd5e1` | `#3a4450` |                                                                                                                                |
 | `--color-accent`          | `#2563eb` | `#3b82f6` | dark step is lighter so it reads on `#0f1419`                                                                                  |
 | `--color-accent-hover`    | `#1d4ed8` | `#60a5fa` |                                                                                                                                |
@@ -52,6 +52,16 @@ backgrounds `#f4f7fb`–`#f8fafd`, slate text steps `#1f2937` / `#637083` / `#68
 | `--color-danger-text`     | `#b03039` | `#f87171` | the **only** semantic colour permitted **as text**: destructive menu items (≥4.5:1 on every surface **and** on the hover fill) |
 | `--color-success`         | `#16845b` | `#30a46c` |                                                                                                                                |
 | `--color-warning`         | `#b66a00` | `#f76b15` |                                                                                                                                |
+
+**Amended 2026-11-02 — `--color-border` is `#d9e2ef`, the diagrams' own tile edge.** The diagrams
+draw every control that sits on a bar or a card as a **contained tile**: a `#ffffff` fill with a
+`#d9e2ef` edge (fig 02/04). The app now paints its toolbar icon buttons the same way, so the one
+border token carries that edge app-wide. The value is _lighter_ than the previous `#e2e8f0`; it is a
+non-text decorative edge (WCAG 1.4.11 does not govern it), and the surfaces it separates
+(`surface` / `bg` / `surface-overlay`) differ far more in lightness than the edge itself, so no
+contrast regression follows. The dark theme keeps `#30363d` (nudged from `#2a323b` to align with
+GitHub Primer's dark `--color-border-default`, an industry-standard dark hairline; the diagrams
+specify no dark edge, so this is a best-practice alignment, not a diagram value).
 
 **The accessibility correction (mandatory).** The diagrams' two lightest slate steps are **not
 shippable**: `#94a3b8` on `#f5f7fb` is **2.39:1** and `#8893a2` also fails the 4.5:1 floor of
@@ -240,12 +250,40 @@ filed as a bug.
   (`shadow-linear-lg`), so the tooltip, the status-bar popovers and the app banner no longer
   carry a second, harder Tailwind `shadow-lg`.
 
+  **Tooltip.** The bubble takes the theme's _text_ colour and its text takes the theme's _background_
+  colour — `--color-text-primary` bubble / `--color-bg` text, with **no visible border** (border
+  colour equals the fill). In light this is fig 02's navy `#1F2937` bubble with white text; in dark it
+  is the inverted token pair. This is the C22-compliant, **token-only** form (no inline hex) — the old
+  `#1a1a1a` / `#2a2a2a` literals were removed.
+
 ### 1.4 Iconography
 
 An icon must disambiguate, not decorate. Two adjacent controls whose icons are the same glyph
 read as the same action. Concretely: Quick Open (`⌘K`) and in-document Find (`⌘F`) sit one
 button apart in the editor toolbar, so Quick Open is a document glyph (`FileText`), **not** a
 second magnifier. `List` is reserved for the bullet-list formatting action in the same toolbar.
+
+**Toolbar icon tiles (added 2026-11-02).** An icon button on one of the three bars is a
+**contained tile**, not a bare glyph floating on the bar: the diagrams draw them that way (fig 02/04
+— a `#ffffff` fill with a `#d9e2ef` edge; the active one filled `#eaf2ff` with a `#2563eb` edge and
+a `#2563eb` glyph). `ui/button.tsx` carries that as its `toolbar` variant:
+
+- **rest** — fill `--color-surface`, edge `--color-border`, glyph `--color-text-secondary`
+  (`#536176`, which is already the diagrams' own rest stroke);
+- **hover** — fill `--color-surface-overlay`, glyph `--color-text-primary`;
+- **pressed** — fill `--color-accent-muted`, edge `--color-accent`, glyph `--color-accent`.
+
+The pressed state is driven by `aria-pressed`, so it exists only for real toggles (the read-only
+switch, the sidebar toggle). The **view mode** control is an _exclusive_ choice and is therefore an
+ARIA radio group (APG): one checked radio, a roving tabindex, and arrow keys that move _and_ select
+— not three independent toggle buttons.
+
+Toolbar glyphs are stroked at **1.8px** (the diagrams' value; lucide defaults to 2px). The override
+is scoped to the tiles (`.toolbar-btn svg`), so icons elsewhere keep lucide's default.
+
+The tile-to-tile gap follows the diagrams: **6px (`gap-1.5`)** on the global bar (fig 02, measured
+7px) and **4px (`gap-1`)** on the pane bars (fig 03/04, measured 5px). The view-mode radio tiles are
+40×32 (fig 02) with the same 6px gap.
 
 ---
 
@@ -530,11 +568,11 @@ At the 192px minimum content width the primary row must not overflow and the que
 
 ## 9. Empty state (C8)
 
-With no document open the **global bar** shows only what can act: sidebar toggle, Quick Open (with
-its `⌘K` chip) and Close. **Save / Save-As / Reload / file details / export / the view switch /
-find / replace / read-only toggle are all gated** — the first group on `activeDocumentId`, the view
-switch on the document branch itself — together with the dividers that precede them: a lone
-divider floating after a chip is worse than none.
+With no document open the **global bar** shows only what can act: sidebar toggle, Quick Open (⌘K
+surfaced via its Tooltip, **not** a persistent chip) and Close. **Save / Save-As / Reload / file
+details / export / the view switch / find / replace / read-only toggle are all gated** — the first
+group on `activeDocumentId`, the view switch on the document branch itself — together with the
+dividers that precede them: a lone divider floating after a button group is worse than none.
 
 **Find is gated too, and that is correct**: with no document there is no content to search, so a
 find entry point would be a dead control — the same reasoning that removes the read-only toggle
@@ -587,8 +625,8 @@ slim global bar:
 > content area. Pinning all three to one number would either clip the drag region or waste 2px on
 > every pane bar.
 
-- **Global bar** (single- or split-pane, always mounted): sidebar toggle, Quick Open with its
-  permanent `⌘K` chip, save / save-as / reload, **file details (`⌘I`)**, close, and the
+- **Global bar** (single- or split-pane, always mounted): sidebar toggle, Quick Open (⌘K surfaced
+  via its Tooltip, **no** persistent chip), save / save-as / reload, **file details (`⌘I`)**, close, and the
   source/split/preview switch. Document title and truncated path live here. In single-pane mode it
   stays — dropping it would strand save and export. **Export HTML lives here only in edit-only mode**
   (the preview pane is `hidden` then, so there is no rendered result to inspect); when the preview is

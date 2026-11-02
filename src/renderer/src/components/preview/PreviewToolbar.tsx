@@ -322,12 +322,12 @@ export function PreviewToolbar({
   return (
     <div
       data-testid="preview-pane-bar"
-      className="titlebar-no-drag flex items-center gap-0.5 px-3 h-9 border-b border-[var(--color-border)] bg-[var(--color-surface)] shrink-0"
+      className="titlebar-no-drag flex items-center gap-1 px-3 h-9 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0"
     >
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="toolbar"
             size="icon"
             data-testid="preview-find-btn"
             aria-label={t('preview.find')}
@@ -343,7 +343,7 @@ export function PreviewToolbar({
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant="ghost"
+              variant="toolbar"
               size="icon"
               data-testid="export-btn"
               aria-label={t('editor.export')}
@@ -361,7 +361,7 @@ export function PreviewToolbar({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="toolbar"
             size="icon"
             data-testid="preview-copy-btn"
             aria-label={t('preview.copyRendered')}
@@ -378,7 +378,7 @@ export function PreviewToolbar({
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
               <Button
-                variant="ghost"
+                variant="toolbar"
                 size="icon"
                 data-testid="preview-more-btn"
                 aria-label={t('preview.more')}

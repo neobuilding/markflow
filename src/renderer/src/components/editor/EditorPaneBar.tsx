@@ -134,7 +134,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
     <Tooltip key={tip}>
       <TooltipTrigger asChild>
         <Button
-          variant="ghost"
+          variant="toolbar"
           size="icon"
           data-testid={`fmt-${before}-${after}`}
           aria-label={t(tip)}
@@ -152,17 +152,17 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
     <div
       ref={barRef}
       data-testid="editor-pane-bar"
-      className="titlebar-no-drag flex items-center gap-0.5 px-3 h-9 border-b border-[var(--color-border)] bg-[var(--color-surface)] shrink-0"
+      className="titlebar-no-drag flex items-center gap-1 px-3 h-9 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0"
     >
       {mode === 'wide' ? (
-        <div className="flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-[var(--color-border)]">
+        <div className="flex items-center gap-1 mr-1.5 pr-1.5 border-r border-[var(--color-border)]">
           {formatButtons}
         </div>
       ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
-              variant="ghost"
+              variant="toolbar"
               size="icon"
               data-testid="fmt-dropdown-btn"
               aria-label={t('editor.format')}
@@ -189,7 +189,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="toolbar"
             size="icon"
             data-testid="editor-find-btn"
             aria-label={t('editor.findShortcut', { shortcut: formatShortcut('⌘F') })}
@@ -206,7 +206,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
-            variant="ghost"
+            variant="toolbar"
             size="icon"
             data-testid="editor-replace-btn"
             aria-label={t('editor.replaceShortcut', { shortcut: formatShortcut('⌘H') })}
@@ -226,7 +226,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
-              variant="ghost"
+              variant="toolbar"
               size="icon"
               data-testid="editor-overflow-btn"
               aria-label={t('editor.more')}
@@ -253,10 +253,11 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
           <Tooltip key={key}>
             <TooltipTrigger asChild>
               <Button
-                variant="ghost"
+                variant="toolbar"
                 size="icon"
                 data-testid={testId}
                 aria-label={label}
+                aria-pressed={key === 'readonly' ? !editable : undefined}
                 disabled={disabled}
                 onClick={onClick}
               >

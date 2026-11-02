@@ -95,6 +95,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'editor.view.editor': '编辑',
   'editor.view.split': '分屏',
   'editor.view.preview': '预览',
+  'editor.view.label': '视图模式',
   'editor.showInFolder': '在文件夹中显示',
   'editor.openSegmentFolder': '定位到此文件夹',
   'editor.copyPath': '复制路径',

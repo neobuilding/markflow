@@ -964,7 +964,7 @@ export function Sidebar(): React.ReactElement | null {
           role="tabpanel"
           id={`sidebar-panel-${sidebarView}`}
           aria-labelledby={`activity-bar-tab-${sidebarView}`}
-          className="relative flex flex-col h-full flex-1 min-w-0 border-r border-[var(--color-border)] bg-[var(--color-bg)] animate-slide-in-left"
+          className="relative flex flex-col h-full flex-1 min-w-0 border-r border-[var(--color-border)] bg-[var(--color-surface)] animate-slide-in-left"
           onKeyDown={handleSidebarKeyDown}
           ref={asideRef}
           // Focusable so the activity bar's focus hand-off has somewhere to land, and so clicking

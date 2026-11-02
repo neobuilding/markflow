@@ -108,6 +108,7 @@ export const en = {
   'editor.view.editor': 'Editor',
   'editor.view.split': 'Split',
   'editor.view.preview': 'Preview',
+  'editor.view.label': 'View mode',
   'editor.showInFolder': 'Show in folder',
   'editor.openSegmentFolder': 'Go to this folder',
   'editor.copyPath': 'Copy path',
