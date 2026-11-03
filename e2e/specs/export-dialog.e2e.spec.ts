@@ -131,6 +131,12 @@ test.describe('export dialog', () => {
 
     // Simulate the "rendering in flight" window deterministically: the store flag is what the
     // preview flips while a document switch or a pending parse is in progress.
+    //
+    // WAIT for the just-typed document's own parse to fully settle FIRST. MarkdownPreview flips
+    // exportReady → true inside the async parseMarkdown().then(...) callback; if we forced false
+    // while that parse was still in flight, its later callback would clobber our false back to
+    // true, and the button would read "Export" instead of "Preparing…" (race → element not found).
+    await page.waitForFunction(() => (window as any).__uiStore.getState().exportReady === true)
     await page.evaluate(() => {
       ;(window as any).__uiStore.getState().setExportReady(false)
     })
