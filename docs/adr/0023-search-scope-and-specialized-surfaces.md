@@ -69,6 +69,8 @@ folderPath`, producing "title hit, no body hit" groups and inflating replace cou
 1. **Three specialized surfaces, no unifying mode switch.**
    - **Quick Open** (`Ctrl/Cmd+K`): file **name + relative path** only, flat list, no scope,
      no replace. Reuses the existing filename glob behavior (ADR-0013 #5).
+     **Amended 2026-11-04 (ADR-0032):** the chord moved to **`Ctrl/Cmd+Shift+K`** — `⌘K` now
+     belongs to the editor's **Link** action. The surface, its scope and its flat list are unchanged.
    - **Search view** (sidebar, `Ctrl/Cmd+Shift+F`): **Markdown body content only**, with
      include/exclude scope and cross-file replace.
    - **In-place find** (editor / preview, existing shortcuts): locates within the current

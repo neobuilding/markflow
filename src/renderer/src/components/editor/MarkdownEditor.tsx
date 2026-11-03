@@ -42,6 +42,7 @@ import {
   FolderOpen,
 } from 'lucide-react'
 import { debounce, formatShortcut } from '../../lib/utils'
+import { FORMAT_SHORTCUTS } from '../../lib/format-shortcuts'
 import { scrollSync } from '../../lib/scrollSync'
 import { useT } from '../../i18n'
 import {
@@ -453,26 +454,18 @@ export function MarkdownEditor({
       })
     }
 
-    // Handle toolbar insert events
+    // Handle toolbar / shortcut insert events. All THREE formatting entry points — the right-click
+    // menu, the toolbar button and the keyboard shortcut — share ONE implementation (`wrap`), so an
+    // action behaves identically however it is triggered. With nothing selected the markers are
+    // inserted with the caret parked between them (the mainstream Markdown-editor behaviour:
+    // Obsidian / VS Code / Typora) and never a literal 'text' placeholder. `wrap` reads the live
+    // editor selection, so it is the single source of truth for "format the selection". The
+    // `editable` guard is the read-only safety net — the menu item is disabled, but the toolbar
+    // button and the keyboard shortcut still dispatch and must no-op in read-only mode.
     const handleInsert = (e: Event) => {
-      if (!editable) return // ignore formatting inserts in read-only mode
+      if (!editable) return
       const { before, after } = (e as CustomEvent<{ before: string; after: string }>).detail
-      const v = viewRef.current
-      // Insert events are only dispatched after the editor has mounted, so the ref is
-      // always populated here; the guard only narrows its nullable type.
-      /* v8 ignore next -- defensive: insert events are only dispatched after the editor mounts, so the ref is never null */
-      if (!v) return
-      const sel = v.state.selection.main
-      const selectedText = v.state.sliceDoc(sel.from, sel.to)
-      const insertion = before + (selectedText || 'text') + after
-      v.dispatch({
-        changes: { from: sel.from, to: sel.to, insert: insertion },
-        selection: {
-          anchor: sel.from + before.length,
-          head: sel.from + before.length + (selectedText || 'text').length,
-        },
-      })
-      v.focus()
+      wrap(before, after)
     }
 
     document.addEventListener('markdown:insert', handleInsert)
@@ -750,34 +743,44 @@ export function MarkdownEditor({
           <List size={13} /> {t('ctx.selectAll')}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        {/* No `shortcut` on the four formatting items: ⌘B/⌘I/⌘E/⌘K were never wired up, and two of
-            them are taken by other commands (⌘B = toggle sidebar, ⌘K = Quick Open, ⌘I = file
-            details). A label promising a binding that does something else is worse than none. */}
+        {/* The four formatting items DO advertise their shortcut: ADR-0032 wired ⌘B / ⌘I / ⌘E / ⌘K
+            to the editor, so the labels are truthful now (they were withheld while those keys
+            belonged to other commands — "no false promises"). The glyphs and the wrapped markup
+            come from the shared format-shortcut table, the same source the toolbar reads.
+            All four formatting paths — this right-click menu via `wrap`, the toolbar button and the
+            keyboard shortcut via `markdown:insert` → `handleInsert` — share ONE implementation, so an
+            action behaves identically however it is triggered. With nothing selected the markers are
+            inserted with the caret parked between them (the mainstream Markdown-editor behaviour)
+            and never a literal 'text' placeholder. */}
         <ContextMenuItem
           data-testid="me-bold"
+          shortcut={formatShortcut(FORMAT_SHORTCUTS.bold.glyph)}
           disabled={!editable}
-          onClick={() => wrap('**', '**')}
+          onClick={() => wrap(FORMAT_SHORTCUTS.bold.before, FORMAT_SHORTCUTS.bold.after)}
         >
           <Bold size={13} /> {t('editor.fmt.bold')}
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-italic"
+          shortcut={formatShortcut(FORMAT_SHORTCUTS.italic.glyph)}
           disabled={!editable}
-          onClick={() => wrap('_', '_')}
+          onClick={() => wrap(FORMAT_SHORTCUTS.italic.before, FORMAT_SHORTCUTS.italic.after)}
         >
           <Italic size={13} /> {t('editor.fmt.italic')}
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-inline-code"
+          shortcut={formatShortcut(FORMAT_SHORTCUTS.code.glyph)}
           disabled={!editable}
-          onClick={() => wrap('`', '`')}
+          onClick={() => wrap(FORMAT_SHORTCUTS.code.before, FORMAT_SHORTCUTS.code.after)}
         >
           <Code size={13} /> {t('editor.fmt.code')}
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-link"
+          shortcut={formatShortcut(FORMAT_SHORTCUTS.link.glyph)}
           disabled={!editable}
-          onClick={() => wrap('[', '](url)')}
+          onClick={() => wrap(FORMAT_SHORTCUTS.link.before, FORMAT_SHORTCUTS.link.after)}
         >
           <Link2 size={13} /> {t('editor.fmt.link')}
         </ContextMenuItem>

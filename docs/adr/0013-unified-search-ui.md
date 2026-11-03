@@ -53,7 +53,7 @@ the **Search view** (sidebar: query + toggles + results grouped by file), and **
    editor-only; `F3` / `Ctrl/Cmd+G` next, `Shift+F3` previous; `Esc` closes.
 8. **Menu labels shortened:** `ctx.newFolderHere` and `ctx.newSubfolder` both read `新建文件夹`.
 9. **Resident sidebar search panel ("search in files").** The sidebar gains a collapsible, **session-only**
-   resident search area above the document tree that **reuses the same `SearchPanel`** as the `Ctrl/Cmd+K`
+   resident search area above the document tree that **reuses the same `SearchPanel`** as the `Ctrl/Cmd+Shift+K`
    palette (single source of truth); the palette keeps its flat list and unchanged behavior, so the two do not
    overlap in responsibility (modal = quick jump, resident = iterative "search in files"). To make a resident
    panel worthwhile, **content mode returns bounded hit context** instead of a body snippet: `SearchResult.matches`

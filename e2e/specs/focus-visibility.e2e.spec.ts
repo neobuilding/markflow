@@ -6,6 +6,7 @@
 // no `:focus-visible` and no `getComputedStyle`. Only a real engine can answer "is there a ring?".
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { VIEWPORTS } from '../helpers/viewports'
 
 interface FocusState {
   testId: string
@@ -45,6 +46,11 @@ const WATCHED = new Set([
   'status-word-count',
 ])
 
+// The two pane-bar entries are INLINE only in the expanded bar; in the default environment the
+// column is folded and they live in the single "…" overflow (Q3), where they are menu items and
+// not part of the tab order. The sweep therefore runs in the `wide` environment, so the watched
+// set stays reachable and the guard below stays meaningful.
+
 test.describe('focus visibility', () => {
   let handle: AppHandle
   test.beforeEach(async () => {
@@ -57,6 +63,7 @@ test.describe('focus visibility', () => {
   test('every watched control shows exactly one focus indicator when reached by keyboard', async () => {
     const { page } = handle
     await waitForAppReady(page)
+    await page.setViewportSize(VIEWPORTS.wide)
 
     // Sweep the tab order. Tab is a keyboard interaction, so `:focus-visible` matches on the
     // landed control (a programmatic focus() would not).

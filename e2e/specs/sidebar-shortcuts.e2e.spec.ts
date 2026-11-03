@@ -56,9 +56,10 @@ test.describe('sidebar shortcuts and the activity bar', () => {
     await expect(page.getByTestId('activity-bar-files')).toBeVisible()
     await expect(page.getByRole('tabpanel')).toBeVisible()
 
-    // ⌘B folds the CONTENT PANEL only — the icon column is always there (VS Code's
-    // `toggleSidebarVisibility` toggles the sidebar PART and keeps the activity bar).
-    await page.keyboard.press(`${mod}+B`)
+    // ⌘\ folds the CONTENT PANEL only — the icon column is always there (VS Code's
+    // `toggleSidebarVisibility` toggles the sidebar PART and keeps the activity bar). ⌘B is now
+    // Bold (Q2b), so the sidebar is folded by ⌘\ alone.
+    await page.keyboard.press(`${mod}+Backslash`)
     await expect(page.getByRole('tabpanel')).toHaveCount(0)
     await expect(page.getByTestId('activity-bar-files')).toBeVisible()
     await expect(page.getByTestId('activity-bar-search')).toBeVisible()
@@ -67,21 +68,55 @@ test.describe('sidebar shortcuts and the activity bar', () => {
     await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-expanded', 'false')
   })
 
-  // ⌘B is renderer-only (the native menu carries no `CmdOrCtrl+B` accelerator), so it has
-  // exactly ONE owner and must fire exactly ONCE. If two handlers ever claimed it, the panel
-  // would fold and unfold again in the same tick and end up where it started — a double-fire
-  // that is invisible everywhere except here.
-  test('⌘B folds and unfolds the content panel exactly once per press', async () => {
+  // ⌘B was reassigned to Bold in Q2b (renderer-only, single owner). This guards the reassignment:
+  // pressing ⌘B must NOT fold the sidebar any more — that key now belongs to the editor.
+  test('⌘B no longer toggles the sidebar (it is now Bold)', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await expect(page.getByRole('tabpanel')).toBeVisible()
 
     await page.keyboard.press(`${mod}+B`)
-    await expect(page.getByRole('tabpanel')).toHaveCount(0)
-
-    await page.keyboard.press(`${mod}+B`)
+    // Sidebar must stay exactly where it was: the key is Bold, not toggle-sidebar.
     await expect(page.getByRole('tabpanel')).toBeVisible()
     await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // ⌘B now applies BOLD (Q2b). The positive half of the reassignment: the key must actually reach
+  // the editor's own insert dispatcher and wrap the selection in `**…**`. The negative half (it no
+  // longer folds the sidebar) is asserted in the test above.
+  test('⌘B applies Bold to the editor selection (Q2b)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    // A new draft opens in EDIT mode, so the editor owns a real selection.
+    await page.getByTestId('new-document-btn').click()
+    const editor = page.locator('.cm-content')
+    await expect(editor).toBeVisible()
+    await editor.click()
+    // A new draft starts with a "# Untitled" heading — clear it, so the assertion below is about
+    // the BOLDING alone and not about the template.
+    await page.keyboard.press(`${mod}+A`)
+    await page.keyboard.press('Delete')
+    await page.keyboard.type('hello')
+    await expect(editor).toContainText('hello')
+
+    // Select the whole document, then bold it.
+    await page.keyboard.press(`${mod}+A`)
+    await page.keyboard.press(`${mod}+B`)
+    await expect(editor).toContainText('**hello**')
+  })
+
+  // The panel shortcut must be DISCOVERABLE without a button (Q2c): the activity-bar menu prints
+  // it next to the entry, platform-formatted like every other shortcut label.
+  test('the activity bar menu advertises the panel shortcut (Q2c)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await expect(page.getByRole('tabpanel')).toBeVisible()
+
+    await page.getByTestId('activity-bar-files').click({ button: 'right' })
+    const item = page.getByTestId('activity-collapse-sidebar')
+    await expect(item).toBeVisible()
+    await expect(item).toContainText(process.platform === 'darwin' ? '⌘\\' : 'Ctrl+\\')
   })
 
   // ⌘\ is the OTHER binding of the same command. It has BOTH a native accelerator

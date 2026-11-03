@@ -139,19 +139,8 @@ test.describe('toolbar icon tiles (design fig 02/04)', () => {
     await expect(page.getByTestId('view-preview')).toBeFocused()
   })
 
-  test('the sidebar toggle reports its state as a pressed tile', async () => {
-    const { page } = handle
-    await openSplit(page)
-
-    const toggle = page.getByTestId('sidebar-toggle-btn')
-    // The sidebar is open, so the toggle is ON: the accent-tinted tile.
-    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
-    await expect(toggle).toHaveCSS('background-color', ACTIVE_FILL)
-    await expect(toggle).toHaveCSS('border-top-color', ACTIVE)
-
-    await toggle.click()
-    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    await expect(toggle).toHaveCSS('background-color', SURFACE)
-    await expect(toggle).toHaveCSS('border-top-color', TILE_EDGE)
-  })
+  // The global-bar sidebar toggle BUTTON was removed in Q2a; the sidebar is still toggleable via the
+  // ActivityBar right-click menu, the native View menu, and the ⌘\ handlers. Its pressed-tile state
+  // is covered by the ActivityBar collapse control and the e2e sidebar-shortcuts spec, so this
+  // button-specific test is dropped.
 })

@@ -3,6 +3,8 @@ import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/re
 import { EditorView } from '@codemirror/view'
 import { setSearchQuery, SearchQuery } from '@codemirror/search'
 import { MarkdownEditor } from './MarkdownEditor'
+import { formatShortcut } from '../../lib/utils'
+import { FORMAT_SHORTCUTS } from '../../lib/format-shortcuts'
 import '../../i18n'
 
 beforeEach(() => {
@@ -57,7 +59,7 @@ describe('MarkdownEditor', () => {
     await waitFor(() => expect(view.state.doc.toString()).toBe('**hi**'))
   })
 
-  it('inserts the placeholder when there is no selection', async () => {
+  it('parks the caret between markers when there is no selection (toolbar / shortcut path)', async () => {
     const onChange = vi.fn()
     render(<MarkdownEditor content="hi" docId="d1" onChange={onChange} />)
     const view = getView()
@@ -66,8 +68,15 @@ describe('MarkdownEditor', () => {
     document.dispatchEvent(
       new CustomEvent('markdown:insert', { detail: { before: '**', after: '**' } }),
     )
-    // selectedText is empty → the placeholder 'text' is wrapped: **text** at the caret.
-    await waitFor(() => expect(view.state.doc.toString()).toBe('h**text**i'))
+    // No placeholder: both marker pairs are inserted with the caret parked BETWEEN them — for Bold
+    // that is `h****i` (`**|**`), not a literal 'text'. The right-click menu produces the identical
+    // result (single source of truth via wrap), so an action behaves identically however triggered.
+    await waitFor(() => {
+      expect(view.state.doc.toString()).toBe('h****i')
+      const sel = view.state.selection.main
+      expect(sel.empty).toBe(true)
+      expect(sel.anchor).toBe(3)
+    })
   })
 
   it('focuses the editor on a real pointerdown gesture', () => {
@@ -190,15 +199,22 @@ describe('MarkdownEditor context menu', () => {
     fireEvent.contextMenu(c)
   })
 
-  // PLAN C5: the formatting items must NOT advertise ⌘B/⌘I/⌘E/⌘K — those combinations
-  // belong to other commands (⌘B = toggle sidebar, ⌘K = Quick Open, ⌘I = file details). A
-  // label promising a binding that does something else is worse than no label at all.
-  it('does not advertise shortcuts that other commands own', async () => {
+  // ADR-0032 wired ⌘B / ⌘I / ⌘E / ⌘K to the editor, so the formatting items can finally
+  // advertise them. The old rule was "no false promises" — those keys belonged to OTHER commands
+  // then (⌘B = toggle sidebar, ⌘K = Quick Open, ⌘I = file details); they are genuinely the
+  // formatting actions' own keys now.
+  it('advertises the formatting shortcuts the editor now owns', async () => {
     const c = setup({ editable: true })
     fireEvent.contextMenu(c)
-    for (const id of ['me-bold', 'me-italic', 'me-inline-code', 'me-link']) {
+    const expected: Array<[string, string]> = [
+      ['me-bold', formatShortcut(FORMAT_SHORTCUTS.bold.glyph)],
+      ['me-italic', formatShortcut(FORMAT_SHORTCUTS.italic.glyph)],
+      ['me-inline-code', formatShortcut(FORMAT_SHORTCUTS.code.glyph)],
+      ['me-link', formatShortcut(FORMAT_SHORTCUTS.link.glyph)],
+    ]
+    for (const [id, glyph] of expected) {
       const item = await screen.findByTestId(id)
-      expect(item.textContent).not.toMatch(/⌘|Ctrl/)
+      expect(item.textContent, id).toContain(glyph)
     }
     // The items that DO own a binding still show it — the rule is "no false promises",
     // not "no shortcuts".
@@ -297,6 +313,24 @@ describe('MarkdownEditor context menu', () => {
     fireEvent.contextMenu(c)
     await fireEvent.click(await screen.findByTestId('me-link'))
     expect(getView().state.doc.toString()).toContain('[](url)')
+  })
+
+  // Symmetry lock: the menu path and the toolbar/shortcut path share ONE implementation, so a Bold
+  // with no selection must park the caret between the markers on BOTH — never inject a 'text'
+  // placeholder. The toolbar/shortcut half is covered by the `markdown:insert` test above.
+  it('bold with no selection parks the caret between markers (menu path)', async () => {
+    const c = setup()
+    fireEvent.contextMenu(c)
+    await fireEvent.click(await screen.findByTestId('me-bold'))
+    const view = getView()
+    await waitFor(() => {
+      // No placeholder: both marker pairs are inserted with the caret parked BETWEEN them. For Bold
+      // that is `****# Hello` (`**|**# Hello`), identical to the toolbar/shortcut path.
+      expect(view.state.doc.toString()).toBe('****# Hello')
+      const sel = view.state.selection.main
+      expect(sel.empty).toBe(true)
+      expect(sel.anchor).toBe(2)
+    })
   })
 
   it('open-link-in-browser is enabled on a link and calls openExternal', async () => {

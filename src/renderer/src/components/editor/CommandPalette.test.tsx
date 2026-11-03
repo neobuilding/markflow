@@ -187,11 +187,19 @@ describe('CommandPalette', () => {
     expect(await screen.findByText(/No results/i)).toBeInTheDocument()
   })
 
-  it('opens via the Ctrl/Cmd+K global shortcut', () => {
+  it('opens via the Ctrl/Cmd+Shift+K global shortcut', () => {
     render(<CommandPalette />)
     expect(useUIStore.getState().searchOpen).toBe(false)
-    fireEvent.keyDown(window, { ctrlKey: true, key: 'k' })
+    fireEvent.keyDown(window, { ctrlKey: true, shiftKey: true, key: 'k' })
     expect(useUIStore.getState().searchOpen).toBe(true)
+  })
+
+  // ADR-0032 gave ⌘K to the editor's Link action, so the palette's plain-⌘K entry point is gone.
+  it("does NOT open on plain Ctrl/Cmd+K — that key is the editor's Link action now", () => {
+    useUIStore.getState().setSearchOpen(false)
+    render(<CommandPalette />)
+    fireEvent.keyDown(window, { ctrlKey: true, key: 'k' })
+    expect(useUIStore.getState().searchOpen).toBe(false)
   })
 
   it('closes via the Escape global shortcut when open', () => {
@@ -201,7 +209,7 @@ describe('CommandPalette', () => {
     expect(useUIStore.getState().searchOpen).toBe(false)
   })
 
-  it('does not open on Ctrl/Cmd+K while a modal surface owns the keyboard', () => {
+  it('does not open on Ctrl/Cmd+Shift+K while a modal surface owns the keyboard', () => {
     useUIStore.getState().setSearchOpen(false)
     render(<CommandPalette />)
     // A dialog is already open: the palette must not be stacked on top of it.
@@ -209,8 +217,9 @@ describe('CommandPalette', () => {
     modal.setAttribute('data-modal-surface', '')
     document.body.appendChild(modal)
     const ev = new KeyboardEvent('keydown', {
-      key: 'k',
+      key: 'K',
       ctrlKey: true,
+      shiftKey: true,
       cancelable: true,
       bubbles: true,
     })

@@ -108,6 +108,23 @@ Two unit tests guard the arrangement (they live in `e2e/`, and `vitest.config.ts
 Coverage of the same handler boundary that needs no real clipboard lives in
 `electron/main/handlers/app.test.ts` (mocked `clipboard`, `ClipboardItem` from the electron export).
 
+## Browser APIs jsdom does not implement
+
+jsdom implements the DOM, not the browser: a handful of APIs the app uses are simply absent, and a
+suite that touches one dies with `X is not a function` / `X is not defined` before it can assert
+anything. There are two ways to deal with that, and which one to use follows from what the test
+needs:
+
+| Case                                                                 | Approach                                                                                                                                                              |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The API's **value** is irrelevant to the assertion                   | Polyfill it once in `test-setup.ts` (`Range.getClientRects`, `IntersectionObserver`, `ResizeObserver`) so no suite has to think about it                              |
+| The API's **value** IS the assertion (e.g. the OS colour preference) | Stub it **in the test**, and restore it afterwards (`window.matchMedia` in `components/preview/MarkdownPreview.test.tsx`, `lib/export.test.ts`, `App.theme.test.tsx`) |
+
+Production code must not care whether the host implements the API: it reads the optional form
+(`window.matchMedia?.(…)`) or an explicit existence guard, so a missing API degrades to a defined
+behaviour instead of a crash. A test that has to stub an API is also a reminder that the production
+path needs the same guard — otherwise the suite passes and the app throws.
+
 ## What the gates cover — and what they deliberately don't
 
 `npm run typecheck` runs four programs. Between them, every `.ts`, `.tsx`, `.mjs` and `.cjs` file in
@@ -156,12 +173,12 @@ deterministic. The same assertion therefore behaves the same on a laptop and on 
 A spec that is _about_ a particular width enters a named environment instead of typing its own
 numbers (`e2e/helpers/viewports.ts`):
 
-| Environment | Size        | What it exercises                                           |
-| ----------- | ----------- | ----------------------------------------------------------- |
-| `standard`  | 1024 × 768  | the default: the editor toolbar is FOLDED (pane 368 < 420)  |
-| `wide`      | 1280 × 900  | the editor toolbar is EXPANDED (pane 496 >= 420)            |
-| `narrow`    | 800 × 600   | the narrow fixture size (at the app's window floor)         |
-| `baseline`  | 2560 × 1440 | the E9 visual baselines (the bars are 2272px / 1136px wide) |
+| Environment | Size        | What it exercises                                                                                  |
+| ----------- | ----------- | -------------------------------------------------------------------------------------------------- |
+| `standard`  | 1024 × 768  | the default: the editor toolbar is FOLDED (pane 368 < 420)                                         |
+| `wide`      | 1280 × 900  | the editor toolbar is EXPANDED (pane 496 >= 420)                                                   |
+| `narrow`    | 800 × 600   | the narrow fixture size (at the app's window floor); the editor toolbar is FOLDED (pane 256 < 420) |
+| `baseline`  | 2560 × 1440 | the E9 visual baselines (the bars are 2272px / 1136px wide)                                        |
 
 Entering an environment is per CASE, not per file: a spec that needs a different window gets its own
 test case for it, while the case that stays in the default environment keeps asserting the default
@@ -172,8 +189,9 @@ format cluster.
 The sizes are not free choices: they follow from the window floor (800), the sidebar default (288)
 and the toolbar's fold threshold (`FOLD_AT` 420), so in split mode the pane is `(width - 288) / 2`.
 `e2e/guards/viewports.test.ts` parses those constants out of the sources of truth and asserts the
-contract — that `standard` really folds, `wide` really expands, `narrow` stays out of the minimal
-mode, and no environment is narrower than the app can be. A layout change that invalidates an
+contract — that `standard` really folds, `wide` really expands, `narrow` also folds (there is ONE
+fold threshold, so a narrow column is a folded column, not a separate mode), and no environment is
+narrower than the app can be. A layout change that invalidates an
 environment therefore fails a unit test, not an e2e timeout far from the cause. The same guard also
 protects the convention itself: that `e2e/helpers/launch.ts` still pins the standard environment for
 every spec (deleting that call would silently make the whole suite host-dependent again, with

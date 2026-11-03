@@ -1,7 +1,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
-import '../../i18n'
+import { t, type TranslationKey } from '../../i18n'
 import { EditorPaneBar } from './EditorPaneBar'
 import { TooltipProvider } from '../ui/tooltip'
 import { useUIStore } from '../../store/ui'
@@ -13,7 +13,7 @@ import { formatShortcut, isMac } from '../../lib/utils'
 // test-setup.ts is a no-op (jsdom has no layout), which would leave the collapse path untested.
 //
 // Every constructed observer is collected, not just the last one: Radix's Popper (used by the
-// Format dropdown) also constructs a ResizeObserver, so keeping only the newest callback would
+// overflow dropdown) also constructs a ResizeObserver, so keeping only the newest callback would
 // hand the test someone else's observer.
 //
 // The mock reports the COLUMN width through `borderBoxSize`, exactly what the production code reads
@@ -80,8 +80,8 @@ describe('EditorPaneBar', () => {
     expect(screen.getByTestId('fmt-[-](url)')).toBeInTheDocument()
     expect(screen.getByTestId('fmt-- -')).toBeInTheDocument()
     expect(screen.getByTestId('fmt-- [ ] -')).toBeInTheDocument()
-    // The collapsed trigger is absent while the column is wide enough.
-    expect(screen.queryByTestId('fmt-dropdown-btn')).toBeNull()
+    // The single overflow trigger is absent while the column is wide enough.
+    expect(screen.queryByTestId('editor-overflow-btn')).toBeNull()
   })
 
   it("dispatches markdown:insert with the button's before/after pair", () => {
@@ -157,7 +157,7 @@ describe('EditorPaneBar', () => {
     expect(screen.getByTestId('editor-redo-btn')).toBeDisabled()
   })
 
-  it('toggles read-only mode from the bar and reflects the state in its accessible name', () => {
+  it('toggles read-only mode from the bar and reflects the state in its accessible name and pressed state', () => {
     // Driven by the store, exactly like EditorPane does.
     function StoreDriven() {
       const editable = useUIStore((s) => s.editable)
@@ -170,9 +170,13 @@ describe('EditorPaneBar', () => {
     render(<StoreDriven />)
     const btn = screen.getByTestId('editor-readonly-btn')
     expect(useUIStore.getState().editable).toBe(false)
+    // Read-only (default) is the resting state: NOT pressed (Q1 — editable is the active/pressed state).
+    expect(btn).toHaveAttribute('aria-pressed', 'false')
     const labelBefore = btn.getAttribute('aria-label')
     fireEvent.click(btn)
     expect(useUIStore.getState().editable).toBe(true)
+    // Edit mode is the active/pressed state.
+    expect(screen.getByTestId('editor-readonly-btn')).toHaveAttribute('aria-pressed', 'true')
     // The accessible name flips with the mode (read-only offers "edit", edit offers "read-only").
     expect(screen.getByTestId('editor-readonly-btn').getAttribute('aria-label')).not.toBe(
       labelBefore,
@@ -193,17 +197,100 @@ describe('EditorPaneBar', () => {
     }
   })
 
-  it('folds the format cluster into a Format dropdown when the column is narrow', async () => {
+  // The accessible name states the ACTION alone; the keyboard shortcut lives in the tooltip (and
+  // in the overflow entry, which reuses the same tooltip key). Since ADR-0032 EVERY format action
+  // has a shortcut, so every button's name and tooltip differ.
+  it('names the bold button by its action alone and carries the shortcut in its tooltip key', async () => {
+    renderBar(true)
+    expect(screen.getByTestId('fmt-**-**').getAttribute('aria-label')).toBe(t('editor.fmt.bold'))
+
+    // Narrow → the same action moves into the overflow, where the entry text is the tooltip text.
+    reportWidth(300)
+    fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
+    const item = await screen.findByTestId('fmt-**-**')
+    expect(item.textContent).toContain(
+      t('editor.fmt.boldShortcut', { shortcut: formatShortcut('⌘B') }),
+    )
+  })
+
+  // ADR-0032: every format action is keyboard-reachable, so every button must advertise its own
+  // glyph — a shortcut nobody can see is a shortcut nobody finds.
+  it('names every format button by its action alone', () => {
+    renderBar(true)
+    const cases: Array<[string, TranslationKey]> = [
+      ['fmt-# -', 'editor.fmt.h1'],
+      ['fmt-**-**', 'editor.fmt.bold'],
+      ['fmt-_-_', 'editor.fmt.italic'],
+      ['fmt-`-`', 'editor.fmt.code'],
+      ['fmt-[-](url)', 'editor.fmt.link'],
+      ['fmt-- -', 'editor.fmt.list'],
+      ['fmt-- [ ] -', 'editor.fmt.task'],
+    ]
+    for (const [testId, labelKey] of cases) {
+      expect(screen.getByTestId(testId).getAttribute('aria-label'), testId).toBe(t(labelKey))
+    }
+  })
+
+  it('advertises the shortcut of every format action in the overflow entry', async () => {
+    renderBar(true)
+    reportWidth(300)
+    fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
+    const cases: Array<[string, TranslationKey, string]> = [
+      ['fmt-# -', 'editor.fmt.h1Shortcut', '⌘1'],
+      ['fmt-**-**', 'editor.fmt.boldShortcut', '⌘B'],
+      ['fmt-_-_', 'editor.fmt.italicShortcut', '⌘I'],
+      ['fmt-`-`', 'editor.fmt.codeShortcut', '⌘E'],
+      ['fmt-[-](url)', 'editor.fmt.linkShortcut', '⌘K'],
+      ['fmt-- -', 'editor.fmt.listShortcut', '⌘⇧L'],
+      ['fmt-- [ ] -', 'editor.fmt.taskShortcut', '⌘⇧T'],
+    ]
+    for (const [testId, tipKey, glyph] of cases) {
+      const item = await screen.findByTestId(testId)
+      expect(item.textContent, testId).toContain(t(tipKey, { shortcut: formatShortcut(glyph) }))
+      // Off macOS the Command glyph must not leak — the handler resolves Ctrl there.
+      if (!isMac()) {
+        expect(item.textContent, testId).not.toContain('⌘')
+      }
+    }
+  })
+
+  // The shortcut glyph must be PLATFORM-FORMATTED, like every other shortcut label in the app
+  // (find / replace / save …): off macOS the app's key handler resolves Ctrl, so a hard-coded
+  // '⌘B' would advertise a Command key to Windows / Linux users.
+  it('formats the bold shortcut for the platform instead of hard-coding the Command glyph', async () => {
+    renderBar(true)
+    reportWidth(300)
+    fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
+    const item = await screen.findByTestId('fmt-**-**')
+    expect(item.textContent).toContain(formatShortcut('⌘B'))
+    if (!isMac()) {
+      expect(item.textContent).not.toContain('⌘')
+    }
+  })
+
+  // In the overflow the read-only entry is a MENU ITEM, so it states the ACTION (the toggle is a
+  // menu item, not a toggle button — `aria-pressed` is not valid on `menuitem`). The pressed state
+  // of the wide bar's toggle is asserted in the tests above.
+  it('shows the read-only action in the overflow entry', async () => {
+    renderBar(false) // read-only → the action offered is "switch to edit"
+    reportWidth(300)
+    fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
+    const item = await screen.findByTestId('editor-readonly-btn')
+    expect(item.textContent).toContain(t('editor.switchEdit'))
+  })
+
+  it('folds every action into a single "…" overflow when the column is narrow', async () => {
     const onInsert = vi.fn()
     document.addEventListener('markdown:insert', onInsert)
     renderBar(true)
     // The bar reports a narrow column (the split ratio is user-draggable down to 0.2).
     reportWidth(300)
-    expect(screen.getByTestId('fmt-dropdown-btn')).toBeInTheDocument()
-    // The expanded buttons are gone — the actions moved one level deeper.
+    // One overflow button replaces ALL inline actions (Q3: single overflow, no separate Format dropdown).
+    expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
     expect(screen.queryByTestId('fmt-**-**')).toBeNull()
+    expect(screen.queryByTestId('editor-find-btn')).toBeNull()
 
-    fireEvent.pointerDown(screen.getByTestId('fmt-dropdown-btn'), { button: 0 })
+    fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
     const item = await screen.findByTestId('fmt-**-**')
     fireEvent.click(item)
     expect(onInsert).toHaveBeenCalledTimes(1)
@@ -214,34 +301,33 @@ describe('EditorPaneBar', () => {
     document.removeEventListener('markdown:insert', onInsert)
   })
 
-  it('expands the format cluster again when the column gets wide', () => {
+  it('expands all actions inline again when the column gets wide', () => {
     renderBar(true)
     reportWidth(300)
-    expect(screen.getByTestId('fmt-dropdown-btn')).toBeInTheDocument()
+    expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
     reportWidth(900)
-    expect(screen.queryByTestId('fmt-dropdown-btn')).toBeNull()
+    expect(screen.queryByTestId('editor-overflow-btn')).toBeNull()
     expect(screen.getByTestId('fmt-**-**')).toBeInTheDocument()
+    expect(screen.getByTestId('editor-find-btn')).toBeInTheDocument()
   })
 
-  it('folds undo/redo/read-only into a `…` overflow when the column is very narrow', async () => {
+  it('folds undo/redo/read-only/find/replace into the same "…" overflow when very narrow', async () => {
     const onUndo = vi.fn()
     document.addEventListener('markdown:undo', onUndo)
     act(() => {
       useEditorHistory.getState().update({ canUndo: true, canRedo: false })
     })
     renderBar(true)
-    // Below the 4-item budget even the folded bar does not fit.
+    // Below the single fold threshold EVERYTHING collapses into one overflow.
     reportWidth(200)
 
-    // The overflow trigger replaces the three inline actions.
+    // The overflow trigger replaces every inline action.
     expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
     expect(screen.queryByTestId('editor-undo-btn')).toBeNull()
     expect(screen.queryByTestId('editor-readonly-btn')).toBeNull()
-    // The format cluster is folded too, while find / replace stay inline (they are the primary
-    // entry points and must never be more than one level deep).
-    expect(screen.getByTestId('fmt-dropdown-btn')).toBeInTheDocument()
-    expect(screen.getByTestId('editor-find-btn')).toBeInTheDocument()
-    expect(screen.getByTestId('editor-replace-btn')).toBeInTheDocument()
+    expect(screen.queryByTestId('editor-find-btn')).toBeNull()
+    expect(screen.queryByTestId('editor-replace-btn')).toBeNull()
+    expect(screen.queryByTestId('fmt-**-**')).toBeNull()
 
     // The overflow carries the SAME actions, with the same testids, and they still work.
     fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
@@ -256,19 +342,9 @@ describe('EditorPaneBar', () => {
     // At exactly FOLD_AT (420) the bar is wide; one pixel under it folds. The boundary being
     // inclusive (`w < FOLD_AT`) is what the e2e environments are calibrated against.
     reportWidth(420)
-    expect(screen.queryByTestId('fmt-dropdown-btn')).toBeNull()
+    expect(screen.queryByTestId('editor-overflow-btn')).toBeNull()
     expect(screen.getByTestId('fmt-**-**')).toBeInTheDocument()
     reportWidth(419)
-    expect(screen.getByTestId('fmt-dropdown-btn')).toBeInTheDocument()
-  })
-
-  it('treats MINIMAL_AT as the inclusive upper bound of the minimal range', () => {
-    renderBar(true)
-    // At exactly MINIMAL_AT (240) the bar is folded; one pixel under it collapses to minimal.
-    reportWidth(240)
-    expect(screen.getByTestId('fmt-dropdown-btn')).toBeInTheDocument()
-    expect(screen.queryByTestId('editor-overflow-btn')).toBeNull()
-    reportWidth(239)
     expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
   })
 
@@ -291,20 +367,20 @@ describe('EditorPaneBar', () => {
     expect(btn).not.toHaveClass('bg-[var(--color-surface-overlay)]')
   })
 
-  it('shows the read-only toggle in the pressed/active tile state when read-only', () => {
-    renderBar(false) // editable=false → read-only active
+  it('shows the read-only toggle as an unpressed tile when read-only', () => {
+    renderBar(false) // editable=false → read-only, resting (NOT pressed)
+    const btn = screen.getByTestId('editor-readonly-btn')
+    expect(btn).not.toHaveAttribute('aria-pressed', 'true')
+    expect(btn).toHaveClass(/bg-\[var\(--color-surface\)\]/)
+    expect(btn).toHaveClass(/border-\[var\(--color-border\)\]/)
+  })
+
+  it('shows the read-only toggle in the pressed/active tile state when editable', () => {
+    renderBar(true) // editable=true → pressed (Q1)
     const btn = screen.getByTestId('editor-readonly-btn')
     expect(btn).toHaveAttribute('aria-pressed', 'true')
     expect(btn).toHaveClass(/bg-\[var\(--color-accent-muted\)\]/)
     expect(btn).toHaveClass(/border-\[var\(--color-accent\)\]/)
     expect(btn).toHaveClass(/text-accent/)
-  })
-
-  it('shows the read-only toggle as an unpressed white tile when editable', () => {
-    renderBar(true) // editable=true → not pressed
-    const btn = screen.getByTestId('editor-readonly-btn')
-    expect(btn).not.toHaveAttribute('aria-pressed', 'true')
-    expect(btn).toHaveClass(/bg-\[var\(--color-surface\)\]/)
-    expect(btn).toHaveClass(/border-\[var\(--color-border\)\]/)
   })
 })

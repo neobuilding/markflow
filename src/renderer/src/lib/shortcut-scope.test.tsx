@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { Dialog, DialogContent } from '../components/ui/dialog'
-import { hasModalSurface, MODAL_SURFACE_SELECTOR } from './shortcut-scope'
+import {
+  hasModalSurface,
+  isEditableTarget,
+  isFindWidgetField,
+  MODAL_SURFACE_SELECTOR,
+} from './shortcut-scope'
 
 describe('shortcut-scope', () => {
   it('finds no modal surface in an empty root', () => {
@@ -46,5 +51,66 @@ describe('shortcut-scope', () => {
     )
     expect(document.querySelector(MODAL_SURFACE_SELECTOR)).not.toBeNull()
     expect(hasModalSurface(document)).toBe(true)
+  })
+})
+
+// `isEditableTarget` decides whether a window-level shortcut may act on the document. It is the
+// guard behind Ctrl/Cmd+B (Bold): a shortcut that MODIFIES the document must not fire while the
+// user is typing in ANY field.
+describe('isEditableTarget', () => {
+  it('treats a missing or non-element active element as "not editing"', () => {
+    expect(isEditableTarget(null)).toBe(false)
+    expect(isEditableTarget(document.createTextNode('x') as unknown as Element)).toBe(false)
+  })
+
+  it('treats an input and a textarea as text-entry fields', () => {
+    expect(isEditableTarget(document.createElement('input'))).toBe(true)
+    expect(isEditableTarget(document.createElement('textarea'))).toBe(true)
+  })
+
+  it('treats the find widget inputs as text-entry fields as well', () => {
+    // The find & replace widget's inputs live inside a CodeMirror panel. They are text fields, so
+    // a shortcut that modifies the document (Ctrl/Cmd+B) must stand down there too — the panel
+    // exemption belongs to the FIND / REPLACE shortcuts only (see isFindWidgetField).
+    const panel = document.createElement('div')
+    panel.className = 'cm-panel'
+    const input = document.createElement('input')
+    panel.appendChild(input)
+    expect(isEditableTarget(input)).toBe(true)
+  })
+
+  it('treats a contenteditable surface as text-entry, except the editor content', () => {
+    // jsdom does not implement `isContentEditable`, so it is defined explicitly here.
+    const editable = document.createElement('div')
+    editable.setAttribute('contenteditable', 'true')
+    Object.defineProperty(editable, 'isContentEditable', { value: true })
+    expect(isEditableTarget(editable)).toBe(true)
+
+    const cmContent = document.createElement('div')
+    cmContent.className = 'cm-content'
+    Object.defineProperty(cmContent, 'isContentEditable', { value: true })
+    expect(isEditableTarget(cmContent)).toBe(false)
+  })
+
+  it('treats a plain element as not editing', () => {
+    expect(isEditableTarget(document.createElement('div'))).toBe(false)
+  })
+})
+
+// `isFindWidgetField` is the narrow exemption the find & replace widget's inputs get: Ctrl/Cmd+F
+// and Ctrl/Cmd+H must keep working while that widget holds focus, because focus sits in its input
+// the moment the panel opens.
+describe('isFindWidgetField', () => {
+  it('is false for a missing element and for a field outside a CodeMirror panel', () => {
+    expect(isFindWidgetField(null)).toBe(false)
+    expect(isFindWidgetField(document.createElement('input'))).toBe(false)
+  })
+
+  it('is true for a field inside a CodeMirror panel', () => {
+    const panel = document.createElement('div')
+    panel.className = 'cm-panel'
+    const input = document.createElement('input')
+    panel.appendChild(input)
+    expect(isFindWidgetField(input)).toBe(true)
   })
 })

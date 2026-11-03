@@ -43,19 +43,30 @@ export function CommandPalette(): React.ReactElement | null {
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      // Ctrl/Cmd+Shift+K — the Quick Open chord. It MOVED here from Ctrl/Cmd+K when ADR-0032 gave
+      // ⌘K to the editor's Link action (the mainstream Markdown-editor binding).
+      //
+      // CAPTURE phase, and it stops propagation: CodeMirror's own default keymap binds ⌘⇧K to
+      // `deleteLine`, and its handler sits BELOW window on the editor's DOM — a bubble-phase
+      // listener runs after it, so the keystroke would delete the line AND open the palette.
+      // Claiming the key in the capture phase keeps exactly one owner (the same rule the format
+      // shortcuts follow in App.tsx).
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
         // Same modal guard as the other window-level shortcuts (lib/shortcut-scope): never stack
         // the palette on top of an already-open dialog, and leave the key un-swallowed.
         if (hasModalSurface(document)) return
         e.preventDefault()
+        e.stopPropagation()
         setSearchOpen(true)
+        return
       }
       if (e.key === 'Escape' && searchOpen) {
         setSearchOpen(false)
       }
     }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
+    // Capture phase — see the note on the ⌘⇧K branch above.
+    window.addEventListener('keydown', handleKey, true)
+    return () => window.removeEventListener('keydown', handleKey, true)
   }, [searchOpen, setSearchOpen])
 
   if (!searchOpen) return null

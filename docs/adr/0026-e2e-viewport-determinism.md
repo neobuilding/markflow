@@ -29,7 +29,7 @@ Pin a **single named environment** for the whole suite and let specs opt into ot
 **The pinned size is the content area, not the OS window frame.** `page.setViewportSize` sets the web
 layout viewport — the area the app's DOM fills. The app's responsive layout is a pure function of
 content width: it measures its own elements (the sidebar via the `--sidebar-width` variable, the pane
-bars via a `ResizeObserver` on `FOLD_AT`/`MINIMAL_AT`). The OS window's outer frame (title bar +
+bars via a `ResizeObserver` on `FOLD_AT`). The OS window's outer frame (title bar +
 borders, scaled by platform DPI) varies machine to machine, so pinning _it_ would not be
 deterministic either. Pinning the content area is therefore both necessary and sufficient; a future
 reader must not "improve" this by resizing the OS window.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useUIStore } from './ui'
 // Initialises the i18next singleton so the store's guard prompts are translated rather than
 // returning raw keys.
@@ -421,5 +421,34 @@ describe('useUIStore — unsaved buffer registry (ADR-0023)', () => {
     useUIStore.getState().setIsNewUnsaved(false)
     useUIStore.getState().closeDocument()
     expect(useUIStore.getState().unsavedBuffers).toEqual({})
+  })
+})
+
+// The theme entry (ADR-0028): a three-way choice — light / dark / follow the system — defaulting
+// to the system preference, resolved live against the OS.
+describe('useUIStore theme', () => {
+  afterEach(() => {
+    useUIStore.getState().setTheme('system')
+  })
+
+  it('starts on the system preference', () => {
+    // `getInitialState` is the pristine store state, so an earlier test that changed the theme
+    // cannot mask the default this assertion is about.
+    expect(useUIStore.getInitialState().theme).toBe('system')
+  })
+
+  it('stores an explicit light or dark choice', () => {
+    useUIStore.getState().setTheme('dark')
+    expect(useUIStore.getState().theme).toBe('dark')
+    useUIStore.getState().setTheme('light')
+    expect(useUIStore.getState().theme).toBe('light')
+    useUIStore.getState().setTheme('system')
+    expect(useUIStore.getState().theme).toBe('system')
+  })
+
+  // The choice is deliberately NOT persisted: each launch starts from the default. The store has no
+  // persist middleware, so there is nothing that could restore a previous choice.
+  it('does not persist the theme choice', () => {
+    expect((useUIStore as unknown as { persist?: unknown }).persist).toBeUndefined()
   })
 })

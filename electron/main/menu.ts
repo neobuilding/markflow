@@ -39,6 +39,27 @@ let editableState = false
 let hasDocumentState = false
 let printingState = false
 
+// The three theme choices the app supports. Mirrors the renderer's `ThemeMode`
+// (src/renderer/src/types) — the main process cannot import renderer types, so the domain concept
+// gets its own small type here instead of repeating the string union at every use.
+export type ThemeMode = 'light' | 'dark' | 'system'
+
+// Active theme mirrored from the renderer so the native theme menu's radio group can show the
+// current choice. The renderer is the source of truth; main only mirrors it for the checkmark.
+// Default 'system' matches the renderer store's default (ui.ts), so a freshly built menu before
+// the first sync already shows the "follow the system" entry as checked.
+let currentTheme: ThemeMode = 'system'
+
+/**
+ * Mirror the renderer's active theme into the native menu and rebuild it so the theme radio group's
+ * `checked` state reflects the current choice. Called from the `app:set-theme` IPC handler (the
+ * renderer bridges every theme change — including the initial one — through that channel).
+ */
+export function applyThemeToMenu(theme: ThemeMode): void {
+  currentTheme = theme
+  setupMenu()
+}
+
 // Re-apply the renderer-synced states to the current menu so that a menu rebuild (such as a
 // language switch via setupMenu()) preserves the enabled/disabled state the renderer last sent.
 function applyMenuStates(): void {
@@ -146,7 +167,9 @@ export function setupMenu(): void {
         {
           id: 'file-details',
           label: menuT('menu.fileDetails'),
-          accelerator: 'CmdOrCtrl+I',
+          // ⌘I belongs to the editor's ITALIC action since ADR-0032 (the mainstream
+          // Markdown-editor binding), so File Details moved to the ⌘⇧I chord.
+          accelerator: 'CmdOrCtrl+Shift+I',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => getMainWindow()?.webContents.send('menu:file-details'),
         },
@@ -226,6 +249,33 @@ export function setupMenu(): void {
           click: () => getMainWindow()?.webContents.send('menu:toggle-preview'),
         },
         { type: 'separator' },
+        // Theme (light / dark / follow the system). The radio `checked` state mirrors
+        // `currentTheme`, which the renderer keeps in sync via `app:set-theme`; choosing an item
+        // forwards the pick back to the renderer (single source of truth) rather than mutating
+        // nativeTheme from the main thread.
+        {
+          label: menuT('menu.theme'),
+          submenu: [
+            {
+              label: menuT('menu.themeLight'),
+              type: 'radio',
+              checked: currentTheme === 'light',
+              click: () => getMainWindow()?.webContents.send('menu:set-theme', 'light'),
+            },
+            {
+              label: menuT('menu.themeDark'),
+              type: 'radio',
+              checked: currentTheme === 'dark',
+              click: () => getMainWindow()?.webContents.send('menu:set-theme', 'dark'),
+            },
+            {
+              label: menuT('menu.themeSystem'),
+              type: 'radio',
+              checked: currentTheme === 'system',
+              click: () => getMainWindow()?.webContents.send('menu:set-theme', 'system'),
+            },
+          ],
+        },
         { label: menuT('menu.resetZoom'), role: 'resetZoom' },
         { label: menuT('menu.zoomIn'), role: 'zoomIn' },
         { label: menuT('menu.zoomOut'), role: 'zoomOut' },
@@ -255,15 +305,6 @@ export function setupMenu(): void {
       ],
     },
     {
-      label: menuT('menu.help'),
-      submenu: [
-        {
-          label: menuT('menu.about'),
-          click: () => getMainWindow()?.webContents.send('menu:about'),
-        },
-      ],
-    },
-    {
       label: menuT('menu.language'),
       submenu: [
         {
@@ -277,6 +318,15 @@ export function setupMenu(): void {
           type: 'radio',
           checked: getCurrentLocale() === 'zh-CN',
           click: () => setMenuLocale('zh-CN', true),
+        },
+      ],
+    },
+    {
+      label: menuT('menu.help'),
+      submenu: [
+        {
+          label: menuT('menu.about'),
+          click: () => getMainWindow()?.webContents.send('menu:about'),
         },
       ],
     },

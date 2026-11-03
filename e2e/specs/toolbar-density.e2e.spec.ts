@@ -142,9 +142,10 @@ test.describe('toolbar density (E8)', () => {
 
     // Drive the editor column below the 420px fold threshold (ADR-0024 §10 trade-off 54) by entering
     // the named `narrow` environment: its 800px content area leaves each split column at
-    // (800 - 288) / 2 = 256px, collapsing the seven format buttons into one dropdown. We enter a
-    // named environment rather than sizing the OS window by hand, so the width is a shared, reviewed
-    // decision and the no-magic-number guard covers it (see ADR-0026).
+    // (800 - 288) / 2 = 256px, collapsing the WHOLE bar into one "…" overflow (Q3: a single
+    // overflow replaces the old Format dropdown + minimal stage). We enter a named environment rather
+    // than sizing the OS window by hand, so the width is a shared, reviewed decision and the
+    // no-magic-number guard covers it (see ADR-0026).
     await page.setViewportSize(VIEWPORTS.narrow)
     // Guard the premise before asserting the result: a window that refused to shrink would
     // otherwise surface as an opaque "element not found" timeout instead of this message.
@@ -155,13 +156,14 @@ test.describe('toolbar density (E8)', () => {
       })
       .toBeLessThan(420)
 
-    const foldBtn = page.getByTestId('fmt-dropdown-btn')
+    const foldBtn = page.getByTestId('editor-overflow-btn')
     await expect(foldBtn).toBeVisible({ timeout: 15_000 })
 
     await foldBtn.click()
     const items = page.getByRole('menuitem')
     const count = await items.count()
-    expect(count, 'the folded menu must list every format action').toBe(7)
+    // Single overflow carries EVERY action: 7 format + find/replace + undo/redo/read-only = 12.
+    expect(count, 'the single overflow must list every bar action').toBe(12)
     for (let i = 0; i < count; i++) {
       const box = await items.nth(i).boundingBox()
       expect(box, `format menu item #${i} has no box`).not.toBeNull()

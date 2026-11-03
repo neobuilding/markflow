@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { VIEWPORTS } from '../helpers/viewports'
 
 // Editor find/replace is now powered by MarkFlow's shared FindWidget (top-anchored, VS Code
 // style) instead of CodeMirror's native panel. The entry points (`Ctrl/Cmd+H` and the toolbar
@@ -50,6 +51,10 @@ test.describe('find and replace', () => {
   test('the toolbar replace button opens the same panel', async () => {
     const { page } = handle
     await waitForAppReady(page)
+    // The replace BUTTON is inline only in the expanded pane bar; in the default environment the
+    // column is folded and every command lives in the single "…" overflow (Q3). The `wide`
+    // environment expands the bar, so the button under test really is the toolbar button.
+    await page.setViewportSize(VIEWPORTS.wide)
     await createDocAndType(page, 'hello world')
 
     await page.getByTestId('editor-replace-btn').click()
@@ -61,6 +66,8 @@ test.describe('find and replace', () => {
   test('Replace swaps the matched text in the document', async () => {
     const { page } = handle
     await waitForAppReady(page)
+    // Same reason as above: the replace button must be an inline button, not an overflow entry.
+    await page.setViewportSize(VIEWPORTS.wide)
     await createDocAndType(page, 'hello world')
 
     await page.getByTestId('editor-replace-btn').click()

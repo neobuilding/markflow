@@ -303,4 +303,18 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     await page.getByTestId('resident-search-input').fill('first\\nsecond')
     await expect(page.getByTestId('search-match')).toHaveCount(1)
   })
+
+  // The Search view's empty state speaks for ITSELF (Q7): it used to borrow the command
+  // palette's `palette.startTyping` string, so the sidebar quoted another surface. It now has
+  // its own key (`sidebar.searchEmptyState`) — the empty state names the results area.
+  test('the empty state names the results area with its own copy (Q7)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await openSearchView(page)
+
+    // No query yet → the empty state is on screen with the sidebar's own wording.
+    await expect(page.getByText('Search results', { exact: true })).toBeVisible()
+    // The palette's wording must NOT leak into the sidebar.
+    await expect(page.getByText('Start typing', { exact: false })).toHaveCount(0)
+  })
 })

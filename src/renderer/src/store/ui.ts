@@ -470,7 +470,7 @@ export const useUIStore = create<UIState>((set, get) => ({
     }),
   bumpDocumentState: () => set((s) => ({ documentStateRevision: s.documentStateRevision + 1 })),
 
-  theme: 'light',
+  theme: 'system',
   setTheme: (theme) => set({ theme }),
 
   language: resolveInitialLanguage(),

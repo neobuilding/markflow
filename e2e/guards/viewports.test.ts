@@ -10,7 +10,7 @@
 //   - every environment is at least the window floor (electron/main/window.ts `minWidth`)
 //   - `standard` really does fold the editor toolbar  (pane < FOLD_AT)
 //   - `wide` really does expand it                     (pane >= FOLD_AT)
-//   - `narrow` stays out of the `minimal` mode         (pane >= MINIMAL_AT)
+//   - `narrow` folds the editor toolbar                  (pane < FOLD_AT)
 //   - `baseline` matches the committed E9 visual baselines (their bar widths)
 //
 // It also guards the convention itself, because convention is not self-enforcing: that
@@ -41,11 +41,6 @@ function pngWidth(relPath: string): number {
 const FOLD_AT = Number(
   /const FOLD_AT = (\d+)/.exec(source('src/renderer/src/components/editor/EditorPaneBar.tsx'))?.[1],
 )
-const MINIMAL_AT = Number(
-  /const MINIMAL_AT = (\d+)/.exec(
-    source('src/renderer/src/components/editor/EditorPaneBar.tsx'),
-  )?.[1],
-)
 const SIDEBAR_DEFAULT = Number(
   /setSidebarWidth\] = useState\((\d+)\)/.exec(
     source('src/renderer/src/components/sidebar/Sidebar.tsx'),
@@ -60,7 +55,6 @@ const splitPaneWidth = (viewport: { width: number }): number =>
 describe('the named e2e environments', () => {
   it('could not read the layout constants — the guard would be vacuous', () => {
     expect(Number.isFinite(FOLD_AT)).toBe(true)
-    expect(Number.isFinite(MINIMAL_AT)).toBe(true)
     expect(Number.isFinite(SIDEBAR_DEFAULT)).toBe(true)
     expect(Number.isFinite(WINDOW_FLOOR)).toBe(true)
   })
@@ -81,11 +75,13 @@ describe('the named e2e environments', () => {
     expect(splitPaneWidth(VIEWPORTS.wide)).toBeGreaterThanOrEqual(FOLD_AT)
   })
 
-  it('has `narrow` stay out of the minimal toolbar mode', () => {
+  it('has `narrow` fold the editor toolbar (single fold threshold)', () => {
     // The app measures the bar's border box, which equals this column width (see EditorPaneBar.tsx
-    // reading `borderBoxSize`), so comparing the column width to MINIMAL_AT is exactly the quantity
-    // the real layout compares against — not the content box, which would subtract the bar's padding.
-    expect(splitPaneWidth(VIEWPORTS.narrow)).toBeGreaterThanOrEqual(MINIMAL_AT)
+    // reading `borderBoxSize`), so comparing the column width to FOLD_AT is exactly the quantity the
+    // real layout compares against — not the content box, which would subtract the bar's padding.
+    // Q3 collapsed the old wide/folded/minimal model into a single threshold, so `narrow` is now a
+    // folded column (pane < FOLD_AT), not a separate minimal mode.
+    expect(splitPaneWidth(VIEWPORTS.narrow)).toBeLessThan(FOLD_AT)
   })
 
   it('pins the standard environment for every spec in the shared launch helper', () => {

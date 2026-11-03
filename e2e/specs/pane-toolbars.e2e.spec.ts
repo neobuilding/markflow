@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { test } from '../helpers/fixtures'
 import { VIEWPORTS } from '../helpers/viewports'
+import { expectTooltipText } from '../helpers/tooltip'
 import {
   expectClipboardAfter,
   readClipboardText,
@@ -50,14 +51,16 @@ test.describe('pane toolbars', () => {
     await expect(page.getByTestId('preview-pane')).toBeVisible()
 
     // The editor column owns the editor-only clusters (ADR-0024 §10 trade-off 52). In the default
-    // environment the column is 368px wide, so the format cluster is the folded `Format` dropdown
-    // (EditorPaneBar folds it below FOLD_AT = 420); the expanded form has its own case below.
-    await expect(page.getByTestId('editor-pane').getByTestId('fmt-dropdown-btn')).toBeVisible()
-    await expect(page.getByTestId('editor-pane').getByTestId('editor-find-btn')).toBeVisible()
-    await expect(page.getByTestId('editor-pane').getByTestId('editor-replace-btn')).toBeVisible()
-    await expect(page.getByTestId('editor-pane').getByTestId('editor-undo-btn')).toBeVisible()
-    await expect(page.getByTestId('editor-pane').getByTestId('editor-redo-btn')).toBeVisible()
-    await expect(page.getByTestId('editor-pane').getByTestId('editor-readonly-btn')).toBeVisible()
+    // environment the column is 368px wide, so EVERYTHING collapses into one "…" overflow
+    // (Q3: single overflow, no separate Format dropdown / minimal stage); the expanded form has its
+    // own case below.
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-overflow-btn')).toBeVisible()
+    // The individual actions are no longer inline — they moved one level down into the overflow.
+    await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toHaveCount(0)
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-find-btn')).toHaveCount(0)
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-replace-btn')).toHaveCount(0)
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-undo-btn')).toHaveCount(0)
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-readonly-btn')).toHaveCount(0)
 
     // The preview column owns the preview-only actions.
     await expect(page.getByTestId('preview-pane').getByTestId('preview-find-btn')).toBeVisible()
@@ -70,12 +73,13 @@ test.describe('pane toolbars', () => {
     await expect(page.getByTestId('reload-btn')).toBeVisible()
     await expect(page.getByTestId('file-details-btn')).toBeVisible()
 
-    // The editor-only clusters exist ONCE: they sank out of the global bar instead of being
-    // duplicated there.
-    await expect(page.getByTestId('editor-find-btn')).toHaveCount(1)
-    await expect(page.getByTestId('editor-replace-btn')).toHaveCount(1)
-    await expect(page.getByTestId('fmt-dropdown-btn')).toHaveCount(1)
-    await expect(page.getByTestId('editor-readonly-btn')).toHaveCount(1)
+    // The editor-only cluster lives ONCE: it sank out of the global bar instead of being duplicated,
+    // and now sits in a single overflow button inside the editor column.
+    await expect(page.getByTestId('editor-overflow-btn')).toHaveCount(1)
+    // The global bar must NOT carry an editor overflow of its own.
+    await expect(
+      page.locator('[data-testid="global-bar"]').getByTestId('editor-overflow-btn'),
+    ).toHaveCount(0)
   })
 
   test('a wide editor column expands the format cluster into its seven entries', async () => {
@@ -94,20 +98,19 @@ test.describe('pane toolbars', () => {
     // The seven format entries (heading, bold, italic, code, link, list, task) sit inline.
     await expect(page.getByTestId('editor-pane').getByTestId(/^fmt-/)).toHaveCount(7)
     await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toBeVisible()
-    // The folded dropdown is replaced by them, never shown alongside them.
-    await expect(page.getByTestId('fmt-dropdown-btn')).toHaveCount(0)
+    // The single overflow is replaced by the expanded actions, never shown alongside them.
+    await expect(page.getByTestId('editor-overflow-btn')).toHaveCount(0)
     // And the cluster lives in the editor column only — the global bar does not carry a copy.
     await expect(page.getByTestId(/^fmt-/)).toHaveCount(7)
   })
 
-  test('narrow editor column folds the format cluster but stays out of the minimal overflow', async () => {
+  test('narrow editor column folds everything into a single overflow', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, 'hello world')
-    // Narrow (800 content area) leaves each split column at (800 - 288) / 2 = 256px. The bar measures
-    // the COLUMN width (its border box, via ResizeObserver `borderBoxSize`), so 256 >= MINIMAL_AT (240):
-    // folded, NOT minimal. This locks the "narrow stays out of the minimal mode" contract that
-    // e2e/guards/viewports.test.ts asserts against the layout constants.
+    // Narrow (800 content area) leaves each split column at (800 - 288) / 2 = 256px, which is below
+    // FOLD_AT (420) — the single fold threshold. Q3 removed the old minimal stage, so the WHOLE bar
+    // (format + find/replace + undo/redo/read-only) collapses into one "…" overflow.
     await page.setViewportSize(VIEWPORTS.narrow)
     await page.getByTestId('view-split').click()
     const editorBar = page.getByTestId('editor-pane-bar')
@@ -118,11 +121,126 @@ test.describe('pane toolbars', () => {
         message: 'the editor column must be narrow enough (< 420px) to fold',
       })
       .toBeLessThan(420)
-    // Format cluster folds into the single dropdown...
-    await expect(page.getByTestId('editor-pane').getByTestId('fmt-dropdown-btn')).toBeVisible()
-    // ...but undo / redo / read-only stay INLINE: the `…` overflow must NOT appear.
-    await expect(page.getByTestId('editor-pane').getByTestId('editor-undo-btn')).toBeVisible()
-    await expect(page.getByTestId('editor-pane').getByTestId('editor-overflow-btn')).toHaveCount(0)
+    // Everything collapses into the single overflow...
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-overflow-btn')).toBeVisible()
+    // ...and the individual actions are no longer inline.
+    await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toHaveCount(0)
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-undo-btn')).toHaveCount(0)
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-readonly-btn')).toHaveCount(0)
+  })
+
+  // The single overflow is not just "one button instead of many": EVERY command must be inside it
+  // AND carry a visible label. The old two-stage model hid the seven formatting actions behind an
+  // UNLABELLED dropdown, so this asserts the labels themselves, not just the presence of a trigger.
+  test('the folded overflow holds every command with a visible label (Q3)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+    await page.getByTestId('view-split').click()
+    await expect(page.getByTestId('editor-pane')).toBeVisible()
+
+    await expect(page.getByTestId('editor-overflow-btn')).toBeVisible()
+    await page.getByTestId('editor-overflow-btn').click()
+
+    const menu = page.getByRole('menu')
+    await expect(menu).toBeVisible()
+    // Seven format actions + find + replace + undo + redo + read-only = twelve entries.
+    await expect(menu.locator('[data-testid^="fmt-"]')).toHaveCount(7)
+    for (const id of [
+      'editor-find-btn',
+      'editor-replace-btn',
+      'editor-undo-btn',
+      'editor-redo-btn',
+      'editor-readonly-btn',
+    ]) {
+      await expect(menu.getByTestId(id)).toBeVisible()
+    }
+    // Every entry names its action — no unlabelled glyph hides behind the overflow.
+    const labels = await menu.locator('[role="menuitem"]').allTextContents()
+    expect(labels).toHaveLength(12)
+    for (const label of labels) {
+      expect(label.trim(), 'an overflow entry must carry a visible label').not.toBe('')
+    }
+  })
+
+  // The read-only toggle is a toggle BUTTON in the wide bar: its pressed state says which mode is
+  // active, and its accessible name states the CURRENT mode (the tooltip states the action).
+  // Edit is the pressed one; read-only is the resting one (ADR-0029).
+  test('the read-only toggle states the current mode and its pressed state (Q1)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    // Its own case: the toggle is inline only in the expanded bar (wide environment).
+    await page.setViewportSize(VIEWPORTS.wide)
+    await createDocAndType(page, 'hello world')
+    await page.getByTestId('view-split').click()
+
+    const toggle = page.getByTestId('editor-readonly-btn')
+    await expect(toggle).toBeVisible()
+    // A new draft opens in EDIT mode, so the toggle is pressed and says so.
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(toggle).toHaveAttribute('aria-label', 'Edit')
+
+    // Clicking switches to read-only: the pressed state follows, and the name states the new mode.
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(toggle).toHaveAttribute('aria-label', 'Read-only')
+  })
+
+  // EVERY format action advertises its shortcut (ADR-0032) — the toolbar is no longer a
+  // mouse-only surface, and a shortcut nobody can see is a shortcut nobody finds. The glyph is
+  // platform-formatted like every other shortcut label in the app (Ctrl+B off macOS).
+  // This subsumes the original Bold-only assertion (Q2c) and extends it to the whole cluster.
+  test('every format button advertises its shortcut in the tooltip', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await page.setViewportSize(VIEWPORTS.wide)
+    await createDocAndType(page, 'hello world')
+    await page.getByTestId('view-split').click()
+
+    const mac = process.platform === 'darwin'
+    const cases: Array<[string, string]> = [
+      ['fmt-# -', mac ? '⌘1' : 'Ctrl+1'],
+      ['fmt-**-**', mac ? '⌘B' : 'Ctrl+B'],
+      ['fmt-_-_', mac ? '⌘I' : 'Ctrl+I'],
+      ['fmt-`-`', mac ? '⌘E' : 'Ctrl+E'],
+      ['fmt-[-](url)', mac ? '⌘K' : 'Ctrl+K'],
+      ['fmt-- -', mac ? '⌘⇧L' : 'Ctrl+Shift+L'],
+      ['fmt-- [ ] -', mac ? '⌘⇧T' : 'Ctrl+Shift+T'],
+    ]
+    for (const [testId, glyph] of cases) {
+      await expectTooltipText(page, testId, glyph)
+    }
+  })
+
+  // The two relocated app commands advertise their NEW chords (ADR-0032). A stale glyph points at
+  // a key that does something else, which is worse than no glyph at all.
+  test('the global bar advertises the relocated chords ⌘⇧K and ⌘⇧I', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+
+    const mac = process.platform === 'darwin'
+    await expectTooltipText(page, 'editor-goto-file-btn', mac ? '⌘⇧K' : 'Ctrl+Shift+K')
+    await expectTooltipText(page, 'file-details-btn', mac ? '⌘⇧I' : 'Ctrl+Shift+I')
+  })
+
+  // The extracted global toolbar (Q8) owns the APP-level commands, and the sidebar toggle that
+  // used to live here was removed (Q2a): the content panel is folded from the activity-bar menu,
+  // the native View menu or ⌘\.
+  test('the global bar carries the app commands and no sidebar toggle (Q2a/Q8)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    const globalBar = page.getByTestId('global-bar')
+    await expect(globalBar).toBeVisible()
+    // Quick Open is the first entry of the global toolbar.
+    await expect(globalBar.getByTestId('editor-goto-file-btn')).toBeVisible()
+    // The sidebar toggle is gone from this bar.
+    await expect(page.getByTestId('sidebar-toggle-btn')).toHaveCount(0)
+
+    // With no document open the bar shows only what can act (Quick Open + Close) — ADR-0024 §9.
+    await expect(globalBar.getByTestId('save-btn')).toHaveCount(0)
+    await expect(globalBar.getByTestId('close-btn')).toBeVisible()
   })
 
   test('the export button follows the preview visibility — exactly one is on screen', async () => {
@@ -144,6 +262,10 @@ test.describe('pane toolbars', () => {
   test('the editor pane bar undo/redo track the document history', async () => {
     const { page } = handle
     await waitForAppReady(page)
+    // Its own case: undo / redo are INLINE only in the expanded bar. In the default environment
+    // the column is folded and Q3 moved every command into the single "…" overflow, so the buttons
+    // do not exist as buttons at all. The `wide` environment expands the bar.
+    await page.setViewportSize(VIEWPORTS.wide)
     await createDocAndType(page, 'hello world')
 
     const undo = page.getByTestId('editor-undo-btn')

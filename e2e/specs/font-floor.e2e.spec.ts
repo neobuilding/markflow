@@ -87,7 +87,7 @@ test.describe('font floor', () => {
 
     // Sweep 2 — the command palette: a dense overlay of small labels (command names, shortcut
     // hints). It is the most label-dense surface in the app, so it is the best second sample.
-    await page.keyboard.press('Control+k')
+    await page.keyboard.press('Control+Shift+k')
     await expect(page.locator('[data-modal-surface]').first()).toBeVisible()
     const palette = await sweepFontSizes(page)
     expect(

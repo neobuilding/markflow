@@ -141,8 +141,15 @@ markflow/
 | Shortcut               | Action                                        |
 | ---------------------- | --------------------------------------------- |
 | `Ctrl/Cmd + N`         | New document                                  |
-| `Ctrl/Cmd + K`         | Search documents                              |
-| `Ctrl/Cmd + \`         | Toggle sidebar                                |
+| `Ctrl/Cmd + Shift + K` | Quick Open (find a document by name / path)   |
+| `Ctrl/Cmd + B`         | Bold                                          |
+| `Ctrl/Cmd + I`         | Italic                                        |
+| `Ctrl/Cmd + K`         | Insert link                                   |
+| `Ctrl/Cmd + E`         | Inline code                                   |
+| `Ctrl/Cmd + Shift + L` | Bullet list                                   |
+| `Ctrl/Cmd + Shift + T` | Task list item                                |
+| `Ctrl/Cmd + 1..6`      | Heading 1..6                                  |
+| `Ctrl/Cmd + \`         | Fold / unfold the content panel               |
 | `Ctrl/Cmd + Shift + P` | Toggle preview mode (edit/preview/split)      |
 | `Ctrl/Cmd + W`         | Close file (keep the opened folder & sidebar) |
 | `Ctrl/Cmd + Shift + W` | Close workspace (close current file & folder) |
@@ -151,7 +158,7 @@ markflow/
 | `Ctrl/Cmd + S`         | Save (manual; no auto-save)                   |
 | `Ctrl/Cmd + Shift + S` | Save As…                                      |
 | `Ctrl/Cmd + Shift + R` | Reload from Disk (load latest file content)   |
-| `Ctrl/Cmd + I`         | File details (path, size, modified date)      |
+| `Ctrl/Cmd + Shift + I` | File details (path, size, modified date)      |
 
 ## 🛠️ Tech Stack
 

@@ -593,7 +593,7 @@ export function SidebarSearch(): React.ReactElement {
         )}
         {!searchQuery && (
           <div className="px-4 py-3 text-xs text-[var(--color-text-tertiary)]">
-            {t('palette.startTyping')}
+            {t('sidebar.searchEmptyState')}
           </div>
         )}
         {results.length > 0 && (

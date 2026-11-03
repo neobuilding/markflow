@@ -268,6 +268,7 @@ function ActivityBar({
         <ContextMenuItem
           data-testid="activity-collapse-sidebar"
           disabled={!open}
+          shortcut={formatShortcut('⌘\\')}
           onClick={onToggle}
         >
           <PanelLeftClose size={13} /> {t('ctx.collapseSidebar')}

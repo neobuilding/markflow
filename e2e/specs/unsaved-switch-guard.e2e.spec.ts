@@ -81,8 +81,8 @@ test.describe('unsaved-switch guard chain (D23)', () => {
     // Answer the unsaved-changes confirm with "keep editing" (0) and record the calls.
     await installConfirmSpy(handle, { defaultResponse: 0 })
 
-    // Quick Open (Ctrl/Cmd+K) and pick the OTHER document — a plain document switch.
-    await page.keyboard.press('Control+k')
+    // Quick Open (Ctrl/Cmd+Shift+K) and pick the OTHER document — a plain document switch.
+    await page.keyboard.press('Control+Shift+k')
     const paletteInput = page.getByTestId('search-input')
     await expect(paletteInput).toBeVisible()
     await paletteInput.pressSequentially('beta')

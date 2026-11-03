@@ -179,4 +179,217 @@ describe('App — window-level shortcut guards (modal owns the keyboard)', () =>
     expect(useUIStore.getState().sidebarOpen).toBe(before)
     modal.remove()
   })
+
+  // Ctrl/Cmd+B was reassigned from the sidebar toggle to Bold. These lock the new owner: exactly
+  // ONE handler (the editor's own `markdown:insert` dispatcher), and it stands down whenever the
+  // user is typing somewhere else.
+  describe('Ctrl/Cmd+B (Bold)', () => {
+    it('dispatches the editor insert event with bold markup', () => {
+      mountApp()
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, cancelable: true }),
+      )
+      expect(onInsert).toHaveBeenCalledTimes(1)
+      const detail = (onInsert.mock.calls[0][0] as CustomEvent).detail
+      expect(detail).toEqual({ before: '**', after: '**' })
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+
+    it('no longer toggles the sidebar', () => {
+      mountApp()
+      const before = useUIStore.getState().sidebarOpen
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, cancelable: true }),
+      )
+      expect(useUIStore.getState().sidebarOpen).toBe(before)
+    })
+
+    it('stands down while the user is typing in a text field', () => {
+      mountApp()
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, cancelable: true }),
+      )
+      expect(onInsert).not.toHaveBeenCalled()
+      input.remove()
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+
+    it('stands down while the editor find widget holds focus', () => {
+      // The find & replace widget's inputs are text fields too: a shortcut that MODIFIES the
+      // document must not fire while the user is typing a search term there. (The panel exemption
+      // belongs to the find / replace shortcuts only.)
+      mountApp()
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+      const panel = document.createElement('div')
+      panel.className = 'cm-panel'
+      const input = document.createElement('input')
+      panel.appendChild(input)
+      document.body.appendChild(panel)
+      input.focus()
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, cancelable: true }),
+      )
+      expect(onInsert).not.toHaveBeenCalled()
+      panel.remove()
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+
+    it('stands down while a modal surface owns the keyboard', () => {
+      mountApp()
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+      const modal = document.createElement('div')
+      modal.setAttribute('data-modal-surface', '')
+      document.body.appendChild(modal)
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, cancelable: true }),
+      )
+      expect(onInsert).not.toHaveBeenCalled()
+      modal.remove()
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+  })
+
+  // ADR-0032 completed the formatting cluster. Every binding dispatches the editor's
+  // `markdown:insert` channel — the SAME channel the toolbar buttons use — so there is exactly one
+  // implementation of each action. These lock the mapping, the guards, and the keys that moved.
+  describe('Ctrl/Cmd+<key> — the formatting cluster (ADR-0032)', () => {
+    // The whole cluster, as the keydown initializers the app sees them.
+    const CASES: Array<[KeyboardEventInit, { before: string; after: string }]> = [
+      [
+        { key: 'b', ctrlKey: true },
+        { before: '**', after: '**' },
+      ],
+      [
+        { key: 'i', ctrlKey: true },
+        { before: '_', after: '_' },
+      ],
+      [
+        { key: 'k', ctrlKey: true },
+        { before: '[', after: '](url)' },
+      ],
+      [
+        { key: 'e', ctrlKey: true },
+        { before: '`', after: '`' },
+      ],
+      [
+        { key: 'l', ctrlKey: true, shiftKey: true },
+        { before: '- ', after: '' },
+      ],
+      [
+        { key: 't', ctrlKey: true, shiftKey: true },
+        { before: '- [ ] ', after: '' },
+      ],
+      [
+        { key: '1', code: 'Digit1', ctrlKey: true },
+        { before: '# ', after: '' },
+      ],
+      [
+        { key: '2', code: 'Digit2', ctrlKey: true },
+        { before: '## ', after: '' },
+      ],
+      [
+        { key: '6', code: 'Digit6', ctrlKey: true },
+        { before: '###### ', after: '' },
+      ],
+    ]
+
+    it('maps every binding to its markup, through the shared insert channel', () => {
+      mountApp()
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+      let calls = 0
+      for (const [init, expected] of CASES) {
+        window.dispatchEvent(new KeyboardEvent('keydown', { cancelable: true, ...init }))
+        calls += 1
+        expect(onInsert, JSON.stringify(init)).toHaveBeenCalledTimes(calls)
+        expect((onInsert.mock.calls[calls - 1][0] as CustomEvent).detail).toEqual(expected)
+      }
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+
+    it('stands down for the whole cluster while the user is typing in a text field', () => {
+      mountApp()
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+      for (const [init] of CASES) {
+        window.dispatchEvent(new KeyboardEvent('keydown', { cancelable: true, ...init }))
+      }
+      expect(onInsert).not.toHaveBeenCalled()
+      input.remove()
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+
+    it('stands down for the whole cluster while a modal surface owns the keyboard', () => {
+      mountApp()
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+      const modal = document.createElement('div')
+      modal.setAttribute('data-modal-surface', '')
+      document.body.appendChild(modal)
+      for (const [init] of CASES) {
+        window.dispatchEvent(new KeyboardEvent('keydown', { cancelable: true, ...init }))
+      }
+      expect(onInsert).not.toHaveBeenCalled()
+      modal.remove()
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+
+    it('leaves the keys of the other commands alone', () => {
+      mountApp()
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+      // ⌘N new document, ⌘\ fold the panel, ⌘⇧F search in files, ⌘⇧E files view.
+      for (const init of [
+        { key: 'n', ctrlKey: true },
+        { key: '\\', ctrlKey: true },
+        { key: 'f', ctrlKey: true, shiftKey: true },
+        { key: 'e', ctrlKey: true, shiftKey: true },
+      ] satisfies KeyboardEventInit[]) {
+        window.dispatchEvent(new KeyboardEvent('keydown', { cancelable: true, ...init }))
+      }
+      expect(onInsert).not.toHaveBeenCalled()
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+
+    it('gives ⌘K to the Link action and moved Quick Open to ⌘⇧K', () => {
+      mountApp()
+      useUIStore.getState().setSearchOpen(false)
+      const onInsert = vi.fn()
+      document.addEventListener('markdown:insert', onInsert)
+
+      // ⌘K is now the editor's Link action — it must NOT open the palette any more.
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, cancelable: true }),
+      )
+      expect(useUIStore.getState().searchOpen).toBe(false)
+      expect((onInsert.mock.calls[0][0] as CustomEvent).detail).toEqual({
+        before: '[',
+        after: '](url)',
+      })
+
+      // The palette's own chord opens it.
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'K',
+          ctrlKey: true,
+          shiftKey: true,
+          cancelable: true,
+        }),
+      )
+      expect(useUIStore.getState().searchOpen).toBe(true)
+      document.removeEventListener('markdown:insert', onInsert)
+    })
+  })
 })

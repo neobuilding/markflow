@@ -1001,17 +1001,7 @@ describe('EditorPane — view mode radio group', () => {
   })
 })
 
-// The sidebar toggle is a real toggle, so it must expose its state: the design image draws the
-// global bar's active control as an accent-tinted tile (fig 02), and `aria-pressed` is what both
-// the screen reader and the pressed styling read.
-describe('EditorPane — global bar toggles', () => {
-  it('reports the sidebar state on the sidebar toggle', () => {
-    useUIStore.getState().setSidebarOpen(true)
-    mount()
-    const toggle = screen.getByTestId('sidebar-toggle-btn')
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(toggle)
-    expect(useUIStore.getState().sidebarOpen).toBe(false)
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
-  })
-})
+// The global-bar sidebar toggle BUTTON was removed in Q2a (the sidebar is still toggleable via the
+// ActivityBar right-click menu, the native View menu, and the ⌘\ handlers). Its pressed-tile state
+// is now covered by the ActivityBar collapse control and the e2e sidebar-shortcuts spec, so this
+// unit test (tied to the removed button) is intentionally dropped.

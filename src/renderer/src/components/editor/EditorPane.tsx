@@ -4,28 +4,14 @@ import {
   Eye,
   Columns,
   GripVertical,
-  PanelLeft,
   X,
   FolderOpen,
   Plus,
-  Save,
-  SaveAll,
-  RotateCcw,
-  Info,
-  FileOutput,
-  FileText,
   Copy,
   Search,
   PenLine,
 } from 'lucide-react'
-import {
-  cn,
-  baseName,
-  dirName,
-  displayTitle,
-  stripMarkdownExt,
-  formatShortcut,
-} from '../../lib/utils'
+import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
 import { useUIStore } from '../../store/ui'
 import {
   useDocument,
@@ -39,6 +25,7 @@ import { MarkdownEditor } from './MarkdownEditor'
 import { MarkdownPreview } from '../preview/MarkdownPreview'
 import { PreviewToolbar } from '../preview/PreviewToolbar'
 import { EditorPaneBar } from './EditorPaneBar'
+import { GlobalToolbar } from './GlobalToolbar'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
@@ -61,7 +48,7 @@ import {
 } from '../ui/context-menu'
 import { FileMenuItems, type DocMenuActions } from './FileMenuItems'
 import { InputContextMenu } from '../ui/input-context-menu'
-import { hasModalSurface } from '../../lib/shortcut-scope'
+import { hasModalSurface, isEditableTarget, isFindWidgetField } from '../../lib/shortcut-scope'
 
 // Reveal a path in the system file manager. Failures (a file deleted outside the app) are
 // swallowed so they never surface as an unhandled rejection
@@ -88,31 +75,8 @@ function findTargetPane(
   return lastPane === 'preview' ? 'preview' : 'editor'
 }
 
-// True when keyboard focus sits in a text-entry surface that is NOT the editor's own content, so a
-// window-level find/replace shortcut must stand down and let that surface keep the key (ADR-0023 /
-// G5). `null` / non-HTMLElement active elements (e.g. just the body) are treated as "not editing".
-//
-// The editor's own editing surface (`.cm-content`) is deliberately EXEMPT: its Ctrl/Cmd+F / Ctrl/Cmd+H
-// belong to the editor's find & replace widget, so the key must route there and NOT be swallowed. Only
-// genuine "other" fields — the resident sidebar search `<input>`, a rename `<input>`, or any
-// contentEditable that isn't the editor itself — keep the key.
-function isEditableTarget(el: Element | null): boolean {
-  if (!(el instanceof HTMLElement)) return false
-  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-    // The editor find widget's own fields live inside a CodeMirror panel: their Ctrl/Cmd+F/H
-    // belong to that widget (same rule as the .cm-content exemption below), so the shortcuts keep
-    // working while the user is typing in the find/replace inputs. Without this arm the
-    // re-open path (Ctrl+H expanding an already-open panel) was unreachable — focus sits in the
-    // find input the moment the panel opens, and the guard swallowed every follow-up shortcut.
-    if (el.closest('.cm-panel')) return false
-    return true
-  }
-  if (el.isContentEditable) {
-    if (el.classList.contains('cm-content')) return false
-    return true
-  }
-  return false
-}
+// `isEditableTarget` / `isFindWidgetField` are provided by '../../lib/shortcut-scope' (shared with
+// App.tsx's Ctrl/Cmd+B guard), so the editor-pane-local copy was removed.
 
 /**
  * The three exclusive view modes, in the order the toolbar renders them.
@@ -129,8 +93,6 @@ export function EditorPane(): React.ReactElement {
     viewMode,
     setViewMode,
     editable,
-    toggleSidebar,
-    sidebarOpen,
     closeDocument,
     externalChange,
     clearExternalChange,
@@ -418,9 +380,13 @@ export function EditorPane(): React.ReactElement {
       // Don't hijack plain find/replace while the caret is in a text field that is NOT the editor's own
       // content (ADR-0023 / G5): e.g. Ctrl/Cmd+F inside the resident sidebar search box must NOT yank
       // focus to the editor find widget. The field keeps the key — return WITHOUT preventDefault so its
-      // own behaviour is untouched. The editor's own `.cm-content` is exempt (see isEditableTarget), so
-      // Ctrl/Cmd+F/H still opens the editor find widget from within the editor.
-      if (isEditableTarget(document.activeElement)) return
+      // own behaviour is untouched. Two exemptions keep the editor's own shortcuts working:
+      //   - `.cm-content` (the editor's own surface) is exempt via `isEditableTarget`.
+      //   - the find & replace widget's own inputs are exempt via `isFindWidgetField`: focus sits in
+      //     the find input the moment the panel opens, so without this arm the re-open path
+      //     (Ctrl/Cmd+H expanding an already-open panel) would be unreachable.
+      if (isEditableTarget(document.activeElement) && !isFindWidgetField(document.activeElement))
+        return
       if (key === 'h') {
         // Replace is editor-only (Q2): the preview has no replace field, so when the ACTIVE pane is
         // the preview this key has no target — stand down WITHOUT preventDefault (don't swallow it,
@@ -628,170 +594,6 @@ export function EditorPane(): React.ReactElement {
     document.body.style.userSelect = 'none'
   }, [])
 
-  // Shared toolbar: open/close/sidebar/edit-mode toggle (used by both empty and document states)
-  const CommonToolbar = (
-    <div className="titlebar-no-drag flex items-center gap-1.5">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="toolbar"
-            size="icon"
-            aria-label={t('menu.toggleSidebar')}
-            aria-pressed={sidebarOpen}
-            data-testid="sidebar-toggle-btn"
-            onClick={toggleSidebar}
-          >
-            <PanelLeft size={16} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {t('editor.toggleSidebarShortcut', {
-            primary: formatShortcut('⌘\\'),
-            secondary: formatShortcut('⌘B'),
-          })}
-        </TooltipContent>
-      </Tooltip>
-      {/* "Go to file…" — the Quick Open trigger (ADR-0023). It lives in the editor toolbar next to
-          the sidebar toggle, and its tooltip NAMES the surface's scope ("Go to file…"), so the
-          entry point says what it searches instead of showing a bare magnifier. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="toolbar"
-            size="icon"
-            aria-label={t('sidebar.goToFile')}
-            data-testid="editor-goto-file-btn"
-            onClick={() => useUIStore.getState().setSearchOpen(true)}
-          >
-            {/* A document glyph, not a magnifier: Quick Open sits one icon away from the in-document
-                find button (⌘F), and two adjacent magnifiers read as the same action. `FileText`
-                rather than `List` because `List` already means "bullet list" in the format
-                cluster of this very toolbar. */}
-            <FileText size={16} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {t('editor.goToFileShortcut', { shortcut: formatShortcut('⌘K') })}
-        </TooltipContent>
-      </Tooltip>
-      {/* The ⌘K shortcut is surfaced in the button's TOOLTIP, not as a persistent chip: the
-          diagram's own rule is "toolbar shows icons only; persistent text is reserved for the
-          title / breadcrumb / input / mode state" (fig 02). A bare ⌘K chip would violate that. */}
-      {/* Save / Save As / Reload grouped with Open/Close as file operations, kept on the left */}
-      {activeDocumentId && (
-        <>
-          {/* Cluster boundary: navigation/search ↔ file operations. It lives INSIDE the
-              `activeDocumentId` gate on purpose — otherwise the empty state would show a lone
-              divider floating between the ⌘K chip and Close. */}
-          <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="toolbar"
-                size="icon"
-                onClick={handleSave}
-                disabled={!editable || !dirty || updateMut.isPending || saveAsMut.isPending}
-                className={editable && dirty ? 'text-accent' : ''}
-                data-testid="save-btn"
-              >
-                <Save size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {editable
-                ? dirty
-                  ? t('editor.saveShortcut', { shortcut: formatShortcut('⌘S') })
-                  : t('editor.noChanges')
-                : t('editor.saveSwitchEdit')}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="toolbar"
-                size="icon"
-                onClick={handleSaveAs}
-                disabled={!editable || saveAsMut.isPending}
-                data-testid="save-as-btn"
-              >
-                <SaveAll size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {editable
-                ? t('editor.saveAsShortcut', { shortcut: formatShortcut('⌘⇧S') })
-                : t('editor.saveAsSwitchEdit')}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="toolbar"
-                size="icon"
-                onClick={handleReload}
-                disabled={reloadMut.isPending}
-                data-testid="reload-btn"
-              >
-                <RotateCcw size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t('editor.reloadShortcut', { shortcut: formatShortcut('⌘⇧R') })}
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="toolbar"
-                size="icon"
-                onClick={() => doc && useUIStore.getState().setFileDetailsId(doc.id)}
-                data-testid="file-details-btn"
-              >
-                <Info size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t('editor.fileDetailsShortcut', { shortcut: formatShortcut('⌘I') })}
-            </TooltipContent>
-          </Tooltip>
-
-          {/* Export follows the preview's visibility (ADR-0024 §10 trade-off 46): when the preview is
-              visible the export button lives on the preview pane bar; in edit-only mode it stays here.
-              Exactly one export button is on screen at a time. */}
-          {viewMode === 'edit' && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="toolbar"
-                  size="icon"
-                  onClick={() => useUIStore.getState().setExportOpen(true)}
-                  data-testid="export-btn"
-                >
-                  <FileOutput size={16} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧X') })}
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
-        </>
-      )}
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button variant="toolbar" size="icon" onClick={handleClose} data-testid="close-btn">
-            <X size={16} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('editor.closeFile')}</TooltipContent>
-      </Tooltip>
-    </div>
-  )
-
   if (!activeDocumentId) {
     return (
       <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface)]">
@@ -800,7 +602,15 @@ export function EditorPane(): React.ReactElement {
           className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] bg-[var(--color-surface-overlay)] shrink-0"
           style={{ height: 'var(--titlebar-height)' }}
         >
-          {CommonToolbar}
+          <GlobalToolbar
+            onSave={handleSave}
+            onSaveAs={handleSaveAs}
+            onReload={handleReload}
+            onClose={handleClose}
+            savePending={updateMut.isPending}
+            saveAsPending={saveAsMut.isPending}
+            reloadPending={reloadMut.isPending}
+          />
           <div className="flex-1" />
         </div>
         {/* Empty state right-click menu . The pane has no document yet, so the only useful actions are the ones that create or find one */}
@@ -933,7 +743,15 @@ export function EditorPane(): React.ReactElement {
         style={{ height: 'var(--titlebar-height)' }}
       >
         <div className="titlebar-no-drag flex items-center gap-1 flex-1 min-w-0">
-          {CommonToolbar}
+          <GlobalToolbar
+            onSave={handleSave}
+            onSaveAs={handleSaveAs}
+            onReload={handleReload}
+            onClose={handleClose}
+            savePending={updateMut.isPending}
+            saveAsPending={saveAsMut.isPending}
+            reloadPending={reloadMut.isPending}
+          />
 
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
 

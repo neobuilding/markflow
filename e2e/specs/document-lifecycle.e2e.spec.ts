@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { VIEWPORTS } from '../helpers/viewports'
 
 test.describe('document lifecycle', () => {
   let handle: AppHandle
@@ -41,6 +42,11 @@ test.describe('document lifecycle', () => {
   test('read-only / edit toggle drives the editor contenteditable state', async () => {
     const { page } = handle
     await waitForAppReady(page)
+
+    // The toggle is inline only in the expanded pane bar; in the default environment the column is
+    // folded and the toggle lives in the single "…" overflow (Q3). The `wide` environment expands
+    // the bar, so this drives the real button.
+    await page.setViewportSize(VIEWPORTS.wide)
 
     await createViaButton(page)
 
