@@ -148,12 +148,24 @@ export function EditorPane(): React.ReactElement {
     startTitleEdit,
     cancelTitleEdit,
     handleContentChange,
+    commitDraft,
+    getAuthoritativeContent,
     handleTitleSave,
     dirty,
     markSaved,
     toDiskFormat,
     getEol,
-  } = useLocalDocument(doc, activeDocumentId)
+  } = useLocalDocument(doc)
+
+  // The editor owns a per-document session that aborts its pending debounce on switch, so a
+  // late preview echo can never reach here. Both callbacks are plain text sinks: no document id,
+  // no identity comparison. That is the acceptance criterion for the isolation design (ADR-0033).
+  // NOTE: these hooks MUST stay up here with the other hooks — EditorPane has early returns below.
+  const onImmediateChange = useCallback((text: string) => commitDraft(text), [commitDraft])
+  const onEditorChange = useCallback(
+    (text: string) => handleContentChange(text),
+    [handleContentChange],
+  )
 
   // Mirror the active document's title into the store: the unsaved-switch guard runs in the store,
   // which has no access to the document object, and a prompt that cannot name the file it is about
@@ -174,13 +186,15 @@ export function EditorPane(): React.ReactElement {
     return () => document.removeEventListener('editor:focus-request', onFocusRequest)
   }, [])
 
-  // Save / Save As / Reload: hold the latest draft in a ref so callbacks don't capture a stale closure.
-  // Initialized once; the effect keeps the fields in sync (mutating fields avoids reassigning the ref).
-  const draftRef = useRef({ localContent, localTitle })
+  // Save / Save As: hold the title draft in a ref so callbacks don't capture a stale closure.
+  // CONTENT deliberately does NOT come from `localContent` (the 400ms-throttled preview mirror):
+  // getAuthoritativeContent() is the keystroke-frame text. Syncing content here on every render
+  // would overwrite a fresh keystroke with the lagging preview value — the "Ctrl+S within 400ms
+  // saves stale text" bug. See docs/adr/0033-editor-draft-session-isolation.md.
+  const draftRef = useRef({ localTitle })
   useEffect(() => {
-    draftRef.current.localContent = localContent
     draftRef.current.localTitle = localTitle
-  })
+  }, [localTitle])
 
   const handleSaveAs = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -192,7 +206,8 @@ export function EditorPane(): React.ReactElement {
     // (the menu item is disabled in read-only mode, so this is never hit) defensive
     /* v8 ignore next -- defensive: the save-as menu item is disabled in read-only mode, so this is never hit */
     if (!useUIStore.getState().editable) return
-    const { localContent, localTitle } = draftRef.current
+    const localContent = getAuthoritativeContent()
+    const { localTitle } = draftRef.current
     // Save As offers the name the title bar shows, so accepting the default cannot
     // silently discard a rename the user typed but has not saved yet. The draft name
     // is the DISPLAY name, so it already carries the file's own extension (`.md` for
@@ -259,7 +274,7 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat, t, openPathsMut])
+  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat, getAuthoritativeContent, t, openPathsMut])
 
   const handleSave = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -277,7 +292,8 @@ export function EditorPane(): React.ReactElement {
       await handleSaveAs()
       return
     }
-    const { localContent, localTitle } = draftRef.current
+    const localContent = getAuthoritativeContent()
+    const { localTitle } = draftRef.current
     // Re-read the on-disk line ending at save time as the final source of truth (don't depend on
     // whether the async effect finished or the store is clean)
     const eol = doc?.filePath
@@ -303,7 +319,7 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [updateMut, handleSaveAs, markSaved, doc, getEol, toDiskFormat, t])
+  }, [updateMut, handleSaveAs, markSaved, doc, getEol, toDiskFormat, getAuthoritativeContent, t])
 
   const handleReload = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -714,7 +730,14 @@ export function EditorPane(): React.ReactElement {
   // it only happened for entries evicted from the React Query cache (gcTime 5m),
   // which is why the lag felt intermittent. The overlay gives the same
   // "cleared immediately" feedback at a fraction of the cost.
-  const showLoading = isLoading
+  // activeDocumentId flips synchronously on a sidebar switch, but useDocument() can still hand
+  // back the PREVIOUS record (stale react-query cache / in-flight refetch), and useLocalDocument
+  // only resets its draft when doc.id changes. In that window localContent is the PREVIOUS
+  // document's text: feeding it to MarkdownEditor writes A's text into B's EditorView because
+  // isDocSwitch force-applies `content` — which is what later surfaced as "Ctrl+Z replays the
+  // previous file". Gate on the ids MATCHING, not just on isLoading.
+  const docMatchesActive = activeDocumentId === null || doc?.id === activeDocumentId
+  const showLoading = isLoading || !docMatchesActive
   // Feed '' while loading so both panes are genuinely empty the moment the
   // overlay lifts, instead of flashing the previous document's text for a frame.
   const editorContent = showLoading ? '' : localContent
@@ -1019,7 +1042,8 @@ export function EditorPane(): React.ReactElement {
             <div className="flex-1 min-h-0">
               <MarkdownEditor
                 content={editorContent}
-                onChange={handleContentChange}
+                onImmediateChange={onImmediateChange}
+                onChange={onEditorChange}
                 editable={editable}
                 docId={activeDocumentId}
                 filePath={doc?.filePath ?? null}

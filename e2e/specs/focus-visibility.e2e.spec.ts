@@ -47,9 +47,11 @@ const WATCHED = new Set([
 ])
 
 // The two pane-bar entries are INLINE only in the expanded bar; in the default environment the
-// column is folded and they live in the single "…" overflow (Q3), where they are menu items and
-// not part of the tab order. The sweep therefore runs in the `wide` environment, so the watched
-// set stays reachable and the guard below stays meaningful.
+// column is narrow enough that they have moved into the "…" overflow (Q3), where they are menu
+// items and not part of the tab order. The overflow is CONDITIONAL — it exists only while a
+// command cannot be shown inline, so a wide column shows no trigger at all. The sweep therefore
+// runs in the `wide` environment, so the watched set stays reachable and the guard below stays
+// meaningful.
 
 test.describe('focus visibility', () => {
   let handle: AppHandle

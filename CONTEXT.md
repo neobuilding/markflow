@@ -99,11 +99,49 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   **视图** menu, or ⌘\.
 - **Editor pane bar** — the per-pane toolbar attached to the editor pane, holding the editor-only
   clusters (Markdown formatting, find/replace, undo/redo, read-only toggle). One per column in split
-  mode. When the column is too narrow (below the fold threshold) the WHOLE bar collapses into a single
-  **"…" overflow** whose entries all carry a visible label — there is no separate unlabeled
+  mode. As the column narrows, commands move into the **conditional overflow trigger** one at a
+  time by descending priority (the priority+ pattern in `components/ui/priority-overflow.ts`): the
+  leftmost formatting cluster survives the longest, and at/above `ALL_INLINE_AT` (472px) there is no
+  overflow at all. Every overflow entry carries a visible label — there is no separate unlabeled
   "Format" dropdown. See `docs/adr/0031-ui-round-3-shortcuts-overflow-and-menu.md`.
 - **Preview pane bar** — the per-pane toolbar attached to the preview pane (find, export HTML, copy,
-  more).
+  copy rendered HTML). Copy rendered HTML is the lowest-priority command. As the column narrows,
+  commands move into the **conditional overflow trigger** one at a time, rightmost first; when every
+  command fits there is no trigger and all commands are inline.
+- **Conditional overflow trigger** — the **"…"** button on a pane bar. It exists only while at least
+  one command cannot be shown inline; when all commands fit, all of them are inline and the trigger
+  is absent. It is **not** a resident menu, and no command may have it as its only access path.
+  Overflow entries keep the bar's priority order and carry a visible label. The trigger itself
+  occupies one command slot, so the final widening step restores the last command _and_ removes the
+  trigger together: no width exists for "all but one inline, plus the trigger".
+  Each bar budgets its **own** chrome: the editor bar pays the shared `px-3` padding plus its
+  format-group border and find/replace divider (40px, so its twelve commands are all inline from
+  472px), while the preview bar has no separators and pays padding only (24px, so its four commands
+  fit from 168px). Charging both bars the same budget made the preview overflow 16px too early.
+
+## Editor state
+
+- **Undo history (撤销历史)** — the CodeMirror `history` state field inside the single persistent
+  `EditorView`. It belongs to an **editing session**, not to a document record: switching or closing
+  a document, and reloading the same document from disk, each discard the old field and create a new
+  empty one. Therefore an edit made before a switch cannot be undone after switching back, even if
+  it was saved. This is a deliberate consequence of the single-active-document model, unlike VS
+  Code's per-resource edit stacks. _Avoid_: "per-document undo stack", "undo history is preserved
+  across switches". _See also_: **Unsaved-changes guard**, **Editing session**.
+- **Editing session (编辑会话)** — one session per open document, owning the editor's debounced
+  preview refresh and the **right to write**: it remembers the text it last wrote into the view, and
+  a keystroke is committed only while it was applied to exactly that text. A switch aborts the
+  previous session (cancelling its pending timer) and the new session owns nothing until the new
+  document's content has been written, so neither a late refresh nor a keystroke in that window can
+  write the previous document's text into the new one. Correctness state — the unsaved text, the
+  dirty flag and the **Dirty buffer snapshot** — is committed on the keystroke frame, never by the
+  debounce; the debounce only refreshes the preview. _See also_:
+  `docs/adr/0033-editor-draft-session-isolation.md`.
+- **Unsaved buffer registry (未保存缓冲区登记表)** — the renderer's `Record<docId, { content,
+revision }>` of unsaved text. The main process only knows on-disk bytes, so content search and
+  cross-file replace need the renderer to report these buffers. The key is a **document id** used
+  for addressing, never for deciding whether a callback is stale. _See also_:
+  **Dirty buffer snapshot**, **Unsaved-changes guard**.
 
 ## Storage & search (main process)
 
@@ -318,8 +356,10 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   **not persisted** — every launch starts at 跟随系统. See `docs/adr/0028-theme-entry.md`.
 - **跟随系统 (System)** — the default theme choice: the app resolves the OS `prefers-color-scheme` and
   **follows it live** (a light↔dark switch while the app is open updates immediately, no restart). The
-  renderer owns the resolution (`App.tsx` applies the `dark` class on `<html>` through the shared
-  `resolveTheme` helper, and installs the media-query listener only while the choice is `system`).
+  renderer owns the resolution: `App.tsx` applies the `dark` class on `<html>` through the shared
+  `resolveTheme` helper, and **both** `App.tsx` and `MarkdownPreview.tsx` install a media-query
+  listener only while the choice is `system` — the preview needs its own because it owns the two
+  Markdown body stylesheets and the `<article data-theme>`.
   _Avoid_: "dark mode toggle" for this entry — it is a follow-the-OS mode, not a switch.
 
 ## Platform & filesystem

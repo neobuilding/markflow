@@ -67,15 +67,29 @@ export default defineConfig<ClipboardOptions>({
   //
   //   1. PROJECT-level `workers: 1` below caps each such project to ONE worker, so two of its
   //      own specs never run at the same time.
-  //   2. Playwright runs PROJECTS sequentially (each project is its own phase), so the clipboard
-  //      and perf projects never share the machine with e2e-app's Electron instances — which is
-  //      what keeps the real system clipboard and the perf thresholds uncontended. Verified
-  //      empirically: two 4s specs in two projects took 8.4s of wall clock, not 4s.
+  //   2. BETWEEN projects there is NO such cap: Playwright schedules the projects of ONE
+  //      invocation CONCURRENTLY, sharing the global worker budget. Measured 2026-11-05: three
+  //      specs in two projects ran on three workers and finished in 12.7s of wall clock while
+  //      their own durations summed to 21.1s — they overlapped. (Reading "two 4s specs in two
+  //      projects took 8.4s" as "sequential" was wrong: 8.4s is what CONCURRENT execution plus
+  //      start-up overhead looks like.)
   //
-  // If Playwright ever parallelised projects, layer 2 would disappear silently; the remedy
-  // would then be to run the clipboard / perf projects in their OWN invocations.
-  // `e2e/guards/e2e-parallelism.test.ts` guards layer 1 and the "no --workers override" rule;
-  // this comment guards layer 2, which no unit test can observe.
+  // Consequence: a project that must not share the machine needs its OWN invocation. That is
+  // exactly the contingency ADR-0027 named: "If Playwright ever parallelised projects, the
+  // clipboard and perf suites would need their own invocations; that is the change to make
+  // then." `npm run e2e:full` and the CI serial job now do it for `e2e-perf-gate`.
+  //
+  // Measured 2026-11-05 (same build, same thresholds, firstContentMs vs the 1500ms threshold):
+  //
+  //   perf-gate inside the invocation that also runs e2e-app : 1602 → RED
+  //   perf-gate in its own invocation                       :  712 → GREEN (478/541/647 idle)
+  //
+  // The threshold is NOT relaxed: the app is still ~3x faster than the frozen 2644ms baseline,
+  // so a regression to the pre-Phase-03 behaviour fails loudly either way. What was wrong was
+  // the MEASUREMENT, not the app — the gate was timing the machine, not the code.
+  //
+  // `e2e/guards/e2e-parallelism.test.ts` guards layer 1, the "no --workers override" rule, and
+  // the "the perf gate gets its own invocation" rule.
   projects: [
     {
       // No project-level `workers`: e2e-app inherits the global budget above, so the suite
@@ -96,15 +110,12 @@ export default defineConfig<ClipboardOptions>({
       testMatch:
         /(?:select-all-copy-fidelity|pane-toolbars|preload-contract|formula-copy-image|copy-once-no-drop-diagrams|context-menu)\.e2e\.spec\.ts$/,
     },
-    // ── Performance: one CI gate + one on-demand diagnostic ──────────────────
+    // ── Performance gate: measured in its OWN invocation ─────────────────────
     //
-    // These are separate projects because Playwright runs EVERY project when no
-    // --project is given, so `npm run e2e:full` names the three CI projects explicitly
-    // (see package.json): e2e-app + e2e-clipboard + e2e-perf-gate, in ONE playwright run.
-    // e2e-perf-diag is the fourth project and is deliberately NOT in that list.
-    //
-    //   e2e-perf-gate  → runs in CI on every PR, has hard thresholds.
-    //   e2e-perf-diag  → diagnostic only, no thresholds, run by hand.
+    // This project asserts HARD TIMING thresholds, so it must not share the machine with the
+    // other projects' workers — and Playwright runs the projects of one invocation concurrently
+    // (see the layer-2 note above). `npm run e2e:full` and the CI serial job therefore run it as
+    // a separate `playwright test` invocation.
     {
       name: 'e2e-perf-gate',
       workers: 1, // timing-sensitive thresholds; parallelism would corrupt measurements
@@ -118,6 +129,18 @@ export default defineConfig<ClipboardOptions>({
       // Inherits the global retries (1 on CI) so a noisy shared runner cannot
       // turn a one-off scheduling hiccup into a red build.
     },
+    // ── Performance: one CI gate + one on-demand diagnostic ──────────────────
+    //
+    // These are separate projects because Playwright runs EVERY project when no
+    // --project is given, so `npm run e2e:full` lists the CI projects explicitly
+    // (see package.json). The perf GATE runs as its OWN invocation so it is not
+    // measured on a machine already loaded by e2e-app; e2e-perf-diag does not.
+    // e2e-perf-diag is the fourth project and is deliberately NOT in that list.
+    //
+    //   e2e-perf-gate  → runs in CI on every PR, has hard thresholds, and gets its
+    //                    own `playwright test` invocation (pinned by
+    //                    e2e/guards/e2e-parallelism.test.ts).
+    //   e2e-perf-diag  → diagnostic only, no thresholds, run by hand.
     {
       name: 'e2e-perf-diag',
       workers: 1, // diagnostic timings must be measured serially

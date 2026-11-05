@@ -20,8 +20,8 @@ Pin a **single named environment** for the whole suite and let specs opt into ot
   the entire e2e surface.
 - The named environments live in `e2e/helpers/viewports.ts` as `VIEWPORTS` (`standard` 1024×768,
   `wide` 1280×900, `narrow` 800×600, `baseline` 2560×1440). Their numbers are derived from layout
-  constants (window floor 800, sidebar default 288, `FOLD_AT` 420) and checked by
-  `e2e/guards/viewports.test.ts`.
+  constants (window floor 800, sidebar default 288, `ALL_INLINE_AT` 472 — which superseded the
+  earlier `FOLD_AT = 420`, see ADR-0031 §5) and checked by `e2e/guards/viewports.test.ts`.
 - A spec that needs a different width **enters a named environment**
   (`page.setViewportSize(VIEWPORTS.wide)`) instead of typing a literal. The same guard forbids
   hand-typed `setViewportSize(...)` numbers.
@@ -29,7 +29,7 @@ Pin a **single named environment** for the whole suite and let specs opt into ot
 **The pinned size is the content area, not the OS window frame.** `page.setViewportSize` sets the web
 layout viewport — the area the app's DOM fills. The app's responsive layout is a pure function of
 content width: it measures its own elements (the sidebar via the `--sidebar-width` variable, the pane
-bars via a `ResizeObserver` on `FOLD_AT`). The OS window's outer frame (title bar +
+bars via a `ResizeObserver` on their own border box — ADR-0031 §5's progressive overflow). The OS window's outer frame (title bar +
 borders, scaled by platform DPI) varies machine to machine, so pinning _it_ would not be
 deterministic either. Pinning the content area is therefore both necessary and sufficient; a future
 reader must not "improve" this by resizing the OS window.
@@ -51,7 +51,7 @@ reader must not "improve" this by resizing the OS window.
 - **Positive:** width-coupled specs behave identically on every machine; the "passes locally, fails in
   CI" class is eliminated at the environment layer, not in the assertions.
 - **Positive:** `narrow` (800 content area) deliberately drives each split column to (800 − 288) / 2 =
-  256px, below `FOLD_AT`, exercising the folded toolbar; `baseline` (2560 content area) matches the
+  256px, well below `ALL_INLINE_AT`, exercising the progressive overflow; `baseline` (2560 content area) matches the
   committed E9 PNGs (global bar 2272 = 2560 − 288, pane bar 1136 = half of that), so the visual spec
   no longer depends on the capturing machine's monitor width.
 - **Constraint:** a reasonable reader may be tempted to "also" pin the OS window — do not; the

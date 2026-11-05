@@ -38,11 +38,23 @@ Two suites must never run concurrently:
 - `e2e-perf-gate` / `e2e-perf-diag` assert **hard timing thresholds**; parallelism would corrupt the
   measurements.
 
-One framework property shapes the whole design: **Playwright runs projects sequentially** (each
-project is its own phase), so an invocation naming several projects runs them one after another.
-Measured: two 4s specs in two projects took 8.4s of wall clock, not 4s. That is what keeps the perf
-thresholds measured on an otherwise idle machine, and keeps the clipboard project alone with the real
-system clipboard — and it is a property of Playwright, not of this repo.
+One framework property was believed to shape the whole design: **Playwright runs projects
+sequentially** (each project is its own phase), so an invocation naming several projects runs them
+one after another. The measurement offered for it — "two 4s specs in two projects took 8.4s of wall
+clock, not 4s" — was read as sequential, but 8.4s is what CONCURRENT execution plus start-up
+overhead looks like.
+
+**Corrected 2026-11-06 by measurement:** Playwright schedules the projects of one invocation
+CONCURRENTLY, sharing the global worker budget. Three specs in two projects ran on three workers
+and finished in 12.7s of wall clock while their own durations summed to 21.1s — they overlapped.
+`workers: 1` caps concurrency _within_ a project only.
+
+Consequence: a project that must not share the machine needs its OWN invocation. The perf gate
+measured 1602ms against its 1500ms threshold while sharing an invocation with `e2e-app` (297
+tests), and 712ms in an invocation of its own — the gate was timing the machine, not the app.
+`npm run e2e:full` and the CI serial job now run the perf gate separately (see
+`playwright.config.ts`'s layer-2 note and `e2e/guards/e2e-parallelism.test.ts`). The threshold was
+NOT relaxed: the app is still ~3x faster than the frozen 2644ms baseline.
 
 ## Decision
 
@@ -71,7 +83,8 @@ system clipboard — and it is a property of Playwright, not of this repo.
      `xvfb-run`. Parallelism comes from the **N shards on N runners**, not from `--workers` inside one
      job; the command deliberately omits `--workers`, so the worker count is driven solely by the
      config's adaptive formula (point 1).
-   - `e2e-serial`: runs `e2e-clipboard` + `e2e-perf-gate` serially (workers:1) on its own runner.
+   - `e2e-serial`: runs `e2e-clipboard` + `e2e-perf-gate` on its own runner, each in its own
+     `playwright test` invocation (amended 2026-11-06 — the perf gate must not share the machine).
    - `release.needs` updated to `[build, ut, e2e-app-shard, e2e-serial, quality, version]`.
 4. **The workflow holds no worker count.** `ci.yml` describes only what CI does — sharding, job
    boundaries, the runner-specific Electron / chrome-sandbox notes — and points at
@@ -115,8 +128,9 @@ system clipboard — and it is a property of Playwright, not of this repo.
   explicit "setup tax" traded for the wall-clock win.
 - **Guard rail:** `e2e/guards/e2e-parallelism.test.ts` fails a unit test (not an opaque e2e timeout)
   if the clipboard / perf projects lose their `workers: 1` cap, if `e2e-app` gains a project-level cap,
-  if the global budget is hardcoded, if a CI step starts passing `--workers`, or if the projects CI
-  runs and the projects `npm run e2e:full` runs drift apart.
+  if the global budget is hardcoded, if a CI step starts passing `--workers`, if the projects CI
+  runs and the projects `npm run e2e:full` runs drift apart, or if the perf gate stops having an
+  invocation of its own (amended 2026-11-06).
 - **Risk — the caps are unmeasured:** the `8` cap and the "−1" headroom are **not** measured beyond the
   `workers=4` datapoint; they are reasonable RAM/OS guards, not validated optima. Re-measure locally
   (`--workers=8`) before treating 7 as a tuned value.
@@ -129,9 +143,14 @@ system clipboard — and it is a property of Playwright, not of this repo.
   upgrades `ubuntu-latest` to more cores, CI workers per shard rise with it and flake risk may follow —
   revisit then (the config formula is the single knob to turn).
 - **Constraint:** the safety argument has two halves — the per-project `workers: 1` caps cover
-  concurrency _within_ a project, and Playwright's sequential project scheduling covers concurrency
-  _between_ projects. If Playwright ever parallelised projects, the clipboard and perf suites would
-  need their own invocations; that is the change to make then.
+  concurrency _within_ a project, and the perf gate's OWN invocation covers concurrency _between_
+  projects. **Amended 2026-11-06:** the second half used to be "Playwright's sequential project
+  scheduling", which turned out to be false (projects of one invocation run concurrently). The
+  perf gate therefore runs as a separate `playwright test` invocation — the change this entry
+  already anticipated ("If Playwright ever parallelised projects, the clipboard and perf suites
+  would need their own invocations; that is the change to make then"). The clipboard project stays
+  in the bulk invocation: it is destructive but not timing-sensitive, and no other project writes
+  the system clipboard.
 - **Constraint:** the shard count (`4`) is hand-picked for the current ~37-spec `e2e-app` and the
   2-core runner; the per-shard worker count is intentionally left to the config formula, not pinned
   here. Revisit either if the spec count or runner shape changes substantially.

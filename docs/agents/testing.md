@@ -125,6 +125,109 @@ Production code must not care whether the host implements the API: it reads the 
 behaviour instead of a crash. A test that has to stub an API is also a reminder that the production
 path needs the same guard — otherwise the suite passes and the app throws.
 
+## Regression tests must be able to fail
+
+A test that locks a bug needs a **positive** assertion that the operation under test actually
+happened, not only a negative assertion that the bad state is absent. A shortcut that never reaches
+the app, or a listener that never fires, would otherwise leave "the bad state is absent" passing
+vacuously. For example: assert the editor text changed after the first Ctrl+Z before asserting it
+never becomes the previous document; assert the preview really reached `dark` before asserting it
+turns `light`.
+
+Follow `CONTRIBUTING.md` ("add tests first"): reproduce the failure, then fix it. When a regression
+is covered only by an e2e test added after the fix, a one-off mutation check is the evidence that
+it really guards the behaviour — temporarily revert the fix, confirm the test goes red, restore
+the fix, and confirm it goes green again. Restore every stubbed global afterwards (see the table
+above).
+
+A mutation check that does **not** turn a test red must be recorded, not ignored. Record it as "this
+scenario did not reach the failure path in that run" — never as "it cannot fail", because those are
+different claims. **Todo ① is the cautionary tale.** Reverting the undo-history fix (2026-11-04)
+turned both unit tests red but left the `document-lifecycle` Ctrl+Z e2e green, which led to the WRONG
+conclusion that the case could not exercise the failure path and was only a smoke test. On
+2026-11-05 a diagnosing-bugs loop (`--repeat-each=10 --workers=6`, ~32s) reproduced the exact
+symptom 8/10. Two probes isolated it: the NEW document's buffer was already polluted on arrival,
+before any Ctrl+Z; and a tagged switch trace showed the sync effect being fed the PREVIOUS
+document's text as a same-document `content` refresh right after a clean `isDocSwitch` write. Root
+cause: the 400ms `debouncedOnChange` carried correctness state and outlived its document, so a
+keystroke in A fired AFTER the switch and wrote A's text into B's draft. The same debounce also
+delayed `dirty`, the unsaved-buffer registry and the text Save reads — a switch or Ctrl+S inside
+those 400ms silently lost the edit because the unsaved-changes guard never saw it.
+
+**Final design (ADR-0033)** replaced the interim docId-tagging fix: each document now owns an
+editing session (`AbortController` + its own debounce), rotated by a synchronous store subscription
+before React commits. Correctness state is committed on the keystroke frame via
+`onImmediateChange(text)`; the debounce only refreshes the preview and checks the signal before
+emitting. Callback signatures are plain text — **no docId, no identity comparison** — which is the
+mechanical acceptance check for the isolation. `docId` remains only a registry key and a switch
+signal. The loop went 10/10 green again with this design. Unit locks: "commits the keystroke on its
+own frame and debounces only the preview", "emits plain-text callbacks with NO document id",
+"drops a debounced change that belongs to the PREVIOUS document", "never feeds the PREVIOUS
+document draft to the editor mid-switch", plus the `useLocalDocument` frame-commit and
+`debounce.cancel()` cases. E2E locks: keystroke-frame `dirty`/registry and the guard firing inside
+the debounce window. Lesson: a flaky e2e is evidence — raise the reproduction rate before
+downgrading the test.
+Todo ② and ③ turn red in both axes under the same procedure.
+
+Measured 2026-11-04 (second round, the focus hand-off) — both directions were mutated separately,
+because one mutation cannot speak for two behaviours:
+
+- **Fold → "…"** (todo ④, first half): making the hand-off effect never re-run turns
+  "folding a focused command keeps keyboard focus reachable" RED (`activeId` stays null, the focus
+  never reaches `editor-overflow-btn`). jsdom backs it with a case that unmounts the focused
+  command the way React does.
+- **"…" gone → first inline command** (todo ④, second half, measured 2026-11-05): disabling ONLY the
+  widen branch (`visible >= total` → `visible > total`, so the hand-off cannot fire when the trigger
+  disappears) turns the SAME e2e RED at its widen step (`expect.poll(activeId).toBe('fmt-# -')`,
+  line 444) while its fold step passes — so the two directions are pinned by two independent
+  mutations, not by one shared red.
+- **A focus outside the bar** (todo ⑤): disabling the stale-focus guard turns "a focus in the
+  editor pane is not pulled into the toolbar when a command folds" RED
+  (`Expected: focused / Received: inactive`). The same mutation leaves the fold case GREEN, which
+  is expected — removing the guard does not disable the hand-off — so that green run proves
+  nothing and is not cited as coverage.
+- **A remembered index outside the command set**: removing the `tracked < total` precondition
+  turns "ignores a remembered command index that no longer exists in the command set" RED (the
+  caret is reclaimed by the "…" trigger).
+
+The first version of the "not pulled into the toolbar" case focused `fmt-# -`, the highest-priority
+command, which is never folded at the width the case used — it could not fail — and it was
+rewritten to focus the undo button, which the 200px column does fold away.
+
+Measured 2026-11-06 (review round over the whole session-isolation change, standards axis and spec
+axis as two independent passes) — three defects that no existing test could see, all now locked:
+
+- **The keystroke-frame commit bypassed the session.** `onImmediateChange(text)` does not go through
+  the debounce, so aborting the session protected the PREVIEW but not the authoritative write: a
+  keystroke landing between "the store switched" and "the view was updated" still carried the
+  PREVIOUS document's text into the new document's draft. The session now owns the WRITE as well —
+  it remembers the text it last wrote into the view, and a keystroke is committed only when it was
+  applied to exactly that text (a check that needs no identifier). Mutation evidence: replacing
+  that ownership comparison with a constant turns "does not commit a keystroke that lands after the
+  session was rotated by a switch" RED at `expect(onImmediateChange).not.toHaveBeenCalled()`.
+- **A test that could not fail.** `useSearch.test.tsx`'s debounce case bumped the revision BEFORE
+  the hook was mounted, so the subscriber never saw the bump, the 300ms timer never fired, and the
+  case asserted nothing. It now bumps the revision after the mount and asserts that the settled
+  snapshot reaches the query.
+- **A timing gate measured on a loaded machine.** `playwright.config.ts` claimed "Playwright runs
+  PROJECTS sequentially (each project is its own phase)". That premise was false: three specs in two
+  projects ran on three workers and finished in 12.7s of wall clock while their own durations
+  summed to 21.1s — they overlapped. `e2e-perf-gate` therefore shared the machine with the 297
+  e2e-app specs and measured 1602ms against its 1500ms threshold, while the SAME build measured
+  712ms in an invocation of its own (478/541/647 across idle runs). The gate now runs in its OWN
+  invocation — `npm run e2e:full` chains two, the CI serial job splits into two steps — and
+  `e2e/guards/e2e-parallelism.test.ts` pins THAT property instead of the project ORDER, which never
+  guaranteed anything. The threshold was NOT relaxed: the app is still ~3x faster than the frozen
+  2644ms baseline. ADR-0027's own contingency ("if Playwright ever parallelised projects, the
+  clipboard and perf suites would need their own invocations") is what this implements.
+
+  One caveat worth knowing: the html/junit reporters are enabled **only when `CI` is set**
+  (`reporter: process.env.CI ? [...] : 'list'`), so locally no report is written at all and a
+  "the second run did not overwrite the report" check is vacuous. The A/B that actually proves the
+  `--reporter=line` guard has to run with `CI=1`: with the flag, `playwright-report/index.html` and
+  `reports/e2e/junit.xml` keep their timestamps; without it, both are rewritten (measured
+  2026-11-06, 01:09:26 → 01:10:25).
+
 ## What the gates cover — and what they deliberately don't
 
 `npm run typecheck` runs four programs. Between them, every `.ts`, `.tsx`, `.mjs` and `.cjs` file in
@@ -173,25 +276,25 @@ deterministic. The same assertion therefore behaves the same on a laptop and on 
 A spec that is _about_ a particular width enters a named environment instead of typing its own
 numbers (`e2e/helpers/viewports.ts`):
 
-| Environment | Size        | What it exercises                                                                                  |
-| ----------- | ----------- | -------------------------------------------------------------------------------------------------- |
-| `standard`  | 1024 × 768  | the default: the editor toolbar is FOLDED (pane 368 < 420)                                         |
-| `wide`      | 1280 × 900  | the editor toolbar is EXPANDED (pane 496 >= 420)                                                   |
-| `narrow`    | 800 × 600   | the narrow fixture size (at the app's window floor); the editor toolbar is FOLDED (pane 256 < 420) |
-| `baseline`  | 2560 × 1440 | the E9 visual baselines (the bars are 2272px / 1136px wide)                                        |
+| Environment | Size        | What it exercises                                                                              |
+| ----------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `standard`  | 1024 × 768  | the default: the editor toolbar is PARTIALLY overflowed (pane 368 < 472)                       |
+| `wide`      | 1280 × 900  | every editor command is INLINE (pane 496 >= 472)                                               |
+| `narrow`    | 800 × 600   | the narrow fixture size (at the app's window floor); MORE commands are in "…" (pane 256 < 472) |
+| `baseline`  | 2560 × 1440 | the E9 visual baselines (the bars are 2272px / 1136px wide)                                    |
 
 Entering an environment is per CASE, not per file: a spec that needs a different window gets its own
 test case for it, while the case that stays in the default environment keeps asserting the default
 layout. `e2e/specs/pane-toolbars.e2e.spec.ts` has both — one case asserts the split-mode ownership in
-the default (folded) environment, and a second, dedicated case enters `wide` to assert the expanded
-format cluster.
+the default (partially overflowed) environment, and a second, dedicated case enters `wide` to assert
+the fully expanded format cluster.
 
 The sizes are not free choices: they follow from the window floor (800), the sidebar default (288)
-and the toolbar's fold threshold (`FOLD_AT` 420), so in split mode the pane is `(width - 288) / 2`.
+and the bar's all-inline width (`ALL_INLINE_AT` 472), so in split mode the pane is `(width - 288) / 2`.
 `e2e/guards/viewports.test.ts` parses those constants out of the sources of truth and asserts the
-contract — that `standard` really folds, `wide` really expands, `narrow` also folds (there is ONE
-fold threshold, so a narrow column is a folded column, not a separate mode), and no environment is
-narrower than the app can be. A layout change that invalidates an
+contract — that `standard` really overflows, `wide` really fits every command inline, `narrow`
+overflows even more commands than `standard`, and no environment is narrower than the app can be. A
+layout change that invalidates an
 environment therefore fails a unit test, not an e2e timeout far from the cause. The same guard also
 protects the convention itself: that `e2e/helpers/launch.ts` still pins the standard environment for
 every spec (deleting that call would silently make the whole suite host-dependent again, with

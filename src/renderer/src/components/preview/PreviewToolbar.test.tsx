@@ -1,9 +1,55 @@
 import React from 'react'
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 import '../../i18n'
 import { PreviewToolbar } from './PreviewToolbar'
 import { TooltipProvider } from '../ui/tooltip'
+
+// jsdom has no layout, so the bar's ResizeObserver needs a controllable width source. The
+// production hook reads `borderBoxSize[0].inlineSize`, the same quantity this mock reports.
+type ResizeCallback = (
+  entries: Array<{
+    borderBoxSize: ReadonlyArray<{ inlineSize: number }>
+    contentRect: { width: number }
+  }>,
+) => void
+const observers: ResizeCallback[] = []
+class MockResizeObserver {
+  constructor(cb: ResizeCallback) {
+    observers.push(cb)
+  }
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+function reportWidth(width: number) {
+  act(() => {
+    observers.forEach((cb) =>
+      cb([{ borderBoxSize: [{ inlineSize: width }], contentRect: { width } }]),
+    )
+  })
+}
+// docs/agents/testing.md:121 — stubbed globals must be restored afterwards.
+const OriginalResizeObserver = globalThis.ResizeObserver
+const OriginalApi = (window as unknown as { api?: unknown }).api
+// A later test replaces Element.prototype.scrollIntoView directly; save the original so the stub
+// cannot leak into the rest of the suite (docs/agents/testing.md:121).
+const OriginalScrollIntoView = Element.prototype.scrollIntoView
+beforeEach(() => {
+  observers.length = 0
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = MockResizeObserver
+  ;(window as unknown as { api: unknown }).api = {
+    clipboard: { writeText: vi.fn() },
+  }
+})
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = OriginalResizeObserver
+  ;(window as unknown as { api: unknown }).api = OriginalApi
+  ;(Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView =
+    OriginalScrollIntoView
+})
 
 function setup(content: React.ReactNode) {
   const ref = React.createRef<HTMLDivElement>()
@@ -415,6 +461,53 @@ describe('PreviewToolbar', () => {
     // panel, not overlay.
     expect(screen.getByTestId('preview-pane-bar')).toHaveClass(/bg-\[var\(--color-bg\)\]/)
     expect(screen.getByTestId('preview-pane-bar')).not.toHaveClass(/surface-overlay/)
+  })
+
+  it('moves preview buttons into More gradually instead of all at once', () => {
+    setup(<p>hello</p>)
+    // Every command fits before the first measurement: a conditional trigger must be ABSENT.
+    expect(screen.queryByTestId('preview-more-btn')).toBeNull()
+    const inlineCounts = new Set<number>()
+    for (const width of [900, 260, 220, 180, 150, 120, 90, 60]) {
+      reportWidth(width)
+      const bar = screen.getByTestId('preview-pane-bar')
+      const inline = Array.from(bar.querySelectorAll('button[data-testid]')).filter(
+        (btn) => btn.getAttribute('data-testid') !== 'preview-more-btn',
+      ).length
+      inlineCounts.add(inline)
+      // The "…" trigger exists EXACTLY while at least one command is missing from the bar.
+      expect(screen.queryByTestId('preview-more-btn') !== null).toBe(inline < 4)
+    }
+    // A static More menu (or a one-step fold) never yields a state where only SOME of the four
+    // commands have moved into the overflow.
+    expect([...inlineCounts].some((n) => n > 0 && n < 4)).toBe(true)
+
+    // 4 tiles + 24px padding = 168px. This bar has NO group separators, so it must stay fully
+    // expanded down to 168px; the editor bar's 40px chrome used to fold it 16px too early.
+    for (const width of [183, 168]) {
+      reportWidth(width)
+      expect(screen.queryByTestId('preview-more-btn')).toBeNull()
+      expect(screen.getByTestId('preview-copy-html-btn')).toBeInTheDocument()
+    }
+  })
+
+  it('keeps Copy rendered HTML reachable inline and from the conditional overflow', async () => {
+    const ref = setup(<p>hello</p>)
+    // Wide: all four commands are inline, so HTML copying needs no menu.
+    expect(screen.queryByTestId('preview-more-btn')).toBeNull()
+    const inlineCopyHtml = screen.getByTestId('preview-copy-html-btn')
+    expect(inlineCopyHtml).toHaveAttribute('aria-label', 'Copy rendered HTML')
+    fireEvent.click(inlineCopyHtml)
+    expect(window.api.clipboard.writeText).toHaveBeenCalledWith(ref.current?.innerHTML)
+
+    // Narrow: the lowest-priority command has moved into the trigger, which now exists.
+    reportWidth(90)
+    expect(screen.queryByTestId('preview-copy-html-btn')).toBeNull()
+    fireEvent.pointerDown(screen.getByTestId('preview-more-btn'))
+    const menuCopyHtml = await screen.findByTestId('preview-copy-html-btn')
+    expect(menuCopyHtml).toHaveTextContent(/HTML/i)
+    fireEvent.click(menuCopyHtml)
+    expect(window.api.clipboard.writeText).toHaveBeenCalledTimes(2)
   })
 
   it('renders toolbar icons as contained white tiles with a subtle border (design fig 02/04)', () => {

@@ -52,8 +52,9 @@ test.describe('find and replace', () => {
     const { page } = handle
     await waitForAppReady(page)
     // The replace BUTTON is inline only in the expanded pane bar; in the default environment the
-    // column is folded and every command lives in the single "…" overflow (Q3). The `wide`
-    // environment expands the bar, so the button under test really is the toolbar button.
+    // column is narrow enough that the low-priority commands have moved into the "…" overflow
+    // (Q3) — a CONDITIONAL trigger, present only while something cannot be shown inline. The
+    // `wide` environment expands the bar, so the button under test really is the toolbar button.
     await page.setViewportSize(VIEWPORTS.wide)
     await createDocAndType(page, 'hello world')
 

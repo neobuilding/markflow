@@ -3,14 +3,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { t, type TranslationKey } from '../../i18n'
 import { EditorPaneBar } from './EditorPaneBar'
+import { ALL_INLINE_AT } from '../ui/priority-overflow'
 import { TooltipProvider } from '../ui/tooltip'
 import { useUIStore } from '../../store/ui'
 import { useEditorHistory } from '../../store/editorHistory'
 import { formatShortcut, isMac } from '../../lib/utils'
 
-// A controllable ResizeObserver: the bar folds its format cluster by COLUMN width (ADR-0024 §10
-// trade-off 54), so the test has to be able to report a width. The global polyfill in
-// test-setup.ts is a no-op (jsdom has no layout), which would leave the collapse path untested.
+// A controllable ResizeObserver: the bar's priority+ overflow is driven by COLUMN width, so the
+// test has to be able to report a width. The global polyfill in test-setup.ts is a no-op (jsdom
+// has no layout), which would leave every partially-overflowed state untested.
 //
 // Every constructed observer is collected, not just the last one: Radix's Popper (used by the
 // overflow dropdown) also constructs a ResizeObserver, so keeping only the newest callback would
@@ -35,6 +36,8 @@ class MockResizeObserver {
   unobserve(): void {}
   disconnect(): void {}
 }
+// docs/agents/testing.md:121 — a stubbed global must be restored afterwards.
+const OriginalResizeObserver = globalThis.ResizeObserver
 
 // Report a column width to every live observer.
 function reportWidth(width: number) {
@@ -68,6 +71,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = OriginalResizeObserver
 })
 
 describe('EditorPaneBar', () => {
@@ -205,7 +209,7 @@ describe('EditorPaneBar', () => {
     expect(screen.getByTestId('fmt-**-**').getAttribute('aria-label')).toBe(t('editor.fmt.bold'))
 
     // Narrow → the same action moves into the overflow, where the entry text is the tooltip text.
-    reportWidth(300)
+    reportWidth(60)
     fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
     const item = await screen.findByTestId('fmt-**-**')
     expect(item.textContent).toContain(
@@ -233,7 +237,7 @@ describe('EditorPaneBar', () => {
 
   it('advertises the shortcut of every format action in the overflow entry', async () => {
     renderBar(true)
-    reportWidth(300)
+    reportWidth(60)
     fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
     const cases: Array<[string, TranslationKey, string]> = [
       ['fmt-# -', 'editor.fmt.h1Shortcut', '⌘1'],
@@ -259,7 +263,7 @@ describe('EditorPaneBar', () => {
   // '⌘B' would advertise a Command key to Windows / Linux users.
   it('formats the bold shortcut for the platform instead of hard-coding the Command glyph', async () => {
     renderBar(true)
-    reportWidth(300)
+    reportWidth(60)
     fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
     const item = await screen.findByTestId('fmt-**-**')
     expect(item.textContent).toContain(formatShortcut('⌘B'))
@@ -273,7 +277,7 @@ describe('EditorPaneBar', () => {
   // of the wide bar's toggle is asserted in the tests above.
   it('shows the read-only action in the overflow entry', async () => {
     renderBar(false) // read-only → the action offered is "switch to edit"
-    reportWidth(300)
+    reportWidth(60)
     fireEvent.pointerDown(screen.getByTestId('editor-overflow-btn'), { button: 0 })
     const item = await screen.findByTestId('editor-readonly-btn')
     expect(item.textContent).toContain(t('editor.switchEdit'))
@@ -284,9 +288,14 @@ describe('EditorPaneBar', () => {
     document.addEventListener('markdown:insert', onInsert)
     renderBar(true)
     // The bar reports a narrow column (the split ratio is user-draggable down to 0.2).
-    reportWidth(300)
+    reportWidth(60)
     // One overflow button replaces ALL inline actions (Q3: single overflow, no separate Format dropdown).
     expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
+    expect(screen.getByTestId('editor-overflow-btn')).toHaveAttribute(
+      'aria-label',
+      t('editor.more'),
+    )
+    expect(screen.getByTestId('editor-overflow-btn')).toHaveAttribute('data-overflow-trigger')
     expect(screen.queryByTestId('fmt-**-**')).toBeNull()
     expect(screen.queryByTestId('editor-find-btn')).toBeNull()
 
@@ -303,7 +312,7 @@ describe('EditorPaneBar', () => {
 
   it('expands all actions inline again when the column gets wide', () => {
     renderBar(true)
-    reportWidth(300)
+    reportWidth(60)
     expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
     reportWidth(900)
     expect(screen.queryByTestId('editor-overflow-btn')).toBeNull()
@@ -318,8 +327,8 @@ describe('EditorPaneBar', () => {
       useEditorHistory.getState().update({ canUndo: true, canRedo: false })
     })
     renderBar(true)
-    // Below the single fold threshold EVERYTHING collapses into one overflow.
-    reportWidth(200)
+    // At the narrowest column EVERYTHING has moved into one overflow.
+    reportWidth(60)
 
     // The overflow trigger replaces every inline action.
     expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
@@ -337,15 +346,17 @@ describe('EditorPaneBar', () => {
     document.removeEventListener('markdown:undo', onUndo)
   })
 
-  it('treats FOLD_AT as the inclusive upper bound of the folded range', () => {
+  it('treats ALL_INLINE_AT as the inclusive lower bound of the fully expanded range', () => {
     renderBar(true)
-    // At exactly FOLD_AT (420) the bar is wide; one pixel under it folds. The boundary being
-    // inclusive (`w < FOLD_AT`) is what the e2e environments are calibrated against.
-    reportWidth(420)
+    // At exactly ALL_INLINE_AT every command fits inline (no "…" trigger); one pixel under it
+    // only the lowest-priority commands start moving into the overflow. The e2e environment
+    // guard derives its wide / standard contract from the same constant.
+    reportWidth(ALL_INLINE_AT)
     expect(screen.queryByTestId('editor-overflow-btn')).toBeNull()
     expect(screen.getByTestId('fmt-**-**')).toBeInTheDocument()
-    reportWidth(419)
+    reportWidth(ALL_INLINE_AT - 1)
     expect(screen.getByTestId('editor-overflow-btn')).toBeInTheDocument()
+    expect(screen.getByTestId('fmt-# -')).toBeInTheDocument()
   })
 
   it('renders the pane bar on the subtle base surface, matching the design image (fig 02 pane bars = #F4F7FB ≈ --color-bg)', () => {
@@ -373,6 +384,21 @@ describe('EditorPaneBar', () => {
     expect(btn).not.toHaveAttribute('aria-pressed', 'true')
     expect(btn).toHaveClass(/bg-\[var\(--color-surface\)\]/)
     expect(btn).toHaveClass(/border-\[var\(--color-border\)\]/)
+  })
+
+  it('moves commands into More one at a time as the column narrows (priority+ overflow)', () => {
+    renderBar(true)
+    const inlineCounts = new Set<number>()
+    for (const width of [900, 470, 440, 410, 380, 350, 320, 290, 260, 230, 200, 160]) {
+      reportWidth(width)
+      const bar = screen.getByTestId('editor-pane-bar')
+      const inline = bar.querySelectorAll('button[data-testid]').length
+      const moreTrigger = screen.queryByTestId('editor-overflow-btn') ? 1 : 0
+      inlineCounts.add(inline - moreTrigger)
+    }
+    // A binary wide/narrow switch can only ever produce {12, 0}. A progressive overflow must
+    // visit at least one intermediate state where SOME commands are inline and others are not.
+    expect([...inlineCounts].some((n) => n > 0 && n < 12)).toBe(true)
   })
 
   it('shows the read-only toggle in the pressed/active tile state when editable', () => {

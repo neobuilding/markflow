@@ -713,6 +713,10 @@ slim global bar:
     entries all carry a visible label. The `Format` dropdown and the `minimal` stage are gone: the
     intermediate state hid the seven formatting actions behind an unlabelled control, which is exactly
     the discoverability problem the round-3 review set out to close.
+    **Superseded 2026-11-04 (ADR-0031 §5):** the single `FOLD_AT = 420` threshold described above is
+    itself superseded — both pane bars now overflow progressively (priority+), one command at a time,
+    and the "…" trigger exists only while something cannot be shown inline. The visible-label rule and
+    the removal of the `Format` dropdown still stand.
     **Amended 2026-10-31 (review round 17) — "export HTML" is ONE action whose entry point follows the preview's visibility, so only one export button is ever on screen.**
     The preview and the exporter share **the same `github-markdown-css` sheet** (`globals.css` §"markdown styling now comes from
     github-markdown-css … the same sheet the exporter uses"; `MarkdownPreview.tsx` repeats it), **the same sanitized HTML source**

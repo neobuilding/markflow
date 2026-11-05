@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react'
-import { Search, FileOutput, Copy, MoreHorizontal } from 'lucide-react'
+import { Search, FileOutput, Copy, MoreHorizontal, CodeXml } from 'lucide-react'
 import { FindWidget } from '../editor/FindWidget'
 import {
   TOGGLE_FIELD,
@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu'
+import { BAR_PADDING, useOverflowFocus, usePriorityOverflow } from '../ui/priority-overflow'
 
 interface PreviewToolbarProps {
   // The scrollable preview content element. Find highlighting is applied to its
@@ -28,6 +29,8 @@ interface PreviewToolbarProps {
   previewVisible: boolean
   onExport: () => void
 }
+
+type PreviewCommandKey = 'find' | 'export' | 'copy' | 'copyHtml'
 
 // The k/n counter is NOT React state: it is the number of <mark> elements we insert into the
 // preview DOM, which React does not own and which can only be counted by walking that DOM —
@@ -313,88 +316,145 @@ export function PreviewToolbar({
     if (findOpen) inputRef.current?.focus()
   }, [findOpen])
 
-  const copyRenderedHtml = useCallback(() => {
-    const el = containerRef.current
-    if (!el) return
-    void window.api.clipboard.writeText(el.innerHTML)
-  }, [containerRef])
+  // Priority+ overflow: commands are ordered by descending priority, so the rightmost ones move
+  // into the "…" trigger ONE AT A TIME as the column narrows. The trigger is CONDITIONAL — it is
+  // rendered only while at least one command has overflowed (CONTEXT.md: "Conditional overflow
+  // trigger"), so no command may depend on it as its only access path. Copy rendered HTML is an
+  // ordinary, LOWEST-priority command: inline when there is room, an overflow entry when there is
+  // not. There is no resident menu, and the committed screenshot baselines are not a design input.
+  const barRef = useRef<HTMLDivElement>(null)
+  // The commands are pure DATA (no callbacks). A command that needs the preview DOM resolves it
+  // in an event handler, never while the array is built during render — holding a ref-reading
+  // callback in that array makes react-hooks/refs reject every later render-time slice/map call.
+  const runCommand = (key: PreviewCommandKey) => {
+    switch (key) {
+      case 'find':
+        setFindOpen(true)
+        break
+      case 'export':
+        onExport()
+        break
+      case 'copy': {
+        const el = containerRef.current
+        if (el) requestRichCopy(el)
+        break
+      }
+      case 'copyHtml': {
+        const el = containerRef.current
+        if (el) void window.api.clipboard.writeText(el.innerHTML)
+        break
+      }
+      default: {
+        // Compile-time exhaustiveness: adding a command without a handler fails the build.
+        const exhaustive: never = key
+        return exhaustive
+      }
+    }
+  }
+  const commands: Array<{
+    key: PreviewCommandKey
+    icon: React.ComponentType<{ size?: number }>
+    label: string
+    tip?: string
+    testId: string
+  }> = [
+    { key: 'find', icon: Search, label: t('preview.find'), testId: 'preview-find-btn' },
+    ...(previewVisible
+      ? [
+          {
+            key: 'export' as const,
+            icon: FileOutput,
+            label: t('editor.export'),
+            tip: t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧X') }),
+            testId: 'export-btn',
+          },
+        ]
+      : []),
+    {
+      key: 'copy',
+      icon: Copy,
+      label: t('preview.copyRendered'),
+      testId: 'preview-copy-btn',
+    },
+    {
+      key: 'copyHtml',
+      icon: CodeXml,
+      label: t('preview.copyHtml'),
+      testId: 'preview-copy-html-btn',
+    },
+  ]
+
+  // This bar has no group separators, so its chrome is padding only (24px, not the editor bar's
+  // 40px). Using the editor budget here would overflow 16px too early (168–183px columns).
+  const visible = usePriorityOverflow(barRef, commands.length, BAR_PADDING)
+  const inline = commands.slice(0, visible)
+  const overflow = commands.slice(visible)
+  useOverflowFocus(barRef, visible, commands.length)
+
+  const renderInline = (cmd: (typeof commands)[number]) => {
+    const Icon = cmd.icon
+    return (
+      <Tooltip key={cmd.key}>
+        <TooltipTrigger asChild>
+          <Button
+            variant="toolbar"
+            size="icon"
+            data-testid={cmd.testId}
+            data-command-index={commands.findIndex((c) => c.key === cmd.key)}
+            aria-label={cmd.label}
+            onClick={() => runCommand(cmd.key)}
+          >
+            <Icon size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{cmd.tip ?? cmd.label}</TooltipContent>
+      </Tooltip>
+    )
+  }
 
   return (
     <div
+      ref={barRef}
       data-testid="preview-pane-bar"
       className="titlebar-no-drag flex items-center gap-1 px-3 h-9 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0"
     >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="toolbar"
-            size="icon"
-            data-testid="preview-find-btn"
-            aria-label={t('preview.find')}
-            onClick={() => setFindOpen(true)}
-          >
-            <Search size={16} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('preview.find')}</TooltipContent>
-      </Tooltip>
+      {inline.map(renderInline)}
 
-      {previewVisible && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="toolbar"
-              size="icon"
-              data-testid="export-btn"
-              aria-label={t('editor.export')}
-              onClick={onExport}
-            >
-              <FileOutput size={16} />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧X') })}
-          </TooltipContent>
-        </Tooltip>
+      {overflow.length > 0 && (
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="toolbar"
+                  size="icon"
+                  data-testid="preview-more-btn"
+                  data-overflow-trigger
+                  aria-label={t('preview.more')}
+                >
+                  <MoreHorizontal size={16} />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent>{t('preview.more')}</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end">
+            {overflow.map((cmd) => {
+              const Icon = cmd.icon
+              return (
+                <DropdownMenuItem
+                  key={cmd.key}
+                  data-testid={cmd.testId}
+                  onClick={() => runCommand(cmd.key)}
+                >
+                  <Icon size={13} />
+                  {cmd.label}
+                </DropdownMenuItem>
+              )
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="toolbar"
-            size="icon"
-            data-testid="preview-copy-btn"
-            aria-label={t('preview.copyRendered')}
-            onClick={() => containerRef.current && requestRichCopy(containerRef.current)}
-          >
-            <Copy size={16} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('preview.copyRendered')}</TooltipContent>
-      </Tooltip>
-
-      <DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="toolbar"
-                size="icon"
-                data-testid="preview-more-btn"
-                aria-label={t('preview.more')}
-              >
-                <MoreHorizontal size={16} />
-              </Button>
-            </DropdownMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent>{t('preview.more')}</TooltipContent>
-        </Tooltip>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem data-testid="preview-copy-html-btn" onClick={copyRenderedHtml}>
-            {t('preview.copyHtml')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
 
       {findOpen && (
         <div className="absolute left-3 right-3 top-9 z-20">

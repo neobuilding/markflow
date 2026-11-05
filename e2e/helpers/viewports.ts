@@ -19,17 +19,26 @@
 // The numbers are not free choices; they follow from layout constants:
 //   - the window floor is 800            (electron/main/window.ts `minWidth`)
 //   - the sidebar default is 288          (Sidebar.tsx `useState(288)`)
-//   - the editor pane bar folds its format cluster below 420 (EditorPaneBar `FOLD_AT`)
-// so in split mode the pane is (width - 288) / 2, and the wide toolbar needs width >= 1128.
+//   - the editor pane bar shows all 12 commands inline from 472px up (`ALL_INLINE_AT` in
+//     ui/priority-overflow.ts); below that they move into "…" one at a time
+// so in split mode the pane is (width - 288) / 2, and a fully expanded bar needs width >= 1232.
 //
 // e2e/guards/viewports.test.ts checks these invariants against the sources of truth, so a layout
 // change that invalidates an environment fails a unit test instead of an e2e run.
+
+/**
+ * Column width at which all 12 editor commands fit inline. Mirrors the production budget
+ * `ALL_INLINE_AT` in `ui/priority-overflow.ts`; the viewport guard asserts they never drift, so
+ * specs can use this instead of typing a magic number.
+ */
+export const ALL_INLINE_AT = 472
+
 export const VIEWPORTS = {
   /** The default environment: the whole suite runs in it unless a spec opts out. */
   standard: { width: 1024, height: 768 },
   /**
-   * Wide enough for the split editor pane to keep the format cluster expanded:
-   * (1280 - 288) / 2 = 496 >= FOLD_AT (420).
+   * Wide enough for the split editor pane to keep every command inline:
+   * (1280 - 288) / 2 = 496 >= ALL_INLINE_AT (472).
    */
   wide: { width: 1280, height: 900 },
   /** The narrow fixture size (at the window floor of 800), used by the responsive specs. */

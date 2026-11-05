@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { test } from '../helpers/fixtures'
-import { VIEWPORTS } from '../helpers/viewports'
+import { ALL_INLINE_AT, VIEWPORTS } from '../helpers/viewports'
 import { expectTooltipText } from '../helpers/tooltip'
 import {
   expectClipboardAfter,
@@ -13,11 +13,12 @@ import {
   type ClipboardSnapshot,
 } from '../helpers/clipboard'
 
-// C20 / ADR-0024 §10 + ADR-0025 P2 (方案乙): the app has THREE bars — a re-scoped global bar
+// C20 / ADR-0024 §10 + ADR-0025 P2 (option B): the app has THREE bars — a re-scoped global bar
 // (file commands), an editor pane bar (format / find-replace / undo-redo / read-only) and a
-// preview pane bar (find / export / copy / more). In split mode each column carries its own bar,
-// and the export entry point follows the preview's visibility: exactly ONE export button is ever
-// on screen (trade-off 46 — two peer toolbars must not carry the same button side by side).
+// preview pane bar (find / export / copy / copy rendered HTML / conditional More). In split mode
+// each column carries its own bar, and the export entry point follows the preview's visibility:
+// exactly ONE export button is ever on screen (trade-off 46 — two peer toolbars must not carry
+// the same button side by side).
 test.describe('pane toolbars', () => {
   let handle: AppHandle
   // The copy test writes the REAL system clipboard. Snapshot it first so afterEach restores the
@@ -51,21 +52,27 @@ test.describe('pane toolbars', () => {
     await expect(page.getByTestId('preview-pane')).toBeVisible()
 
     // The editor column owns the editor-only clusters (ADR-0024 §10 trade-off 52). In the default
-    // environment the column is 368px wide, so EVERYTHING collapses into one "…" overflow
-    // (Q3: single overflow, no separate Format dropdown / minimal stage); the expanded form has its
-    // own case below.
+    // environment the column is 368px wide: priority+ overflow keeps the high-priority format
+    // cluster and Find inline, and moves the REST into one "…" menu one at a time as the column
+    // shrinks (single overflow, no separate Format dropdown / minimal stage). The fully expanded
+    // form has its own case below.
     await expect(page.getByTestId('editor-pane').getByTestId('editor-overflow-btn')).toBeVisible()
-    // The individual actions are no longer inline — they moved one level down into the overflow.
-    await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toHaveCount(0)
-    await expect(page.getByTestId('editor-pane').getByTestId('editor-find-btn')).toHaveCount(0)
+    await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toHaveCount(1)
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-find-btn')).toHaveCount(1)
     await expect(page.getByTestId('editor-pane').getByTestId('editor-replace-btn')).toHaveCount(0)
     await expect(page.getByTestId('editor-pane').getByTestId('editor-undo-btn')).toHaveCount(0)
     await expect(page.getByTestId('editor-pane').getByTestId('editor-readonly-btn')).toHaveCount(0)
 
-    // The preview column owns the preview-only actions.
+    // The preview column owns the preview-only actions. At 368px all four preview commands fit
+    // inline (four 36px slots + 24px padding = 168px), so the CONDITIONAL overflow trigger is
+    // absent:
+    // no command — including Copy rendered HTML — may depend on that menu as its only entry point.
     await expect(page.getByTestId('preview-pane').getByTestId('preview-find-btn')).toBeVisible()
     await expect(page.getByTestId('preview-pane').getByTestId('preview-copy-btn')).toBeVisible()
-    await expect(page.getByTestId('preview-pane').getByTestId('preview-more-btn')).toBeVisible()
+    await expect(
+      page.getByTestId('preview-pane').getByTestId('preview-copy-html-btn'),
+    ).toBeVisible()
+    await expect(page.getByTestId('preview-pane').getByTestId('preview-more-btn')).toHaveCount(0)
 
     // The global bar keeps the file-lifecycle commands (trade-off 50 / 51 / 53): they must stay
     // reachable in every view mode, which only the always-mounted global bar can guarantee.
@@ -85,9 +92,9 @@ test.describe('pane toolbars', () => {
   test('a wide editor column expands the format cluster into its seven entries', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    // Its own case, because it needs its own window: the cluster only expands when the COLUMN is
-    // wide enough (EditorPaneBar folds it below FOLD_AT = 420), and the column is half the content
-    // area. The wide environment puts it at (1280 - sidebar 288) / 2 = 496 — see
+    // Its own case, because it needs its own window: every command is only inline when the COLUMN
+    // is wide enough (below ALL_INLINE_AT they progressively move into "…"), and the column
+    // is half the content area. The wide environment puts it at (1280 - sidebar 288) / 2 = 496 — see
     // e2e/helpers/viewports.ts for the arithmetic, and e2e/guards/viewports.test.ts for the
     // contract that keeps the two numbers in sync with the app's own constants.
     await page.setViewportSize(VIEWPORTS.wide)
@@ -104,35 +111,38 @@ test.describe('pane toolbars', () => {
     await expect(page.getByTestId(/^fmt-/)).toHaveCount(7)
   })
 
-  test('narrow editor column folds everything into a single overflow', async () => {
+  test('narrow editor column moves more commands into the overflow', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, 'hello world')
-    // Narrow (800 content area) leaves each split column at (800 - 288) / 2 = 256px, which is below
-    // FOLD_AT (420) — the single fold threshold. Q3 removed the old minimal stage, so the WHOLE bar
-    // (format + find/replace + undo/redo/read-only) collapses into one "…" overflow.
+    // Narrow (800 content area) leaves each split column at (800 - 288) / 2 = 256px, well below
+    // ALL_INLINE_AT: only the highest-priority format buttons remain inline, and the rest
+    // have moved into one "…" overflow one at a time. There is no separate minimal stage.
     await page.setViewportSize(VIEWPORTS.narrow)
     await page.getByTestId('view-split').click()
     const editorBar = page.getByTestId('editor-pane-bar')
     // Guard the premise before asserting the result: boundingBox() is the border box == the column
-    // width the app measures, so it must be < FOLD_AT for the fold to be meaningful.
+    // width the app measures, so it must be < ALL_INLINE_AT for the overflow to be meaningful.
     await expect
       .poll(async () => (await editorBar.boundingBox())?.width ?? 0, {
-        message: 'the editor column must be narrow enough (< 420px) to fold',
+        message: `the editor column must be narrow enough (< ${ALL_INLINE_AT}px) to overflow`,
       })
-      .toBeLessThan(420)
-    // Everything collapses into the single overflow...
+      .toBeLessThan(ALL_INLINE_AT)
+    // The single overflow is present...
     await expect(page.getByTestId('editor-pane').getByTestId('editor-overflow-btn')).toBeVisible()
-    // ...and the individual actions are no longer inline.
-    await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toHaveCount(0)
+    // ...the low-priority actions moved into it, while the top-priority ones are STILL inline
+    // (a progressive overflow, not an all-or-nothing fold).
+    await expect(page.getByTestId('editor-pane').getByTestId('fmt-**-**')).toHaveCount(1)
+    await expect(page.getByTestId('editor-pane').getByTestId('editor-replace-btn')).toHaveCount(0)
     await expect(page.getByTestId('editor-pane').getByTestId('editor-undo-btn')).toHaveCount(0)
     await expect(page.getByTestId('editor-pane').getByTestId('editor-readonly-btn')).toHaveCount(0)
   })
 
-  // The single overflow is not just "one button instead of many": EVERY command must be inside it
-  // AND carry a visible label. The old two-stage model hid the seven formatting actions behind an
-  // UNLABELLED dropdown, so this asserts the labels themselves, not just the presence of a trigger.
-  test('the folded overflow holds every command with a visible label (Q3)', async () => {
+  // The overflow is not just "one button instead of many": the commands that did NOT fit inline
+  // must be inside it AND carry a visible label, while the rest stay on the bar. The old
+  // two-stage model hid the seven formatting actions behind an UNLABELLED dropdown, so this
+  // asserts the labels themselves, not just the presence of a trigger.
+  test('the overflow holds the remaining commands with visible labels (priority+)', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, 'hello world')
@@ -144,23 +154,27 @@ test.describe('pane toolbars', () => {
 
     const menu = page.getByRole('menu')
     await expect(menu).toBeVisible()
-    // Seven format actions + find + replace + undo + redo + read-only = twelve entries.
-    await expect(menu.locator('[data-testid^="fmt-"]')).toHaveCount(7)
-    for (const id of [
-      'editor-find-btn',
-      'editor-replace-btn',
-      'editor-undo-btn',
-      'editor-redo-btn',
-      'editor-readonly-btn',
-    ]) {
-      await expect(menu.getByTestId(id)).toBeVisible()
-    }
-    // Every entry names its action — no unlabelled glyph hides behind the overflow.
     const labels = await menu.locator('[role="menuitem"]').allTextContents()
-    expect(labels).toHaveLength(12)
+    // At the default 368px column the bar is PARTIALLY overflowed: some commands are still
+    // inline, and only the low-priority ones live in the menu.
+    expect(labels.length, 'a partially overflowed bar must have overflow entries').toBeGreaterThan(
+      0,
+    )
+    expect(
+      labels.length,
+      'the overflow must not swallow the whole bar at a mid width',
+    ).toBeLessThan(12)
+    // Every entry names its action — no unlabelled glyph hides behind the overflow.
     for (const label of labels) {
       expect(label.trim(), 'an overflow entry must carry a visible label').not.toBe('')
     }
+    // Inline buttons (minus the "…" trigger) + menu entries == all twelve commands: nothing
+    // disappears when a command moves between the two placements.
+    const inlineButtons = await page
+      .getByTestId('editor-pane-bar')
+      .locator('button[data-testid]')
+      .count()
+    expect(inlineButtons - 1 + labels.length, 'every command is inline or in the overflow').toBe(12)
   })
 
   // The read-only toggle is a toggle BUTTON in the wide bar: its pressed state says which mode is
@@ -263,8 +277,8 @@ test.describe('pane toolbars', () => {
     const { page } = handle
     await waitForAppReady(page)
     // Its own case: undo / redo are INLINE only in the expanded bar. In the default environment
-    // the column is folded and Q3 moved every command into the single "…" overflow, so the buttons
-    // do not exist as buttons at all. The `wide` environment expands the bar.
+    // the column is partially overflowed and those low-priority commands live in the "…" menu,
+    // so the buttons do not exist as buttons at all. The `wide` environment expands the bar.
     await page.setViewportSize(VIEWPORTS.wide)
     await createDocAndType(page, 'hello world')
 
@@ -304,6 +318,18 @@ test.describe('pane toolbars', () => {
     await expect(page.getByTestId('preview-find-input')).toBeFocused()
   })
 
+  // ADR-0033: switching to preview-only UNMOUNTS the editor while the SAME document stays open.
+  // A pending 400ms preview refresh must be flushed on teardown rather than discarded, or the
+  // preview shows the pre-edit text. This is a different teardown path from a document switch.
+  test('a preview-only switch inside the debounce window still shows the typed text', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'TYPED-BEFORE-SWITCH')
+    // No wait: the click lands inside the 400ms window.
+    await page.getByTestId('view-preview').click()
+    await expect(page.locator('article.markdown-preview')).toContainText('TYPED-BEFORE-SWITCH')
+  })
+
   test('the preview bar copies the rendered content to the system clipboard', async ({
     clipboardE2e,
   }) => {
@@ -324,5 +350,187 @@ test.describe('pane toolbars', () => {
       () => readClipboardText(handle),
       'hello world',
     )
+  })
+
+  test('the inline Copy rendered HTML command writes the HTML source to the clipboard', async ({
+    clipboardE2e,
+  }) => {
+    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
+    test.skip(!snap?.restorable, clipboardSkipMessage(snap))
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+    await expect(page.locator('article.markdown-preview')).toContainText('hello world')
+
+    // All four preview commands fit at 368px, so the conditional trigger is ABSENT. Copy
+    // rendered HTML must therefore be reachable as an ordinary inline button, not a menu entry.
+    await expect(page.getByTestId('preview-more-btn')).toHaveCount(0)
+    await expectClipboardAfter(
+      handle,
+      () => page.getByTestId('preview-copy-html-btn').click(),
+      () => readClipboardText(handle),
+      'hello world',
+    )
+    // It is the HTML SOURCE (plain text), distinct from the rich-text copy command.
+    expect(await readClipboardText(handle)).toContain('<')
+  })
+
+  test('a narrow preview column shows the conditional More with the overflowed commands', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+    await expect(page.getByTestId('preview-more-btn')).toHaveCount(0)
+
+    // Named environments bottom out at 256px per column, while four preview commands need only
+    // 168px. Shrink the bar itself: the ResizeObserver observes THIS border box, so this takes
+    // exactly the same measurement path as dragging the split divider to its narrowest ratio.
+    await page.getByTestId('preview-pane-bar').evaluate((el) => {
+      ;(el as HTMLElement).style.width = '120px'
+    })
+    await expect(page.getByTestId('preview-more-btn')).toBeVisible()
+    await expect(page.getByTestId('preview-more-btn')).toHaveAttribute('aria-label', /.+/)
+    await page.getByTestId('preview-more-btn').click()
+    const menu = page.getByRole('menu')
+    await expect(menu.getByTestId('preview-copy-html-btn')).toBeVisible()
+    // 120px leaves one command inline; the other three are labelled entries in the overflow.
+    await expect(menu.locator('[role="menuitem"]')).toHaveCount(3)
+    await page.keyboard.press('Escape')
+  })
+
+  test('shrinking the column moves commands into More one at a time', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+    const bar = page.getByTestId('editor-pane-bar')
+
+    // Drive a CONTINUOUS shrink through the same ResizeObserver path the split divider uses.
+    // Only inline command buttons carry data-command-index, so the count excludes the trigger.
+    const counts = await bar.evaluate(async (el) => {
+      const node = el as HTMLElement
+      const result: number[] = []
+      for (const width of [900, 460, 430, 400, 370, 340, 310, 280, 250, 220]) {
+        node.style.width = `${width}px`
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        )
+        result.push(node.querySelectorAll('button[data-command-index]').length)
+      }
+      node.style.width = ''
+      return result
+    })
+
+    expect(counts[0]).toBe(12)
+    // Many distinct intermediate states, never an all-or-nothing jump.
+    expect(new Set(counts).size).toBeGreaterThanOrEqual(4)
+    for (let i = 1; i < counts.length; i += 1) {
+      expect(counts[i], `width step ${i} never expands while shrinking`).toBeLessThanOrEqual(
+        counts[i - 1],
+      )
+      // The last geometric step restores two commands (trigger + final command); no other step
+      // may move more than one.
+      expect(counts[i - 1] - counts[i], `width step ${i} folds one at a time`).toBeLessThanOrEqual(
+        2,
+      )
+    }
+  })
+
+  test('folding a focused command keeps keyboard focus reachable (WCAG 2.4.3)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+    const bar = page.getByTestId('editor-pane-bar')
+    const activeId = () =>
+      page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? null)
+
+    await page.getByTestId('fmt-# -').focus()
+    await bar.evaluate((el) => {
+      ;(el as HTMLElement).style.width = '60px'
+    })
+    await expect.poll(activeId).toBe('editor-overflow-btn')
+
+    // Back to the default 368px column the bar is still PARTIALLY overflowed (More stays), so
+    // expand past ALL_INLINE_AT to make the trigger disappear and hand focus back inline.
+    await bar.evaluate((el) => {
+      ;(el as HTMLElement).style.width = '900px'
+    })
+    await expect.poll(activeId).toBe('fmt-# -')
+  })
+
+  // A focus OUTSIDE the bar (the editor caret) must NOT be pulled into the toolbar when a command
+  // folds. useOverflowFocus only re-homes focus that is ALREADY inside the bar; a STALE in-bar focus
+  // (the user focused a command, then moved the caret to the editor) must not yank it back when the
+  // column narrows. Locked at the real-browser level because jsdom cannot reproduce CodeMirror's
+  // focus management. See docs/agents/testing.md "Regression tests must be able to fail".
+  test('a focus in the editor pane is not pulled into the toolbar when a command folds', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'CARET-HERE')
+    const editor = page.locator('.cm-content')
+    const bar = page.getByTestId('editor-pane-bar')
+
+    // Focus a command that WILL be folded: the undo button sits at the tail of the priority
+    // order, so it is among the first to move into "…". It has to be INLINE for this to be
+    // reachable at all, hence the wide bar first.
+    await bar.evaluate((el, w) => {
+      ;(el as HTMLElement).style.width = `${w}px`
+    }, 900)
+    const undo = page.getByTestId('editor-undo-btn')
+    await expect(undo).toBeVisible()
+    await undo.focus()
+    await expect(undo).toBeFocused()
+
+    // The user then moves the caret back into the editor pane, so the bar's tracked focus is now
+    // STALE: the command it remembers is no longer where the focus is.
+    await editor.click()
+    await expect(editor).toBeFocused()
+
+    // Narrow the column so that very command is folded away. The guard must leave the caret alone.
+    await bar.evaluate((el, w) => {
+      ;(el as HTMLElement).style.width = `${w}px`
+    }, 200)
+    await expect(undo).toHaveCount(0)
+    await expect(editor).toBeFocused()
+  })
+
+  // The chrome budget is a MODEL of the rendered bar. If the DOM charges more than the budget
+  // (a separator, a border, a gap), the bar would claim to be fully inline while clipping its
+  // last command. `e2e/guards/viewports.test.ts` re-derives the threshold from the budget but
+  // cannot see layout; THIS case is the only one that measures the real bar against that model.
+  test('the all-inline width really fits the rendered bar (no clipped command)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'hello world')
+    const bar = page.getByTestId('editor-pane-bar')
+
+    await bar.evaluate((el, w) => {
+      ;(el as HTMLElement).style.width = `${w}px`
+    }, ALL_INLINE_AT)
+    const fit = await bar.evaluate((el) => {
+      const node = el as HTMLElement
+      return { scrollWidth: node.scrollWidth, clientWidth: node.clientWidth }
+    })
+    // Guard the premise: the width really took effect, so the fit assertion below is not vacuous.
+    expect(fit.clientWidth, 'the bar took the requested width').toBe(ALL_INLINE_AT)
+    expect(
+      fit.scrollWidth,
+      `the rendered bar (${fit.scrollWidth}px of content) must fit the width the budget claims for it (${fit.clientWidth}px)`,
+    ).toBeLessThanOrEqual(fit.clientWidth)
+
+    // The ResizeObserver drives the re-render; every command must be inline at that width.
+    await expect
+      .poll(async () =>
+        bar.evaluate((el) => el.querySelectorAll('button[data-command-index]').length),
+      )
+      .toBe(12)
+
+    // One pixel less and the bar must give a command up — otherwise the width above was a lie.
+    await bar.evaluate((el, w) => {
+      ;(el as HTMLElement).style.width = `${w}px`
+    }, ALL_INLINE_AT - 1)
+    await expect
+      .poll(async () =>
+        bar.evaluate((el) => el.querySelectorAll('button[data-command-index]').length),
+      )
+      .toBeLessThan(12)
   })
 })

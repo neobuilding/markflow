@@ -126,6 +126,37 @@ describe('useSearchView', () => {
     expect(api.search.query).not.toHaveBeenCalled()
   })
 
+  it('coalesces per-keystroke registry bumps into one settled re-query', async () => {
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        useUIStore.setState({ unsavedBuffers: {}, documentStateRevision: 0 })
+        useUIStore.getState().setSearchQuery('hello')
+      })
+      const { result, unmount } = renderHook(() => useSearchView())
+      const initial = result.current.data
+      // Three "keystrokes" in one tick: the revision bumps each time but the Search view must
+      // not re-query per keystroke (ADR-0033 + rerender-use-ref-transient-values).
+      act(() => {
+        useUIStore.getState().reportUnsavedBuffer('a', 'h')
+        useUIStore.getState().reportUnsavedBuffer('a', 'he')
+        useUIStore.getState().reportUnsavedBuffer('a', 'hel')
+      })
+      expect(result.current.data).toBe(initial)
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+      expect(api.search.query.mock.calls.length).toBeGreaterThan(1)
+      const last = api.search.query.mock.calls.at(-1)![0]
+      expect(last.dirtyDocumentSnapshots).toEqual([
+        { documentId: 'a', content: 'hel', revision: 3 },
+      ])
+      unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   // ADR-0023 ruling 13: the renderer intercepts a CR/LF query and shows an inline hint, so no
   // IPC is ever issued and `search.multilineUnsupported` never enters the envelope.
   it('issues no IPC for a multiline query', () => {
@@ -143,20 +174,28 @@ describe('useSearchView', () => {
 })
 
 // The dirty-state revision is debounced so a burst of buffer edits does not refetch per keystroke.
-// The timer callback only runs when time advances, which the synchronous tests above never do.
+// The subscriber only sees bumps that happen AFTER it is mounted, so the edit below must come
+// after the hook is rendered — a bump before the mount is already settled by the initial state.
 describe('useSearchView — debounced document-state revision', () => {
-  it('fires the debounce timer callback when time advances', () => {
+  it('re-queries with the settled revision once the debounce elapses', () => {
     vi.useFakeTimers()
     try {
       act(() => {
+        useUIStore.setState({ unsavedBuffers: {}, documentStateRevision: 0 })
         useUIStore.getState().setSearchQuery('hello')
-        useUIStore.getState().reportUnsavedBuffer('a', 'x')
       })
       const { unmount } = renderHook(() => useSearchView())
-      // Advance past the 300ms debounce so `setDebounced` runs.
+      // An edit AFTER the hook is mounted: the imperative subscriber sees the revision bump.
+      act(() => {
+        useUIStore.getState().reportUnsavedBuffer('a', 'x')
+      })
       act(() => {
         vi.advanceTimersByTime(350)
       })
+      // The settled revision must reach the query — otherwise the search view would keep
+      // searching the pre-edit bytes.
+      const last = api.search.query.mock.calls.at(-1)![0]
+      expect(last.dirtyDocumentSnapshots).toEqual([{ documentId: 'a', content: 'x', revision: 1 }])
       unmount()
     } finally {
       vi.useRealTimers()

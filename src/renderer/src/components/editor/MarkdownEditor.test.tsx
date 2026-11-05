@@ -1,14 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react'
 import { EditorView } from '@codemirror/view'
 import { setSearchQuery, SearchQuery } from '@codemirror/search'
+import { undo, undoDepth } from '@codemirror/commands'
 import { MarkdownEditor } from './MarkdownEditor'
+import { useUIStore } from '../../store/ui'
 import { formatShortcut } from '../../lib/utils'
 import { FORMAT_SHORTCUTS } from '../../lib/format-shortcuts'
 import '../../i18n'
 
 beforeEach(() => {
   cleanup()
+  // The editor rotates its editing session from a STORE subscription, so a leaked
+  // activeDocumentId would make the next case's switch a no-op. No case may leak state.
+  useUIStore.setState({ activeDocumentId: null })
 })
 
 function getView(): EditorView {
@@ -22,6 +27,110 @@ describe('MarkdownEditor', () => {
   it('renders the given content', () => {
     render(<MarkdownEditor content="# Hello" docId="d1" onChange={() => {}} />)
     expect(screen.getByText('# Hello')).toBeTruthy()
+  })
+
+  it('commits the keystroke on its own frame and debounces only the preview', async () => {
+    const onChange = vi.fn()
+    const onImmediateChange = vi.fn()
+    render(
+      <MarkdownEditor
+        content="AAAA"
+        docId="a"
+        onChange={onChange}
+        onImmediateChange={onImmediateChange}
+      />,
+    )
+    getView().dispatch({ changes: { from: 4, insert: 'x' } })
+    // Correctness state must NOT wait for the 400ms debounce (Q14).
+    expect(onImmediateChange).toHaveBeenCalledWith('AAAAx')
+    expect(onChange).not.toHaveBeenCalled()
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('AAAAx'))
+  })
+
+  it('emits plain-text callbacks with NO document id (Q15 acceptance)', async () => {
+    const onChange = vi.fn()
+    const onImmediateChange = vi.fn()
+    render(
+      <MarkdownEditor
+        content="AAAA"
+        docId="a"
+        onChange={onChange}
+        onImmediateChange={onImmediateChange}
+      />,
+    )
+    getView().dispatch({ changes: { from: 4, insert: 'x' } })
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    // One argument only: no docId, hence no identity comparison can be needed downstream.
+    expect(onImmediateChange.mock.calls[0]).toHaveLength(1)
+    expect(onChange.mock.calls[0]).toHaveLength(1)
+  })
+
+  it('drops a debounced change that belongs to the PREVIOUS document', async () => {
+    const onChange = vi.fn()
+    const { rerender } = render(<MarkdownEditor content="AAAA" docId="a" onChange={onChange} />)
+    // A real keystroke schedules the 400ms preview refresh ...
+    getView().dispatch({ changes: { from: 4, insert: ' edited' } })
+    // ... and the user switches documents BEFORE it fires. The old editing session is aborted,
+    // so its pending timer can no longer write A's text into B's draft (todo 1).
+    rerender(<MarkdownEditor content="BBBB" docId="b" onChange={onChange} />)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('does not commit a keystroke that lands after the session was rotated by a switch', () => {
+    const onChange = vi.fn()
+    const onImmediateChange = vi.fn()
+    const { rerender } = render(
+      <MarkdownEditor
+        content="AAAA"
+        docId="a"
+        onChange={onChange}
+        onImmediateChange={onImmediateChange}
+      />,
+    )
+    // The store switches documents. The editor's subscription rotates the session BEFORE React
+    // commits, so the fresh session owns nothing while the view still holds A's text.
+    act(() => {
+      useUIStore.getState().setActiveDocumentId('b')
+    })
+    // A keystroke in that window still carries A's text. Committing it would write A's text into
+    // B's draft — the "Ctrl+Z replays the previous file" bug (ADR-0033).
+    getView().dispatch({ changes: { from: 4, insert: '!' } })
+    expect(onImmediateChange).not.toHaveBeenCalled()
+
+    // Once B's content is applied, the session owns the view again and typing commits.
+    rerender(
+      <MarkdownEditor
+        content="BBBB"
+        docId="b"
+        onChange={onChange}
+        onImmediateChange={onImmediateChange}
+      />,
+    )
+    getView().dispatch({ changes: { from: 4, insert: '?' } })
+    expect(onImmediateChange).toHaveBeenCalledWith('BBBB?')
+  })
+
+  it('flushes a pending preview when the editor unmounts (switch to preview-only)', () => {
+    const onChange = vi.fn()
+    const { unmount } = render(<MarkdownEditor content="AAAA" docId="a" onChange={onChange} />)
+    getView().dispatch({ changes: { from: 4, insert: 'x' } })
+    expect(onChange).not.toHaveBeenCalled()
+    // Unmounting the editor while the SAME document stays open must land the pending refresh,
+    // otherwise the preview keeps showing the pre-edit text.
+    unmount()
+    expect(onChange).toHaveBeenCalledWith('AAAAx')
+  })
+
+  it('keeps a pending preview timer alive when the parent callback identity changes', async () => {
+    const onChange = vi.fn()
+    const first = (text: string) => onChange(text)
+    const second = (text: string) => onChange(text)
+    const { rerender } = render(<MarkdownEditor content="AAAA" docId="a" onChange={first} />)
+    getView().dispatch({ changes: { from: 4, insert: 'x' } })
+    // A parent re-render with a fresh callback must NOT rebuild (and thereby drop) the debounce.
+    rerender(<MarkdownEditor content="AAAA" docId="a" onChange={second} />)
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('AAAAx'))
   })
 
   it('skips re-applying an internal (echo) change on the same document', async () => {
@@ -122,6 +231,50 @@ describe('MarkdownEditor', () => {
     const view = getView()
     await waitFor(() => expect(view.state.selection.main.from).toBe(0))
     expect(onConsumeSelection).not.toHaveBeenCalled()
+  })
+
+  it('never undoes across a document switch into the previous file', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(<MarkdownEditor content="AAAA" docId="a" onChange={onChange} />)
+    const view = getView()
+    view.dispatch({ changes: { from: 4, insert: ' edited' } })
+    expect(view.state.doc.toString()).toBe('AAAA edited')
+
+    // A real document switch spans two commits: the panes empty first, then the query data lands.
+    rerender(<MarkdownEditor content="" docId="b" onChange={onChange} />)
+    rerender(<MarkdownEditor content="BBBB" docId="b" onChange={onChange} />)
+    expect(view.state.doc.toString()).toBe('BBBB')
+
+    view.dispatch({ changes: { from: 4, insert: ' edited' } })
+    // Keep pressing Ctrl+Z past the beginning of THIS document's history. A programmatic
+    // document load must never become an undoable event, otherwise the editor is replaced
+    // wholesale with the previous file's content.
+    for (let i = 0; i < 6; i += 1) undo(view)
+    expect(view.state.doc.toString()).toBe('BBBB')
+    expect(undoDepth(view.state)).toBe(0)
+  })
+
+  it('clears the undo history when the SAME document is replaced from disk', () => {
+    const onChange = vi.fn()
+    const { rerender } = render(<MarkdownEditor content="AAAA" docId="a" onChange={onChange} />)
+    const view = getView()
+    view.dispatch({ changes: { from: 4, insert: ' edited' } })
+    expect(view.state.doc.toString()).toBe('AAAA edited')
+
+    // The echo guard consumes the internal change first (as the real parent does when it
+    // accepts onChange), then a reload / external file change replaces the buffer WITHOUT a
+    // doc-id change. That programmatic replacement must not leave the old edits undoable:
+    // CodeMirror cannot map them back over the replaced text, so keeping them would only
+    // leave a Ctrl+Z that no longer does anything.
+    rerender(<MarkdownEditor content="AAAA edited" docId="a" onChange={onChange} />)
+    rerender(<MarkdownEditor content="RELOADED" docId="a" onChange={onChange} />)
+    expect(view.state.doc.toString()).toBe('RELOADED')
+
+    view.dispatch({ changes: { from: 8, insert: '!' } })
+    expect(view.state.doc.toString()).toBe('RELOADED!')
+    for (let i = 0; i < 6; i += 1) undo(view)
+    expect(view.state.doc.toString()).toBe('RELOADED')
+    expect(undoDepth(view.state)).toBe(0)
   })
 
   it('ignores an out-of-range offset instead of crashing (mid-switch / drifted buffer)', async () => {

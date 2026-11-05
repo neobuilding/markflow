@@ -6,18 +6,19 @@ do not hand-roll an equivalent inside a feature component.
 
 ## Available primitives
 
-| Primitive                    | Use for                                                                                                   |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `Button`                     | Any click action. `variant` (`ghost` / `accent`) + `size` (`icon` / `sm`) cover the toolbar.              |
-| `Input`                      | Any single-line text field (`h-9`, shared `.focus-ring`). Do not hand-roll a bordered `<input>`.          |
-| `Select`                     | Any `<select>`. Wraps the native element (`h-9`, shared `.focus-ring`); do not hand-roll its focus ring.  |
-| `SearchInput`                | Every query field: value, placeholder, optional `leadingIcon`, `onClear`, `mainField`.                    |
-| `IconToggleGroup`            | Any set of small text toggles (`Aa`, `ab`, `.*`). `testId` is the group id; buttons get `<testId>-<key>`. |
-| `InputContextMenu`           | Wraps any text input to give it Cut/Copy/Paste/Undo/Redo/Select-all.                                      |
-| `Tooltip` / `TooltipContent` | Icon buttons. Always pair with `aria-label`.                                                              |
-| `ContextMenu*`               | Right-click menus anywhere.                                                                               |
-| `Dialog`                     | Modal surfaces.                                                                                           |
-| `MatchCounter`               | `k / n` match display shared by all find surfaces.                                                        |
+| Primitive                    | Use for                                                                                                                                                                                                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Button`                     | Any click action. `variant` (`default` / `ghost` / `outline` / `accent` / `toolbar`) + `size` (`md` / `sm` / `icon`). Defaults are `default` + `md`. `toolbar` is the icon-tile look both pane bars use; `default` is the filled surface used by dialogs. |
+| `DropdownMenu*`              | Menu surfaces opened by a trigger (`DropdownMenu` / `Trigger` / `Content` / `Item` / `Separator`). The pane bars' conditional "…" overflow is one of these.                                                                                               |
+| `Input`                      | Any single-line text field (`h-9`, shared `.focus-ring`). Do not hand-roll a bordered `<input>`.                                                                                                                                                          |
+| `Select`                     | Any `<select>`. Wraps the native element (`h-9`, shared `.focus-ring`); do not hand-roll its focus ring.                                                                                                                                                  |
+| `SearchInput`                | Every query field: value, placeholder, optional `leadingIcon`, `onClear`, `mainField`.                                                                                                                                                                    |
+| `IconToggleGroup`            | Any set of small text toggles (`Aa`, `ab`, `.*`). `testId` is the group id; buttons get `<testId>-<key>`.                                                                                                                                                 |
+| `InputContextMenu`           | Wraps any text input to give it Cut/Copy/Paste/Undo/Redo/Select-all.                                                                                                                                                                                      |
+| `Tooltip` / `TooltipContent` | Icon buttons. Always pair with `aria-label`.                                                                                                                                                                                                              |
+| `ContextMenu*`               | Right-click menus anywhere.                                                                                                                                                                                                                               |
+| `Dialog`                     | Modal surfaces.                                                                                                                                                                                                                                           |
+| `MatchCounter`               | `k / n` match display shared by all find surfaces.                                                                                                                                                                                                        |
 
 ## Why this is a rule, not a suggestion
 

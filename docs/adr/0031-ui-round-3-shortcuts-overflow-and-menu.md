@@ -56,6 +56,8 @@ amendment notes pointing at this ADR.
   to 0.2, so a viewport breakpoint can never describe the pane's width. `FOLD_AT = 420` is compared
   against the bar's **border box** (`borderBoxSize`), which equals the column width; the e2e
   environment contract (`e2e/guards/viewports.test.ts`) is derived from the same constants.
+  **(Superseded by §5:** the single `FOLD_AT` threshold became a per-command budget; measuring the
+  border box is still the rule.**)**
 - **Menu order follows the platform convention**: 文件 / 编辑 / 视图 / 窗口 / 帮助 is the order every
   mainstream desktop app uses (macOS, Windows, VS Code); 语言 is a MarkFlow-specific top-level menu,
   so it sits after the platform's own menus and before 帮助, which is last by convention.
@@ -66,6 +68,11 @@ amendment notes pointing at this ADR.
 ---
 
 ## 3. Decision
+
+> **Superseded in part by §5 (2026-11-04):** item 3's single `FOLD_AT = 420` two-state fold no
+> longer applies — both pane bars now overflow commands progressively and show "…" only while at
+> least one command is hidden. Items 1, 2, 4–6 and the visible-label rule still stand. Flagged per
+> `docs/agents/domain.md` (mark ADR conflicts explicitly rather than rewriting history).
 
 1. **⌘B = Bold.** `App.tsx`'s window handler dispatches the editor's existing
    `markdown:insert` event with `{ before: '**', after: '**' }` — the very same channel the toolbar's
@@ -94,9 +101,82 @@ amendment notes pointing at this ADR.
 - ⌘B is now the shortcut a Markdown author expects, and the sidebar shortcut is unambiguous.
 - The pane bar has exactly two states, so there is no threshold that hides an action behind an
   unlabelled control; the visible-label rule also gives screen-reader users the action names.
+  **(Superseded by §5:** the bar now has as many states as it has commands; the visible-label rule
+  still stands.**)**
 - ADR-0024 §9's empty-state rule is now "Quick Open + Close" (no sidebar toggle), and ADR-0024 §10's
   two-stage collapse description is superseded by this ADR's single threshold.
 - The old `⌘B` = toggle-panel binding is a **breaking change** and belongs in the release notes —
   the same treatment ADR-0024 §3 item 3 gave ⌘⇧E.
 - The i18n surface grew by one key per locale (`sidebar.searchEmptyState`) and shrank by two
   (`editor.format`, `editor.toggleSidebarShortcut`).
+
+---
+
+## 5. Amendment (2026-11-04): progressive priority+ overflow
+
+R-c / R-d's "one threshold, the WHOLE bar folds at once" is superseded by a **progressive priority+
+overflow**. `components/ui/priority-overflow.ts` budgets one 36px slot per icon tile and moves the
+lowest-priority commands into the single "…" menu ONE AT A TIME as the column shrinks; at/above
+`ALL_INLINE_AT` (472px for the twelve editor commands) no overflow is shown at all. Both pane bars
+now use a **conditional overflow trigger**: the "…" button exists only while at least one command
+has overflowed, so no command may depend on it as its only access path — Copy rendered HTML became
+an ordinary, lowest-priority preview command instead of a resident menu entry. The single overflow,
+visible labels on every entry, and the absence of a separate Format dropdown are unchanged.
+
+Reason: an all-or-nothing fold made every command disappear (or reappear) at one pixel boundary.
+Priority+ is the mainstream toolbar pattern (VS Code / Fluent / Radix-style navigation menus): show
+as many items as fit and collapse the rest one by one, keeping the most-used actions reachable.
+Verified against the local VS Code source (`src/vs/base/browser/ui/toolbar/toolbar.ts`): its
+responsive mode pushes the "…" action only while `minimumWidth > containerWidth` and pulls it once
+`hiddenActions` empties; one ResizeObserver on the container, a fixed per-action budget in
+`kind: 'all'` mode, hiding from the array's end (`overflowFrom: 'end'`), and no debounce, binary
+search or hysteresis. The e2e viewport contract derives from `ALL_INLINE_AT` instead of `FOLD_AT`;
+the `FOLD_AT` references in ADR-0024 §10 and ADR-0026 describe the superseded two-state
+implementation.
+
+The chrome budget is **per bar**: the editor bar's 40px includes its format-group border and the
+find/replace divider, while the preview bar has no separators and uses padding only (24px). Charging
+both bars the same 40px made the preview overflow 16px too early (columns of 168–183px); the shared
+calculation now takes the bar's own chrome. The named e2e environments import `ALL_INLINE_AT` from a
+shared helper, and `e2e/guards/viewports.test.ts` asserts that helper matches the production budget.
+
+The committed `chrome-visual` PNGs are **regression assets, not a design input**. When the wide
+layout changes, `preview-pane-bar-e2e-app-win32.png` is re-captured from the new design; keeping a
+resident menu merely to avoid re-capturing it would invert that relationship. The behavioral
+assertions (trigger present/absent, one-at-a-time overflow) are the specification — the screenshot
+only detects unintended drift. Re-capturing must be verified in the same run as the behavioural
+assertions (`pane-toolbars`, `toolbar-density`, the viewport guard): pixel baselines must never be
+used on their own to judge a behaviour change, and a re-capture whose cause is not understood must
+be reported rather than silently merged.
+
+### 5.1 Re-capture record (2026-11-04)
+
+Three baselines were re-captured in this round: `editor-pane-bar`, `editor-pane-bar-dark` and
+`preview-pane-bar`. Per the rule above, the cause is reported here rather than merged silently.
+
+**Measured — each baseline compared against the current render, one at a time:**
+
+| Baseline                  | Difference vs the committed PNG | Budget |
+| ------------------------- | ------------------------------- | ------ |
+| `editor-pane-bar` (light) | 340 pixels (1% of the image)    | 20     |
+| `editor-pane-bar-dark`    | 300 pixels (1%)                 | 20     |
+| `preview-pane-bar`        | 22 pixels (1%)                  | 20     |
+
+Every figure is over the spec's 20-pixel budget, so the re-capture was REQUIRED: the rendered bars
+changed, and this is neither font-rasterisation nor host drift.
+
+**Localised to a segment, not to individual pixels:** the Playwright `diff` image for the light
+editor bar shows the first seven format buttons as pixel-identical, with the difference confined to
+the **trailing segment** (find / replace / undo / redo / read-only) — which rules out a whole-bar
+layout shift. That segment is exactly what this round reworked: `EditorPaneBar.tsx` gained the
+`group: 'format' | 'find' | 'editing'` model with its group separators, and the read-only button's
+glyph became state-dependent (`editable ? PenLine : Lock`).
+
+**Not established:** which individual button owns which of the 340 / 300 / 22 pixels. The diff
+image was read visually to localise the segment; no coordinate-level mapping was produced, so the
+residual attribution stays open.
+
+**Verified in the same run as the re-capture:** `pane-toolbars` (behavioural assertions: trigger
+conditionality, one-at-a-time overflow, focus hand-off in BOTH directions, the chrome budget
+against the real layout), `toolbar-density`, `e2e/guards/viewports.test.ts` (the environment
+contract) and `chrome-visual` itself — all green against the re-captured baselines.

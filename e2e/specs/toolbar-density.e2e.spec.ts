@@ -13,7 +13,7 @@
 // 13px inline glyphs on purpose (PLAN C23 "menu item icons stay 13px").
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
-import { VIEWPORTS } from '../helpers/viewports'
+import { ALL_INLINE_AT, VIEWPORTS } from '../helpers/viewports'
 
 const MIN_HIT_PX = 32
 const ICON_PX = 16
@@ -136,25 +136,24 @@ test.describe('toolbar density (E8)', () => {
     await assertBarsHitArea(page, ['global-bar', 'preview-pane-bar'])
   })
 
-  test('the folded format menu keeps a >= 32px target for every entry', async () => {
+  test('the overflow entries keep a >= 32px target', async () => {
     const { page } = handle
     await openSplitWithDoc(page)
 
-    // Drive the editor column below the 420px fold threshold (ADR-0024 §10 trade-off 54) by entering
-    // the named `narrow` environment: its 800px content area leaves each split column at
-    // (800 - 288) / 2 = 256px, collapsing the WHOLE bar into one "…" overflow (Q3: a single
-    // overflow replaces the old Format dropdown + minimal stage). We enter a named environment rather
-    // than sizing the OS window by hand, so the width is a shared, reviewed decision and the
-    // no-magic-number guard covers it (see ADR-0026).
+    // Drive the editor column below the all-inline width (ALL_INLINE_AT = 472) by entering the
+    // named `narrow` environment: its 800px content area leaves each split column at
+    // (800 - 288) / 2 = 256px, so the lower-priority commands have progressively moved into one
+    // "…" overflow. We enter a named environment rather than sizing the OS window by hand, so the
+    // width is a shared, reviewed decision and the no-magic-number guard covers it (see ADR-0026).
     await page.setViewportSize(VIEWPORTS.narrow)
     // Guard the premise before asserting the result: a window that refused to shrink would
     // otherwise surface as an opaque "element not found" timeout instead of this message.
     const editorBar = page.getByTestId('editor-pane-bar')
     await expect
       .poll(async () => (await editorBar.boundingBox())?.width ?? 0, {
-        message: 'the editor column must be narrow enough (< 420px) to fold',
+        message: `the editor column must be narrow enough (< ${ALL_INLINE_AT}px) to overflow`,
       })
-      .toBeLessThan(420)
+      .toBeLessThan(ALL_INLINE_AT)
 
     const foldBtn = page.getByTestId('editor-overflow-btn')
     await expect(foldBtn).toBeVisible({ timeout: 15_000 })
@@ -162,8 +161,10 @@ test.describe('toolbar density (E8)', () => {
     await foldBtn.click()
     const items = page.getByRole('menuitem')
     const count = await items.count()
-    // Single overflow carries EVERY action: 7 format + find/replace + undo/redo/read-only = 12.
-    expect(count, 'the single overflow must list every bar action').toBe(12)
+    // A narrow column is PARTIALLY overflowed: some commands are still inline, so the menu holds
+    // the remaining ones (never zero, never all twelve at this width).
+    expect(count, 'the overflow must list the commands that no longer fit').toBeGreaterThan(0)
+    expect(count, 'a partially overflowed bar keeps some commands inline').toBeLessThan(12)
     for (let i = 0; i < count; i++) {
       const box = await items.nth(i).boundingBox()
       expect(box, `format menu item #${i} has no box`).not.toBeNull()

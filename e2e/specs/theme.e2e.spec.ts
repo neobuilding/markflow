@@ -109,6 +109,53 @@ test.describe('theme entry (ADR-0028)', () => {
     await expect.poll(() => isDark(page)).toBe(osPrefersDark)
   })
 
+  test('dark → system keeps the preview following the OS (todo 2)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    // The preview pane needs real content: its <article> carries data-theme and the two
+    // github-markdown-css sheets drive the rendered body.
+    await page.getByTestId('new-document-btn').click()
+    await expect(page.locator('.cm-content')).toBeVisible()
+    await page.getByTestId('view-split').click()
+    await expect(page.locator('article.markdown-preview')).toBeVisible()
+
+    const previewTheme = () =>
+      page.evaluate(() => ({
+        attr: document.querySelector('article.markdown-preview')?.getAttribute('data-theme'),
+        darkDisabled: (document.getElementById('md-body-dark') as HTMLStyleElement | null)
+          ?.disabled,
+        lightDisabled: (document.getElementById('md-body-light') as HTMLStyleElement | null)
+          ?.disabled,
+      }))
+
+    // Drive the REAL Chromium media feature instead of stubbing matchMedia: emulateMedia is
+    // already exercised in this repo's Electron harness (focus-visibility.e2e.spec.ts).
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await expect
+      .poll(() => page.evaluate(() => window.matchMedia('(prefers-color-scheme: dark)').matches))
+      .toBe(true)
+
+    await page.evaluate(() => (window as any).__uiStore.getState().setTheme('dark'))
+    await expect
+      .poll(previewTheme)
+      .toEqual({ attr: 'dark', darkDisabled: false, lightDisabled: true })
+
+    // Switching to 跟随系统 still sees the dark OS preference on the first apply.
+    await page.evaluate(() => (window as any).__uiStore.getState().setTheme('system'))
+    await expect
+      .poll(previewTheme)
+      .toEqual({ attr: 'dark', darkDisabled: false, lightDisabled: true })
+
+    // The OS then flips to LIGHT. The preview must follow through its own media-query listener —
+    // the regression was that it stayed on the dark sheet until a remount.
+    await page.emulateMedia({ colorScheme: 'light' })
+    await expect
+      .poll(previewTheme)
+      .toEqual({ attr: 'light', darkDisabled: true, lightDisabled: false })
+    await expect.poll(() => isDark(page)).toBe(false)
+  })
+
   test('the theme choice is not persisted across launches (ADR-0028 R-f)', async () => {
     const { page } = handle
     await waitForAppReady(page)

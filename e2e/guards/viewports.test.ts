@@ -8,9 +8,9 @@
 //
 // So this test parses the constants out of the sources of truth and asserts the contract:
 //   - every environment is at least the window floor (electron/main/window.ts `minWidth`)
-//   - `standard` really does fold the editor toolbar  (pane < FOLD_AT)
-//   - `wide` really does expand it                     (pane >= FOLD_AT)
-//   - `narrow` folds the editor toolbar                  (pane < FOLD_AT)
+//   - `standard` really does overflow the editor toolbar (pane < ALL_INLINE_AT)
+//   - `wide` really does expand it                       (pane >= ALL_INLINE_AT)
+//   - `narrow` overflows the editor toolbar even more     (pane < ALL_INLINE_AT)
 //   - `baseline` matches the committed E9 visual baselines (their bar widths)
 //
 // It also guards the convention itself, because convention is not self-enforcing: that
@@ -38,9 +38,26 @@ function pngWidth(relPath: string): number {
 }
 
 /** The layout constants the environments are derived from, read from the code that owns them. */
-const FOLD_AT = Number(
-  /const FOLD_AT = (\d+)/.exec(source('src/renderer/src/components/editor/EditorPaneBar.tsx'))?.[1],
-)
+const PRIORITY_OVERFLOW = source('src/renderer/src/components/ui/priority-overflow.ts')
+// One reader for every "export const NAME = 123" the guard needs: the value is parsed out of the
+// SOURCE (importing the module would pull React into this node-side guard), and a missed read
+// surfaces as NaN in the vacuity test below, not as a silently green comparison.
+function parseConst(name: string, src: string): number {
+  return Number(new RegExp(`export const ${name} = (\\d+)`).exec(src)?.[1])
+}
+
+// The width at which ALL editor-pane-bar commands fit inline. Below it the bar progressively moves
+// the lowest-priority commands into its "…" overflow (ui/priority-overflow.ts).
+//
+// It is RECOMPUTED here from the budget the production code uses, not read as a literal: the
+// threshold has to move WITH the budget, and a guard that compared two hand-written numbers
+// could not see the two disagreeing about where "all inline" begins.
+const ITEM_SLOT = parseConst('ITEM_SLOT', PRIORITY_OVERFLOW)
+const BAR_PADDING = parseConst('BAR_PADDING', PRIORITY_OVERFLOW)
+const EDITOR_SEPARATORS = parseConst('EDITOR_SEPARATORS', PRIORITY_OVERFLOW)
+const EDITOR_COMMAND_COUNT = parseConst('EDITOR_COMMAND_COUNT', PRIORITY_OVERFLOW)
+const ALL_INLINE_AT = ITEM_SLOT * EDITOR_COMMAND_COUNT + BAR_PADDING + EDITOR_SEPARATORS
+const HELPER_ALL_INLINE_AT = parseConst('ALL_INLINE_AT', source('e2e/helpers/viewports.ts'))
 const SIDEBAR_DEFAULT = Number(
   /setSidebarWidth\] = useState\((\d+)\)/.exec(
     source('src/renderer/src/components/sidebar/Sidebar.tsx'),
@@ -54,9 +71,27 @@ const splitPaneWidth = (viewport: { width: number }): number =>
 
 describe('the named e2e environments', () => {
   it('could not read the layout constants — the guard would be vacuous', () => {
-    expect(Number.isFinite(FOLD_AT)).toBe(true)
+    expect(Number.isFinite(ITEM_SLOT)).toBe(true)
+    expect(Number.isFinite(BAR_PADDING)).toBe(true)
+    expect(Number.isFinite(EDITOR_SEPARATORS)).toBe(true)
+    expect(Number.isFinite(EDITOR_COMMAND_COUNT)).toBe(true)
+    expect(Number.isFinite(ALL_INLINE_AT)).toBe(true)
     expect(Number.isFinite(SIDEBAR_DEFAULT)).toBe(true)
     expect(Number.isFinite(WINDOW_FLOOR)).toBe(true)
+  })
+
+  it('derives the all-inline threshold from the EDITOR bar chrome', () => {
+    // Two ways to break this without any test noticing: hand-write the number, or derive it from
+    // the WRONG budget (`BAR_PADDING` is the preview bar's 24px, giving 456 instead of 472). Both
+    // leave the named environments pinned to a width the editor bar no longer uses, so the
+    // assertion names the exact call instead of settling for "some derivation".
+    expect(PRIORITY_OVERFLOW).toMatch(
+      /export const ALL_INLINE_AT = allInlineWidth\(\s*EDITOR_COMMAND_COUNT,\s*EDITOR_BAR_CHROME\s*\)/,
+    )
+    // Specs import ALL_INLINE_AT from helpers/viewports.ts; a source change that moved the real
+    // threshold must not silently leave those premise checks behind.
+    expect(Number.isFinite(HELPER_ALL_INLINE_AT)).toBe(true)
+    expect(HELPER_ALL_INLINE_AT).toBe(ALL_INLINE_AT)
   })
 
   it('keeps every environment at or above the window floor', () => {
@@ -67,21 +102,22 @@ describe('the named e2e environments', () => {
     }
   })
 
-  it('has `standard` fold the editor toolbar, so the default environment is unambiguous', () => {
-    expect(splitPaneWidth(VIEWPORTS.standard)).toBeLessThan(FOLD_AT)
+  it('has `standard` overflow the editor toolbar, so the default environment is unambiguous', () => {
+    expect(splitPaneWidth(VIEWPORTS.standard)).toBeLessThan(ALL_INLINE_AT)
   })
 
   it('has `wide` expand the editor toolbar, so the wide environment is unambiguous', () => {
-    expect(splitPaneWidth(VIEWPORTS.wide)).toBeGreaterThanOrEqual(FOLD_AT)
+    expect(splitPaneWidth(VIEWPORTS.wide)).toBeGreaterThanOrEqual(ALL_INLINE_AT)
   })
 
-  it('has `narrow` fold the editor toolbar (single fold threshold)', () => {
-    // The app measures the bar's border box, which equals this column width (see EditorPaneBar.tsx
-    // reading `borderBoxSize`), so comparing the column width to FOLD_AT is exactly the quantity the
-    // real layout compares against — not the content box, which would subtract the bar's padding.
-    // Q3 collapsed the old wide/folded/minimal model into a single threshold, so `narrow` is now a
-    // folded column (pane < FOLD_AT), not a separate minimal mode.
-    expect(splitPaneWidth(VIEWPORTS.narrow)).toBeLessThan(FOLD_AT)
+  it('has `narrow` overflow more commands than `standard`', () => {
+    // The app measures the bar's border box, which equals this column width (see
+    // ui/priority-overflow.ts reading `borderBoxSize`), so comparing the column width to
+    // ALL_INLINE_AT is exactly the quantity the real layout compares against — not the content
+    // box, which would subtract the bar's padding. The overflow is progressive: `narrow` is a
+    // smaller column than `standard`, so MORE commands are in "…", not a separate mode.
+    expect(splitPaneWidth(VIEWPORTS.narrow)).toBeLessThan(ALL_INLINE_AT)
+    expect(splitPaneWidth(VIEWPORTS.narrow)).toBeLessThan(splitPaneWidth(VIEWPORTS.standard))
   })
 
   it('pins the standard environment for every spec in the shared launch helper', () => {
@@ -124,10 +160,10 @@ describe('the named e2e environments', () => {
     // pixel, hence the tolerance on the preview bar).
     const dir = 'e2e/specs/chrome-visual.e2e.spec.ts-snapshots'
     const content = VIEWPORTS.baseline.width - SIDEBAR_DEFAULT
-    // The baseline images show the EXPANDED format cluster, so the column must stay above FOLD_AT:
-    // if that threshold moves past this column width, the committed PNGs go stale and the spec
-    // should say so here rather than as an opaque screenshot diff.
-    expect(splitPaneWidth(VIEWPORTS.baseline)).toBeGreaterThanOrEqual(FOLD_AT)
+    // The baseline images show the FULLY EXPANDED bar, so the column must stay above
+    // ALL_INLINE_AT: if that width moves past this column, the committed PNGs go stale and the
+    // spec should say so here rather than as an opaque screenshot diff.
+    expect(splitPaneWidth(VIEWPORTS.baseline)).toBeGreaterThanOrEqual(ALL_INLINE_AT)
     expect(
       pngWidth(`${dir}/global-bar-e2e-app-win32.png`),
       'the global bar spans the whole content area',

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { EditorView } from '@codemirror/view'
 import { render, waitFor, act, fireEvent, screen } from '@testing-library/react'
 import { FileText, Search } from 'lucide-react'
 import { TooltipProvider } from '../ui/tooltip'
@@ -15,6 +16,18 @@ const h = vi.hoisted(() => ({
   noDoc: false,
   filePath: '/a.md',
   editingTitle: false,
+  // The keystroke-frame text Save must see; deliberately different from the preview mirror.
+  authoritativeContent: '# A',
+  commitDraft: vi.fn(),
+  saveMutateAsync: vi.fn(
+    async (_params: { id: string; updates: { title: string; content: string } }) => ({
+      id: 'a',
+      title: 'a',
+      filePath: '/a.md',
+      content: '# A',
+      missing: false,
+    }),
+  ),
 }))
 
 vi.mock('../../hooks/useDocuments', () => ({
@@ -26,13 +39,7 @@ vi.mock('../../hooks/useDocuments', () => ({
   }),
   useUpdateDocument: () => ({
     mutate: vi.fn(),
-    mutateAsync: vi.fn(async () => ({
-      id: 'a',
-      title: 'a',
-      filePath: '/a.md',
-      content: '# A',
-      missing: false,
-    })),
+    mutateAsync: h.saveMutateAsync,
   }),
   useOpenPaths: () => ({ mutate: vi.fn(), isPending: false }),
   useOpenFolder: () => ({ mutate: vi.fn(), isPending: false }),
@@ -63,10 +70,13 @@ vi.mock('../../hooks/useLocalDocument', () => ({
     startTitleEdit: h.startTitleEdit,
     cancelTitleEdit: vi.fn(),
     handleContentChange: vi.fn(),
+    commitDraft: h.commitDraft,
+    // Save reads the keystroke-frame text, not the throttled preview mirror.
+    getAuthoritativeContent: () => h.authoritativeContent,
     handleTitleSave: vi.fn(),
     dirty: false,
     markSaved: vi.fn(),
-    toDiskFormat: vi.fn(),
+    toDiskFormat: (text: string) => text,
     getEol: vi.fn(),
   }),
 }))
@@ -83,6 +93,9 @@ beforeEach(() => {
   h.noDoc = false
   h.filePath = '/a.md'
   h.editingTitle = false
+  h.authoritativeContent = '# A'
+  h.commitDraft.mockClear()
+  h.saveMutateAsync.mockClear()
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setEditable(true)
   useUIStore.getState().setPendingMatch(null)
@@ -120,6 +133,18 @@ it('jumps the editor to a pending search hit and then clears it (Phase 4)', asyn
   mount()
   // MarkdownEditor applies the offset and calls back, clearing pendingMatch.
   await waitFor(() => expect(useUIStore.getState().pendingMatch).toBeNull())
+})
+
+it('never feeds the PREVIOUS document draft to the editor mid-switch', () => {
+  // activeDocumentId flips synchronously on a sidebar switch, but useDocument() can still
+  // return the previous record (stale react-query cache / in-flight refetch) and
+  // useLocalDocument only resets its draft when doc.id changes. localContent is therefore
+  // the PREVIOUS document's text here. Feeding it to MarkdownEditor writes A's text into B's
+  // EditorView (isDocSwitch force-applies `content`), which is what later surfaced as
+  // "Ctrl+Z replays the previous file" in the real browser.
+  useUIStore.getState().setActiveDocumentId('b') // query mock still returns doc.id === 'a'
+  mount()
+  expect(document.querySelector('.cm-content')?.textContent ?? '').not.toContain('# A')
 })
 
 // D22 / §6 step 9: the Quick Open trigger lives in the editor's CommonToolbar, next to the
@@ -257,6 +282,30 @@ describe('EditorPane pendingFileAction save / saveAs / reload (能力 6)', () =>
       useUIStore.getState().requestFileAction({ type: 'save' })
     })
     await waitFor(() => expect(useUIStore.getState().pendingFileAction).toBeNull())
+  })
+
+  it('Save writes the keystroke-frame text, not the 400ms-throttled preview mirror', async () => {
+    // The preview mirror is still '# A' (mock), but the user has already typed more. Saving
+    // inside the debounce window must persist the typed text (Q14 / ADR-0033).
+    h.authoritativeContent = '# A\nTYPED-JUST-NOW'
+    mount()
+    act(() => {
+      useUIStore.getState().requestFileAction({ type: 'save' })
+    })
+    await waitFor(() => expect(h.saveMutateAsync).toHaveBeenCalled())
+    expect(h.saveMutateAsync.mock.calls[0][0].updates.content).toBe('# A\nTYPED-JUST-NOW')
+  })
+
+  it('wires the keystroke-frame commit through to the editor', () => {
+    mount()
+    const node = document.querySelector('.cm-editor') as HTMLElement
+    const view = EditorView.findFromDOM(node)
+    expect(view).toBeTruthy()
+    act(() => {
+      view!.dispatch({ changes: { from: 3, insert: 'X' } })
+    })
+    // No 400ms wait: correctness state lands on the keystroke frame.
+    expect(h.commitDraft).toHaveBeenCalledWith('# AX')
   })
 
   it('runs Save As when requested', async () => {

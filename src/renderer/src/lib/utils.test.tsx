@@ -583,6 +583,15 @@ describe('debounce', () => {
     vi.advanceTimersByTime(50)
     expect(fn).toHaveBeenCalledWith('b')
   })
+
+  it('cancel() drops a pending invocation', () => {
+    const fn = vi.fn()
+    const debounced = debounce(fn, 100)
+    debounced('stale')
+    debounced.cancel()
+    vi.advanceTimersByTime(100)
+    expect(fn).not.toHaveBeenCalled()
+  })
 })
 
 describe('buildFileTree — nested folders', () => {

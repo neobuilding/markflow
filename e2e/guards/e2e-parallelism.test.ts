@@ -22,6 +22,9 @@
 //   5. CI selects exactly the projects `npm run e2e:full` selects. Those two lists describe the
 //      same intent but live in two files (the workflow and package.json), so adding a project to one
 //      and forgetting the other would silently drop a suite from local runs, from CI, or from both.
+//   6. The perf gate runs in its OWN playwright invocation. `workers: 1` only caps concurrency
+//      WITHIN a project: Playwright schedules the projects of one invocation concurrently, so a
+//      gate sharing an invocation with e2e-app is timed on a loaded machine.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -104,6 +107,38 @@ describe('the e2e parallelism contract', () => {
     const inScript = projectsIn(pkg.scripts['e2e:full'] ?? '')
     const inWorkflow = [...new Set(workflowPlaywrightLines().flatMap(projectsIn))].sort()
     expect(inWorkflow).toEqual([...new Set(inScript)].sort())
+  })
+
+  it('gives the timing-sensitive perf gate its OWN playwright invocation', () => {
+    // Playwright schedules the projects of ONE invocation CONCURRENTLY (measured 2026-11-05:
+    // three specs in two projects ran on three workers and finished in 12.7s of wall clock while
+    // their own durations summed to 21.1s). A perf gate that shares an invocation with e2e-app
+    // is therefore measured on a loaded machine: firstContentMs measured 1602ms against the
+    // 1500ms threshold → RED, while the SAME build measured 712ms in its own invocation
+    // (478/541/647 across idle runs).
+    //
+    // The threshold must NOT be relaxed to compensate — the app is ~3x faster than the frozen
+    // 2644ms baseline — and nothing in a failing test would point at the cause, so the
+    // isolation is pinned here.
+    const pkg = JSON.parse(repoSource('package.json')) as { scripts: Record<string, string> }
+    const invocations = (pkg.scripts['e2e:full'] ?? '')
+      .split('&&')
+      .map((command) => command.trim())
+      .filter(Boolean)
+    const perfInvocations = invocations.filter((command) =>
+      projectsIn(command).includes('e2e-perf-gate'),
+    )
+    expect(perfInvocations).toHaveLength(1)
+    expect(projectsIn(perfInvocations[0])).not.toContain(PARALLEL_PROJECT)
+
+    // CI must do the same: the perf gate gets a step of its own, sharing no invocation with
+    // the app shards or the clipboard specs.
+    const perfSteps = workflowPlaywrightLines().filter((line) =>
+      projectsIn(line).includes('e2e-perf-gate'),
+    )
+    expect(perfSteps).toHaveLength(1)
+    expect(projectsIn(perfSteps[0])).not.toContain(PARALLEL_PROJECT)
+    expect(projectsIn(perfSteps[0])).not.toContain('e2e-clipboard')
   })
 
   it('keeps the diagnostic perf project out of CI and out of e2e:full', () => {

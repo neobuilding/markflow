@@ -13,6 +13,13 @@
 // Baselines are generated on ONE platform and skipped everywhere else. Playwright already suffixes
 // snapshot files with the platform name, so adding a Linux baseline later needs no change here:
 // run the spec with `--update-snapshots` on that platform once, then widen BASELINE_PLATFORMS.
+//
+// Re-capture record: the editor (light+dark) and preview bar baselines were re-captured on
+// 2026-11-04 with the progressive-overflow rework. Each re-capture was measured against the
+// committed PNG (340 / 300 / 22 pixels, all over the 20px budget); only the light editor diff was
+// localised further (to the trailing find/replace/undo/redo/read-only segment). The full record,
+// including what was NOT established, is docs/adr/0031-ui-round-3-shortcuts-overflow-and-menu.md
+// §5.1 — a re-capture whose cause is not understood must be REPORTED, not silently merged.
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { VIEWPORTS } from '../helpers/viewports'
