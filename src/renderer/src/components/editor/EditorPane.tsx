@@ -736,7 +736,7 @@ export function EditorPane(): React.ReactElement {
   // document's text: feeding it to MarkdownEditor writes A's text into B's EditorView because
   // isDocSwitch force-applies `content` — which is what later surfaced as "Ctrl+Z replays the
   // previous file". Gate on the ids MATCHING, not just on isLoading.
-  const docMatchesActive = activeDocumentId === null || doc?.id === activeDocumentId
+  const docMatchesActive = doc?.id === activeDocumentId
   const showLoading = isLoading || !docMatchesActive
   // Feed '' while loading so both panes are genuinely empty the moment the
   // overlay lifts, instead of flashing the previous document's text for a frame.
