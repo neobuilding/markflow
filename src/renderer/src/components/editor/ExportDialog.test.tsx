@@ -22,6 +22,18 @@ const doc: Document = {
 
 const exportDocument = vi.fn(async () => {})
 const getExportHtml = vi.fn<() => string | null>(() => '<h1>hi</h1>')
+// C20 ⑨: the preview renders the export's parts; the fake carries one recognisable marker per
+// part so the test can tell "the export's own stylesheet" from "the app's styling".
+const buildExportParts = vi.fn(async (opts: { theme: 'light' | 'dark' }) => ({
+  theme: opts.theme,
+  lang: 'en',
+  body: '<h1>hi</h1>',
+  css: '.markdown-body{color:#111111}',
+  fontCss: '@font-face{font-family:Probe;src:url(data:font/woff;base64,AA)}',
+  rootVars: '  --md-pre-bg: #edf2f9;',
+  containerCss: 'padding:24px;',
+  printCss: '@media print{.markdown-body hr{display:block}}',
+}))
 
 vi.mock('../../hooks/useDocuments', () => ({
   // Mirror the real hook: no active document means no data. This keeps the
@@ -31,6 +43,8 @@ vi.mock('../../hooks/useDocuments', () => ({
 vi.mock('../../lib/export', () => ({
   exportDocument: (...a: unknown[]) => (globalThis as any).__exportDocument(...a),
   resolveTheme: (choice: string, ui: string) => (choice === 'current' ? ui : choice),
+  // C20 ⑨: the export preview renders the export's own parts in a shadow root.
+  buildExportParts: (...a: unknown[]) => (globalThis as any).__buildExportParts(...a),
 }))
 vi.mock('../../lib/exportStore', () => ({
   getExportHtml: () => (globalThis as any).__getExportHtml(),
@@ -45,10 +59,14 @@ vi.mock('../../lib/exportStore', () => ({
 beforeEach(() => {
   ;(globalThis as any).__exportDocument = exportDocument
   ;(globalThis as any).__getExportHtml = getExportHtml
+  ;(globalThis as any).__buildExportParts = buildExportParts
   useUIStore.getState().setExportOpen(false)
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setTheme('light')
   useUIStore.getState().setExporting(false)
+  // C20 补 ⑦: the export cache's readiness is mirrored in the store; the "ready" case is the
+  // default for the existing assertions (the not-ready path has its own test below).
+  useUIStore.getState().setExportReady(true)
   ;(window as unknown as { api: unknown }).api = {
     dialog: { saveHtmlFile: vi.fn(async () => '/out.html') },
     documents: {
@@ -77,6 +95,51 @@ describe('ExportDialog', () => {
     expect(screen.getByText(/Inline images/i)).toBeInTheDocument()
   })
 
+  it("renders the export preview in a shadow root with the export's styles (C20 ⑨)", async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    const host = await screen.findByTestId('export-preview-host')
+    await waitFor(() => expect(host.shadowRoot?.querySelector('.markdown-body')).not.toBeNull())
+    const root = host.shadowRoot!
+    // The preview must show the export's styling, not the app's: the export's sheet is inlined
+    // into the shadow root.
+    expect(root.querySelector('style')?.textContent).toContain('.markdown-body{color:#111111}')
+    // S1: a shadow root does not register fonts, so the @font-face rules must live in the HOST
+    // document instead.
+    expect(document.getElementById('markflow-export-preview-fonts')?.textContent).toContain(
+      '@font-face',
+    )
+    // S2: `body` does not match inside a shadow root, so the container declarations are applied
+    // to the preview container.
+    expect(root.querySelector('.export-preview-container')).not.toBeNull()
+  })
+
+  it('the theme select comes from the shared Select primitive (one focus ring, 36px)', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    const select = await screen.findByRole('combobox')
+    expect(select.className).toContain('focus-ring')
+    expect(select.className).toContain('h-9')
+    // The hand-rolled 1px ring this used to carry.
+    expect(select.className).not.toContain('focus:ring-1')
+  })
+
+  it('re-renders the preview when the theme choice changes (C20 ⑨)', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    const host = await screen.findByTestId('export-preview-host')
+    await waitFor(() => expect(host.shadowRoot?.querySelector('.markdown-body')).not.toBeNull())
+    expect(host.shadowRoot!.querySelector('.markdown-body')!.getAttribute('data-theme')).toBe(
+      'light',
+    )
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dark' } })
+    await waitFor(() =>
+      expect(host.shadowRoot!.querySelector('.markdown-body')!.getAttribute('data-theme')).toBe(
+        'dark',
+      ),
+    )
+  })
+
   it('runs the export when confirm is clicked', async () => {
     useUIStore.getState().setExportOpen(true)
     render(<ExportDialog />)
@@ -88,15 +151,24 @@ describe('ExportDialog', () => {
     expect(useUIStore.getState().exportOpen).toBe(false)
   })
 
-  it('shows an error when the preview is not ready', async () => {
+  it('disables the export button while the document is still rendering (C20 补 ⑦ / E12)', async () => {
+    // The export cache still holds the PREVIOUS document's HTML during a switch or a pending
+    // parse, so the button must be disabled (and say so) instead of writing the wrong file.
+    useUIStore.getState().setExportReady(false)
     useUIStore.getState().setExportOpen(true)
     render(<ExportDialog />)
     await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
-    getExportHtml.mockReturnValue(null)
-    const exportBtn = screen.getByRole('button', { name: 'Export' })
-    fireEvent.click(exportBtn)
-    await waitFor(() => expect(screen.getByText(/preview/i)).toBeInTheDocument())
+    const exportBtn = screen.getByRole('button', { name: 'Preparing…' })
+    expect(exportBtn).toBeDisabled()
     expect(exportDocument).not.toHaveBeenCalled()
+  })
+
+  it('enables the export button once the document has rendered', async () => {
+    useUIStore.getState().setExportReady(true)
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled()
   })
 
   it('prompts for overwrite when the target already exists', async () => {

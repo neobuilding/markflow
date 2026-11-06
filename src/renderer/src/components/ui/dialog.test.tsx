@@ -45,4 +45,23 @@ describe('Dialog (Radix wrapper)', () => {
       expect(document.querySelector('.my-custom-content')).not.toBeNull()
     })
   })
+
+  it('the built-in close button uses the shared .focus-ring, not a hand-rolled ring', async () => {
+    render(
+      <Dialog open={true}>
+        <DialogContent>
+          <DialogTitle>Title</DialogTitle>
+        </DialogContent>
+      </Dialog>,
+    )
+    const closeBtn = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('button.absolute.right-4')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    // ADR-0024 §"One focus indicator": two indicators on one box is noise, and a hand-rolled one
+    // drifts (this one was already 2px while the export dialog's was 1px).
+    expect(closeBtn.className).toContain('focus-ring')
+    expect(closeBtn.className).not.toContain('focus:ring-')
+  })
 })

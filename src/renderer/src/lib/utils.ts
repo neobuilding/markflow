@@ -30,12 +30,15 @@ export function formatDate(ts: number): string {
 export function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
   fn: T,
   delay: number,
-): (...args: Parameters<T>) => void {
+) {
   let timer: ReturnType<typeof setTimeout>
-  return (...args: Parameters<T>) => {
+  const debounced = (...args: Parameters<T>) => {
     clearTimeout(timer)
     timer = setTimeout(() => fn(...args), delay)
   }
+  // A pending call can outlive the state it was scheduled from (e.g. an editor echo fired
+  // after a document switch). Callers must be able to drop it instead of emitting stale data.
+  return Object.assign(debounced, { cancel: () => clearTimeout(timer) })
 }
 
 // Whether the current platform is macOS (navigator.platform is deprecated; use userAgent)

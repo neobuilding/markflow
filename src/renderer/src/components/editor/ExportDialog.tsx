@@ -5,6 +5,8 @@ import { exportDocument, resolveTheme } from '../../lib/export'
 import { getExportHtml } from '../../lib/exportStore'
 import { prepareExportHtml } from '../../lib/exportBake'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
+import { ExportPreview } from './ExportPreview'
+import { Select } from '../ui/select'
 import { Button } from '../ui/button'
 import {
   ContextMenu,
@@ -27,6 +29,11 @@ export function ExportDialog(): React.ReactElement {
   const setOpen = useUIStore((s) => s.setExportOpen)
   const uiTheme = useUIStore((s) => s.theme)
   const activeDocumentId = useUIStore((s) => s.activeDocumentId)
+  // C20 补 ⑦ / E12: the export cache is a non-reactive singleton, so its readiness is mirrored
+  // in the store. While it is false the cache still holds the PREVIOUS document's HTML (a
+  // document switch or a pending parse), so the Export button must be disabled rather than
+  // writing the wrong file or showing an error the user cannot act on.
+  const exportReady = useUIStore((s) => s.exportReady)
   const { t } = useT()
   const { data: doc } = useDocument(activeDocumentId)
 
@@ -106,7 +113,10 @@ export function ExportDialog(): React.ReactElement {
       await handlePickPath()
       return
     }
-    if (!getExportHtml()) {
+    // Not ready ⇒ the cache still holds the PREVIOUS document's HTML (a switch or a pending
+    // parse is in flight). An empty cache ⇒ there is nothing to export yet. Both are the same
+    // user-visible situation: the document has not finished rendering.
+    if (!exportReady || !getExportHtml()) {
       setError(t('export.previewNotReady'))
       return
     }
@@ -138,7 +148,7 @@ export function ExportDialog(): React.ReactElement {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent>
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t('export.title')}</DialogTitle>
         </DialogHeader>
@@ -149,15 +159,29 @@ export function ExportDialog(): React.ReactElement {
             <label className="block text-2xs text-[var(--color-text-tertiary)] mb-1">
               {t('export.theme')}
             </label>
-            <select
+            <Select
               value={themeChoice}
               onChange={(e) => setThemeChoice(e.target.value as ThemeChoice)}
-              className="w-full text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="current">{t('export.themeCurrent', { theme: uiTheme })}</option>
               <option value="light">{t('export.themeLight')}</option>
               <option value="dark">{t('export.themeDark')}</option>
-            </select>
+            </Select>
+          </div>
+
+          {/* C20 ⑨: the export preview. It renders the EXPORT's own stylesheet in a shadow root,
+              so what is on screen is what the file will contain — not the app's own styling.
+              W1 (the theme can be forced) is handled by the selector above; W2 (the export bakes
+              every diagram, the app preview renders lazily) and W3 (the preview is always the
+              single-file form, images inlined) are stated in the note below. */}
+          <div>
+            <label className="block text-2xs text-[var(--color-text-tertiary)] mb-1">
+              {t('export.previewTitle')}
+            </label>
+            <ExportPreview theme={resolveTheme(themeChoice, uiTheme)} />
+            <p className="text-2xs text-[var(--color-text-tertiary)] mt-1">
+              {t('export.previewNote')}
+            </p>
           </div>
 
           {/* Inline images */}
@@ -185,7 +209,7 @@ export function ExportDialog(): React.ReactElement {
                     value={targetPath ?? ''}
                     readOnly
                     placeholder={t('export.notSelected')}
-                    className="flex-1 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 outline-none text-[var(--color-text-secondary)] truncate"
+                    className="flex-1 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 focus-ring text-[var(--color-text-secondary)] truncate"
                   />
                 </ContextMenuTrigger>
                 <ContextMenuContent>
@@ -206,7 +230,11 @@ export function ExportDialog(): React.ReactElement {
             </p>
           </div>
 
-          {error && <p className="text-2xs text-red-500">{error}</p>}
+          {error && (
+            <p className="text-2xs text-[var(--color-text-primary)]">
+              <span className="text-[var(--color-danger)]">⚠</span> {error}
+            </p>
+          )}
         </div>
 
         {showOverwrite ? (
@@ -214,7 +242,7 @@ export function ExportDialog(): React.ReactElement {
             <p className="text-sm text-[var(--color-text-secondary)]">
               {t('export.overwritePrompt', { path: overwriteTargetPath })}
             </p>
-            <div className="flex items-center justify-end gap-2 mt-3">
+            <div className="flex items-center justify-end gap-3 mt-3">
               <Button
                 variant="ghost"
                 size="sm"
@@ -229,12 +257,21 @@ export function ExportDialog(): React.ReactElement {
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-end gap-2 mt-5">
+          <div className="flex items-center justify-end gap-3 mt-5">
             <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
               {t('export.cancel')}
             </Button>
-            <Button variant="accent" size="sm" onClick={handleConfirm} disabled={busy}>
-              {busy ? t('export.exporting') : t('export.export')}
+            <Button
+              variant="accent"
+              size="sm"
+              onClick={handleConfirm}
+              disabled={busy || !exportReady}
+            >
+              {busy
+                ? t('export.exporting')
+                : exportReady
+                  ? t('export.export')
+                  : t('export.preparing')}
             </Button>
           </div>
         )}

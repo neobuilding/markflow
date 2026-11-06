@@ -139,8 +139,9 @@ describe('SidebarSearch (Search view)', () => {
 
   it('exposes whole word and regexp toggles, both OFF by default', () => {
     renderPanel()
-    const ab = screen.getByTestId('search-match-case-ab')
-    const re = screen.getByTestId('search-match-case-.*')
+    // `ab` / `.*` live on the always-visible SECONDARY row now, not in the primary row's group.
+    const ab = screen.getByTestId('search-advanced-toggles-ab')
+    const re = screen.getByTestId('search-advanced-toggles-.*')
     expect(ab.getAttribute('aria-pressed')).toBe('false')
     expect(re.getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(ab)
@@ -154,7 +155,7 @@ describe('SidebarSearch (Search view)', () => {
   it('shows the regex hint only while regexp is on', () => {
     renderPanel()
     expect(screen.queryByTestId('search-regex-hint')).toBeNull()
-    fireEvent.click(screen.getByTestId('search-match-case-.*'))
+    fireEvent.click(screen.getByTestId('search-advanced-toggles-.*'))
     expect(screen.getByTestId('search-regex-hint').textContent).toContain('\\n')
   })
 
@@ -209,7 +210,9 @@ describe('SidebarSearch (Search view)', () => {
     const input = screen.getByTestId('resident-search-input') as HTMLInputElement
     fireEvent.change(input, { target: { value: 'the' } })
     await screen.findAllByTestId('search-match')
-    fireEvent.click(screen.getByTestId('resident-search-clear'))
+    // The clear button now belongs to the shared `SearchInput`, which names it `${testId}-clear`
+    // — the same rule the editor/preview find widgets already follow.
+    fireEvent.click(screen.getByTestId('resident-search-input-clear'))
     await waitFor(() => expect(useUIStore.getState().searchQuery).toBe(''))
   })
 
@@ -397,5 +400,12 @@ describe('SidebarSearch (Search view)', () => {
     fireEvent.click(screen.getByTestId('search-replace-all'))
     const note = await screen.findByTestId('search-replace-skipped')
     expect(note.textContent).toMatch(/工作区|workspace/i)
+  })
+
+  // ADR-0024 §8 (C9): the query field keeps a ≥80px floor at the 240px sidebar floor. The floor is
+  // enforced in CSS via `min-w-[80px]` on the field, so it must be present on the rendered input.
+  it('keeps the query field at the 80px C9 floor via the CSS min-width', () => {
+    renderPanel()
+    expect(screen.getByTestId('resident-search-input')).toHaveClass('min-w-[80px]')
   })
 })

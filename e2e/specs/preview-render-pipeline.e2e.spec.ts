@@ -4,6 +4,7 @@ import { writeFileSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkTempDir } from '../helpers/temp'
+import { VIEWPORTS } from '../helpers/viewports'
 
 // Self-contained test data: a committed copy of examples/demo.en.md (4 mermaid diagrams)
 // lives under e2e/fixtures so this spec never depends on the examples/ tree.
@@ -275,7 +276,7 @@ test.describe('preview render pipeline', () => {
   test('small window: off-screen mermaid diagrams still bake when scrolled into view', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    await page.setViewportSize({ width: 800, height: 600 })
+    await page.setViewportSize(VIEWPORTS.narrow)
     const content = readFileSync(DIAGRAM_FIXTURE, 'utf-8')
     await openDoc(page, content, { editable: true })
     // Slot 0 is on-screen at open; slot 3 starts below the fold.

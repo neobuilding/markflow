@@ -40,6 +40,10 @@ export default defineConfig({
       'shared/**/*.test.ts',
       'scripts/**/*.test.ts',
       'scripts/**/*.test.mjs',
+      // The e2e harness has its own unit-testable parts (the clipboard project's wiring, the
+      // skip-message policy). They are plain `*.test.ts`, so this pattern cannot pick up a
+      // `*.e2e.spec.ts` spec.
+      'e2e/**/*.test.ts',
       'actions/create-pr/src/**/*.test.mjs',
       'actions/create-pr/blocks/**/*.test.mjs',
       '.github/create-pr/blocks/**/*.test.mjs',
@@ -60,8 +64,10 @@ export default defineConfig({
       // so the previous `all: true` behavior is preserved by the `include` list below.
       include: [
         'src/renderer/src/lib/**/*.{ts,tsx}',
-        'src/renderer/src/store/**/*.ts',
-        'src/renderer/src/i18n/**/*.ts',
+        // `{ts,tsx}` like every other renderer pattern below: a `*.ts`-only glob silently drops a
+        // future `.tsx` module from the gate (nothing today, but the gap is invisible until then).
+        'src/renderer/src/store/**/*.{ts,tsx}',
+        'src/renderer/src/i18n/**/*.{ts,tsx}',
         'src/renderer/src/hooks/**/*.{ts,tsx}',
         'src/renderer/src/components/**/*.{ts,tsx}',
         'electron/preload/**/*.ts',

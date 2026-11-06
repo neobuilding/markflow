@@ -16,13 +16,18 @@ import { prepareExportHtml } from './lib/exportBake'
 import { routeSelectAll, createSelectAllKeydownHandler } from './lib/selectAllRouter'
 import { queryClient, DOCS_KEY } from './lib/queryClient'
 import { isDirInFolder } from './lib/utils'
-import { hasModalSurface } from './lib/shortcut-scope'
+import { hasModalSurface, isEditableTarget } from './lib/shortcut-scope'
+import { matchFormatShortcut } from './lib/format-shortcuts'
 import { t, useT, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
 
 export default function App(): React.ReactElement {
-  const { setNewDocOpen, toggleSidebar, theme, closeWorkspace, setPrinting, printing } =
-    useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const theme = useUIStore((s) => s.theme)
+  const printing = useUIStore((s) => s.printing)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setNewDocOpen, toggleSidebar, closeWorkspace, setPrinting } = useUIStore.getState()
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
   const { t: rt } = useT()
@@ -67,7 +72,32 @@ export default function App(): React.ReactElement {
   }, [closeWorkspace])
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
+    // `window.matchMedia` is not guaranteed to exist outside a browser engine (jsdom does not
+    // implement it), so the query is taken defensively — the same optional-call pattern the export
+    // / print path uses in `lib/export.ts`. Without the guard the effect throws on every mount in
+    // such a host; with it, `resolveTheme` degrades to 'light' and no OS listener is installed.
+    const mq =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)')
+        : null
+    const apply = () => {
+      // Resolve the choice with the SAME helper the export / print path uses, so "system" means one
+      // thing app-wide (ADR-0028). The media query is cached so a light<->dark switch while the app
+      // is open updates immediately (no restart).
+      document.documentElement.classList.toggle('dark', resolveTheme('current', theme) === 'dark')
+    }
+    apply()
+    if (theme === 'system' && mq) {
+      mq.addEventListener('change', apply)
+      return () => mq.removeEventListener('change', apply)
+    }
+  }, [theme])
+
+  // Bridge the active theme to the native shell (title bar / OS chrome) and to the native menu's
+  // theme radio checkmark (the `menu.theme*` items). Runs on mount — so the initial 'system' default
+  // syncs — and on every change. No persistence: the choice lives only for the session.
+  useEffect(() => {
+    if (window.api?.app?.setTheme) window.api.app.setTheme(theme)
   }, [theme])
 
   useEffect(() => {
@@ -109,6 +139,53 @@ export default function App(): React.ReactElement {
         st.requestSearchFocus()
         return
       }
+      // ⌘⇧E — the Files view, symmetric with ⌘⇧F above (VS Code `workbench.view.explorer`).
+      // `requestPanelFocus` hands focus to the tree afterwards (WCAG 2.4.3); the app shell cannot
+      // reach the panel element itself, so it bumps the nonce the Sidebar watches.
+      if (mod && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const st = useUIStore.getState()
+        st.setSidebarOpen(true)
+        st.setSidebarView('files')
+        st.requestPanelFocus()
+        return
+      }
+      // The formatting cluster: Ctrl/Cmd+B (Bold), +I (Italic), +K (Link), +E (Code),
+      // +Shift+L (List), +Shift+T (Task) and +1..6 (Heading 1..6). Every one of them dispatches
+      // the editor's existing `markdown:insert` event — the very same channel the toolbar's
+      // buttons use — so there is exactly one implementation of "bold" / "italic" / "link" / ….
+      //
+      // `⌘B` REPLACED the old sidebar-toggle binding (the panel is folded by Ctrl/Cmd+\ only),
+      // and the rest of the cluster was completed by ADR-0032.
+      //
+      //   - Deliberately renderer-only: the native menu carries NO accelerator for these keys, so
+      //     there is exactly one handler and no double-fire.
+      //   - Not VS Code bindings: there Ctrl+B toggles the BOTTOM panel, which MarkFlow does not
+      //     have, so the key is free for the editor's primary inline action. Bold-on-⌘B is the
+      //     convention of the Markdown-first editors (Typora / Obsidian / Bear / Zettlr), and the
+      //     rest of the cluster follows the same editors (⌘I = italic, ⌘K = link, ⌘1..6 = heading).
+      //   - Guarded by `isEditableTarget` so the key is NOT swallowed while the user types in ANY
+      //     text field (sidebar search, a rename input, or the editor's own find & replace widget)
+      //     — those surfaces keep the key for themselves.
+      //   - The editor's own `markdown:insert` dispatcher ignores the event when read-only, so the
+      //     shortcuts are no-ops in read-only mode — consistent with the disabled format buttons.
+      //
+      // The bindings and the glyphs the UI advertises live in ONE table
+      // (lib/format-shortcuts.ts), so a tooltip can never drift from the key it promises.
+      const format = matchFormatShortcut(e, isMac)
+      if (format) {
+        // The modal guard above already stood down for modal surfaces; only the focus check remains.
+        if (isEditableTarget(document.activeElement)) return
+        e.preventDefault()
+        e.stopPropagation()
+        document.dispatchEvent(
+          new CustomEvent('markdown:insert', {
+            detail: { before: format.before, after: format.after },
+          }),
+        )
+        return
+      }
     }
     // Capture phase: global shortcuts must fire even when the editor (CodeMirror) has focus and
     // would otherwise stopPropagation the keydown before it reaches a bubbling window listener.
@@ -131,6 +208,14 @@ export default function App(): React.ReactElement {
     if (!window.api) return
     const removeNew = window.api.onMenuEvent('new-document', () => setNewDocOpen(true))
     const removeSidebar = window.api.onMenuEvent('toggle-sidebar', () => toggleSidebar())
+    const removeSetTheme = window.api.onMenuEvent('set-theme', (data) => {
+      // The native theme menu sends the raw choice as a plain string; narrow it to the store's
+      // ThemeMode before recording it. The theme effect above bridges the value to nativeTheme and
+      // to the menu's radio checkmark, so this handler only records the choice.
+      if (data === 'light' || data === 'dark' || data === 'system') {
+        useUIStore.getState().setTheme(data)
+      }
+    })
     const removeOpen = window.api.onMenuEvent('open-files', (data) => {
       const paths = Array.isArray(data) ? data : data ? [data as string] : []
       if (paths.length === 0) return
@@ -198,6 +283,7 @@ export default function App(): React.ReactElement {
     return () => {
       removeNew()
       removeSidebar()
+      removeSetTheme()
       removeOpen()
       removeClose()
       removeCloseFile()
@@ -405,7 +491,7 @@ export default function App(): React.ReactElement {
         <ExportDialog />
         {printing && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 shadow-lg">
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 shadow-linear-lg">
               <span className="text-sm text-[var(--color-text-secondary)]">
                 {rt('app.preparingPrint')}
               </span>

@@ -26,7 +26,7 @@ function renderLocalDocument(
   let currentDoc = doc
   const result = { current: undefined as unknown as ReturnType<typeof useLocalDocument> }
   function Wrapper() {
-    result.current = useLocalDocument(currentDoc, currentDoc?.id ?? null)
+    result.current = useLocalDocument(currentDoc)
     return null
   }
   const client = new QueryClient()
@@ -139,6 +139,59 @@ describe('useLocalDocument — unsaved buffer registry (D28)', () => {
     act(() => result.current.handleContentChange(baseDoc.content))
     // Back at the baseline the buffer is cleared, so search reads the on-disk bytes again.
     expect(useUIStore.getState().unsavedBuffers['doc-1']).toBeUndefined()
+    unmount()
+  })
+})
+
+// Q14: the keystroke frame must commit correctness state. Waiting 400ms for the preview echo
+// used to leave dirty/registry stale, so a switch or Save inside that window lost the edit.
+describe('useLocalDocument — keystroke-frame commit (Q14)', () => {
+  beforeEach(() => {
+    act(() => {
+      useUIStore.setState({ unsavedBuffers: {}, documentStateRevision: 0, dirty: false })
+    })
+  })
+
+  it('commits dirty + registry synchronously, before any debounce', () => {
+    const { result, unmount } = renderLocalDocument(baseDoc)
+    act(() => result.current.commitDraft('# Hello\nTYPED\n'))
+    const state = useUIStore.getState()
+    expect(state.dirty).toBe(true)
+    expect(state.unsavedBuffers['doc-1'].content).toBe('# Hello\nTYPED\n')
+    // The preview mirror has NOT caught up yet — that is the point of the split.
+    expect(result.current.localContent).toBe(baseDoc.content)
+    unmount()
+  })
+
+  it('getAuthoritativeContent returns the committed text, independent of the preview state', () => {
+    const { result, unmount } = renderLocalDocument(baseDoc)
+    act(() => result.current.commitDraft('# Hello\nTYPED\n'))
+    expect(result.current.getAuthoritativeContent()).toBe('# Hello\nTYPED\n')
+    // The debounced echo and a successful save both keep the authoritative ref in step.
+    act(() => result.current.handleContentChange('# Hello\nTYPED\n'))
+    expect(result.current.getAuthoritativeContent()).toBe('# Hello\nTYPED\n')
+    act(() => result.current.markSaved('# Hello\nSAVED\n', 'hi.md'))
+    expect(result.current.getAuthoritativeContent()).toBe('# Hello\nSAVED\n')
+    unmount()
+  })
+
+  it('reports every keystroke but only flips the dirty flag once', () => {
+    const { result, unmount } = renderLocalDocument(baseDoc)
+    act(() => {
+      result.current.commitDraft('# Hello\nA')
+      result.current.commitDraft('# Hello\nAB')
+    })
+    expect(useUIStore.getState().unsavedBuffers['doc-1'].revision).toBe(2)
+    expect(useUIStore.getState().dirty).toBe(true)
+    unmount()
+  })
+
+  it('resets the authoritative text on a document switch', () => {
+    const { result, setDoc, unmount } = renderLocalDocument(baseDoc)
+    act(() => result.current.commitDraft('UNSAVED A'))
+    expect(result.current.getAuthoritativeContent()).toBe('UNSAVED A')
+    act(() => setDoc({ ...baseDoc, id: 'doc-2', content: '# B\n' }))
+    expect(result.current.getAuthoritativeContent()).toBe('# B\n')
     unmount()
   })
 })

@@ -27,6 +27,30 @@ describe('shared/i18n — en dictionary', () => {
   })
 })
 
+describe('shared/i18n — find option scopes (C20 补 ⑧)', () => {
+  it('states the scope on both find-option families', () => {
+    // The sidebar Search view searches the WORKSPACE; the in-document find widget searches the
+    // CURRENT document. The toggles are named alike but do different things, and they do NOT
+    // link up — so each tooltip has to say which scope it applies to (ADR-0024 §10 trade-off 45).
+    expect(en['search.matchCase']).not.toBe(en['find.toggle.case'])
+    expect(en['search.matchCase']).toContain('workspace')
+    expect(en['find.toggle.case']).toContain('document')
+    expect(zhCN['search.matchCase']).toContain('工作区')
+    expect(zhCN['find.toggle.case']).toContain('文档')
+    // …for every option of both families, not just the first one. (The regex key differs
+    // between the two families: `search.regexp` vs `find.toggle.regex`.)
+    for (const [searchKey, findKey] of [
+      ['search.wholeWord', 'find.toggle.wholeWord'],
+      ['search.regexp', 'find.toggle.regex'],
+    ] as const) {
+      expect(en[searchKey]).toContain('workspace')
+      expect(en[findKey]).toContain('document')
+      expect(zhCN[searchKey]).toContain('工作区')
+      expect(zhCN[findKey]).toContain('文档')
+    }
+  })
+})
+
 describe('shared/i18n — zh-CN parity with en', () => {
   it('zh-CN covers exactly the same keys as en', () => {
     const enKeys = new Set(Object.keys(en) as TranslationKey[])

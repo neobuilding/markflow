@@ -16,9 +16,25 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { _electron as electron, ElectronApplication, Page } from 'playwright'
 import { mkTempDir, cleanupTempDirs } from './temp'
+import { VIEWPORTS } from './viewports'
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DEV_URL_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '.dev-url')
+
+// Deterministic content-area viewport pinned for every e2e run. The app launches maximized to the
+// host's work area (see electron/main/window.ts), so the CONTENT AREA it renders into varies between
+// a developer's large monitor and the CI runner's smaller virtual display — the root cause of
+// width-coupled specs passing locally but failing on CI. We pin the content area (the web layout
+// viewport that page.setViewportSize sets), NOT the OS window's outer frame: the app's responsive
+// layout only measures the content width (its own DOM, via ResizeObserver / --sidebar-width), and the
+// OS frame (title bar + borders, platform DPI) differs per machine, so pinning it would not be
+// deterministic either. Our chosen width (1024) sits above the window.ts minWidth:800 floor, keeping
+// the content area valid.
+//
+// The size itself lives in helpers/viewports.ts, together with the other named environments and
+// the layout arithmetic behind them; individual specs enter one by name (e.g. the 800x600
+// fixtures) instead of typing their own numbers.
+const DEFAULT_E2E_VIEWPORT = VIEWPORTS.standard
 
 export interface AppHandle {
   electronApp: ElectronApplication
@@ -137,6 +153,12 @@ export async function launchApp(): Promise<AppHandle> {
 
   const page = await electronApp.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+  // Pin the deterministic content-area viewport (see DEFAULT_E2E_VIEWPORT) before the spec drives the
+  // app, so width-coupled layout is reproducible across machines rather than tracking the host's
+  // monitor size. The app measures its own DOM, so pinning the content area — not the OS window frame
+  // — is what makes the layout deterministic. Specs that need a different size call
+  // page.setViewportSize afterwards, entering a named VIEWPORTS.* environment.
+  await page.setViewportSize(DEFAULT_E2E_VIEWPORT)
   return { electronApp, page, userDataDir }
 }
 

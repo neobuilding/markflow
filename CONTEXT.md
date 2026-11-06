@@ -77,6 +77,72 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   in-memory only, never persisted. See `docs/adr/0010-sidebar-folder-filter-toggle.md`.
   _Avoid_: "show empty folders" (a valid checkbox synonym, but the canonical toggle name is 显示所有文件夹)
 
+## UI surfaces
+
+- **Quick Open (⌘⇧K)** — the global-bar command that opens a document by name/path (Goto File). Its
+  ⌘⇧K shortcut (Ctrl+Shift+K on Windows/Linux) is surfaced through the button's Tooltip / aria-label.
+  It is **not** a persistent chip on the toolbar: the design diagram (fig 02) shows the shortcut only
+  as a Tooltip example, so there is no always-visible shortcut chip element. Relocated from ⌘K to
+  ⌘⇧K so that ⌘K could become the mainstream Link shortcut — see
+  `docs/adr/0032-format-toolbar-shortcuts-and-precedence.md`.
+- **Tooltip** — the popover shown on hover/focus for icon-only controls. It carries the control's full
+  name and any keyboard shortcut. Its bubble is the theme's text colour with the theme's background as
+  text, and has no visible border (border colour equals the fill).
+- **Activity bar** — the always-present ~48px vertical icon column at the left of the sidebar (Files /
+  Search switch). It is **permanent**: collapsing the sidebar (⌘\) hides only the content panel, never
+  the activity bar.
+- **Content panel** — the sidebar region (file tree or search) that sits to the right of the activity
+  bar and unmounts when the sidebar is collapsed.
+- **Global bar** — the single toolbar mounted above the content area in every view mode (Quick Open,
+  save, file details, close, the source/split/preview switch, title + path). It carries **no sidebar
+  toggle**: the content panel is folded from the **活动栏 (Activity bar)** right-click menu, the native
+  **视图** menu, or ⌘\.
+- **Editor pane bar** — the per-pane toolbar attached to the editor pane, holding the editor-only
+  clusters (Markdown formatting, find/replace, undo/redo, read-only toggle). One per column in split
+  mode. As the column narrows, commands move into the **conditional overflow trigger** one at a
+  time by descending priority (the priority+ pattern in `components/ui/priority-overflow.ts`): the
+  leftmost formatting cluster survives the longest, and at/above `ALL_INLINE_AT` (472px) there is no
+  overflow at all. Every overflow entry carries a visible label — there is no separate unlabeled
+  "Format" dropdown. See `docs/adr/0031-ui-round-3-shortcuts-overflow-and-menu.md`.
+- **Preview pane bar** — the per-pane toolbar attached to the preview pane (find, export HTML, copy,
+  copy rendered HTML). Copy rendered HTML is the lowest-priority command. As the column narrows,
+  commands move into the **conditional overflow trigger** one at a time, rightmost first; when every
+  command fits there is no trigger and all commands are inline.
+- **Conditional overflow trigger** — the **"…"** button on a pane bar. It exists only while at least
+  one command cannot be shown inline; when all commands fit, all of them are inline and the trigger
+  is absent. It is **not** a resident menu, and no command may have it as its only access path.
+  Overflow entries keep the bar's priority order and carry a visible label. The trigger itself
+  occupies one command slot, so the final widening step restores the last command _and_ removes the
+  trigger together: no width exists for "all but one inline, plus the trigger".
+  Each bar budgets its **own** chrome: the editor bar pays the shared `px-3` padding plus its
+  format-group border and find/replace divider (40px, so its twelve commands are all inline from
+  472px), while the preview bar has no separators and pays padding only (24px, so its four commands
+  fit from 168px). Charging both bars the same budget made the preview overflow 16px too early.
+
+## Editor state
+
+- **Undo history (撤销历史)** — the CodeMirror `history` state field inside the single persistent
+  `EditorView`. It belongs to an **editing session**, not to a document record: switching or closing
+  a document, and reloading the same document from disk, each discard the old field and create a new
+  empty one. Therefore an edit made before a switch cannot be undone after switching back, even if
+  it was saved. This is a deliberate consequence of the single-active-document model, unlike VS
+  Code's per-resource edit stacks. _Avoid_: "per-document undo stack", "undo history is preserved
+  across switches". _See also_: **Unsaved-changes guard**, **Editing session**.
+- **Editing session (编辑会话)** — one session per open document, owning the editor's debounced
+  preview refresh and the **right to write**: it remembers the text it last wrote into the view, and
+  a keystroke is committed only while it was applied to exactly that text. A switch aborts the
+  previous session (cancelling its pending timer) and the new session owns nothing until the new
+  document's content has been written, so neither a late refresh nor a keystroke in that window can
+  write the previous document's text into the new one. Correctness state — the unsaved text, the
+  dirty flag and the **Dirty buffer snapshot** — is committed on the keystroke frame, never by the
+  debounce; the debounce only refreshes the preview. _See also_:
+  `docs/adr/0033-editor-draft-session-isolation.md`.
+- **Unsaved buffer registry (未保存缓冲区登记表)** — the renderer's `Record<docId, { content,
+revision }>` of unsaved text. The main process only knows on-disk bytes, so content search and
+  cross-file replace need the renderer to report these buffers. The key is a **document id** used
+  for addressing, never for deciding whether a callback is stale. _See also_:
+  **Dirty buffer snapshot**, **Unsaved-changes guard**.
+
 ## Storage & search (main process)
 
 - **Document Store** — the in-memory `Map` (`electron/main/model/documentStore.ts`) holding loaded documents;
@@ -139,9 +205,10 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   specialized search split (ADR-0023); the sidebar Search view owns body content. Its only visible
   entry is the **Command centre** trigger in the **global toolbar**.
 - **Global toolbar (全局工具栏)** — the app's always-present tool row at the top of the **editor
-  pane** (`EditorPane.tsx` `CommonToolbar`), rendered both with and without an active document. It
-  hosts global actions — the sidebar toggle and the **Command centre** trigger — as opposed to the
-  document-scoped file operations to its right. **It is not a separate top bar**: adding one was
+  pane** (`GlobalToolbar.tsx`), rendered both with and without an active document. It
+  hosts the **Command centre** trigger and the document-lifecycle actions (save / save-as / reload /
+  file details / export / close) — as opposed to the editor-only clusters, which live in the
+  **editor pane bar**. **It is not a separate top bar**: adding one was
   rejected (ADR-0023 decision 7), so the dead `ui/titlebar.tsx` is deleted rather than revived.
   _Avoid_: "title bar" / "顶栏" for this — MarkFlow has no dedicated title bar component.
 - **Hit row (命中行)** — one in-document occurrence row inside a search group, carrying the line
@@ -197,7 +264,7 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **Command centre (命令中心)** — MarkFlow's equivalent of VS Code's Command Centre: a **compact
   trigger** (not a persistent title-bar input field) that opens the `Ctrl/Cmd+K` Quick
   Open palette (placeholder "Go to file…", `⌘K` hint). It lives in the **global toolbar** — the
-  editor pane's always-present tool row — right of the sidebar toggle, so it stays visible with the
+  editor pane's always-present tool row — so it stays visible with the
   sidebar closed and with no document open. It is the only visible entry for file-name
   search and deliberately sits in the global toolbar, not as a resident sidebar input. _See also_:
   **Quick Open**, **Search view**, **Global toolbar**.
@@ -277,19 +344,23 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 ## Theme & appearance
 
 - **Theme mode** — `useUIStore.theme` is `'light' | 'dark' | 'system'`
-  (`src/renderer/src/types/index.ts`). The Markdown **preview** follows it: `MarkdownPreview.tsx` resolves
-  `isDark` from `theme`, or from `matchMedia('(prefers-color-scheme: dark)')` when `theme === 'system'`, and
-  sets `data-theme` on the `<article>`; the **exporter** follows it too (`export.ts` resolves `current` → UI
-  theme, `system` → `matchMedia`). See `docs/adr/0018-preview-refactor-03-style-perf-media.md`.
-- **No UI theme toggle** — `setTheme` exists in the store and as `window.api.app.setTheme` (preload IPC), but
-  **no user-facing control invokes it**; the store default is `'light'`, so the app renders light unless
-  changed programmatically. The app **chrome** applies
-  `document.documentElement.classList.toggle('dark', …)` only when `theme === 'dark'` — it does **not** track
-  `system`. So: preview/export honor the theme, the chrome does not follow the OS `system` preference, and there
-  is no user switch. This is a pre-existing theme-sync gap, out of scope for
-  `docs/adr/0018-preview-refactor-03-style-perf-media.md` (it only unifies the preview's style source
-  to github-markdown-css; it does not add a toggle). _Avoid_: assuming the app ships a
-  clickable dark-mode switch.
+  (`src/renderer/src/types/index.ts`), defaulting to `'system'`. The Markdown **preview** follows it:
+  `MarkdownPreview.tsx` resolves `isDark` from `theme`, or from `matchMedia('(prefers-color-scheme: dark)')` when
+  `theme === 'system'`, and sets `data-theme` on the `<article>`; the **exporter** follows it too (`export.ts`
+  resolves `current` → UI theme, `system` → `matchMedia`). See
+  `docs/adr/0018-preview-refactor-03-style-perf-media.md`.
+- **主题 submenu (Theme submenu)** — the native **视图 (View)** menu carries a **主题** submenu with three
+  radio entries: 浅色 / 深色 / 跟随系统 (Light / Dark / System). Picking one forwards the value to the
+  renderer, which stores it and bridges it back to the main process (`app:set-theme` → `nativeTheme`), so the
+  OS chrome follows too; the main process mirrors the value into the menu's radio checkmark. The choice is
+  **not persisted** — every launch starts at 跟随系统. See `docs/adr/0028-theme-entry.md`.
+- **跟随系统 (System)** — the default theme choice: the app resolves the OS `prefers-color-scheme` and
+  **follows it live** (a light↔dark switch while the app is open updates immediately, no restart). The
+  renderer owns the resolution: `App.tsx` applies the `dark` class on `<html>` through the shared
+  `resolveTheme` helper, and **both** `App.tsx` and `MarkdownPreview.tsx` install a media-query
+  listener only while the choice is `system` — the preview needs its own because it owns the two
+  Markdown body stylesheets and the `<article data-theme>`.
+  _Avoid_: "dark mode toggle" for this entry — it is a follow-the-OS mode, not a switch.
 
 ## Platform & filesystem
 
@@ -322,6 +393,21 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   propagation to avoid firing ancestor handlers. See `docs/adr/0008-context-menu-architecture.md`.
 - **formatShortcut** — renders a keyboard shortcut string per platform (⌘ on macOS, Ctrl elsewhere); tooltip
   and menu shortcuts must use it rather than a hardcoded `⌘`.
+- **Format-key precedence (格式键优先)** — the policy that resolves a clash between a mainstream
+  formatting shortcut (Bold / Italic / Link / Code / List / Task / Heading) and an existing MarkFlow
+  app-command shortcut: **the format key wins and the app command relocates to a Shift chord**. Established
+  by `docs/adr/0032-format-toolbar-shortcuts-and-precedence.md`. Currently applied as `⌘I` = Italic (File
+  Details → `⌘⇧I`) and `⌘K` = Link (Quick Open → `⌘⇧K`). The freed `⌘I` / `⌘K` follow the Typora /
+  Obsidian / Bear / Zettlr convention rather than VS Code.
+- **renderer-only shortcut** — a keyboard shortcut handled entirely in the renderer (the `App.tsx` window
+  capture listener → `markdown:insert`), with **no** matching native menu accelerator, so there is exactly
+  one owner and no double-fire with CodeMirror. All format-toolbar shortcuts (`⌘B` / `⌘I` / `⌘K` / `⌘E` /
+  `⌘⇧L` / `⌘⇧T` / `⌘1..6`) are renderer-only (ADR-0031 / ADR-0032). Contrast with app commands that also
+  carry a native accelerator (e.g. Save `⌘S`).
+- **format-shortcut table** — the single module (`src/renderer/src/lib/format-shortcuts.ts`) that owns every
+  formatting binding: the key, the inserted markup and the advertised glyph. The window handler matches
+  against it, and the toolbar tooltips plus the editor's right-click menu read the same glyphs from it — so a
+  label can never drift from the key the handler implements (ADR-0032).
 - **AUTO-block PR body** — the Create-PR Action manages PR bodies via symmetric `<!-- AUTO:key --> … <!-- /AUTO:key -->`
   markers; on refresh each segment resets to the template while human-written content outside the markers is
   preserved. (A planned generalization replaces the hardcoded blocks with scanned `.mjs` **block plugins** —

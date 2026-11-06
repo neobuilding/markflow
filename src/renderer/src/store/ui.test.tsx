@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
 import { useUIStore } from './ui'
 // Initialises the i18next singleton so the store's guard prompts are translated rather than
 // returning raw keys.
@@ -421,5 +422,71 @@ describe('useUIStore — unsaved buffer registry (ADR-0023)', () => {
     useUIStore.getState().setIsNewUnsaved(false)
     useUIStore.getState().closeDocument()
     expect(useUIStore.getState().unsavedBuffers).toEqual({})
+  })
+})
+
+// Field-scoped subscriptions are a performance contract, not a style choice: ADR-0033 writes the
+// registry on every keystroke, so an identity-selector subscriber re-renders the whole app once
+// per character. This is the behavioural counterpart to e2e/guards/ui-store-selectors.test.ts.
+describe('useUIStore — selector-scoped subscriptions', () => {
+  it('does not re-render a subscriber that reads only theme on a registry write', () => {
+    let renders = 0
+    const { unmount } = renderHook(() => {
+      renders += 1
+      return useUIStore((s) => s.theme)
+    })
+    const before = renders
+    act(() => {
+      for (let i = 0; i < 24; i += 1) {
+        useUIStore.getState().reportUnsavedBuffer('selector-probe', `keystroke ${i}`)
+      }
+    })
+    // 24 writes produce 24 new state objects, but the selected slice never changed.
+    expect(renders).toBe(before)
+    expect(useUIStore.getState().unsavedBuffers['selector-probe'].content).toBe('keystroke 23')
+    act(() => useUIStore.getState().clearUnsavedBuffer('selector-probe'))
+    unmount()
+  })
+
+  it('keeps action references stable across registry writes', () => {
+    // Components read actions through getState() instead of subscribing (Vercel
+    // rerender-defer-reads). That is only safe while the initializer never reassigns them.
+    const before = useUIStore.getState().setNewDocOpen
+    act(() => {
+      for (let i = 0; i < 24; i += 1) {
+        useUIStore.getState().reportUnsavedBuffer('action-probe', `keystroke ${i}`)
+      }
+    })
+    expect(useUIStore.getState().setNewDocOpen).toBe(before)
+    act(() => useUIStore.getState().clearUnsavedBuffer('action-probe'))
+  })
+})
+
+// The theme entry (ADR-0028): a three-way choice — light / dark / follow the system — defaulting
+// to the system preference, resolved live against the OS.
+describe('useUIStore theme', () => {
+  afterEach(() => {
+    useUIStore.getState().setTheme('system')
+  })
+
+  it('starts on the system preference', () => {
+    // `getInitialState` is the pristine store state, so an earlier test that changed the theme
+    // cannot mask the default this assertion is about.
+    expect(useUIStore.getInitialState().theme).toBe('system')
+  })
+
+  it('stores an explicit light or dark choice', () => {
+    useUIStore.getState().setTheme('dark')
+    expect(useUIStore.getState().theme).toBe('dark')
+    useUIStore.getState().setTheme('light')
+    expect(useUIStore.getState().theme).toBe('light')
+    useUIStore.getState().setTheme('system')
+    expect(useUIStore.getState().theme).toBe('system')
+  })
+
+  // The choice is deliberately NOT persisted: each launch starts from the default. The store has no
+  // persist middleware, so there is nothing that could restore a previous choice.
+  it('does not persist the theme choice', () => {
+    expect((useUIStore as unknown as { persist?: unknown }).persist).toBeUndefined()
   })
 })

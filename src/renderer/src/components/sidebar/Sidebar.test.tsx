@@ -104,6 +104,11 @@ beforeEach(() => {
   // store, so they have to be cleared per test like the rest of the workspace.
   useUIStore.getState().setShowAllFolders(false)
   useUIStore.setState({ recentlyCreatedFolders: new Set<string>() })
+  // `panelFocusNonce` is a GLOBAL counter on the store, and the Sidebar's focus hand-off effect
+  // fires whenever it changes. Left above 0, the next mount() would yank focus into the content
+  // panel and break any assertion about `document.activeElement`. Reset it so every test starts
+  // from "no focus request".
+  useUIStore.setState({ panelFocusNonce: 0 })
   ;(window as unknown as { api: unknown }).api = {
     dialog: {
       openFiles: vi.fn(async () => ['/x.md']),
@@ -127,10 +132,12 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('Sidebar', () => {
-  it('renders nothing when the sidebar is closed', () => {
+  it('renders no panel when the sidebar is collapsed, but keeps the activity bar', () => {
     useUIStore.getState().setSidebarOpen(false)
     const { container } = mount()
     expect(container.querySelector('aside')).toBeNull()
+    expect(screen.getByTestId('activity-bar-files')).toBeTruthy()
+    expect(screen.getByTestId('activity-bar-search')).toBeTruthy()
   })
 
   it('applies the platform-specific header padding (mac vs non-mac)', () => {
@@ -538,11 +545,50 @@ describe('Sidebar — interactions', () => {
   // sidebar tab switches to the Search view.
   it('switches the sidebar to the Search view instead of opening a modal palette', async () => {
     mount()
-    await userEvent.click(screen.getByTestId('sidebar-view-search'))
+    await userEvent.click(screen.getByTestId('activity-bar-search'))
     await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('search'))
     await waitFor(() => expect(screen.getByTestId('resident-search-input')).toBeTruthy())
-    await userEvent.click(screen.getByTestId('sidebar-view-files'))
+    await userEvent.click(screen.getByTestId('activity-bar-files'))
     await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('files'))
+  })
+
+  // The activity bar is a vertical tablist, and the content panel next to it is its tabpanel.
+  // `aria-selected` / `aria-expanded` follow "selected AND the panel is open", so collapsing must
+  // leave BOTH tabs false rather than claiming a panel is showing.
+  it('reports the activity bar as a tablist whose selected tab owns the visible panel', async () => {
+    mount()
+    const tablist = screen.getByRole('tablist')
+    expect(tablist.getAttribute('aria-orientation')).toBe('vertical')
+    const files = screen.getByTestId('activity-bar-files')
+    const search = screen.getByTestId('activity-bar-search')
+    expect(files.getAttribute('aria-selected')).toBe('true')
+    expect(files.getAttribute('aria-expanded')).toBe('true')
+    // Only the selected tab points at a panel: exactly one is mounted, so `aria-controls` on the
+    // other one would be a dangling IDREF.
+    expect(files.getAttribute('aria-controls')).toBe('sidebar-panel-files')
+    expect(search.hasAttribute('aria-controls')).toBe(false)
+    const panel = screen.getByRole('tabpanel')
+    expect(panel.id).toBe('sidebar-panel-files')
+    expect(panel.getAttribute('aria-labelledby')).toBe('activity-bar-tab-files')
+
+    act(() => {
+      useUIStore.getState().toggleSidebar()
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('activity-bar-files').getAttribute('aria-selected')).toBe('false')
+    })
+    expect(screen.getByTestId('activity-bar-search').getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByTestId('activity-bar-files').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('tabpanel')).toBeNull()
+  })
+
+  // Clicking the ALREADY ACTIVE view collapses the panel — VS Code's default
+  // `workbench.activityBar.iconClickBehavior: 'toggle'`.
+  it('collapses the sidebar when the active view icon is clicked again', async () => {
+    mount()
+    expect(useUIStore.getState().sidebarOpen).toBe(true)
+    await userEvent.click(screen.getByTestId('activity-bar-files'))
+    await waitFor(() => expect(useUIStore.getState().sidebarOpen).toBe(false))
   })
 
   it('does nothing when the import-folder dialog returns no path', async () => {
@@ -792,7 +838,7 @@ describe('Sidebar document item context menu', () => {
     // Covers the `if (!row) return` branch of the F2 handler: the key landed on the sidebar root,
     // not on a document/folder row, so there is nothing to rename.
     mount()
-    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'F2' })
+    fireEvent.keyDown(screen.getByRole('tabpanel'), { key: 'F2' })
     expect(screen.queryByTestId('folder-name-input')).toBeNull()
   })
 
@@ -1407,7 +1453,7 @@ describe('Sidebar — folder row context menu', () => {
     )
     fireEvent.contextMenu(screen.getByTestId('sidebar-resize-handle'))
     fireEvent.click(await screen.findByTestId('side-reset-sidebar-width'))
-    expect(document.documentElement.style.getPropertyValue('--sidebar-width')).toBe('240px')
+    expect(document.documentElement.style.getPropertyValue('--sidebar-width')).toBe('288px')
   })
 })
 
@@ -1480,7 +1526,7 @@ describe('Sidebar — folder high-order items', () => {
     mount()
     // No row focused: unlike F2, the undo only needs the focus to be somewhere in the
     // sidebar (the handler is bound on the sidebar root, which is itself focusable).
-    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'z', ctrlKey: true })
+    fireEvent.keyDown(screen.getByRole('tabpanel'), { key: 'z', ctrlKey: true })
     await waitFor(() => expect(undoRenameMock).toHaveBeenCalled())
   })
 
@@ -1490,7 +1536,7 @@ describe('Sidebar — folder high-order items', () => {
     undoRenameMock.mockImplementationOnce(async () => ({ ok: false, reason: 'occupied' as const }))
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
     mount()
-    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'z', ctrlKey: true })
+    fireEvent.keyDown(screen.getByRole('tabpanel'), { key: 'z', ctrlKey: true })
     await waitFor(() => expect(alert).toHaveBeenCalled())
     alert.mockRestore()
   })
@@ -2055,7 +2101,9 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     // "notes" resolves to "notes.md", which already exists here — flagged live, before any commit.
     const hint = await within(row).findByTestId('file-name-hint')
     expect(hint).toHaveTextContent('already exists')
-    expect(input.className).toContain('border-red-500')
+    // The clash is flagged with the semantic danger token, not a hard-coded palette class
+    // (ADR-0024 §1.1: semantic colours are indicators; `--color-danger` is the indicator role).
+    expect(input.className).toContain('border-[var(--color-danger)]')
     // Enter is refused until the name is unique.
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(createMock).not.toHaveBeenCalled()
@@ -2099,7 +2147,12 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     // instead of failing the commit with a generic "could not create".
     fireEvent.change(input, { target: { value: 'a/b' } })
     const hint = await within(row).findByTestId('file-name-hint')
-    expect(hint.textContent).toBe(t('sidebar.invalidName', { name: 'a/b' }))
+    // The message is prefixed with a danger-coloured ⚠ indicator (ADR-0024 §1.1: semantic
+    // colours act as indicators only — the message text itself stays in the text colour), so
+    // the hint is a superset of the raw i18n string.
+    expect(hint.textContent).toContain(t('sidebar.invalidName', { name: 'a/b' }))
+    expect(hint.textContent).toContain('\u26a0')
+    expect(hint.querySelector('.text-\\[var\\(--color-danger\\)\\]')).not.toBeNull()
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(createFolderMock).not.toHaveBeenCalled()
     // An ordinary name clears the flag again.
@@ -2376,5 +2429,84 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     await waitFor(() => expect(createMock).toHaveBeenCalled())
     // The input stays open, so what the user typed is not lost.
     expect(screen.getByTestId('file-create-row')).toBeInTheDocument()
+  })
+})
+
+// The activity bar is a vertical tablist. Two focus regimes meet here, and they must not fight:
+//
+//   · ↑/↓ (ARIA APG automatic activation, the model VS Code's ActionBar uses) move between the
+//     tabs, activate the target, and KEEP focus on the bar so the next arrow press lands.
+//   · A programmatic switch (⌘⇧E → Files) hands focus to the content panel — EXPLICITLY, via
+//     `requestPanelFocus()`, never as a side effect of a view change.
+//
+// The activity bar also carries the recovery entries (reset width / collapse) in ITS context menu,
+// because the panel's own resize-handle menu unmounts together with the panel.
+describe('Sidebar — activity bar', () => {
+  it('moves between the tabs with ↑/↓, auto-activates them and keeps focus on the bar', async () => {
+    mount()
+    const files = screen.getByTestId('activity-bar-files')
+    const search = screen.getByTestId('activity-bar-search')
+
+    files.focus()
+    expect(document.activeElement).toBe(files)
+
+    fireEvent.keyDown(files, { key: 'ArrowDown' })
+    await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('search'))
+    await waitFor(() => expect(search.getAttribute('aria-selected')).toBe('true'))
+    // Focus stays inside the tablist and moves onto the newly activated tab, so ↑/↓ can be
+    // pressed repeatedly.
+    await waitFor(() => expect(document.activeElement).toBe(search))
+
+    fireEvent.keyDown(search, { key: 'ArrowUp' })
+    await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('files'))
+    await waitFor(() => expect(document.activeElement).toBe(files))
+  })
+
+  it('keeps a roving tabindex, falling back to the first tab while the bar is collapsed', async () => {
+    mount()
+    const files = screen.getByTestId('activity-bar-files')
+    const search = screen.getByTestId('activity-bar-search')
+
+    // Open, Files active: only the active tab is a Tab stop.
+    expect(files.getAttribute('tabindex')).toBe('0')
+    expect(search.getAttribute('tabindex')).toBe('-1')
+
+    await userEvent.click(search)
+    await waitFor(() => expect(search.getAttribute('tabindex')).toBe('0'))
+    expect(files.getAttribute('tabindex')).toBe('-1')
+
+    // Collapsed: neither tab owns a panel, so the FIRST tab takes the tab stop — otherwise the
+    // whole bar would become unreachable by keyboard (WCAG 2.1.1).
+    act(() => {
+      useUIStore.getState().toggleSidebar()
+    })
+    await waitFor(() => expect(screen.queryByRole('tabpanel')).toBeNull())
+    expect(files.getAttribute('tabindex')).toBe('0')
+    expect(search.getAttribute('tabindex')).toBe('-1')
+  })
+
+  it('hands focus to the content panel only when a caller asks for it', async () => {
+    mount()
+    const panel = screen.getByRole('tabpanel')
+    // Nobody asked, so the panel did not steal focus on mount.
+    expect(document.activeElement).not.toBe(panel)
+
+    act(() => {
+      useUIStore.getState().requestPanelFocus()
+    })
+    await waitFor(() => expect(document.activeElement).toBe(panel))
+  })
+
+  it('keeps the recovery entries in the activity bar context menu', async () => {
+    mount()
+    // The panel's own resize-handle menu unmounts with the panel, so the bar carries them.
+    fireEvent.contextMenu(screen.getByRole('tablist'))
+    fireEvent.click(await screen.findByTestId('activity-collapse-sidebar'))
+
+    await waitFor(() => expect(useUIStore.getState().sidebarOpen).toBe(false))
+    // The bar survives the collapse — and so does its menu.
+    expect(screen.getByRole('tablist')).toBeTruthy()
+    fireEvent.contextMenu(screen.getByRole('tablist'))
+    expect(await screen.findByTestId('activity-reset-sidebar-width')).toBeTruthy()
   })
 })

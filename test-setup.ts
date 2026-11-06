@@ -111,6 +111,27 @@ if (
     IntersectionObserverMock
 }
 
+// The editor pane bar (EditorPaneBar) collapses its whole command set into a single "…" overflow when
+// the editor column is too narrow, measured with a ResizeObserver. jsdom does not implement
+// ResizeObserver, so any suite that mounts the editor pane throws "ResizeObserver is not defined".
+// Provide a no-op mock: the bar initialises in its default (expanded) layout, and since jsdom has
+// no real layout, no resize ever fires — matching the static-render assumption under test.
+if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === 'undefined') {
+  class ResizeObserverMock {
+    // jsdom performs no layout, so the callback is never invoked — but the parameter is still
+    // declared so this mock's signature mirrors the real `(callback)` one, exactly as
+    // IntersectionObserverMock does above. A zero-arg default constructor here makes CodeQL resolve
+    // the global `ResizeObserver` to THIS class, and it then reports every real
+    // `new ResizeObserver(cb)` in marked code as passing a superfluous trailing argument
+    // (false alert on EditorPaneBar.tsx). Do not "simplify" this constructor away.
+    constructor(_callback: ResizeObserverCallback) {}
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = ResizeObserverMock
+}
+
 // The suite creates real temp dirs under %TEMP% (folder-watcher / open-folder / document
 // / export fixtures). Vitest never cleans %TEMP%, so reclaim every path allocated through
 // mkTestDir() when each test file finishes. Registering the hook in this setup file means

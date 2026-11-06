@@ -130,3 +130,47 @@ describe('export — buildStandaloneHtml (R7)', () => {
     expect(embed).toHaveBeenCalled()
   })
 })
+
+describe('export — non-test-runner / defensive branches (C33a coverage)', () => {
+  // `readCssFromDisk` and the katex `@font-face` split only differ from the happy path when the
+  // code runs OUTSIDE the test runner (or without a `process.cwd`). Those branches are statically
+  // eliminated in the Vite production build, so they can only be exercised by re-importing the
+  // module with `import.meta.env.MODE` flipped and by simulating a missing `process.cwd`.
+  it('skips the disk fallback when not running under the test runner, and a font-less katex sheet yields no inlined @font-face', async () => {
+    vi.stubEnv('MODE', 'production')
+    vi.resetModules()
+    try {
+      const exportMod = await import('./export')
+      const parts = await exportMod.buildExportParts({
+        theme: 'light',
+        embedImages: false,
+        body: '<p>x</p>',
+      })
+      // Outside the test runner the `?raw` imports are populated and the disk fallback is skipped,
+      // so `readCssFromDisk` returns '' early — covering the `if (!isTestRunner) return ''` branch.
+      expect(parts.fontCss).toBe('')
+      expect(parts.theme).toBe('light')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
+  it('tolerates a missing process.cwd in readCssFromDisk (empty cwd fallback)', async () => {
+    // The `globalThis.process?.cwd?.() ?? ''` branch is only taken when `process.cwd()` is
+    // unavailable. With no cwd the disk path collapses to a repo-relative string that cannot be
+    // resolved, so `buildExportParts` rejects — but the `?? ''` branch itself must be exercised
+    // (it must not raise a *different*, e.g. env-access, error before reaching the read).
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(undefined as unknown as string)
+    vi.resetModules()
+    try {
+      const exportMod = await import('./export')
+      await expect(
+        exportMod.buildExportParts({ theme: 'dark', embedImages: false, body: '<p>y</p>' }),
+      ).rejects.toThrow()
+    } finally {
+      cwdSpy.mockRestore()
+      vi.resetModules()
+    }
+  })
+})

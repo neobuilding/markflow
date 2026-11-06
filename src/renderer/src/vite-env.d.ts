@@ -38,6 +38,7 @@ export type MenuEvent =
   | 'print'
   | 'language'
   | 'select-all'
+  | 'set-theme'
 
 // Electron preload bridge exposed on window.api
 export interface Api {

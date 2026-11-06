@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { EditorView } from '@codemirror/view'
 import { render, waitFor, act, fireEvent, screen } from '@testing-library/react'
+import { FileText, Search } from 'lucide-react'
 import { TooltipProvider } from '../ui/tooltip'
 import { EditorPane } from './EditorPane'
 import { useUIStore } from '../../store/ui'
@@ -14,6 +16,18 @@ const h = vi.hoisted(() => ({
   noDoc: false,
   filePath: '/a.md',
   editingTitle: false,
+  // The keystroke-frame text Save must see; deliberately different from the preview mirror.
+  authoritativeContent: '# A',
+  commitDraft: vi.fn(),
+  saveMutateAsync: vi.fn(
+    async (_params: { id: string; updates: { title: string; content: string } }) => ({
+      id: 'a',
+      title: 'a',
+      filePath: '/a.md',
+      content: '# A',
+      missing: false,
+    }),
+  ),
 }))
 
 vi.mock('../../hooks/useDocuments', () => ({
@@ -25,13 +39,7 @@ vi.mock('../../hooks/useDocuments', () => ({
   }),
   useUpdateDocument: () => ({
     mutate: vi.fn(),
-    mutateAsync: vi.fn(async () => ({
-      id: 'a',
-      title: 'a',
-      filePath: '/a.md',
-      content: '# A',
-      missing: false,
-    })),
+    mutateAsync: h.saveMutateAsync,
   }),
   useOpenPaths: () => ({ mutate: vi.fn(), isPending: false }),
   useOpenFolder: () => ({ mutate: vi.fn(), isPending: false }),
@@ -62,10 +70,13 @@ vi.mock('../../hooks/useLocalDocument', () => ({
     startTitleEdit: h.startTitleEdit,
     cancelTitleEdit: vi.fn(),
     handleContentChange: vi.fn(),
+    commitDraft: h.commitDraft,
+    // Save reads the keystroke-frame text, not the throttled preview mirror.
+    getAuthoritativeContent: () => h.authoritativeContent,
     handleTitleSave: vi.fn(),
     dirty: false,
     markSaved: vi.fn(),
-    toDiskFormat: vi.fn(),
+    toDiskFormat: (text: string) => text,
     getEol: vi.fn(),
   }),
 }))
@@ -82,6 +93,9 @@ beforeEach(() => {
   h.noDoc = false
   h.filePath = '/a.md'
   h.editingTitle = false
+  h.authoritativeContent = '# A'
+  h.commitDraft.mockClear()
+  h.saveMutateAsync.mockClear()
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setEditable(true)
   useUIStore.getState().setPendingMatch(null)
@@ -121,13 +135,26 @@ it('jumps the editor to a pending search hit and then clears it (Phase 4)', asyn
   await waitFor(() => expect(useUIStore.getState().pendingMatch).toBeNull())
 })
 
+it('never feeds the PREVIOUS document draft to the editor mid-switch', () => {
+  // activeDocumentId flips synchronously on a sidebar switch, but useDocument() can still
+  // return the previous record (stale react-query cache / in-flight refetch) and
+  // useLocalDocument only resets its draft when doc.id changes. localContent is therefore
+  // the PREVIOUS document's text here. Feeding it to MarkdownEditor writes A's text into B's
+  // EditorView (isDocSwitch force-applies `content`), which is what later surfaced as
+  // "Ctrl+Z replays the previous file" in the real browser.
+  useUIStore.getState().setActiveDocumentId('b') // query mock still returns doc.id === 'a'
+  mount()
+  expect(document.querySelector('.cm-content')?.textContent ?? '').not.toContain('# A')
+})
+
 // D22 / §6 step 9: the Quick Open trigger lives in the editor's CommonToolbar, next to the
-// sidebar toggle — and the shortcut chip is ALWAYS visible, not just inside the tooltip.
+// sidebar toggle. Per the diagram's own rule ("toolbar shows icons only; persistent text is
+// reserved for the title / breadcrumb / input / mode state"), the ⌘K shortcut is surfaced in the
+// button's TOOLTIP, not as a persistent chip — so the bar stays icon-only like the mockup.
 describe('EditorPane — Quick Open trigger (D22)', () => {
-  it('renders the trigger with its shortcut chip when a document is open', () => {
+  it('renders the trigger when a document is open', () => {
     mount()
     expect(screen.getByTestId('editor-goto-file-btn')).toBeTruthy()
-    expect(screen.getByTestId('editor-goto-file-chip').textContent).toMatch(/K/)
   })
 
   it('renders the trigger with NO document open (empty state)', () => {
@@ -137,7 +164,6 @@ describe('EditorPane — Quick Open trigger (D22)', () => {
     useUIStore.getState().setActiveDocumentId(null)
     mount()
     expect(screen.getByTestId('editor-goto-file-btn')).toBeTruthy()
-    expect(screen.getByTestId('editor-goto-file-chip')).toBeTruthy()
     useUIStore.getState().setActiveDocumentId('a')
     h.noDoc = false
   })
@@ -147,6 +173,62 @@ describe('EditorPane — Quick Open trigger (D22)', () => {
     expect(useUIStore.getState().searchOpen).toBe(false)
     fireEvent.click(screen.getByTestId('editor-goto-file-btn'))
     expect(useUIStore.getState().searchOpen).toBe(true)
+  })
+
+  // PLAN C6 (R5): Quick Open must NOT wear a magnifier — it sits one icon away from the
+  // in-document find button (⌘F), and two adjacent magnifiers read as the same action.
+  // Compared against the icon library's OWN output rather than a class name, so a lucide
+  // upgrade cannot quietly turn this into a no-op assertion.
+  it('uses a document glyph, not a magnifier, for the Quick Open trigger', () => {
+    const magnifier = render(<Search size={16} />).container.querySelector('svg')!
+    const docGlyph = render(<FileText size={16} />).container.querySelector('svg')!
+    mount()
+    const icon = screen.getByTestId('editor-goto-file-btn').querySelector('svg')!
+    expect(icon.outerHTML).toBe(docGlyph.outerHTML)
+    expect(icon.outerHTML).not.toBe(magnifier.outerHTML)
+    // PLAN C23 / ADR-0024 §1.3: chrome main controls wear 16px icons.
+    expect(icon.getAttribute('width')).toBe('16')
+    expect(icon.getAttribute('height')).toBe('16')
+  })
+})
+
+// PLAN C8: with no document open, the read-only / edit choice has no meaning — and the
+// divider that precedes it must be wrapped with it, or the empty state ends in a lone
+// vertical line.
+describe('EditorPane — read-only toggle', () => {
+  it('hides the read-only / edit toggle while no document is open', () => {
+    h.noDoc = true
+    useUIStore.getState().setActiveDocumentId(null)
+    mount()
+    expect(screen.queryByTestId('editor-readonly-btn')).toBeNull()
+  })
+
+  it('shows the read-only / edit toggle once a document is open', () => {
+    mount()
+    expect(screen.getByTestId('editor-readonly-btn')).toBeTruthy()
+  })
+})
+
+// C20 / ADR-0024 §10 trade-off 46: "Export HTML" is ONE action whose entry point follows the
+// preview's visibility — preview visible ⇒ preview bar; edit-only ⇒ global bar. Only one export
+// button is ever on screen: two peer toolbars must not carry the same button side by side.
+describe('EditorPane — export button placement (C20)', () => {
+  it('shows exactly one export button and moves it with the preview visibility', () => {
+    act(() => {
+      useUIStore.getState().setViewMode('edit')
+    })
+    mount()
+    expect(screen.getAllByTestId('export-btn')).toHaveLength(1)
+    // Edit-only has no visible preview to inspect, so the entry stays on the global bar.
+    expect(screen.getByTestId('export-btn').closest('[data-testid="preview-pane"]')).toBeNull()
+
+    act(() => {
+      useUIStore.getState().setViewMode('split')
+    })
+    const btn = screen.getByTestId('export-btn')
+    // Preview visible ⇒ the action sits next to the live rendering it exports.
+    expect(screen.getAllByTestId('export-btn')).toHaveLength(1)
+    expect(btn.closest('[data-testid="preview-pane"]')).not.toBeNull()
   })
 })
 
@@ -200,6 +282,30 @@ describe('EditorPane pendingFileAction save / saveAs / reload (能力 6)', () =>
       useUIStore.getState().requestFileAction({ type: 'save' })
     })
     await waitFor(() => expect(useUIStore.getState().pendingFileAction).toBeNull())
+  })
+
+  it('Save writes the keystroke-frame text, not the 400ms-throttled preview mirror', async () => {
+    // The preview mirror is still '# A' (mock), but the user has already typed more. Saving
+    // inside the debounce window must persist the typed text (Q14 / ADR-0033).
+    h.authoritativeContent = '# A\nTYPED-JUST-NOW'
+    mount()
+    act(() => {
+      useUIStore.getState().requestFileAction({ type: 'save' })
+    })
+    await waitFor(() => expect(h.saveMutateAsync).toHaveBeenCalled())
+    expect(h.saveMutateAsync.mock.calls[0][0].updates.content).toBe('# A\nTYPED-JUST-NOW')
+  })
+
+  it('wires the keystroke-frame commit through to the editor', () => {
+    mount()
+    const node = document.querySelector('.cm-editor') as HTMLElement
+    const view = EditorView.findFromDOM(node)
+    expect(view).toBeTruthy()
+    act(() => {
+      view!.dispatch({ changes: { from: 3, insert: 'X' } })
+    })
+    // No 400ms wait: correctness state lands on the keystroke frame.
+    expect(h.commitDraft).toHaveBeenCalledWith('# AX')
   })
 
   it('runs Save As when requested', async () => {
@@ -559,7 +665,7 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     expect(reopened.defaultPrevented).toBe(true)
   })
 
-  it('does not open find via CodeMirror’s own Mod-f while a modal owns the keyboard', async () => {
+  it("does not open find via CodeMirror's own Mod-f while a modal owns the keyboard", async () => {
     useUIStore.getState().setViewMode('edit')
     mount()
     await waitFor(() => expect(document.querySelector('.cm-content')).not.toBeNull())
@@ -875,3 +981,76 @@ describe('EditorPane in-pane find (Ctrl+F)', () => {
     expect(ev.defaultPrevented).toBe(false)
   })
 })
+
+// PLAN C32 U5 / ADR-0024 §7.2: the title input is a focusable control, so it must show a
+// visible focus indicator. It used to carry `focus:ring-0`, i.e. NO indicator at all — the one
+// genuine WCAG 2.4.7 failure in the app.
+describe('EditorPane focus indicators (C32 U5)', () => {
+  it('gives the title input exactly one visible focus indicator', async () => {
+    h.editingTitle = true
+    mount()
+    const input = await screen.findByTestId('title-input')
+    expect(input.className).toContain('focus-ring')
+    expect(input.className).not.toContain('focus:ring-0')
+    expect(input.className).not.toContain('focus:ring-1')
+    expect(input.className).not.toContain('focus:ring-2')
+    expect(input.className).not.toContain('focus:border-accent')
+  })
+})
+
+// The view mode is an EXCLUSIVE choice (editor / split / preview), so it is an ARIA radio group
+// (APG radio group): exactly one checked radio, ONE Tab stop for the whole group (roving
+// tabindex) and arrow keys that move AND select. Before this it was three plain buttons whose
+// active state was VISUAL ONLY -- nothing told a screen reader which mode was on.
+describe('EditorPane — view mode radio group', () => {
+  it('exposes the three modes as one radio group with exactly one checked radio', () => {
+    useUIStore.getState().setViewMode('split')
+    mount()
+    const group = screen.getByRole('radiogroup', { name: 'View mode' })
+    const radios = screen.getAllByRole('radio')
+    expect(radios).toHaveLength(3)
+    expect(group).toContainElement(radios[1])
+    expect(radios.filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(1)
+    expect(screen.getByTestId('view-split')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('view-edit')).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByTestId('view-preview')).toHaveAttribute('aria-checked', 'false')
+    // Every mode is a CONTAINED TILE (design fig 02): the unchecked ones are white tiles with the
+    // border edge, the checked one is the accent-tinted tile with an accent edge.
+    expect(screen.getByTestId('view-edit')).toHaveClass('bg-[var(--color-surface)]')
+    expect(screen.getByTestId('view-preview')).toHaveClass('bg-[var(--color-surface)]')
+    expect(screen.getByTestId('view-split')).toHaveClass('bg-[var(--color-accent-muted)]')
+    expect(screen.getByTestId('view-split')).toHaveClass('border-[var(--color-accent)]')
+  })
+
+  it('keeps a roving tabindex: only the checked radio is a Tab stop', () => {
+    useUIStore.getState().setViewMode('preview')
+    mount()
+    expect(screen.getByTestId('view-preview')).toHaveAttribute('tabindex', '0')
+    expect(screen.getByTestId('view-edit')).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByTestId('view-split')).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('moves and selects with the arrow keys, and jumps with Home/End', () => {
+    useUIStore.getState().setViewMode('edit')
+    mount()
+    const group = screen.getByRole('radiogroup', { name: 'View mode' })
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(useUIStore.getState().viewMode).toBe('split')
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(useUIStore.getState().viewMode).toBe('preview')
+    // Wraps around to the first mode.
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    expect(useUIStore.getState().viewMode).toBe('edit')
+    fireEvent.keyDown(group, { key: 'ArrowLeft' })
+    expect(useUIStore.getState().viewMode).toBe('preview')
+    fireEvent.keyDown(group, { key: 'Home' })
+    expect(useUIStore.getState().viewMode).toBe('edit')
+    fireEvent.keyDown(group, { key: 'End' })
+    expect(useUIStore.getState().viewMode).toBe('preview')
+  })
+})
+
+// The global-bar sidebar toggle BUTTON was removed in Q2a (the sidebar is still toggleable via the
+// ActivityBar right-click menu, the native View menu, and the ⌘\ handlers). Its pressed-tile state
+// is now covered by the ActivityBar collapse control and the e2e sidebar-shortcuts spec, so this
+// unit test (tied to the removed button) is intentionally dropped.

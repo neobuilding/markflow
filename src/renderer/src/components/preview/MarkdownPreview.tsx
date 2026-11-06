@@ -81,8 +81,10 @@ function applyMarkdownBodyTheme(theme: ThemeMode): boolean {
   if (theme === 'light') isDark = false
   else if (theme === 'dark') isDark = true
   else
+    // Same existence guard as App.tsx and the theme effect below: a truthy but non-callable
+    // matchMedia must degrade to light instead of throwing (docs/agents/testing.md:123-126).
     isDark =
-      typeof window !== 'undefined' && !!window.matchMedia
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
         ? window.matchMedia('(prefers-color-scheme: dark)').matches
         : false
   const light = document.getElementById('md-body-light') as HTMLStyleElement | null
@@ -129,6 +131,9 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
     if (isDocSwitch) {
       setSanitizedHtml(sanitizeHtml(''))
       setLoading(true)
+      // C20 补 ⑦: during a document switch the export cache still holds the PREVIOUS
+      // document's HTML, so the export must be disabled until this document has parsed.
+      useUIStore.getState().setExportReady(false)
     }
 
     const run = () => {
@@ -160,6 +165,9 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           setExportMermaidSlots(res.mermaid)
           setExportHtml(clean)
           setExportContent(content)
+          // C20 补 ⑦: the cache now holds THIS document's complete render — the export
+          // dialog may be enabled (E12).
+          useUIStore.getState().setExportReady(true)
           setSanitizedHtml(clean)
           hasContentRef.current = true
           setLoading(false)
@@ -274,13 +282,25 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
     injectMarkdownBodyStyles()
   }, [])
   useEffect(() => {
-    const isDark = applyMarkdownBodyTheme(theme)
-    const el = previewRef.current
-    // Unreachable false branch: the ref is attached whenever this effect runs.
-    /* v8 ignore next */
-    if (el) {
-      el.setAttribute('data-theme', isDark ? 'dark' : 'light')
+    const apply = () => {
+      const isDark = applyMarkdownBodyTheme(theme)
+      const el = previewRef.current
+      // Unreachable false branch: the ref is attached whenever this effect runs.
+      /* v8 ignore next */
+      if (el) {
+        el.setAttribute('data-theme', isDark ? 'dark' : 'light')
+      }
     }
+    apply()
+    // 跟随系统 must keep following AFTER the choice is made. The OS preference can change
+    // while the app is open, and Electron's nativeTheme.themeSource update is asynchronous:
+    // switching dark → system often still reads "dark" on the first apply, so the preview
+    // would stay on the dark sheet forever. App.tsx installs the same listener for the
+    // chrome's `.dark` class; the preview owns its two stylesheets and needs its own.
+    if (theme !== 'system' || typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
   }, [theme])
 
   useEffect(() => {

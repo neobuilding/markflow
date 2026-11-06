@@ -4,14 +4,18 @@ import { useUIStore } from '../../store/ui'
 import { useCreateDocument } from '../../hooks/useDocuments'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Input } from '../ui/input'
+import { Select } from '../ui/select'
 import { Button } from '../ui/button'
 import { useT } from '../../i18n'
 import { InputContextMenu } from '../ui/input-context-menu'
 
 export function NewDocumentDialog(): React.ReactElement {
   const { t } = useT()
-  const { newDocOpen, setNewDocOpen, setActiveDocumentId, setEditable, setIsNewUnsaved } =
-    useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const newDocOpen = useUIStore((s) => s.newDocOpen)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setNewDocOpen, setActiveDocumentId, setEditable, setIsNewUnsaved } = useUIStore.getState()
   const [title, setTitle] = useState('')
   // Ref for the right-click edit menu
   const titleRef = useRef<HTMLInputElement>(null)
@@ -67,19 +71,15 @@ export function NewDocumentDialog(): React.ReactElement {
             <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
               {t('new.extension')}
             </label>
-            <select
-              value={ext}
-              onChange={(e) => setExt(e.target.value)}
-              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text-primary)] outline-none focus:ring-2 focus:ring-[var(--color-accent)]"
-            >
+            <Select value={ext} onChange={(e) => setExt(e.target.value)}>
               <option value=".md">.md</option>
               <option value=".mdx">.mdx</option>
               <option value=".markdown">.markdown</option>
               <option value=".mdtxt">.mdtxt</option>
               <option value=".mdtext">.mdtext</option>
-            </select>
+            </Select>
           </div>
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-3">
             <Button variant="ghost" size="sm" onClick={() => setNewDocOpen(false)}>
               {t('new.cancel')}
             </Button>

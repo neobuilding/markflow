@@ -1,35 +1,74 @@
 import React from 'react'
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 import '../../i18n'
-import { PreviewFindBar } from './PreviewFindBar'
+import { PreviewToolbar } from './PreviewToolbar'
+import { TooltipProvider } from '../ui/tooltip'
+
+// jsdom has no layout, so the bar's ResizeObserver needs a controllable width source. The
+// production hook reads `borderBoxSize[0].inlineSize`, the same quantity this mock reports.
+type ResizeCallback = (
+  entries: Array<{
+    borderBoxSize: ReadonlyArray<{ inlineSize: number }>
+    contentRect: { width: number }
+  }>,
+) => void
+const observers: ResizeCallback[] = []
+class MockResizeObserver {
+  constructor(cb: ResizeCallback) {
+    observers.push(cb)
+  }
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+function reportWidth(width: number) {
+  act(() => {
+    observers.forEach((cb) =>
+      cb([{ borderBoxSize: [{ inlineSize: width }], contentRect: { width } }]),
+    )
+  })
+}
+// docs/agents/testing.md:121 — stubbed globals must be restored afterwards.
+const OriginalResizeObserver = globalThis.ResizeObserver
+const OriginalApi = (window as unknown as { api?: unknown }).api
+// A later test replaces Element.prototype.scrollIntoView directly; save the original so the stub
+// cannot leak into the rest of the suite (docs/agents/testing.md:121).
+const OriginalScrollIntoView = Element.prototype.scrollIntoView
+beforeEach(() => {
+  observers.length = 0
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = MockResizeObserver
+  ;(window as unknown as { api: unknown }).api = {
+    clipboard: { writeText: vi.fn() },
+  }
+})
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+  ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = OriginalResizeObserver
+  ;(window as unknown as { api: unknown }).api = OriginalApi
+  ;(Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView =
+    OriginalScrollIntoView
+})
 
 function setup(content: React.ReactNode) {
   const ref = React.createRef<HTMLDivElement>()
   render(
-    <div className="relative">
-      <div ref={ref}>{content}</div>
-      <PreviewFindBar containerRef={ref} />
-    </div>,
+    <TooltipProvider>
+      <div className="relative">
+        <div ref={ref}>{content}</div>
+        <PreviewToolbar containerRef={ref} previewVisible onExport={() => {}} />
+      </div>
+    </TooltipProvider>,
   )
   return ref
 }
 
-describe('PreviewFindBar', () => {
-  it('opens the find bar from the search button', () => {
+describe('PreviewToolbar', () => {
+  it('opens the find panel from the search button', () => {
     setup(<p>hello</p>)
     fireEvent.click(screen.getByTestId('preview-find-btn'))
     expect(screen.getByTestId('preview-find-bar')).toBeInTheDocument()
-  })
-
-  it('floats the search button over the content instead of leaving it in flow', () => {
-    setup(<p>hello</p>)
-    // Regression guard: the trigger used to be a plain flow element placed after an `h-full`
-    // content div inside an `overflow-hidden` parent, so it was laid out below the visible area and
-    // clipped away — the pane had no reachable button. `click()` never caught it because a clipped
-    // element still has a bounding box, so the e2e asserts real geometry. jsdom has no layout, so
-    // lock the structural contract here: the trigger must be absolutely positioned.
-    expect(screen.getByTestId('preview-find-btn')).toHaveClass('absolute')
   })
 
   it('highlights every match and shows the 1 / N count', async () => {
@@ -334,7 +373,11 @@ describe('PreviewFindBar', () => {
   it('reports no match when the preview container is not mounted', () => {
     // A ref that is never attached to an element stays null, exercising the `!container` guard.
     const ref = React.createRef<HTMLDivElement>()
-    render(<PreviewFindBar containerRef={ref} />)
+    render(
+      <TooltipProvider>
+        <PreviewToolbar containerRef={ref} previewVisible onExport={() => {}} />
+      </TooltipProvider>,
+    )
     fireEvent.click(screen.getByTestId('preview-find-btn'))
     fireEvent.change(screen.getByTestId('preview-find-input'), { target: { value: 'hello' } })
     expect(screen.getByTestId('preview-find-count')).toHaveTextContent('No match')
@@ -377,5 +420,103 @@ describe('PreviewFindBar', () => {
     await waitFor(() =>
       expect(screen.getByTestId('preview-find-count')).toHaveTextContent('No match'),
     )
+  })
+
+  it('renders the export button only when the preview is visible and forwards the click', () => {
+    const onExport = vi.fn()
+    const ref = React.createRef<HTMLDivElement>()
+    const { rerender } = render(
+      <TooltipProvider>
+        <div className="relative">
+          <div ref={ref}>
+            <p>hello</p>
+          </div>
+          <PreviewToolbar containerRef={ref} previewVisible onExport={onExport} />
+        </div>
+      </TooltipProvider>,
+    )
+    const btn = screen.getByTestId('export-btn')
+    expect(btn).toBeInTheDocument()
+    fireEvent.click(btn)
+    expect(onExport).toHaveBeenCalledTimes(1)
+    // When the preview is hidden (edit-only mode), the export button leaves the preview bar; it is
+    // re-shown on the global header instead.
+    rerender(
+      <TooltipProvider>
+        <div className="relative">
+          <div ref={ref}>
+            <p>hello</p>
+          </div>
+          <PreviewToolbar containerRef={ref} previewVisible={false} onExport={onExport} />
+        </div>
+      </TooltipProvider>,
+    )
+    expect(screen.queryByTestId('export-btn')).toBeNull()
+  })
+
+  it('renders the pane bar on the subtle base surface, matching the design image (fig 02 pane bars = #F4F7FB ≈ --color-bg)', () => {
+    setup(<p>hello</p>)
+    // The design image uses a SUBTLE tint for the pane (preview) bar (#F4F7FB ≈ --color-bg), distinct
+    // from the clearly blue-gray GLOBAL bar (--color-surface-overlay). Assert base surface — not white
+    // panel, not overlay.
+    expect(screen.getByTestId('preview-pane-bar')).toHaveClass(/bg-\[var\(--color-bg\)\]/)
+    expect(screen.getByTestId('preview-pane-bar')).not.toHaveClass(/surface-overlay/)
+  })
+
+  it('moves preview buttons into More gradually instead of all at once', () => {
+    setup(<p>hello</p>)
+    // Every command fits before the first measurement: a conditional trigger must be ABSENT.
+    expect(screen.queryByTestId('preview-more-btn')).toBeNull()
+    const inlineCounts = new Set<number>()
+    for (const width of [900, 260, 220, 180, 150, 120, 90, 60]) {
+      reportWidth(width)
+      const bar = screen.getByTestId('preview-pane-bar')
+      const inline = Array.from(bar.querySelectorAll('button[data-testid]')).filter(
+        (btn) => btn.getAttribute('data-testid') !== 'preview-more-btn',
+      ).length
+      inlineCounts.add(inline)
+      // The "…" trigger exists EXACTLY while at least one command is missing from the bar.
+      expect(screen.queryByTestId('preview-more-btn') !== null).toBe(inline < 4)
+    }
+    // A static More menu (or a one-step fold) never yields a state where only SOME of the four
+    // commands have moved into the overflow.
+    expect([...inlineCounts].some((n) => n > 0 && n < 4)).toBe(true)
+
+    // 4 tiles + 24px padding = 168px. This bar has NO group separators, so it must stay fully
+    // expanded down to 168px; the editor bar's 40px chrome used to fold it 16px too early.
+    for (const width of [183, 168]) {
+      reportWidth(width)
+      expect(screen.queryByTestId('preview-more-btn')).toBeNull()
+      expect(screen.getByTestId('preview-copy-html-btn')).toBeInTheDocument()
+    }
+  })
+
+  it('keeps Copy rendered HTML reachable inline and from the conditional overflow', async () => {
+    const ref = setup(<p>hello</p>)
+    // Wide: all four commands are inline, so HTML copying needs no menu.
+    expect(screen.queryByTestId('preview-more-btn')).toBeNull()
+    const inlineCopyHtml = screen.getByTestId('preview-copy-html-btn')
+    expect(inlineCopyHtml).toHaveAttribute('aria-label', 'Copy rendered HTML')
+    fireEvent.click(inlineCopyHtml)
+    expect(window.api.clipboard.writeText).toHaveBeenCalledWith(ref.current?.innerHTML)
+
+    // Narrow: the lowest-priority command has moved into the trigger, which now exists.
+    reportWidth(90)
+    expect(screen.queryByTestId('preview-copy-html-btn')).toBeNull()
+    fireEvent.pointerDown(screen.getByTestId('preview-more-btn'))
+    const menuCopyHtml = await screen.findByTestId('preview-copy-html-btn')
+    expect(menuCopyHtml).toHaveTextContent(/HTML/i)
+    fireEvent.click(menuCopyHtml)
+    expect(window.api.clipboard.writeText).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders toolbar icons as contained white tiles with a subtle border (design fig 02/04)', () => {
+    setup(<p>hello</p>)
+    const btn = screen.getByTestId('preview-find-btn')
+    // Rest state: white tile (--color-surface) + subtle cool-blue border. The blue-gray overlay is
+    // only a HOVER variant (`hover:bg-...`), never the rest background.
+    expect(btn).toHaveClass(/bg-\[var\(--color-surface\)\]/)
+    expect(btn).toHaveClass(/border-\[var\(--color-border\)\]/)
+    expect(btn).not.toHaveClass('bg-[var(--color-surface-overlay)]')
   })
 })

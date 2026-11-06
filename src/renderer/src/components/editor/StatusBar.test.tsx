@@ -532,3 +532,59 @@ describe('StatusBar — context menus', () => {
     expect(mockWriteText).toHaveBeenLastCalledWith('CRLF')
   })
 })
+
+// PLAN C32 U6/U7 — the semantic-colour contract of ADR-0024 §1.1: a semantic colour is an
+// INDICATOR (the ● / ✓ / ⚠ glyph), never the text colour. The text itself stays neutral
+// (`--color-text-secondary`) so it clears 1.4.3 on its own, and a state-bearing border is
+// painted at full opacity (an `/60` border is a state signal at ~40% strength — not allowed).
+describe('StatusBar semantic colour roles (C32 U6/U7)', () => {
+  beforeEach(() => {
+    docState.doc = {
+      id: 'd1',
+      filePath: '/tmp/a.md',
+      wordCount: 42,
+      encoding: 'GBK',
+      encodingConfidence: 0.3,
+    }
+    useUIStore.getState().setActiveDocumentId('d1')
+    useUIStore.getState().setDirty(false)
+    useUIStore.getState().setSaving(false)
+    useUIStore.getState().setPrinting(false)
+    useUIStore.getState().setJustSaved(false)
+    useUIStore.getState().setEditable(true)
+    useUIStore.getState().requestFileAction(null)
+    mockConfirm.mockResolvedValue(true)
+    mockWriteText.mockResolvedValue(undefined)
+    installApi()
+  })
+
+  it('keeps the unsaved label in the neutral text colour and colours only the ● indicator', async () => {
+    useUIStore.getState().setDirty(true)
+    render(<StatusBar />)
+    const label = await screen.findByTestId('status-unsaved')
+    expect(label).toHaveClass('text-[var(--color-text-secondary)]')
+    // The warning colour rides the indicator glyph alone.
+    const dot = screen.getByTestId('status-unsaved-dot')
+    expect(dot).toHaveClass('text-[var(--color-warning)]')
+    expect(label).not.toHaveClass('text-[var(--color-warning)]')
+  })
+
+  it('keeps the saved label in the neutral text colour and colours only the ✓ indicator', async () => {
+    render(<StatusBar />)
+    act(() => useUIStore.getState().setJustSaved(true))
+    const label = await screen.findByTestId('status-saved')
+    expect(label).toHaveClass('text-[var(--color-text-secondary)]')
+    const check = screen.getByTestId('status-saved-check')
+    expect(check).toHaveClass('text-[var(--color-success)]')
+    expect(label).not.toHaveClass('text-[var(--color-success)]')
+  })
+
+  it('paints the low-confidence encoding border at full opacity (no /60)', async () => {
+    render(<StatusBar />)
+    const pill = await screen.findByTestId('status-encoding')
+    expect(pill.className).toContain('border-[var(--color-warning)]')
+    // A state-bearing border must not be dimmed: `/60` would drop it below the 3:1 floor.
+    expect(pill.className).not.toContain('/60')
+    expect(pill.className).not.toContain('border-[var(--color-warning)]/')
+  })
+})

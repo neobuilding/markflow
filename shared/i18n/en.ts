@@ -10,6 +10,11 @@ export const en = {
   'sidebar.files': 'Files',
   // Go to file… — the Quick Open trigger and the label that names its scope.
   'sidebar.goToFile': 'Go to file…',
+  // The always-present 48px icon column on the far left (R4). It replaced the old Files/Search
+  // text tablist; each icon is a `role="tab"` and the panel next to it is its `tabpanel`.
+  'sidebar.activityBar': 'Activity Bar',
+  'sidebar.activityFiles': 'Files / Explorer',
+  'sidebar.activitySearch': 'Search in files',
   // Accessible name for the resident "search in files" panel toggle in the sidebar, kept
   // distinct from the toolbar "Search" button (which opens the Ctrl/Cmd+K palette) so
   // assistive tech and getByRole queries don't collide.
@@ -79,7 +84,6 @@ export const en = {
   'editor.closeFile': 'Close file',
   'editor.renameTitle': 'Rename file',
   'editor.fileDeleted': 'Deleted on disk — save to restore it',
-  'editor.toggleSidebarShortcut': 'Toggle Sidebar ({{shortcut}})',
   'editor.goToFileShortcut': 'Go to file… ({{shortcut}})',
   'editor.switchReadOnly': 'Switch to read-only mode',
   'editor.switchEdit': 'Switch to edit mode',
@@ -91,14 +95,24 @@ export const en = {
   'editor.notFound': 'Document not found',
   'editor.fmt.h1': 'H1',
   'editor.fmt.bold': 'Bold',
+  'editor.fmt.boldShortcut': 'Bold ({{shortcut}})',
   'editor.fmt.italic': 'Italic',
   'editor.fmt.code': 'Code',
   'editor.fmt.link': 'Link',
   'editor.fmt.list': 'List',
   'editor.fmt.task': 'Task',
+  'editor.fmt.h1Shortcut': 'H1 ({{shortcut}})',
+  'editor.fmt.italicShortcut': 'Italic ({{shortcut}})',
+  'editor.fmt.codeShortcut': 'Code ({{shortcut}})',
+  'editor.fmt.linkShortcut': 'Link ({{shortcut}})',
+  'editor.fmt.listShortcut': 'List ({{shortcut}})',
+  'editor.fmt.taskShortcut': 'Task ({{shortcut}})',
+  'editor.more': 'More',
+  'sidebar.searchEmptyState': 'Search results',
   'editor.view.editor': 'Editor',
   'editor.view.split': 'Split',
   'editor.view.preview': 'Preview',
+  'editor.view.label': 'View mode',
   'editor.showInFolder': 'Show in folder',
   'editor.openSegmentFolder': 'Go to this folder',
   'editor.copyPath': 'Copy path',
@@ -147,9 +161,9 @@ export const en = {
   // disabled rather than silently meaningless.
   'search.scopeDisabledNoRoot': 'Open a folder to use include / exclude',
   // Match Case (`Aa`). Off by default = case-INSENSITIVE, exactly like VS Code.
-  'search.matchCase': 'Match Case',
-  'search.wholeWord': 'Match Whole Word',
-  'search.regexp': 'Use Regular Expression',
+  'search.matchCase': 'Match Case (workspace search)',
+  'search.wholeWord': 'Match Whole Word (workspace search)',
+  'search.regexp': 'Use Regular Expression (workspace search)',
   'search.regexHint':
     'In regex mode write \\n to match a line break (CRLF included); ^ and $ anchor the whole document and (?m) is not supported.',
   'search.invalidRegex': 'Invalid regular expression: {{message}}',
@@ -231,9 +245,13 @@ export const en = {
   'export.choose': 'Choose…',
   'export.imageNote':
     'When not inlined, local images are rewritten to relative paths (distributed alongside the .html), while remote https images are kept.',
+  'export.previewTitle': 'Preview',
+  'export.previewNote':
+    'The preview is rendered as a single file (images inlined) and shows every diagram in the document.',
+  'export.previewUnavailable': 'Preview unavailable.',
   'export.failed': 'Export failed. Please try again.',
-  'export.previewNotReady':
-    'Preview is not ready yet. Please switch to the preview or split view first.',
+  'export.previewNotReady': 'The document is still rendering. Please try again in a moment.',
+  'export.preparing': 'Preparing…',
   'export.overwritePrompt':
     'File "{{path}}" already exists. Are you sure you want to overwrite it? This action cannot be undone.',
   'export.cancel': 'Cancel',
@@ -321,6 +339,9 @@ export const en = {
   'preview.findNext': 'Next match',
   'preview.findClose': 'Close find',
   'preview.findNone': 'No match',
+  'preview.copyRendered': 'Copy rendered content',
+  'preview.copyHtml': 'Copy rendered HTML',
+  'preview.more': 'More',
 
   // ── Native menu (Electron main process) ────────────────────────────────
   'menu.file': 'File',
@@ -345,6 +366,10 @@ export const en = {
   'menu.toggleSidebar': 'Toggle Sidebar',
   'menu.togglePreview': 'Toggle Preview',
   'menu.toggleDevTools': 'Toggle Developer Tools',
+  'menu.theme': 'Theme',
+  'menu.themeLight': 'Light',
+  'menu.themeDark': 'Dark',
+  'menu.themeSystem': 'System',
   'menu.about': 'About MarkFlow',
   'menu.selectAll': 'Select All',
   // Labels for Electron `role` items. They are listed explicitly (instead of relying on
@@ -440,10 +465,10 @@ export const en = {
   // ── Find widget (shared by editor & preview) ───────────────────────────
   'find.placeholder': 'Find',
   'find.replacePlaceholder': 'Replace',
-  'find.toggle.case': 'Match Case',
-  'find.toggle.wholeWord': 'Match Whole Word',
-  'find.toggle.regex': 'Use Regular Expression',
-  'find.toggle.preserveCase': 'Preserve Case',
+  'find.toggle.case': 'Match Case (this document)',
+  'find.toggle.wholeWord': 'Match Whole Word (this document)',
+  'find.toggle.regex': 'Use Regular Expression (this document)',
+  'find.toggle.preserveCase': 'Preserve Case (this document)',
   // Visible glyphs on the toggle group: Aa / ab / .* / AB
   'find.toggle.caseShort': 'Aa',
   'find.toggle.wholeWordShort': 'ab',

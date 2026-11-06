@@ -37,7 +37,7 @@ describe('ContextMenu (Radix wrapper)', () => {
       </ContextMenu>,
     )
     await waitFor(() => {
-      expect(document.querySelector('.text-\\[var\\(--color-danger\\)\\]')).not.toBeNull()
+      expect(document.querySelector('.text-\\[var\\(--color-danger-text\\)\\]')).not.toBeNull()
     })
   })
 

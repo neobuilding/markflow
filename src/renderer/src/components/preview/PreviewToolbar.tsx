@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react'
-import { Search } from 'lucide-react'
+import { Search, FileOutput, Copy, MoreHorizontal, CodeXml } from 'lucide-react'
 import { FindWidget } from '../editor/FindWidget'
 import {
   TOGGLE_FIELD,
@@ -8,12 +8,29 @@ import {
   type FindToggleState,
 } from '../../lib/find-toggles'
 import { useT } from '../../i18n'
+import { requestRichCopy } from '../../lib/previewCopy'
+import { formatShortcut } from '../../lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { Button } from '../ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu'
+import { BAR_PADDING, useOverflowFocus, usePriorityOverflow } from '../ui/priority-overflow'
 
-interface PreviewFindBarProps {
+interface PreviewToolbarProps {
   // The scrollable preview content element. Find highlighting is applied to its
   // text nodes (script/style subtrees are skipped).
   containerRef: React.RefObject<HTMLDivElement | null>
+  // Export follows the preview's visibility (ADR-0024 §10 trade-off 46): the button
+  // lives on this bar only when the preview is actually visible.
+  previewVisible: boolean
+  onExport: () => void
 }
+
+type PreviewCommandKey = 'find' | 'export' | 'copy' | 'copyHtml'
 
 // The k/n counter is NOT React state: it is the number of <mark> elements we insert into the
 // preview DOM, which React does not own and which can only be counted by walking that DOM —
@@ -140,8 +157,6 @@ type Segment = { node: Text; from: number; to: number }
 function wrapSegments(segs: Segment[]): HTMLElement[] {
   const marks: HTMLElement[] = []
   segs.forEach(({ node, from, to }) => {
-    // Split the tail first, so `node` keeps [0, to): splitText leaves the text BEFORE the offset
-    // on the original node and returns the remainder as a new sibling.
     if (to < node.data.length) node.splitText(to)
     const piece = from > 0 ? node.splitText(from) : node
     const mark = document.createElement('mark')
@@ -154,13 +169,13 @@ function wrapSegments(segs: Segment[]): HTMLElement[] {
   return marks
 }
 
-// Preview find bar: a find-only surface that reuses the shared FindWidget shell.
-// Matches are highlighted in the rendered preview DOM (not in an editor model), with the current
-// match tagged `.preview-find-active` and scrolled into view. One match = a GROUP of <mark>
-// elements (a match may span sibling nodes), so mark bookkeeping is per group, not per element.
-export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.ReactElement {
+export function PreviewToolbar({
+  containerRef,
+  previewVisible,
+  onExport,
+}: PreviewToolbarProps): React.ReactElement {
   const { t } = useT()
-  const [open, setOpen] = useState(false)
+  const [findOpen, setFindOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [toggleState, setToggleState] = useState<FindToggleState>({
     caseSensitive: false,
@@ -168,10 +183,7 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
     regexp: false,
     preserveCase: false,
   })
-  // The bar's own input, focused when the bar opens (see the `open` effect below).
   const inputRef = useRef<HTMLInputElement>(null)
-  // External store for the match counters (see the note on PreviewSearchSnapshot above).
-  // `getSnapshot` must return a cached object, so the snapshot is only replaced on publish.
   const snapshotRef = useRef<PreviewSearchSnapshot>(EMPTY_SNAPSHOT)
   const listenersRef = useRef(new Set<() => void>())
   const subscribe = useCallback((onStoreChange: () => void) => {
@@ -183,14 +195,11 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
   const getSnapshot = useCallback(() => snapshotRef.current, [])
   const publish = useCallback((next: PreviewSearchSnapshot) => {
     const prev = snapshotRef.current
-    // Notify only on a real change — otherwise every effect run would force another render.
     if (prev.count === next.count && prev.current === next.current) return
     snapshotRef.current = next
     listenersRef.current.forEach((l) => l())
   }, [])
   const { count, current } = useSyncExternalStore(subscribe, getSnapshot)
-  // One entry per MATCH; each entry holds that match's <mark> elements (usually one, more when the
-  // match spans sibling nodes).
   const marksRef = useRef<HTMLElement[][]>([])
   const currentIndexRef = useRef(0)
 
@@ -199,7 +208,6 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
       const parent = mark.parentNode
       /* v8 ignore next -- defensive: a mark we just inserted into the preview is always attached */
       if (parent) {
-        // normalize() re-joins the text nodes splitText carved out, restoring the original DOM.
         parent.replaceChild(document.createTextNode(mark.textContent ?? ''), mark)
         parent.normalize()
       }
@@ -229,9 +237,6 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
       return
     }
 
-    // Find every match against the still-unmutated DOM, recording which text nodes it covers.
-    // Collecting first (instead of wrapping as we go) is what makes a cross-node match work:
-    // all offsets stay valid until the first mutation.
     const pending: Segment[][] = []
     collectTextRuns(container).forEach((nodes) => {
       const text = nodes.map((n) => n.data).join('')
@@ -252,15 +257,11 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
           const to = Math.min(end, b.end)
           if (from < to) segs.push({ node: b.node, from: from - b.start, to: to - b.start })
         })
-        // A zero-length match (e.g. the regexp "a*") covers no characters, so it is not a
-        // highlightable match and must not inflate the counter.
         if (segs.length) pending.push(segs)
-        // Guard against zero-length matches to avoid an infinite loop.
         if (m[0].length === 0) re.lastIndex += 1
       }
     })
 
-    // Wrap back-to-front so the offsets recorded above are still valid while the DOM is mutated.
     const groups: HTMLElement[][] = []
     for (let i = pending.length - 1; i >= 0; i -= 1) groups.unshift(wrapSegments(pending[i]))
 
@@ -274,15 +275,12 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
     }
   }
 
-  // Re-run highlighting whenever the query or a toggle changes — and again whenever the bar
-  // REOPENS. Closing clears the marks but deliberately KEEPS the query (ADR-0023), so without
-  // re-applying on open the bar comes back with the query text still sitting in the box but zero
-  // highlights and a stale "No match" counter. `open` in the deps is what restores them; when it
-  // flips to false we skip, because onClose has already cleared the marks.
+  // Re-run highlighting on query/toggle change and on reopen (keep query across close, ADR-0023).
+  // Gated on `findOpen` so closing (which clears marks) does not immediately re-apply them.
   useEffect(() => {
-    if (open) applySearch(query, toggleState)
+    if (findOpen) applySearch(query, toggleState)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, toggleState, open])
+  }, [query, toggleState, findOpen])
 
   const goTo = (delta: number) => {
     const n = marksRef.current.length
@@ -295,77 +293,190 @@ export function PreviewFindBar({ containerRef }: PreviewFindBarProps): React.Rea
   }
 
   const onToggle = (key: FindToggleKey) => {
-    // `preserve` is a replace-only toggle and is never rendered in the preview, so this
-    // guard is unreachable from the UI. Hoisted out so `key` narrows to the three match toggles.
     /* v8 ignore next -- defensive: the `preserve` toggle is never rendered in the preview */
     if (key === 'preserve') return
-    // Same key->field mapping the editor panel uses (lib/find-toggles), so the two surfaces can
-    // never disagree about what `Aa` / `ab` / `.*` mean.
     const field = TOGGLE_FIELD[key]
     setToggleState((ts) => withToggle(ts, field, !ts[field]))
   }
 
-  const onClose = () => {
+  const onFindClose = () => {
     clearMarks()
-    setOpen(false)
-    // Keep `query` so reopening restores it — matching the editor find widget, which never
-    // clears the query on close (ADR-0023: one interaction model for both find surfaces).
+    setFindOpen(false)
     publish(EMPTY_SNAPSHOT)
   }
 
   // Ctrl/Cmd+F in preview mode is routed here by EditorPane as a `preview:find` document event.
-  // It cannot be a listener on the container: that is a plain non-focusable <div>, so clicking
-  // the preview leaves focus on <body> and a keydown never reaches it — which is why Ctrl+F used
-  // to do nothing at all in preview mode.
   useEffect(() => {
-    const onOpen = () => setOpen(true)
+    const onOpen = () => setFindOpen(true)
     document.addEventListener('preview:find', onOpen)
     return () => document.removeEventListener('preview:find', onOpen)
   }, [])
 
-  // Focus the query input once the bar is mounted, so Ctrl+F can be followed by typing.
   useEffect(() => {
-    if (open) inputRef.current?.focus()
-  }, [open])
+    if (findOpen) inputRef.current?.focus()
+  }, [findOpen])
 
-  if (!open) {
+  // Priority+ overflow: commands are ordered by descending priority, so the rightmost ones move
+  // into the "…" trigger ONE AT A TIME as the column narrows. The trigger is CONDITIONAL — it is
+  // rendered only while at least one command has overflowed (CONTEXT.md: "Conditional overflow
+  // trigger"), so no command may depend on it as its only access path. Copy rendered HTML is an
+  // ordinary, LOWEST-priority command: inline when there is room, an overflow entry when there is
+  // not. There is no resident menu, and the committed screenshot baselines are not a design input.
+  const barRef = useRef<HTMLDivElement>(null)
+  // The commands are pure DATA (no callbacks). A command that needs the preview DOM resolves it
+  // in an event handler, never while the array is built during render — holding a ref-reading
+  // callback in that array makes react-hooks/refs reject every later render-time slice/map call.
+  const runCommand = (key: PreviewCommandKey) => {
+    switch (key) {
+      case 'find':
+        setFindOpen(true)
+        break
+      case 'export':
+        onExport()
+        break
+      case 'copy': {
+        const el = containerRef.current
+        if (el) requestRichCopy(el)
+        break
+      }
+      case 'copyHtml': {
+        const el = containerRef.current
+        if (el) void window.api.clipboard.writeText(el.innerHTML)
+        break
+      }
+      default: {
+        // Compile-time exhaustiveness: adding a command without a handler fails the build.
+        const exhaustive: never = key
+        return exhaustive
+      }
+    }
+  }
+  const commands: Array<{
+    key: PreviewCommandKey
+    icon: React.ComponentType<{ size?: number }>
+    label: string
+    tip?: string
+    testId: string
+  }> = [
+    { key: 'find', icon: Search, label: t('preview.find'), testId: 'preview-find-btn' },
+    ...(previewVisible
+      ? [
+          {
+            key: 'export' as const,
+            icon: FileOutput,
+            label: t('editor.export'),
+            tip: t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧X') }),
+            testId: 'export-btn',
+          },
+        ]
+      : []),
+    {
+      key: 'copy',
+      icon: Copy,
+      label: t('preview.copyRendered'),
+      testId: 'preview-copy-btn',
+    },
+    {
+      key: 'copyHtml',
+      icon: CodeXml,
+      label: t('preview.copyHtml'),
+      testId: 'preview-copy-html-btn',
+    },
+  ]
+
+  // This bar has no group separators, so its chrome is padding only (24px, not the editor bar's
+  // 40px). Using the editor budget here would overflow 16px too early (168–183px columns).
+  const visible = usePriorityOverflow(barRef, commands.length, BAR_PADDING)
+  const inline = commands.slice(0, visible)
+  const overflow = commands.slice(visible)
+  useOverflowFocus(barRef, visible, commands.length)
+
+  const renderInline = (cmd: (typeof commands)[number]) => {
+    const Icon = cmd.icon
     return (
-      <button
-        type="button"
-        data-testid="preview-find-btn"
-        // Name the surface's scope ("Find in preview"), not the generic input placeholder
-        // (§10.3: every search entry says what it searches).
-        aria-label={t('preview.find')}
-        title={t('preview.find')}
-        onClick={() => setOpen(true)}
-        // MUST be positioned. As a flow element following an `h-full` content div inside an
-        // `overflow-hidden` parent it was laid out below the visible area and clipped away: the
-        // pane had no reachable search button. (Playwright still clicked it, because a clipped
-        // element keeps a bounding box — which is exactly why the suite stayed green.)
-        className="absolute top-2 right-2 z-20 flex h-6 w-6 items-center justify-center rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-tertiary)] shadow-sm transition-colors hover:text-accent"
-      >
-        <Search size={13} />
-      </button>
+      <Tooltip key={cmd.key}>
+        <TooltipTrigger asChild>
+          <Button
+            variant="toolbar"
+            size="icon"
+            data-testid={cmd.testId}
+            data-command-index={commands.findIndex((c) => c.key === cmd.key)}
+            aria-label={cmd.label}
+            onClick={() => runCommand(cmd.key)}
+          >
+            <Icon size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{cmd.tip ?? cmd.label}</TooltipContent>
+      </Tooltip>
     )
   }
 
   return (
-    <div data-testid="preview-find-bar" className="find-surface">
-      <FindWidget
-        testId="preview-find"
-        query={query}
-        onQueryChange={setQuery}
-        total={count}
-        current={current}
-        onPrev={() => goTo(-1)}
-        onNext={() => goTo(1)}
-        onClose={onClose}
-        toggleState={toggleState}
-        onToggle={onToggle}
-        showReplace={false}
-        inputRef={inputRef}
-        placeholder={t('find.placeholder')}
-      />
+    <div
+      ref={barRef}
+      data-testid="preview-pane-bar"
+      className="titlebar-no-drag flex items-center gap-1 px-3 h-9 border-b border-[var(--color-border)] bg-[var(--color-bg)] shrink-0"
+    >
+      {inline.map(renderInline)}
+
+      {overflow.length > 0 && (
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="toolbar"
+                  size="icon"
+                  data-testid="preview-more-btn"
+                  data-overflow-trigger
+                  aria-label={t('preview.more')}
+                >
+                  <MoreHorizontal size={16} />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent>{t('preview.more')}</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end">
+            {overflow.map((cmd) => {
+              const Icon = cmd.icon
+              return (
+                <DropdownMenuItem
+                  key={cmd.key}
+                  data-testid={cmd.testId}
+                  onClick={() => runCommand(cmd.key)}
+                >
+                  <Icon size={13} />
+                  {cmd.label}
+                </DropdownMenuItem>
+              )
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      {findOpen && (
+        <div className="absolute left-3 right-3 top-9 z-20">
+          <div data-testid="preview-find-bar" className="find-surface">
+            <FindWidget
+              testId="preview-find"
+              query={query}
+              onQueryChange={setQuery}
+              total={count}
+              current={current}
+              onPrev={() => goTo(-1)}
+              onNext={() => goTo(1)}
+              onClose={onFindClose}
+              toggleState={toggleState}
+              onToggle={onToggle}
+              showReplace={false}
+              inputRef={inputRef}
+              placeholder={t('find.placeholder')}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

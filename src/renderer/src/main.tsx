@@ -8,6 +8,9 @@ import { warmupParseWorker } from './lib/parseClient'
 import 'katex/dist/katex.min.css'
 import 'highlight.js/styles/github.css'
 import './styles/globals.css'
+// Single source of truth for .markdown-body overrides + dark hljs palette, shared with the
+// standalone HTML export (lib/export.ts inlines the same file via ?raw). See styles/markdownExport.css.
+import './styles/markdownExport.css'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

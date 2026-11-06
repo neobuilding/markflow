@@ -141,8 +141,15 @@ markflow/
 | Shortcut               | Action                                        |
 | ---------------------- | --------------------------------------------- |
 | `Ctrl/Cmd + N`         | New document                                  |
-| `Ctrl/Cmd + K`         | Search documents                              |
-| `Ctrl/Cmd + \`         | Toggle sidebar                                |
+| `Ctrl/Cmd + Shift + K` | Quick Open (find a document by name / path)   |
+| `Ctrl/Cmd + B`         | Bold                                          |
+| `Ctrl/Cmd + I`         | Italic                                        |
+| `Ctrl/Cmd + K`         | Insert link                                   |
+| `Ctrl/Cmd + E`         | Inline code                                   |
+| `Ctrl/Cmd + Shift + L` | Bullet list                                   |
+| `Ctrl/Cmd + Shift + T` | Task list item                                |
+| `Ctrl/Cmd + 1..6`      | Heading 1..6                                  |
+| `Ctrl/Cmd + \`         | Fold / unfold the content panel               |
 | `Ctrl/Cmd + Shift + P` | Toggle preview mode (edit/preview/split)      |
 | `Ctrl/Cmd + W`         | Close file (keep the opened folder & sidebar) |
 | `Ctrl/Cmd + Shift + W` | Close workspace (close current file & folder) |
@@ -151,7 +158,7 @@ markflow/
 | `Ctrl/Cmd + S`         | Save (manual; no auto-save)                   |
 | `Ctrl/Cmd + Shift + S` | Save As…                                      |
 | `Ctrl/Cmd + Shift + R` | Reload from Disk (load latest file content)   |
-| `Ctrl/Cmd + I`         | File details (path, size, modified date)      |
+| `Ctrl/Cmd + Shift + I` | File details (path, size, modified date)      |
 
 ## 🛠️ Tech Stack
 
@@ -215,11 +222,22 @@ npm run e2e:full        # End-to-end: drives the REAL Electron app via Playwrigh
   shared Vite dev server and waits for `dist/electron/index.js`, so the main process must be built
   first (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you
   must run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e:full`.
-- **E2E script family**: `e2e:app` (functional/behavioral specs only), `e2e:perf-gate` (performance
-  regression gate only), `e2e:perf-diag` (threshold-free diagnostics, on demand), and
-  `e2e:full` — `e2e-app` + `e2e-perf-gate` in a **single** Playwright run, which is what CI
-  executes. One run matters: it keeps a single global setup (one Vite dev server) and a single
-  report (`playwright-report/`, `reports/e2e/junit.xml`) covering both suites.
+- **E2E script family**: `e2e:app` (functional/behavioral specs only), `e2e:clipboard` (the specs that
+  write the _real_ system clipboard), `e2e:perf-gate` (performance regression gate only),
+  `e2e:perf-diag` (threshold-free diagnostics, on demand), and `e2e:full` — `e2e-app` +
+  `e2e-clipboard` + `e2e-perf-gate` in a **single** Playwright run, which is what CI executes. One
+  run matters: it keeps a single global setup (one Vite dev server) and a single report
+  (`playwright-report/`, `reports/e2e/junit.xml`) covering all suites.
+- **Clipboard specs are their own project**: the tests that write the _real_ system clipboard
+  (`select-all-copy-fidelity`, `pane-toolbars`, `preload-contract`, `formula-copy-image`,
+  `copy-once-no-drop-diagrams`, `context-menu`) are destructive — they overwrite whatever you had
+  copied and only put it back afterwards — so they belong to the `e2e-clipboard` project instead of
+  `e2e-app`. `npm run e2e:app` reports them as skipped (they read the `clipboardE2e` option, which
+  only that project sets); `npm run e2e:clipboard` runs them for real, and CI does too through
+  `npm run e2e:full`. A single spec still runs, e.g.
+  `npm run e2e:clipboard -- e2e/specs/context-menu.e2e.spec.ts`. See `e2e/helpers/clipboard.ts` for
+  why, and `electron/main/handlers/app.test.ts` for the same OS boundary covered without touching a
+  real clipboard.
 - **Performance**: `npm run e2e:full` composes two Playwright projects — `e2e-app` (functional) and
   `e2e-perf-gate`. The gate asserts that opening a folder buried in non-Markdown build output
   and immediately switching documents does not stall the main-process event loop, which is the

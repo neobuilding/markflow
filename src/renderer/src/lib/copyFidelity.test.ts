@@ -10,6 +10,7 @@ import {
   enhanceForPaste,
   safeEnhanceForPaste,
   lightTokenDeclarations,
+  collectRootRuleTokens,
   readableRules,
   rgbToHex,
 } from './copyFidelity'
@@ -292,6 +293,36 @@ describe('light-token pinning (D16 — the fragment must be a LIGHT island)', ()
     }
   })
 
+  it('also reads the declarations that follow a nested rule (CSS nesting)', () => {
+    // Regression guard (D16): the CSSOM exposes the declarations that come AFTER a nested rule
+    // as a separate `CSSNestedDeclarations` child rule — they are NOT in `rule.style`. Vite's
+    // CSS transform wraps every `color-mix()` in an `@supports` block, so each `:root` block in
+    // globals.css ends with a nested rule and its trailing tokens (`--md-pre-bg`, …) used to be
+    // invisible here → the copy host inherited the DARK values → the payload leaked the theme.
+    //
+    // jsdom's CSSOM does not implement CSS nesting, so the shape is built by hand here; the
+    // browser behaviour itself is covered end-to-end by the D16 e2e.
+    const decl = (name: string, value: string): CSSStyleDeclaration =>
+      ({
+        length: 1,
+        item: () => name,
+        getPropertyValue: () => value,
+      }) as unknown as CSSStyleDeclaration
+    const nestedRule = {
+      style: decl('--probe-after', '#333333'),
+    } as unknown as CSSRule
+    const rootRule = {
+      selectorText: ':root',
+      style: decl('--probe-before', '#111111'),
+      cssRules: [nestedRule],
+    } as unknown as CSSRule
+
+    const out: string[] = []
+    collectRootRuleTokens(rootRule, out)
+    expect(out).toContain('--probe-before: #111111')
+    expect(out).toContain('--probe-after: #333333')
+  })
+
   it('ignores a stylesheet that cannot be read (defensive)', () => {
     const blocked = {
       get cssRules(): never {
@@ -299,6 +330,54 @@ describe('light-token pinning (D16 — the fragment must be a LIGHT island)', ()
       },
     }
     expect(readableRules(blocked as unknown as CSSStyleSheet)).toEqual([])
+  })
+})
+
+describe('collectRootRuleTokens — nested-rule loop branches (D16, defensive)', () => {
+  // jsdom's CSSOM does not implement CSS nesting or optional `cssRules`, so the synthetic
+  // shapes below exercise the branches that the browser-only path would otherwise skip.
+  const decl = (name: string, value: string): CSSStyleDeclaration =>
+    ({
+      length: 1,
+      item: () => name,
+      getPropertyValue: () => value,
+    }) as unknown as CSSStyleDeclaration
+
+  it('treats a missing cssRules as an empty list (no nested declarations)', () => {
+    // A top-level style rule has no `cssRules`; the `?? []` branch must not throw and must
+    // still collect the rule's own `:root` tokens.
+    const rootRule = {
+      selectorText: ':root',
+      style: decl('--probe-root', '#111111'),
+    } as unknown as CSSRule
+    const out: string[] = []
+    collectRootRuleTokens(rootRule, out)
+    expect(out).toContain('--probe-root: #111111')
+  })
+
+  it('skips a nested SELECTOR rule (not a declaration block) and a child without a style', () => {
+    // Regression guard for the two loop branches the happy-path test never hits:
+    //  - a nested selector rule (`& .x`) is filtered by `selectorText` → `continue`;
+    //  - a child carrying neither a selector nor a `style` is skipped by `if (style)`.
+    const nestedSelector = {
+      selectorText: '& .child',
+      style: decl('--probe-skip', '#999999'),
+    } as unknown as CSSRule
+    const noStyleChild = {} as unknown as CSSRule
+    const nestedDecl = { style: decl('--probe-after', '#333333') } as unknown as CSSRule
+    const rootRule = {
+      selectorText: ':root',
+      style: decl('--probe-before', '#111111'),
+      cssRules: [nestedSelector, noStyleChild, nestedDecl],
+    } as unknown as CSSRule
+
+    const out: string[] = []
+    collectRootRuleTokens(rootRule, out)
+    // The rule's own tokens and a real nested declaration block are collected…
+    expect(out).toContain('--probe-before: #111111')
+    expect(out).toContain('--probe-after: #333333')
+    // …but the nested SELECTOR rule is skipped (its tokens must not leak)…
+    expect(out).not.toContain('--probe-skip')
   })
 })
 

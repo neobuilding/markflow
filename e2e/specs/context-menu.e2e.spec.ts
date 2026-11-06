@@ -5,9 +5,20 @@
 // preview: generic / link variants render the expected items ;
 // sidebar: right-clicking a document row shows the file menu ;
 // keyboard: Shift+F10 opens the menu on the focused surface ( G11)
-import { test, expect, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import type { ElectronApplication } from 'playwright'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { test } from '../helpers/fixtures'
+import {
+  readClipboardHtml,
+  readClipboardText,
+  readClipboardTypes,
+  snapshotClipboard,
+  restoreClipboard,
+  clipboardSkipMessage,
+  CLIPBOARD_SPEC_SKIP_REASON,
+  type ClipboardSnapshot,
+} from '../helpers/clipboard'
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
@@ -53,13 +64,61 @@ async function confirmCalls(
   )
 }
 
+/**
+ * Measure the contrast of a menu item's painted text colour against the surface it is actually
+ * read against (the first opaque ancestor background — the item itself is transparent).
+ */
+async function measureItemContrast(
+  page: Page,
+  testId: string,
+): Promise<{ fg: string; bg: string; ratio: number } | null> {
+  return page.evaluate((id) => {
+    const el = document.querySelector(`[data-testid="${id}"]`) as HTMLElement | null
+    if (!el) return null
+    const parse = (c: string): [number, number, number] => {
+      const m = c.match(/rgba?\(([^)]+)\)/)
+      if (!m) return [0, 0, 0]
+      const parts = m[1].split(',').map((p) => parseFloat(p.trim()))
+      return [parts[0] || 0, parts[1] || 0, parts[2] || 0]
+    }
+    const lum = ([r, g, b]: [number, number, number]) => {
+      const f = (c: number) => {
+        const s = c / 255
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+      }
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    }
+    let bg = 'rgb(255, 255, 255)'
+    let node: HTMLElement | null = el
+    while (node) {
+      const c = getComputedStyle(node).backgroundColor
+      if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') {
+        bg = c
+        break
+      }
+      node = node.parentElement
+    }
+    const fg = getComputedStyle(el).color
+    const l1 = lum(parse(fg))
+    const l2 = lum(parse(bg))
+    return { fg, bg, ratio: (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05) }
+  }, testId)
+}
+
 test.describe('context menus', () => {
   let handle: AppHandle
+  // One test in this block copies to the REAL system clipboard; preserve the user's content around
+  // every test in the block so the restore always runs, whichever test touched it. Outside the
+  // `e2e-clipboard` project the snapshot is skipped, which makes the restore a no-op: any other run
+  // writes nothing (see helpers/clipboard).
+  let snap: ClipboardSnapshot | undefined
 
-  test.beforeEach(async () => {
+  test.beforeEach(async ({ clipboardE2e }) => {
     handle = await launchApp()
+    snap = clipboardE2e ? await snapshotClipboard(handle) : undefined
   })
   test.afterEach(async () => {
+    await restoreClipboard(handle, snap)
     await closeApp(handle)
   })
 
@@ -118,8 +177,14 @@ test.describe('context menus', () => {
   // inlined). jsdom cannot catch that (no execCommand), so the mechanism is pinned here with a REAL
   // Chromium copy event plus a read-back of the real system clipboard. Empirically the event DOES
   // reach the article (probe below) — this test is the regression guard that keeps it that way.
-  test('preview: menu Copy reaches the preview copy handler and lands a clean payload (R3/R6)', async () => {
-    const { page, electronApp } = handle
+  test('preview: menu Copy reaches the preview copy handler and lands a clean payload (R3/R6)', async ({
+    clipboardE2e,
+  }) => {
+    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
+    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
+    // Never overwrite a clipboard we cannot put back.
+    test.skip(!snap?.restorable, clipboardSkipMessage(snap))
+    const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, '# Title\n\n```js\nconst x = 1\n```\n')
     await page.getByTestId('view-preview').click()
@@ -150,33 +215,26 @@ test.describe('context menus', () => {
     // …and the REAL system clipboard (read back from the main process) must hold the clean
     // payload: the code text is present, and none of the pipeline's internal markers leaked.
     // Electron 44 replaced `readHTML()` with `read()` + `ClipboardItem.getType(mime)`.
-    await expect
-      .poll(async () => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
-      .toContain('const x = 1')
-    const clip = await electronApp.evaluate(async ({ clipboard }) => {
-      const items = await clipboard.read()
-      const item = items[0]
-      let html = ''
-      if (item && item.types.includes('text/html')) {
-        const blob = (await item.getType('text/html')) as Blob
-        html = await blob.text()
-      }
-      return { html, text: await clipboard.readText(), types: item ? item.types : [] }
-    })
+    await expect.poll(() => readClipboardText(handle), { timeout: 15_000 }).toContain('const x = 1')
+    const [html, types, text] = await Promise.all([
+      readClipboardHtml(handle),
+      readClipboardTypes(handle),
+      readClipboardText(handle),
+    ])
     // Both halves must be present (the browser packed text/plain + text/html from setData).
-    expect(clip.types).toContain('text/html')
+    expect(types).toContain('text/html')
     // The html keeps the semantic structure; the code text is split by hljs <span>s, so match
     // the tag + a token rather than a contiguous source line.
-    expect(clip.html).toContain('<pre')
-    expect(clip.html).toContain('const')
-    expect(clip.text).toContain('const x = 1')
+    expect(html).toContain('<pre')
+    expect(html).toContain('const')
+    expect(text).toContain('const x = 1')
     // R6: no internal marker survived into the pasted HTML.
-    expect(clip.html).not.toContain('data-lang')
-    expect(clip.html).not.toContain('data-line')
-    expect(clip.html).not.toContain('data-mermaid')
-    expect(clip.html).not.toContain('data-baked')
+    expect(html).not.toContain('data-lang')
+    expect(html).not.toContain('data-line')
+    expect(html).not.toContain('data-mermaid')
+    expect(html).not.toContain('data-baked')
     // markdown-it-anchor's heading tabindex must be stripped too.
-    expect(clip.html).not.toContain('tabindex')
+    expect(html).not.toContain('tabindex')
   })
 
   test('preview: right-clicking a link shows open/copy-link/copy/select-all', async () => {
@@ -413,6 +471,35 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
     await expect(page.getByTestId('side-rename-folder')).toBeVisible()
     await expect(page.getByTestId('side-delete-folder')).toBeVisible()
     await expect(page.getByTestId('side-close-workspace')).toBeVisible()
+  })
+
+  // PLAN C32 E1 — the destructive menu item is painted with `--color-danger-text`, the ONLY
+  // semantic colour allowed to act as text (ADR-0024 §1.1). The unit test (C25 U3/U10) checks
+  // the token arithmetic; this spec measures what the engine actually paints, in both themes.
+  test('the destructive menu item stays readable against the menu surface', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = scratchDir({ 'a.md': '# A', 'b.md': '# B' })
+    await openFolder(page, dir, 2)
+    await page.getByTestId('current-folder-bar').click({ button: 'right' })
+    await expect(page.getByTestId('side-delete-folder')).toBeVisible()
+
+    for (const theme of ['light', 'dark'] as const) {
+      await page.evaluate((t) => (window as any).__uiStore.getState().setTheme(t), theme)
+      await expect
+        .poll(async () => page.evaluate(() => document.documentElement.classList.contains('dark')))
+        .toBe(theme === 'dark')
+
+      const measured = await measureItemContrast(page, 'side-delete-folder')
+      expect(measured, `the ${theme} destructive item must be on screen`).not.toBeNull()
+      // `transition-colors` also transitions `color`, so the theme switch animates the item's
+      // text colour over ~100ms — poll instead of sampling the pre-transition value.
+      await expect
+        .poll(async () => (await measureItemContrast(page, 'side-delete-folder'))?.ratio ?? 0, {
+          timeout: 5000,
+        })
+        .toBeGreaterThanOrEqual(4.5)
+    }
   })
 
   test('file details dialog: right-clicking the path offers copy path/name + show-in-folder', async () => {
@@ -910,8 +997,9 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await page.getByTestId('side-bg-new-file').click()
     const input = page.getByTestId('file-create-row').locator('input')
     await input.fill('alpha')
-    // Flagged before any commit: the red border is the live same-name check, not a post-hoc error.
-    await expect(input).toHaveClass(/border-red-500/)
+    // Flagged before any commit: the live same-name check sets the input's invalid state
+    // (red border + aria-invalid), not a post-hoc error.
+    await expect(input).toHaveAttribute('aria-invalid', 'true')
     await input.press('Enter')
     // Refused: the row stays open and nothing lands on disk.
     await expect(page.getByTestId('file-create-row')).toBeVisible()
@@ -938,7 +1026,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await page.getByTestId('side-bg-new-folder').click()
     const input = page.getByTestId('folder-create-row').locator('input')
     await input.fill('sub')
-    await expect(input).toHaveClass(/border-red-500/)
+    await expect(input).toHaveAttribute('aria-invalid', 'true')
     await input.press('Enter')
     await expect(page.getByTestId('folder-create-row')).toBeVisible()
     await page.waitForTimeout(500)
@@ -963,7 +1051,7 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await page.getByTestId('side-bg-new-folder').click()
     const input = page.getByTestId('folder-create-row').locator('input')
     await input.fill('a/b')
-    await expect(input).toHaveClass(/border-red-500/)
+    await expect(input).toHaveAttribute('aria-invalid', 'true')
     await input.press('Enter')
     await expect(page.getByTestId('folder-create-row')).toBeVisible()
     await page.waitForTimeout(500)

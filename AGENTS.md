@@ -21,6 +21,11 @@ Single-context: one `CONTEXT.md` at the root plus `docs/adr/`. See `docs/agents/
 Path-shape and filesystem rules that keep the unit suite deterministic across Windows and Linux
 CI. See `docs/agents/testing.md`.
 
+### UI control reuse
+
+Check `src/renderer/src/components/ui/` before writing any new input, toggle, button, or menu.
+See `docs/agents/ui-control-reuse.md` (normative version: ADR-0024 §4).
+
 ## Language convention
 
 Source code, comments, commit messages, test code, and test fixtures (e2e fixtures under

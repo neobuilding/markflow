@@ -4,3 +4,4 @@ release
 coverage
 *.min.css
 *.local
+playwright-report

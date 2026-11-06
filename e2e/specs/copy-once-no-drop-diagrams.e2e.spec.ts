@@ -21,8 +21,17 @@
 // itself proof the retry ran. The deterministic guarantee for the mechanism lives in the unit tests
 // (`previewCopy.test.ts` → "cold-cache copy retry"); this spec is the end-to-end user-facing guard
 // that a single copy never leaves the clipboard short.
-import { test, expect, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { test } from '../helpers/fixtures'
+import {
+  readClipboardHtml,
+  snapshotClipboard,
+  restoreClipboard,
+  clipboardSkipMessage,
+  CLIPBOARD_SPEC_SKIP_REASON,
+  type ClipboardSnapshot,
+} from '../helpers/clipboard'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
@@ -31,11 +40,22 @@ test.describe('preview: a single copy lands every diagram (no copy-once drop)', 
   let handle: AppHandle
   let scratch: string
 
-  test.beforeEach(async () => {
+  // This spec proves a single copy lands everything, so it must write the REAL clipboard — and
+  // must therefore put the user's own content back afterwards. It stands down outside the
+  // `e2e-clipboard` project (see helpers/clipboard).
+  let snap: ClipboardSnapshot | undefined
+
+  test.beforeEach(async ({ clipboardE2e }) => {
+    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
+    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
     handle = await launchApp()
     scratch = mkTempDir('markflow-copy-once-')
+    snap = await snapshotClipboard(handle)
   })
   test.afterEach(async () => {
+    // The gate above aborts before the app is launched, so there is nothing to put back.
+    if (!handle) return
+    await restoreClipboard(handle, snap)
     await closeApp(handle)
   })
 
@@ -58,7 +78,9 @@ test.describe('preview: a single copy lands every diagram (no copy-once drop)', 
   }
 
   test('Ctrl+A + Ctrl+C pressed ONCE lands all 4 diagrams as PNGs', async () => {
-    const { page, electronApp } = handle
+    // Never overwrite a clipboard we cannot put back.
+    test.skip(!snap?.restorable, clipboardSkipMessage(snap))
+    const { page } = handle
     await waitForAppReady(page)
     // The demo fixture is a self-contained English copy of examples/demo.en.md with 4 mermaid
     // diagrams (flowchart / sequence / gantt / pie): e2e/fixtures/preview-render-pipeline/diagrams.md.
@@ -72,14 +94,7 @@ test.describe('preview: a single copy lands every diagram (no copy-once drop)', 
     const article = page.locator('.markdown-preview')
     await expect(article).toBeVisible()
 
-    const readClip = async (): Promise<string> =>
-      electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items[0]
-        if (!item || !item.types.includes('text/html')) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
+    const readClip = (): Promise<string> => readClipboardHtml(handle)
 
     // The real user flow: focus the preview, select-all, copy — EXACTLY ONCE. No poll/retry; this
     // single action is what used to come out short.

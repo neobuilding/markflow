@@ -929,17 +929,9 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
     expect(useUIStore.getState().exportOpen).toBe(true)
   })
 
-  it('toggles the sidebar open via the toolbar button when it is closed', async () => {
-    const user = userEvent.setup()
-    useUIStore.getState().setSidebarOpen(false)
-    mount()
-    await openDoc()
-    await flush()
-
-    await user.click(screen.getByTestId('sidebar-toggle-btn'))
-    await flush()
-    expect(useUIStore.getState().sidebarOpen).toBe(true)
-  })
+  // The global-bar sidebar toggle BUTTON was removed in Q2a; the sidebar is now toggled via the
+  // ActivityBar right-click menu, the native View menu, and the ⌘\ handlers. That path is covered by
+  // the e2e sidebar-shortcuts spec, so this button-specific test is dropped.
 })
 
 describe('EditorPane — split-view drag', () => {

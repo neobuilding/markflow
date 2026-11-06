@@ -8,8 +8,17 @@
 // and it fails SILENTLY — an `<img>` that cannot parse the SVG just fires `onerror` and nothing is
 // copied (the same failure class as the `blob:` CSP bug, F14). The unit tests cover the assembly;
 // only a real browser can prove a bitmap comes out.
-import { test, expect, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { test } from '../helpers/fixtures'
+import {
+  clearClipboard,
+  snapshotClipboard,
+  restoreClipboard,
+  clipboardSkipMessage,
+  CLIPBOARD_SPEC_SKIP_REASON,
+  type ClipboardSnapshot,
+} from '../helpers/clipboard'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
@@ -22,11 +31,23 @@ test.describe('copy a formula as an image (ADR 0020)', () => {
   let handle: AppHandle
   let scratch: string
 
-  test.beforeEach(async () => {
+  // All three tests copy to the REAL system clipboard; preserve the user's content around them and
+  // stand down entirely when it cannot be restored. The whole file also stands down outside the
+  // `e2e-clipboard` project (see helpers/clipboard).
+  let snap: ClipboardSnapshot | undefined
+
+  test.beforeEach(async ({ clipboardE2e }) => {
+    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
+    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
     handle = await launchApp()
     scratch = mkTempDir('markflow-formula-')
+    snap = await snapshotClipboard(handle)
+    test.skip(!snap.restorable, clipboardSkipMessage(snap))
   })
   test.afterEach(async () => {
+    // The gate above aborts before the app is launched, so there is nothing to put back.
+    if (!handle) return
+    await restoreClipboard(handle, snap)
     await closeApp(handle)
   })
 
@@ -47,7 +68,8 @@ test.describe('copy a formula as an image (ADR 0020)', () => {
     await expect(page.locator('.markdown-preview')).toBeVisible()
   }
 
-  const clearClipboard = () => handle.electronApp.evaluate(({ clipboard }) => clipboard.clear())
+  // Shared helper: the OS clipboard is contended by host clipboard managers (see helpers/clipboard).
+  const clear = (): Promise<void> => clearClipboard(handle)
 
   // Read the bitmap back out of the REAL system clipboard (main process), plus an "ink" count:
   // an all-white bitmap — fonts or CSS missing — is exactly how this feature fails silently.
@@ -88,7 +110,7 @@ test.describe('copy a formula as an image (ADR 0020)', () => {
     const formula = page.locator('.markdown-preview .katex').first()
     await expect(formula).toBeVisible({ timeout: 30_000 })
 
-    await clearClipboard()
+    await clear()
     // A real right-click lands on the <p> for an inline formula (Playwright's hit test reports
     // "p intercepts pointer events"), so dispatch the contextmenu event on the formula itself —
     // same event, same React handler, same coordinates.
@@ -145,7 +167,7 @@ test.describe('copy a formula as an image (ADR 0020)', () => {
     const display = page.locator('.markdown-preview .katex-display')
     await expect(display).toBeVisible({ timeout: 30_000 })
 
-    await clearClipboard()
+    await clear()
     await display.click({ button: 'right' })
     const item = page.getByTestId('preview-copy-formula-image')
     await expect(item).toBeVisible()

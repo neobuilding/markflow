@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { VIEWPORTS } from '../helpers/viewports'
 
 // Editor find/replace is now powered by MarkFlow's shared FindWidget (top-anchored, VS Code
 // style) instead of CodeMirror's native panel. The entry points (`Ctrl/Cmd+H` and the toolbar
@@ -44,12 +45,17 @@ test.describe('find and replace', () => {
     // event, which silently stole the key from the editor's replace panel (the Search view
     // opened instead, and the editor's panel never appeared).
     await expect(page.getByTestId('resident-search-input')).toBeHidden()
-    await expect(page.getByTestId('sidebar-view-search')).toHaveAttribute('aria-selected', 'false')
+    await expect(page.getByTestId('activity-bar-search')).toHaveAttribute('aria-selected', 'false')
   })
 
   test('the toolbar replace button opens the same panel', async () => {
     const { page } = handle
     await waitForAppReady(page)
+    // The replace BUTTON is inline only in the expanded pane bar; in the default environment the
+    // column is narrow enough that the low-priority commands have moved into the "…" overflow
+    // (Q3) — a CONDITIONAL trigger, present only while something cannot be shown inline. The
+    // `wide` environment expands the bar, so the button under test really is the toolbar button.
+    await page.setViewportSize(VIEWPORTS.wide)
     await createDocAndType(page, 'hello world')
 
     await page.getByTestId('editor-replace-btn').click()
@@ -61,6 +67,8 @@ test.describe('find and replace', () => {
   test('Replace swaps the matched text in the document', async () => {
     const { page } = handle
     await waitForAppReady(page)
+    // Same reason as above: the replace button must be an inline button, not an overflow entry.
+    await page.setViewportSize(VIEWPORTS.wide)
     await createDocAndType(page, 'hello world')
 
     await page.getByTestId('editor-replace-btn').click()
@@ -273,7 +281,7 @@ test.describe('find and replace', () => {
     await expect(page.getByTestId('search-input')).toBeVisible()
   })
 
-  test('the preview find button floats over the content instead of being clipped', async () => {
+  test('the preview find button stays reachable at the top of the pane instead of being clipped', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await createDocAndType(page, 'hello world')
@@ -287,6 +295,9 @@ test.describe('find and replace', () => {
     // parent, the button was laid out BELOW the visible area and clipped away — the pane had no
     // reachable search button at all. `click()` never caught it because a clipped element still
     // has a bounding box, so only geometry does: the button must sit near the TOP of the pane.
+    //
+    // C20 moved the button from the floating widget into the preview pane bar (ADR-0025 §5 P2.2),
+    // so the bar is now its host — and the same "reachable, not clipped" guarantee must hold.
     const geometry = await button.evaluate((el) => {
       const host = el.parentElement
       const own = el.getBoundingClientRect()
