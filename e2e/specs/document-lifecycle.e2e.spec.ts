@@ -232,6 +232,49 @@ test.describe('document lifecycle', () => {
     )
   })
 
+  // Companion to the single-keystroke Q14 lock: selector-scoped store subscriptions are a
+  // performance fix, so they must NOT change the per-keystroke registry contract. Content search
+  // and cross-file replace read this registry at call time; coalescing the writes into the 400ms
+  // preview debounce would make them read stale text (see ADR-0033 Consequences).
+  test('consecutive keystrokes keep the unsaved buffer registry in lockstep', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createViaButton(page)
+    await page.locator('.cm-content').click()
+
+    const before = await page.evaluate(
+      () => (window as any).__uiStore.getState().documentStateRevision as number,
+    )
+    const typed = 'SELECTOR-LOCK-42'
+    await page.keyboard.type(typed)
+
+    // Read IMMEDIATELY — no debounce wait, exactly like the Q14 case above.
+    const after = await page.evaluate(() => {
+      const s = (window as any).__uiStore.getState()
+      return {
+        revision: s.documentStateRevision as number,
+        dirty: s.dirty as boolean,
+        reported: (s.unsavedBuffers[s.activeDocumentId]?.content ?? null) as string | null,
+      }
+    })
+
+    expect(after.dirty).toBe(true)
+    expect(after.reported, 'content search must see the full typed text at once').toContain(typed)
+    expect(
+      after.revision - before,
+      'one registry write per keystroke, not one coalesced write',
+    ).toBeGreaterThanOrEqual(typed.length)
+
+    // Actions are read through getState() rather than subscribed (Vercel rerender-defer-reads),
+    // while the view-mode UI still depends on a field-scoped selector. Driving both through the
+    // real UI proves the action reference survived the registry writes AND the selector still
+    // re-renders the control.
+    await page.getByTestId('view-preview').click()
+    await expect(page.getByTestId('view-preview')).toHaveAttribute('aria-checked', 'true')
+    await page.getByTestId('view-split').click()
+    await expect(page.getByTestId('view-split')).toHaveAttribute('aria-checked', 'true')
+  })
+
   test('switching inside the debounce window still prompts instead of discarding silently', async () => {
     const { page } = handle
     await waitForAppReady(page)

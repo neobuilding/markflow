@@ -279,24 +279,27 @@ function ActivityBar({
 }
 
 export function Sidebar(): React.ReactElement | null {
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen)
+  const activeDocumentId = useUIStore((s) => s.activeDocumentId)
+  const sidebarView = useUIStore((s) => s.sidebarView)
+  const activeFolder = useUIStore((s) => s.activeFolder)
+  const showAllFolders = useUIStore((s) => s.showAllFolders)
+  const recentlyCreatedFolders = useUIStore((s) => s.recentlyCreatedFolders)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
   const {
-    sidebarOpen,
     toggleSidebar,
-    activeDocumentId,
     setActiveDocumentId,
     selectDocument,
-    sidebarView,
     setSidebarView,
-    activeFolder,
     setActiveFolder,
     closeWorkspace,
-    showAllFolders,
     setShowAllFolders,
     toggleShowAllFolders,
-    recentlyCreatedFolders,
     markFolderCreated,
     clearCreatedFolder,
-  } = useUIStore()
+  } = useUIStore.getState()
   const { t } = useT()
   // Total sidebar width = activity bar (48px) + content panel. The 48px column is new (R4), so
   // the default grows 240 → 288 and the floor 180 → 240 to keep the content panel at 240/192.

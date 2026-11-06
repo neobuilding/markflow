@@ -8,14 +8,12 @@ import { SearchResultList } from './SearchResults'
 import { hasModalSurface } from '../../lib/shortcut-scope'
 
 export function CommandPalette(): React.ReactElement | null {
-  const {
-    searchOpen,
-    setSearchOpen,
-    setSearchQuery,
-    searchQuery,
-    selectDocument,
-    setFileDetailsId,
-  } = useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const searchOpen = useUIStore((s) => s.searchOpen)
+  const searchQuery = useUIStore((s) => s.searchQuery)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setSearchOpen, setSearchQuery, selectDocument, setFileDetailsId } = useUIStore.getState()
   const { data, isFetching } = useQuickOpen()
   // Memoised: a fresh `[]` on every render would make the effect below re-run (and reset the
   // highlighted row) even when the results have not changed.

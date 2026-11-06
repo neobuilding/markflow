@@ -11,8 +11,11 @@ import { InputContextMenu } from '../ui/input-context-menu'
 
 export function NewDocumentDialog(): React.ReactElement {
   const { t } = useT()
-  const { newDocOpen, setNewDocOpen, setActiveDocumentId, setEditable, setIsNewUnsaved } =
-    useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const newDocOpen = useUIStore((s) => s.newDocOpen)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setNewDocOpen, setActiveDocumentId, setEditable, setIsNewUnsaved } = useUIStore.getState()
   const [title, setTitle] = useState('')
   // Ref for the right-click edit menu
   const titleRef = useRef<HTMLInputElement>(null)

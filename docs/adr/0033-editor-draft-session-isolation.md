@@ -81,6 +81,31 @@ argument.
   keystroke flips React/store `dirty`; later ones just refresh the registry content.
 - Consumers that need current text must read the authoritative ref; reading `localContent` is
   correct only for rendering the preview.
+- **Registry writes are per keystroke, so every React subscriber must be field-scoped.** A bare
+  `useUIStore()` uses zustand's identity selector and re-renders on each of those writes; five such
+  subscribers re-rendered the app shell, editor pane and sidebar once per character, costing
+  ~340ms per 24-character input on a 952-block document and turning the CI perf gate red
+  (2026-11-06). Selector-scoped subscriptions keep this decision intact while making the writes
+  invisible to unrelated components. `e2e/guards/ui-store-selectors.test.ts` pins the constraint
+  and `src/renderer/src/store/ui.test.tsx` locks the behaviour.
+- **The registry deliberately stays in the reactive store.** React performance guidance
+  (`rerender-use-ref-transient-values`) would move such high-frequency writes into a ref. That is
+  rejected here: content search (`useSearch.ts:75`) and replace (`SidebarSearch.tsx:163`) read
+  `unsavedBuffers` synchronously at call time, and `replace.ts` cancels an apply whose
+  `documentStateRevision` no longer matches, so a debounced or coalesced publication can silently
+  lose an edit. Any future migration to a non-reactive store MUST move those two read points and
+  the three keystroke-frame locks (`useLocalDocument.test.tsx`, `document-lifecycle.e2e.spec.ts`)
+  in the same change.
+- **Only observable UI values are subscribed.** Actions are stable references created once by the
+  store initializer, so components read them through `useUIStore.getState()` instead of
+  subscribing (`rerender-defer-reads`). Object-literal selectors are forbidden without
+  `useShallow` because React 19 compares snapshots with `Object.is`; derived non-primitive props
+  such as `selectionOffset` are memoised so the editor's sync effect is not re-run by unrelated
+  renders (`rerender-dependencies`). Both are pinned by
+  `e2e/guards/ui-store-selectors.test.ts`.
+- **Follow-up, not in this change:** `EditorPane` is not memoised, so a re-render still cascades
+  into `MarkdownEditor` / `MarkdownPreview`. React Compiler is NOT enabled in this repo, so
+  extracting those into `memo()` children remains a valid later optimisation (`rerender-memo`).
 
 ## Verification
 

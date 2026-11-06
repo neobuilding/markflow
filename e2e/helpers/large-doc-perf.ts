@@ -65,6 +65,9 @@ export interface LargeDocMetrics {
   firstMermaidMs: number
   /** Activation -> every local image decoded. */
   localImagesMs: number
+  /** First -> last `beforeinput` during the typing burst (key dispatch cost). Recorded, never
+   *  gated: it separates "slow key dispatch" from "slow render" on a future red run. */
+  inputDispatchMs: number
   /** Editor input -> the new block is visible in the preview (D-D / D-E cost). */
   typeToPreviewMs: number
   /** Single keystroke -> the inserted text is visible in the preview (per-keystroke proxy). */
@@ -139,6 +142,35 @@ export async function collectLoadProbe(page: Page): Promise<{
         cls: [],
       },
   )
+}
+
+/**
+ * Passive probe for the typing burst: records the first and last `beforeinput` so the input
+ * window can be split into "CDP key dispatch" and "post-input render". It observes only; the
+ * numbers are RECORDED, never asserted against a threshold (wall-clock gates stay in the spec).
+ */
+export async function installInputDispatchProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as any
+    const d = { first: 0, last: 0 }
+    w.__inputDispatch = d
+    document.querySelector('.cm-content')?.addEventListener(
+      'beforeinput',
+      () => {
+        if (d.first === 0) d.first = performance.now()
+        d.last = performance.now()
+      },
+      true,
+    )
+  })
+}
+
+/** Span (ms) between the first and last `beforeinput`; 0 when the burst fired no events. */
+export async function collectInputDispatchMs(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const d = (window as any).__inputDispatch as { first: number; last: number } | undefined
+    return d && d.last > d.first ? d.last - d.first : 0
+  })
 }
 
 /** Count the structural landmarks that prove the real document rendered. */
@@ -281,6 +313,7 @@ export function baselineDelta(current: LargeDocMetrics, baseline: LargeDocMetric
     'firstContentMs',
     'firstMermaidMs',
     'localImagesMs',
+    'inputDispatchMs',
     'typeToPreviewMs',
     'typeCharToPreviewMs',
     'cls',

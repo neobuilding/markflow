@@ -22,8 +22,12 @@ import { t, useT, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
 
 export default function App(): React.ReactElement {
-  const { setNewDocOpen, toggleSidebar, theme, closeWorkspace, setPrinting, printing } =
-    useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const theme = useUIStore((s) => s.theme)
+  const printing = useUIStore((s) => s.printing)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setNewDocOpen, toggleSidebar, closeWorkspace, setPrinting } = useUIStore.getState()
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
   const { t: rt } = useT()

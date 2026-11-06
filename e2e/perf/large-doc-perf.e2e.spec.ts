@@ -52,6 +52,8 @@ import {
   LARGE_DOC_NAME,
   installLoadProbe,
   collectLoadProbe,
+  installInputDispatchProbe,
+  collectInputDispatchMs,
   countStructure,
   waitForLocalImages,
   readMainMemory,
@@ -78,9 +80,15 @@ import {
 //
 // Every threshold sits comfortably above the slowest measured run AND well below the
 // pre-Phase-03 value, so a regression to the old behaviour fails loudly while run-to-run
-// noise does not. NOTE: this project (e2e-perf-diag) is on-demand, NOT the CI gate
-// (e2e-perf-gate is the CI gate), so these thresholds guard hand-run
-// regressions; promote to CI only after the numbers are shown stable on the runner.
+// noise does not. This spec runs in BOTH projects, including the CI gate `e2e-perf-gate`.
+//
+// KNOWN LIMITATION: these numbers were measured on a dev box, not on the 2-core CI runner that
+// runs the gate. Wall-clock timings there are systematically higher (the 2026-11-06 CI failure
+// measured 2006-2128ms for typeToPreviewMs). The threshold is deliberately NOT relaxed for the
+// runner: ADR-0027 forbids compensating for machine speed, and the fix belongs in the code —
+// that failure came from per-keystroke full-tree re-renders (see ADR-0033 Consequences), not
+// from a slower parse. `inputDispatchMs` is recorded, never gated, so a future red run can be
+// attributed to key dispatch vs the render pipeline without re-instrumenting the app.
 //
 // Override for ad-hoc runs, e.g.
 //   PERF_MAX_CLS=0.2 npx playwright test --project=e2e-perf-diag large-doc-perf
@@ -153,12 +161,16 @@ test.describe('large document preview performance (diagnostic)', () => {
       const marker = `PERF_PROBE_${Date.now()}`
       await page.locator('.cm-content').click()
       await page.keyboard.press('Control+End')
+      // Passive: split the input window into CDP key dispatch vs post-input render. RECORDED only,
+      // never asserted — the wall-clock gates live at the bottom of this spec.
+      await installInputDispatchProbe(page)
       const tType = Date.now()
       await page.keyboard.type(`\n\n${marker}\n`)
       await expect(page.locator('article.markdown-preview p', { hasText: marker })).toHaveCount(1, {
         timeout: 60_000,
       })
       const typeToPreviewMs = Date.now() - tType
+      const inputDispatchMs = await collectInputDispatchMs(page)
 
       // ── per-keystroke latency: a single insert on the big doc. The dominant cost is
       //    the re-parse + re-render, so this is what the user waits per keystroke. ──
@@ -188,6 +200,7 @@ test.describe('large document preview performance (diagnostic)', () => {
         firstContentMs,
         firstMermaidMs,
         localImagesMs,
+        inputDispatchMs,
         typeToPreviewMs,
         typeCharToPreviewMs,
         cls: probe.cls.reduce((s, v) => s + v, 0),
@@ -216,6 +229,9 @@ test.describe('large document preview performance (diagnostic)', () => {
       console.log(`  firstMermaidMs : ${metrics.firstMermaidMs.toFixed(0)}   [D-E]`)
       console.log(`  localImagesMs  : ${metrics.localImagesMs.toFixed(0)}`)
       console.log('--- input latency ---')
+      console.log(
+        `  inputDispatchMs : ${metrics.inputDispatchMs.toFixed(0)}   [key dispatch, recorded only]`,
+      )
       console.log(`  typeToPreviewMs: ${metrics.typeToPreviewMs.toFixed(0)}   [D-D / D-E]`)
       console.log(
         `  typeCharToPreviewMs: ${metrics.typeCharToPreviewMs.toFixed(0)}   [per-keystroke proxy]`,
@@ -254,7 +270,8 @@ test.describe('large document preview performance (diagnostic)', () => {
 
       // ── gate (calibration above) ──
       // Asserted AFTER the report + artifacts are persisted, so a failing run still leaves
-      // its numbers on disk to diff against. Each threshold targets one Phase-03 candidate:
+      // its numbers on disk to diff against. Each threshold targets one Phase-03 candidate.
+      // inputDispatchMs is intentionally absent: it is a recorded diagnostic, not a gate.
       console.log('--- thresholds ---')
       console.log(`  firstContentMs      ${firstContentMs}   < ${MAX_FIRST_CONTENT_MS}`)
       console.log(`  typeToPreviewMs     ${typeToPreviewMs}   < ${MAX_TYPE_TO_PREVIEW_MS}`)
@@ -270,11 +287,11 @@ test.describe('large document preview performance (diagnostic)', () => {
       ).toBeLessThan(MAX_FIRST_CONTENT_MS)
       expect(
         typeToPreviewMs,
-        'input -> updated preview on a 952-block doc (D-E cache regression?)',
+        'input -> updated preview on a 952-block doc (per-keystroke re-render regression?)',
       ).toBeLessThan(MAX_TYPE_TO_PREVIEW_MS)
       expect(
         typeCharToPreviewMs,
-        'one keystroke -> visible in preview (D-E cache regression?)',
+        'one keystroke -> visible in preview (render pipeline regression?)',
       ).toBeLessThan(MAX_TYPE_CHAR_MS)
       // D-E: lazy render must keep off-screen diagrams UNBAKED. A value near mermaidSlots
       // means every diagram baked again — exactly the cost D-E① removed.

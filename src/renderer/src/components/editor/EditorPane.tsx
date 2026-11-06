@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react'
+import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import {
   Edit3,
   Eye,
@@ -88,15 +88,14 @@ function findTargetPane(
 const VIEW_MODE_ORDER: ViewMode[] = ['edit', 'split', 'preview']
 
 export function EditorPane(): React.ReactElement {
-  const {
-    activeDocumentId,
-    viewMode,
-    setViewMode,
-    editable,
-    closeDocument,
-    externalChange,
-    clearExternalChange,
-  } = useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const activeDocumentId = useUIStore((s) => s.activeDocumentId)
+  const viewMode = useUIStore((s) => s.viewMode)
+  const editable = useUIStore((s) => s.editable)
+  const externalChange = useUIStore((s) => s.externalChange)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setViewMode, closeDocument, clearExternalChange } = useUIStore.getState()
   const { t } = useT()
   // Radio-group plumbing for the view-mode control: the refs let the arrow handler move DOM focus
   // to the radio it just selected (the roving tabindex alone moves the *tab stop*, not the focus).
@@ -126,7 +125,13 @@ export function EditorPane(): React.ReactElement {
   // content has loaded, then calls back to clear it.
   const pendingMatch = useUIStore((s) => s.pendingMatch)
   const consumeMatch = useCallback(() => useUIStore.getState().setPendingMatch(null), [])
-  const selectionOffset = pendingMatch ? { from: pendingMatch.start, to: pendingMatch.end } : null
+  // Stable across unrelated renders: this object feeds MarkdownEditor's sync effect, whose
+  // full-document re-dispatch would otherwise run on every render while a jump is pending
+  // (Vercel rerender-dependencies / rerender-memo-with-default-value).
+  const selectionOffset = useMemo(
+    () => (pendingMatch ? { from: pendingMatch.start, to: pendingMatch.end } : null),
+    [pendingMatch],
+  )
   const previewContentRef = useRef<HTMLDivElement>(null)
   // Which pane the user last interacted with. The preview is a non-focusable <div>, so focus
   // cannot identify the active pane; this ref (fed by each pane's onPointerDown) is what routes
