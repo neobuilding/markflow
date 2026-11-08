@@ -3,7 +3,7 @@
 // it from 10px — a GLOBAL change (every `text-2xs` consumer moved by 1px), which is exactly the
 // kind of change that needs a regression guard rather than a screenshot.
 //
-// This spec is the automated stand-in for C13's "逐点截图" deliverable: it walks the rendered UI
+// This spec is the automated stand-in for C13's screenshot-by-screenshot deliverable: it walks the rendered UI
 // and fails if ANY visible text renders below the floor. A screenshot proves one moment; this
 // proves every element, in the app's real cascade, forever.
 //

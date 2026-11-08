@@ -25,16 +25,12 @@
 //   6. The perf gate runs in its OWN playwright invocation. `workers: 1` only caps concurrency
 //      WITHIN a project: Playwright schedules the projects of one invocation concurrently, so a
 //      gate sharing an invocation with e2e-app is timed on a loaded machine.
+// Contract guard, not a behaviour test: these assertions lock repository conventions (which
+// projects may write the real clipboard, how CI is orchestrated) rather than application logic.
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { availableParallelism } from 'node:os'
 import config from '../../playwright.config'
-
-// The repo root, derived from THIS file's location (the same convention as e2e/helpers/launch.ts
-// and the other guards), so the guard reads the same sources no matter where the run started.
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const repoSource = (relPath: string): string => readFileSync(join(ROOT, relPath), 'utf-8')
+import { e2eFullInvocations, playwrightCommandsIn, repoSource } from './repo'
 
 const projects = config.projects ?? []
 const projectOf = (name: string) => projects.find((p) => p.name === name)
@@ -49,12 +45,8 @@ const PARALLEL_PROJECT = 'e2e-app'
  * The workflow's Playwright invocations, with comment lines dropped: a commented-out command must
  * not count as "the workflow runs this project".
  */
-function workflowPlaywrightLines(): string[] {
-  return repoSource('.github/workflows/ci.yml')
-    .split('\n')
-    .filter((line) => !line.trimStart().startsWith('#'))
-    .filter((line) => line.includes('playwright test'))
-}
+const workflowPlaywrightLines = (): string[] =>
+  playwrightCommandsIn(repoSource('.github/workflows/ci.yml'))
 
 /** The project names a Playwright command selects. */
 function projectsIn(command: string): string[] {
@@ -74,19 +66,38 @@ describe('the e2e parallelism contract', () => {
     expect(projectOf(PARALLEL_PROJECT)?.workers).toBeUndefined()
   })
 
-  it('keeps the global budget a sane number', () => {
-    expect(typeof config.workers).toBe('number')
-    expect(config.workers as number).toBeGreaterThanOrEqual(1)
+  it('derives the global budget from the machine instead of hardcoding it', () => {
+    // `workers: 1` at the top level is the pre-ADR-0027 state: a serial suite that still PASSES,
+    // so nobody notices until the wall clock is measured again. These are RELATIONS with an oracle
+    // outside the config — this host's real parallelism and ADR-0027's intent — not a restatement
+    // of the formula. The previous `toBe(Math.max(1, min(n, 8) - 2))` expectation moved in
+    // lockstep with the config, so it could never catch a wrong formula; it also cited ADR-0027
+    // for `-2` while that decision records `-1` (clarified 2026-11-08).
+    const n = availableParallelism()
+    expect(config.workers, 'ADR-0027: the budget must be a positive count').toBeGreaterThanOrEqual(
+      1,
+    )
+    expect(
+      config.workers,
+      "ADR-0027: the budget must not exceed this host's available parallelism",
+    ).toBeLessThanOrEqual(n)
+    // A hardcoded `workers: 1` is indistinguishable from a computed budget on a 2-core CI runner,
+    // so call the many-core case out directly.
+    if (n > 3) {
+      expect(
+        config.workers,
+        'ADR-0027: a many-core host must not stay serial — do not hardcode workers: 1',
+      ).toBeGreaterThan(1)
+    }
   })
 
-  it('derives the global budget from the machine instead of hardcoding it', () => {
-    // `workers: 1` at the top level is the pre-ADR-0027 state: a serial suite that still passes,
-    // so the regression would be invisible until someone measured the wall clock again.
-    const source = repoSource('playwright.config.ts')
-    expect(source).toMatch(/^ {2}workers:\s*Math\./m)
-    // `availableParallelism()` honours the cgroup CPU quota / affinity mask; `cpus().length`
-    // reports the HOST's cores and over-subscribes a limited runner.
-    expect(source).toContain('availableParallelism()')
+  it('ignores commented-out Playwright commands in the workflow', () => {
+    const fakeWorkflow = [
+      '# npx playwright test --project=e2e-app --grep one-spec',
+      'npx playwright test --project=e2e-app',
+      '   # npx playwright test --project=e2e-perf-diag',
+    ].join('\n')
+    expect(playwrightCommandsIn(fakeWorkflow)).toEqual([fakeWorkflow.split('\n')[1]])
   })
 
   it('keeps tests inside a file serial, and parallelises across files', () => {
@@ -102,9 +113,29 @@ describe('the e2e parallelism contract', () => {
     expect(offenders).toEqual([])
   })
 
+  it('caps the retry budget at one and keeps the timing diagnostic retry-free', () => {
+    // ADR-0034's "Invariants that must not change" lists "all `retries` settings", and nothing
+    // guarded them. Both ways they go wrong are silent: raising the budget turns a genuine
+    // regression into a flake that passes on the second attempt, and a project that overrides the
+    // budget locally hides the change from every other check.
+    expect(
+      config.retries,
+      'ADR-0034: more than one retry masks a genuine failure as a flake',
+    ).toBeLessThanOrEqual(1)
+    for (const project of projects) {
+      if (project.name === 'e2e-perf-diag') {
+        expect(project.retries, 'the timing diagnostic must never retry').toBe(0)
+      } else {
+        expect(
+          project.retries,
+          `${project.name} must inherit the global retry budget instead of overriding it`,
+        ).toBeUndefined()
+      }
+    }
+  })
+
   it('runs exactly the projects npm run e2e:full runs', () => {
-    const pkg = JSON.parse(repoSource('package.json')) as { scripts: Record<string, string> }
-    const inScript = projectsIn(pkg.scripts['e2e:full'] ?? '')
+    const inScript = e2eFullInvocations().flatMap(projectsIn)
     const inWorkflow = [...new Set(workflowPlaywrightLines().flatMap(projectsIn))].sort()
     expect(inWorkflow).toEqual([...new Set(inScript)].sort())
   })
@@ -120,12 +151,7 @@ describe('the e2e parallelism contract', () => {
     // The threshold must NOT be relaxed to compensate — the app is ~3x faster than the frozen
     // 2644ms baseline — and nothing in a failing test would point at the cause, so the
     // isolation is pinned here.
-    const pkg = JSON.parse(repoSource('package.json')) as { scripts: Record<string, string> }
-    const invocations = (pkg.scripts['e2e:full'] ?? '')
-      .split('&&')
-      .map((command) => command.trim())
-      .filter(Boolean)
-    const perfInvocations = invocations.filter((command) =>
+    const perfInvocations = e2eFullInvocations().filter((command) =>
       projectsIn(command).includes('e2e-perf-gate'),
     )
     expect(perfInvocations).toHaveLength(1)
@@ -144,8 +170,7 @@ describe('the e2e parallelism contract', () => {
   it('keeps the diagnostic perf project out of CI and out of e2e:full', () => {
     // e2e-perf-diag is the on-demand twin of e2e-perf-gate: no thresholds, slow by design. It is
     // run by hand (`npm run e2e:perf-diag`), never by the suite CI runs.
-    const pkg = JSON.parse(repoSource('package.json')) as { scripts: Record<string, string> }
-    const inScript = projectsIn(pkg.scripts['e2e:full'] ?? '')
+    const inScript = e2eFullInvocations().flatMap(projectsIn)
     const inWorkflow = workflowPlaywrightLines().flatMap(projectsIn)
     for (const name of ['e2e-perf-diag']) {
       expect(inScript).not.toContain(name)

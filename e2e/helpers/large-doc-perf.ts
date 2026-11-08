@@ -1,6 +1,6 @@
 // e2e/helpers/large-doc-perf.ts
 // Measurement primitives for the LARGE-DOCUMENT preview performance diagnostic
-// (e2e/perf/large-doc-perf.e2e.spec.ts).
+// (e2e/perf-gate/large-doc-perf.e2e.spec.ts).
 //
 // Why this is separate from perf-fixture.ts: that helper measures the "open a
 // folder then switch files" chokidar scenario (many small docs). This one measures
@@ -33,11 +33,11 @@ export const LARGE_DOC_NAME = 'demo-large.en.md'
 export const RESULTS_DIR = join(PROJECT_ROOT, 'reports', 'perf')
 
 /**
- * Optional committed baseline. It does NOT exist until someone decides the numbers
- * are stable enough to freeze (run with PERF_UPDATE_BASELINE=1 to write it).
- * Until then the diagnostic only records + prints.
+ * The committed baseline the gate compares against (frozen 2026-09-20), so a run can report the
+ * delta against a known-good build. It exists — re-freeze it with PERF_UPDATE_BASELINE=1 after an
+ * intentional change; until then the numbers are the reference.
  */
-export const BASELINE_PATH = join(PROJECT_ROOT, 'e2e', 'perf', 'baselines', 'large-doc.json')
+export const BASELINE_PATH = join(PROJECT_ROOT, 'e2e', 'perf-baselines', 'large-doc.json')
 
 export interface LargeDocMetrics {
   // ── structure actually rendered (guards against a vacuous perf run) ──

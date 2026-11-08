@@ -14,10 +14,8 @@
 // behavioural counterpart (a selector-scoped hook does not re-render on a registry write).
 import { describe, it, expect } from 'vitest'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+import { join } from 'node:path'
+import { ROOT } from './repo'
 const RENDERER_SRC = join(ROOT, 'src', 'renderer', 'src')
 
 /** Every renderer source file, recursively. Test files are included: they must follow the rule too. */

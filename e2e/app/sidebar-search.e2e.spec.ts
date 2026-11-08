@@ -253,7 +253,7 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     await expect(page.getByTestId('search-match')).toHaveCount(0)
   })
 
-  // §13.4 / D35: ICU ships a dictionary for Han, so 中文 IS one word segment — whole-word
+  // §13.4 / D35: ICU ships a dictionary for Han, so a Chinese word IS one word segment — whole-word
   // matching must work for Chinese, the exact bug the naive `\w`/`\p{L}` approaches get wrong.
   test('whole-word mode matches Chinese on UAX #29 boundaries (D35)', async () => {
     const { page } = handle
@@ -263,7 +263,7 @@ test.describe('sidebar Search view (ADR-0023)', () => {
 
     await openSearchView(page)
     await page.getByTestId('search-advanced-toggles-ab').click()
-    // Both occurrences of 中文 are standalone word segments.
+    // Both occurrences of the Chinese word are standalone word segments.
     await page.getByTestId('resident-search-input').pressSequentially('中文')
     await expect(page.getByTestId('search-match')).toHaveCount(2)
   })

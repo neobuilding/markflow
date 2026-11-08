@@ -1,3 +1,6 @@
+// Contract guard, not a behaviour test: these assertions lock repository conventions (which
+// project may write the real clipboard, how specs obtain the app) rather than application logic.
+//
 // Guard test: the clipboard specs and the Playwright project that runs them must not drift apart.
 //
 // The failure this prevents is quiet and expensive: a spec that writes the REAL system clipboard
@@ -7,52 +10,58 @@
 // clipboard) only wastes CI minutes.
 //
 // These checks are about the CONFIG, not about the clipboard: which specs the project claims,
-// that each of them gates itself, and that no other project may set the option.
+// that each of them goes through the shared fixture that owns the destructive gate, and that no
+// other project may set the option.
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { existsSync, readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 import config from '../../playwright.config'
-import { CLIPBOARD_E2E_DEFAULT } from '../helpers/fixtures'
+import { CLIPBOARD_E2E_DEFAULT, CLIPBOARD_OPTION_DECLARATION } from '../helpers/fixtures'
+import { ROOT } from './repo'
+import { specFilesUnder } from './scan-specs'
 
 const PROJECT_NAME = 'e2e-clipboard'
 const projects = config.projects ?? []
-// The repo root, derived from THIS file's location (the same convention as
-// e2e/helpers/launch.ts and e2e/guards/viewports.test.ts), for reading sources outside testDir.
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const repoSource = (relPath: string): string => readFileSync(join(ROOT, relPath), 'utf-8')
 
 /**
- * The spec directory, taken straight from the config. playwright.config.ts derives `testDir` from
- * `import.meta.url`, so it is absolute no matter which directory the run was started from — a
- * `process.cwd()` fallback would only hide a config regression behind a silently different path.
+ * The clipboard project's OWN spec directory (ADR-0034: one project, one directory).
+ * playwright.config.ts derives `testDir` from `import.meta.url`, so it is absolute no matter
+ * which directory the run was started from — a `process.cwd()` fallback would only hide a config
+ * regression behind a silently different path.
  */
-function specDir(): string {
-  if (!config.testDir) throw new Error('playwright.config.ts must define testDir')
-  return config.testDir
-}
 const project = projects.find((p) => p.name === PROJECT_NAME)
+
+function specDir(): string {
+  const dir = project?.testDir
+  if (!dir || typeof dir !== 'string') {
+    throw new Error(PROJECT_NAME + ' must define its own testDir (ADR-0034)')
+  }
+  return dir
+}
 
 /** The clipboardE2e option a project sets, if any. */
 function optionOf(p: { use?: unknown }): boolean | undefined {
   return (p.use as { clipboardE2e?: boolean } | undefined)?.clipboardE2e
 }
 
-/** Playwright matches testMatch against the spec path relative to testDir. */
-function isMatchedByProject(specFile: string): boolean {
-  const raw = project?.testMatch ?? []
-  const list = Array.isArray(raw) ? raw : [raw]
-  return list
-    .filter((m): m is RegExp => m instanceof RegExp)
-    .some((m) => new RegExp(m.source, m.flags.replace('g', '')).test(specFile))
-}
-
-const specFiles = readdirSync(specDir()).filter((f) => f.endsWith('.e2e.spec.ts'))
+// The spec files of this project, RECURSIVELY: a spec nested in a subdirectory is still a spec
+// this project runs, so a one-level scan would let it slip past every check below.
+const specFiles = specFilesUnder(specDir()).map((file) => relative(specDir(), file))
 const sourceOf = (file: string): string => readFileSync(join(specDir(), file), 'utf-8')
-// Depth-tolerant: also matches '../../helpers/…' or any other relative depth.
+// Depth-tolerant: also matches '../../helpers/…' or any other relative depth, and a subpath
+// import such as '../helpers/clipboard/index'.
 const importsHelper = (file: string, helper: string): boolean =>
-  new RegExp(`from ['"][./]+helpers/${helper}['"]`).test(sourceOf(file))
-const clipboardSpecs = specFiles.filter((file) => importsHelper(file, 'clipboard'))
+  new RegExp(`from ['"][./]+helpers/${helper}(/[^'"]*)?['"]`).test(sourceOf(file))
+/**
+ * A spec reaches the REAL system clipboard only through the shared clipboard fixture: it takes the
+ * app from that fixture, and the fixture is what launches, snapshots, restores and closes it. A
+ * spec that launched its own app would bypass both the destructive gate and the restore — so
+ * "uses the fixture" is the marker, and it is what the cross-directory scan looks for too.
+ */
+const reachesClipboard = (source: string): boolean =>
+  /\bclipboardApp\b/.test(source) ||
+  new RegExp(`from ['"][./]+helpers/clipboard(/[^'"]*)?['"]`).test(source)
+const clipboardSpecs = specFiles.filter((file) => reachesClipboard(sourceOf(file)))
 
 describe('the ' + PROJECT_NAME + ' Playwright project', () => {
   it('exists', () => {
@@ -75,14 +84,20 @@ describe('the ' + PROJECT_NAME + ' Playwright project', () => {
     expect(CLIPBOARD_E2E_DEFAULT).toBe(false)
   })
 
-  it('wires that default into the fixture, so the constant is what the specs actually get', () => {
-    // The claim "every other project leaves the clipboard alone" lives in the fixture declaration,
+  it('wires the safe default into the fixture option that specs actually read', () => {
+    // The claim "every other project leaves the clipboard alone" lives in the fixture DECLARATION,
     // not in the constant: wiring `[true, { option: true }]` would leave the constant — and the
-    // assertion above — green while every project started writing the user's clipboard.
+    // assertion above — green while every project started writing the user's clipboard. The old
+    // source-text regex was removed; the declaration is now exported data, so this checks the real
+    // value without parsing a file.
     expect(
-      repoSource('e2e/helpers/fixtures.ts'),
+      CLIPBOARD_OPTION_DECLARATION[0],
       'the clipboardE2e option must default to CLIPBOARD_E2E_DEFAULT',
-    ).toMatch(/clipboardE2e:\s*\[\s*CLIPBOARD_E2E_DEFAULT\s*,\s*\{\s*option:\s*true\s*\}\s*\]/)
+    ).toBe(CLIPBOARD_E2E_DEFAULT)
+    expect(
+      CLIPBOARD_OPTION_DECLARATION[1].option,
+      'the declaration must stay settable from a project use block',
+    ).toBe(true)
   })
 
   it('detects at least one clipboard spec, so the checks below cannot pass vacuously', () => {
@@ -92,10 +107,10 @@ describe('the ' + PROJECT_NAME + ' Playwright project', () => {
   })
 
   it('covers exactly the specs that touch the clipboard', () => {
-    // A spec that touches the clipboard but is missing here would write the user's clipboard in
-    // npm run e2e:app; a spec listed here that does not touch it only wastes CI minutes.
-    const matched = specFiles.filter(isMatchedByProject).sort()
-    expect(matched).toEqual([...clipboardSpecs].sort())
+    // With one directory per project (ADR-0034) the directory IS the boundary — there is no
+    // testMatch left to drift. Every spec in this project's testDir must touch the real clipboard,
+    // and every clipboard spec must live in that directory.
+    expect([...specFiles].sort()).toEqual([...clipboardSpecs].sort())
   })
 
   it('makes every clipboard spec import the extended test, so the option exists in it', () => {
@@ -103,12 +118,49 @@ describe('the ' + PROJECT_NAME + ' Playwright project', () => {
     expect(offenders).toEqual([])
   })
 
-  it('makes every clipboard spec gate itself on the option', () => {
-    // Without the gate the spec would run (and write) in EVERY project, which is exactly what
-    // the project split exists to prevent. The canonical gate is `test.skip(!clipboardE2e, …)`.
+  it('makes every clipboard spec use the shared fixture that owns the destructive gate', () => {
+    // The gate used to be repeated in six specs — and had already drifted apart (three skipped
+    // before launching the app, three launched first and snapshotted conditionally). It now lives
+    // in the fixture that launches the app, so a spec cannot forget it. What each spec must still
+    // do is take the app from that fixture: a spec that launched its own would write the
+    // clipboard without the gate and without the restore.
     const offenders = clipboardSpecs
-      .filter((file) => !/test\.skip\(\s*!\s*clipboardE2e\b/.test(sourceOf(file)))
+      .filter((file) => !/\bclipboardApp\b/.test(sourceOf(file)))
       .sort()
+    expect(offenders, 'a clipboard spec launched its own app and bypassed the shared gate').toEqual(
+      [],
+    )
+    // The gate itself (`test.skip(!clipboardE2e, …)` inside the fixture) is NOT pinned by a
+    // source-text match anymore: a regex could only prove a string was present. Its behaviour was
+    // verified directly on 2026-11-07 — setting `clipboardE2e: false` produced `1 skipped` (not
+    // failed) and stopped before launching Electron, so no clipboard was touched.
+  })
+
+  it('keeps every clipboard spec inside the clipboard project directory', () => {
+    // Scanning only specDir() cannot catch the dangerous drift: a clipboard spec moved into
+    // another project's testDir would run in `npm run e2e:app` and overwrite the user's clipboard
+    // while every assertion above stayed green. The scan is recursive, so a spec hidden in a
+    // subdirectory does not escape either.
+    const otherDirs = projects
+      .filter((p) => p.name !== PROJECT_NAME && typeof p.testDir === 'string')
+      .map((p) => p.testDir as string)
+    const offenders: string[] = []
+    for (const dir of otherDirs) {
+      for (const file of specFilesUnder(dir)) {
+        const src = readFileSync(file, 'utf-8')
+        if (reachesClipboard(src)) {
+          offenders.push(file)
+        }
+      }
+    }
     expect(offenders).toEqual([])
+  })
+
+  it('keeps the ownership guard in place, so the wider contract cannot be deleted unnoticed', () => {
+    // This file can only assert that the clipboard specs are where they belong; the WIDER contract
+    // (one spec file, one project, every spec collected exactly once) lives in a second guard. If
+    // that guard were deleted, nothing here would notice — so its existence is asserted from a
+    // file that is still there.
+    expect(existsSync(join(ROOT, 'e2e', 'guards', 'project-ownership.test.ts'))).toBe(true)
   })
 })

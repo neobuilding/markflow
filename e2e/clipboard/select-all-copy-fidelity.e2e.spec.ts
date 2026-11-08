@@ -5,17 +5,10 @@
 //      blockquote styling / fonts (payload is bare semantic HTML with no styles).
 // Each test asserts the DESIRED post-fix behavior, so it is red now and green once fixed.
 import { expect, type Page } from '@playwright/test'
-import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { waitForAppReady, AppHandle } from '../helpers/launch'
 import { test } from '../helpers/fixtures'
 import { VIEWPORTS } from '../helpers/viewports'
-import {
-  readClipboardHtml,
-  snapshotClipboard,
-  restoreClipboard,
-  clipboardSkipMessage,
-  CLIPBOARD_SPEC_SKIP_REASON,
-  type ClipboardSnapshot,
-} from '../helpers/clipboard'
+import { readClipboardHtml } from '../helpers/clipboard'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
@@ -33,21 +26,13 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
   // clipboard holds something we could not put back (a file list, a private app format) — a
   // skipped test is always better than destroying the user's content. It also stands down in every
   // project except `e2e-clipboard` (see helpers/clipboard).
-  let snap: ClipboardSnapshot | undefined
-
-  test.beforeEach(async ({ clipboardE2e }) => {
-    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
-    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
-    handle = await launchApp()
+  //
+  // That whole lifecycle — the gate, the launch, the snapshot, the restore and the close — is
+  // owned by the shared clipboard fixture (helpers/fixtures.ts), so it exists in exactly one place
+  // for all six clipboard specs instead of six copies that can drift apart.
+  test.beforeEach(async ({ clipboardApp }) => {
+    handle = clipboardApp
     scratch = mkTempDir('markflow-repro-')
-    snap = await snapshotClipboard(handle)
-    test.skip(!snap.restorable, clipboardSkipMessage(snap))
-  })
-  test.afterEach(async () => {
-    // The gate above aborts before the app is launched, so there is nothing to put back.
-    if (!handle) return
-    await restoreClipboard(handle, snap)
-    await closeApp(handle)
   })
 
   async function openDoc(page: Page, content: string): Promise<string> {

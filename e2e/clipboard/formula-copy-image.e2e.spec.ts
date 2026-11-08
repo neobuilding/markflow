@@ -9,16 +9,9 @@
 // copied (the same failure class as the `blob:` CSP bug, F14). The unit tests cover the assembly;
 // only a real browser can prove a bitmap comes out.
 import { expect, type Page } from '@playwright/test'
-import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { waitForAppReady, AppHandle } from '../helpers/launch'
 import { test } from '../helpers/fixtures'
-import {
-  clearClipboard,
-  snapshotClipboard,
-  restoreClipboard,
-  clipboardSkipMessage,
-  CLIPBOARD_SPEC_SKIP_REASON,
-  type ClipboardSnapshot,
-} from '../helpers/clipboard'
+import { clearClipboard } from '../helpers/clipboard'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
@@ -34,21 +27,12 @@ test.describe('copy a formula as an image (ADR 0020)', () => {
   // All three tests copy to the REAL system clipboard; preserve the user's content around them and
   // stand down entirely when it cannot be restored. The whole file also stands down outside the
   // `e2e-clipboard` project (see helpers/clipboard).
-  let snap: ClipboardSnapshot | undefined
-
-  test.beforeEach(async ({ clipboardE2e }) => {
-    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
-    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
-    handle = await launchApp()
+  //
+  // The gate, the launch, the snapshot, the restore and the close are owned by the shared
+  // clipboard fixture (helpers/fixtures.ts) — one implementation for all six clipboard specs.
+  test.beforeEach(async ({ clipboardApp }) => {
+    handle = clipboardApp
     scratch = mkTempDir('markflow-formula-')
-    snap = await snapshotClipboard(handle)
-    test.skip(!snap.restorable, clipboardSkipMessage(snap))
-  })
-  test.afterEach(async () => {
-    // The gate above aborts before the app is launched, so there is nothing to put back.
-    if (!handle) return
-    await restoreClipboard(handle, snap)
-    await closeApp(handle)
   })
 
   async function openMathDoc(page: Page): Promise<void> {

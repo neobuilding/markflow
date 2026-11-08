@@ -198,7 +198,7 @@ test.describe('native menu i18n + quit lifecycle', () => {
 
   // The native menu's TOP-LEVEL ORDER is a product decision (ADR-0031 R-e): the platform's own
   // menus in their conventional order, MarkFlow's language menu after them, Help last.
-  // 文件 / 编辑 / 视图 / 窗口 / 语言 / 帮助 — asserted on the LIVE built menu, not on the template.
+  // File / Edit / View / Window / Language / Help — asserted on the LIVE built menu, not on the template.
   test('the native menu keeps the conventional top-level order', async () => {
     const { page } = handle
     await waitForAppReady(page)

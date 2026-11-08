@@ -17,16 +17,17 @@
 // helpers/launch.ts still pins the standard environment for every spec, that no spec types a
 // viewport size of its own, and that the committed baselines and the named environment agree.
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 import { VIEWPORTS } from '../helpers/viewports'
-
-// The repo root, derived from THIS file's location rather than from process.cwd(): the guard must
-// read the same sources no matter which directory the test run was started from. The repo's other
-// e2e helpers resolve their paths the same way (see helpers/launch.ts).
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const SPEC_DIR = join(ROOT, 'e2e', 'specs')
+import config from '../../playwright.config'
+import { ROOT } from './repo'
+import { specFilesUnder } from './scan-specs'
+// ADR-0034: specs live in one directory per project. The named-environment rule must cover ALL
+// of them — clipboard and perf specs also call setViewportSize — not just e2e/app.
+const SPEC_DIRS = (config.projects ?? [])
+  .map((project) => project.testDir)
+  .filter((dir): dir is string => typeof dir === 'string')
 
 function source(path: string): string {
   return readFileSync(join(ROOT, path), 'utf-8')
@@ -136,12 +137,17 @@ describe('the named e2e environments', () => {
     // environment must stay a shared, documented decision.
     const offenders: string[] = []
     let seen = 0
-    for (const file of readdirSync(SPEC_DIR).filter((f) => f.endsWith('.e2e.spec.ts'))) {
-      const src = readFileSync(join(SPEC_DIR, file), 'utf-8')
-      for (const match of src.matchAll(/setViewportSize\(\s*([^)]*)\)/g)) {
-        seen++
-        if (!/^VIEWPORTS\.\w+$/.test(match[1].trim())) {
-          offenders.push(`${file}: ${match[0].trim()}`)
+    expect(SPEC_DIRS.length, 'the scan must cover every project directory').toBeGreaterThan(0)
+    for (const dir of SPEC_DIRS) {
+      // Recursive: a spec nested in a subdirectory is still a spec this project runs, and a
+      // one-level scan would let it pick a viewport size of its own unnoticed.
+      for (const file of specFilesUnder(dir)) {
+        const src = readFileSync(file, 'utf-8')
+        for (const match of src.matchAll(/setViewportSize\(\s*([^)]*)\)/g)) {
+          seen++
+          if (!/^VIEWPORTS\.\w+$/.test(match[1].trim())) {
+            offenders.push(`${relative(ROOT, file)}: ${match[0].trim()}`)
+          }
         }
       }
     }
@@ -158,7 +164,7 @@ describe('the named e2e environments', () => {
     // captured them. The arithmetic is the same one the bars use at that width: the global bar
     // spans the content area, a pane bar is one column of it (the split divider takes the odd
     // pixel, hence the tolerance on the preview bar).
-    const dir = 'e2e/specs/chrome-visual.e2e.spec.ts-snapshots'
+    const dir = 'e2e/app/chrome-visual.e2e.spec.ts-snapshots'
     const content = VIEWPORTS.baseline.width - SIDEBAR_DEFAULT
     // The baseline images show the FULLY EXPANDED bar, so the column must stay above
     // ALL_INLINE_AT: if that width moves past this column, the committed PNGs go stale and the

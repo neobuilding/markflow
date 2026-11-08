@@ -7,10 +7,11 @@
 // note in switch-perf-gate.e2e.spec.ts). Now that D-E① (mermaid cache + lazy render) and R9
 // (image intrinsic size) have landed, the thresholds are calibrated from real runs.
 //
-// It is registered in BOTH perf projects: `e2e-perf-diag` (on-demand diagnostic, prints the
-// full report) and `e2e-perf-gate` (CI gate, ~12s). Keeping one spec for both roles is
-// deliberate — a gate that can drift from the diagnostic it was derived from stops guarding
-// anything (the same reasoning as the shared perf-fixture.ts).
+// It belongs to `e2e-perf-gate` ONLY (ADR-0034). The same run prints the full diagnostic
+// report, persists run records, optionally freezes the baseline, and THEN asserts the calibrated
+// thresholds — so the gate keeps every diagnostic capability. Anti-drift between a gate and the
+// diagnostic it was calibrated from comes from shared helpers (perf-fixture.ts), not from
+// registering one spec in two projects.
 //
 // It answers, for the three Phase-03 candidates:
 //
@@ -31,10 +32,10 @@
 // the tall `pic-tall.png` that makes the pre-R9 CLS obvious) and ~100 distinct sections
 // (block-parse cost).
 //
-// Run:  npm run e2e:perf-diag         # this spec + the folder-switch diagnostic
-//       npx playwright test --project=e2e-perf-diag large-doc-perf
-//       PERF_UPDATE_BASELINE=1 npx playwright test --project=e2e-perf-diag large-doc-perf
-//         → also freezes e2e/perf/baselines/large-doc.json for future deltas.
+// Run:  npm run e2e:perf-gate
+//       npx playwright test --project=e2e-perf-gate large-doc-perf
+//       PERF_UPDATE_BASELINE=1 npx playwright test --project=e2e-perf-gate large-doc-perf
+//         → also freezes e2e/perf-baselines/large-doc.json for future deltas.
 //
 // Artifacts: reports/perf/large-doc-<timestamp>.json + large-doc-latest.json
 import { test, expect } from '@playwright/test'
@@ -80,7 +81,7 @@ import {
 //
 // Every threshold sits comfortably above the slowest measured run AND well below the
 // pre-Phase-03 value, so a regression to the old behaviour fails loudly while run-to-run
-// noise does not. This spec runs in BOTH projects, including the CI gate `e2e-perf-gate`.
+// noise does not. This spec runs in the CI gate project `e2e-perf-gate` only (ADR-0034).
 //
 // KNOWN LIMITATION: these numbers were measured on a dev box, not on the 2-core CI runner that
 // runs the gate. Wall-clock timings there are systematically higher (the 2026-11-06 CI failure
@@ -91,7 +92,7 @@ import {
 // attributed to key dispatch vs the render pipeline without re-instrumenting the app.
 //
 // Override for ad-hoc runs, e.g.
-//   PERF_MAX_CLS=0.2 npx playwright test --project=e2e-perf-diag large-doc-perf
+//   PERF_MAX_CLS=0.2 npx playwright test --project=e2e-perf-gate large-doc-perf
 const MAX_FIRST_CONTENT_MS = Number(process.env.PERF_MAX_FIRST_CONTENT_MS ?? 1500)
 const MAX_TYPE_TO_PREVIEW_MS = Number(process.env.PERF_MAX_TYPE_TO_PREVIEW_MS ?? 2000)
 const MAX_TYPE_CHAR_MS = Number(process.env.PERF_MAX_TYPE_CHAR_MS ?? 2000)

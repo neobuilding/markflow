@@ -1,5 +1,5 @@
 // Editor Ctrl+A in EDIT MODE — the exact scenario the user reported
-// ("编辑窗格内 Ctrl+A 只会选中当前光标位置之前的内容").
+// ("Ctrl+A inside the editor pane selects only the text before the caret").
 //
 // Why this file exists alongside select-all-copy-fidelity.e2e.spec.ts: that spec opens an
 // imported document, i.e. READ-ONLY, and gains focus with a click. The bug report came from

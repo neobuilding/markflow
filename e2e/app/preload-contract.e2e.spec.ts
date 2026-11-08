@@ -2,13 +2,6 @@ import type {} from '../../src/renderer/src/vite-env.d.ts'
 import { expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { test } from '../helpers/fixtures'
-import {
-  snapshotClipboard,
-  restoreClipboard,
-  clipboardSkipMessage,
-  CLIPBOARD_SPEC_SKIP_REASON,
-  type ClipboardSnapshot,
-} from '../helpers/clipboard'
 
 // Covers the preload split into api/* submodules and the main-process handler
 // groups. The refactor is a pure relocation, so the contract
@@ -22,17 +15,11 @@ import {
 // surfacing as a runtime crash in the renderer.
 test.describe('preload bridge contract (api/* split)', () => {
   let handle: AppHandle
-  // One test here writes the REAL system clipboard (that is the point — "no throw" is not a
-  // write). Capture the user's content so it can be put back; outside the `e2e-clipboard` project
-  // the whole clipboard concern is off, so nothing is captured and nothing is written back (see
-  // helpers/clipboard).
-  let snap: ClipboardSnapshot | undefined
-  test.beforeEach(async ({ clipboardE2e }) => {
+
+  test.beforeEach(async () => {
     handle = await launchApp()
-    snap = clipboardE2e ? await snapshotClipboard(handle) : undefined
   })
   test.afterEach(async () => {
-    await restoreClipboard(handle, snap)
     await closeApp(handle)
   })
 
@@ -301,73 +288,6 @@ test.describe('preload bridge contract (api/* split)', () => {
     // And cancelling an unknown token is a no-op rather than a throw.
     const cancelled = await page.evaluate(() => window.api.replace.cancel('no-such-token'))
     expect(cancelled).toBe(false)
-  })
-
-  // Reopened 2026-09-22: this used to assert only "the call does not throw", which
-  // stayed green while `clipboard:write-image` / `write-svg` copied NOTHING — the handler built a
-  // `new ClipboardItem(...)` from a `declare const` that does not exist at runtime in the main
-  // process, and swallowed the resulting ReferenceError. Both handlers are exercised through the
-  // real system clipboard here: "no throw" is not a clipboard write.
-  test('clipboard:writeSvg and writeImage really land on the system clipboard', async ({
-    clipboardE2e,
-  }) => {
-    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
-    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
-    // Never overwrite a clipboard we cannot put back.
-    test.skip(!snap?.restorable, clipboardSkipMessage(snap))
-    const { page } = handle
-    await waitForAppReady(page)
-
-    const clear = () => handle.electronApp.evaluate(({ clipboard }) => clipboard.clear())
-    const readTypes = () =>
-      handle.electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        return items.map((item) => item.types)
-      })
-
-    // A 1x1 PNG (the same fixture the export tests use): a truncated PNG decodes to an empty
-    // nativeImage, which the handler correctly refuses to write — it must be a real image.
-    const PNG_HEX =
-      '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082'
-
-    await clear()
-    await page.evaluate(async (hex) => {
-      const bytes = new Uint8Array(hex.length / 2)
-      for (let i = 0; i < bytes.length; i += 1) {
-        bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16)
-      }
-      let bin = ''
-      bytes.forEach((b) => {
-        bin += String.fromCharCode(b)
-      })
-      await window.api.clipboard.writeImage(`data:image/png;base64,${btoa(bin)}`)
-    }, PNG_HEX)
-    await expect
-      .poll(async () => (await readTypes()).some((types) => types.includes('image/png')), {
-        timeout: 15_000,
-      })
-      .toBe(true)
-
-    // The vector payload: Electron does not surface the custom `image/svg+xml` MIME through
-    // `clipboard.read()` (only `text/html` comes back), so assert the HTML wrapper really carries
-    // the diagram — before the ClipboardItem fix the clipboard was simply empty here.
-    await clear()
-    const readClipHtml = () =>
-      handle.electronApp.evaluate(async ({ clipboard }) => {
-        const items = await clipboard.read()
-        const item = items.find((entry) => entry.types.includes('text/html'))
-        if (!item) return ''
-        const blob = (await item.getType('text/html')) as Blob
-        return await blob.text()
-      })
-    await page.evaluate(async () => {
-      await window.api.clipboard.writeSvg('<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>')
-    })
-    await expect
-      .poll(async () => (await readClipHtml()).includes('data:image/svg+xml;base64,'), {
-        timeout: 15_000,
-      })
-      .toBe(true)
   })
 
   test('onMenuEvent subscription returns a callable unsubscribe function', async () => {

@@ -51,9 +51,9 @@ npm run e2e:full        # 端到端：用 Playwright 驱动真实的 Electron �
   xvfb-run --auto-servernum -- npm run e2e:full
   ```
 
-- **e2e 脚本族**：`e2e:app`（仅功能/行为 spec）、`e2e:perf-gate`（仅性能门禁）、`e2e:perf-diag`（无阈值诊断，按需）、`e2e:full`（CI 执行的标准组合 = **两次** Playwright 运行：先 `e2e-app` + `e2e-clipboard`，产出 `playwright-report/` 与 `reports/e2e/junit.xml`；再 `e2e-perf-gate` **独占一次调用**）。
-- **性能门禁必须独占一次调用**：Playwright 会把**同一次调用里的多个 project 并发**调度（实测 2026-11-05：三个用例分属两个 project，墙钟 12.7s，而各用例自身耗时合计 21.1s），所以与 `e2e-app`（297 个用例、约 10.6 分钟）共享一次调用时，计时门禁会把机器负载算进阈值：`firstContentMs` 实测 1602ms 越过 1500ms 阈值而变红，独立调用则实测 712ms 通过。阈值本身不动（应用仍比冻结基线 2644ms 快约 3 倍），改的是测量条件。第二次调用带 `--reporter=line --output=test-results/perf-gate`：CI 下 html/junit reporter 是开启的（本地只有 `list`），不带这个 flag 时第二次调用会**覆盖**第一次的 `playwright-report/` 与 `reports/e2e/junit.xml`（实测：带 flag 两者时间戳不变，不带则被改写）。该约束由 `e2e/guards/e2e-parallelism.test.ts` 钉住。
-- **性能门禁**：`npm run e2e:full` 覆盖三个 Playwright project：`e2e-app`（功能）、`e2e-clipboard`（破坏性：写真实系统剪贴板）与 `e2e-perf-gate`（性能门禁，独占一次调用）。性能门禁守护"文件夹监视器只监视 Markdown 文件"这条修复：在一个塞满非 Markdown 构建产物的文件夹里打开并立刻切换文档时，断言主进程事件循环不会被卡住（尖峰数与最大卡顿均有阈值）。旁边另有一份**不带阈值**的诊断 spec，需要具体数字而非通过与失败时按需运行：
+- **e2e 脚本族**：`e2e:app`（仅功能/行为 spec，210 例）、`e2e:clipboard`（仅写真实系统剪贴板的 21 例，破坏性）、`e2e:perf-gate`（仅性能门禁，2 例）、`e2e:perf-diag`（无阈值诊断，按需，1 例）、`e2e:full`（CI 执行的标准组合 = **两次** Playwright 运行：先 `e2e-app` + `e2e-clipboard`，产出 `playwright-report/` 与 `reports/e2e/junit.xml`；再 `e2e-perf-gate` **独占一次调用**）。
+- **性能门禁必须独占一次调用**：Playwright 会把**同一次调用里的多个 project 并发**调度（实测 2026-11-05：三个用例分属两个 project，墙钟 12.7s，而各用例自身耗时合计 21.1s），所以与 `e2e-app`（当时 297 个用例、约 10.6 分钟）共享一次调用时，计时门禁会把机器负载算进阈值：`firstContentMs` 实测 1602ms 越过 1500ms 阈值而变红，独立调用则实测 712ms 通过。阈值本身不动（应用仍比冻结基线 2644ms 快约 3 倍），改的是测量条件。第二次调用带 `--reporter=line --output=test-results/perf-gate`：CI 下 html/junit reporter 是开启的（本地只有 `list`），不带这个 flag 时第二次调用会**覆盖**第一次的 `playwright-report/` 与 `reports/e2e/junit.xml`（实测：带 flag 两者时间戳不变，不带则被改写）。该约束由 `e2e/guards/e2e-parallelism.test.ts` 钉住。
+- **性能门禁**：`npm run e2e:full` 覆盖三个 Playwright project：`e2e-app`（功能）、`e2e-clipboard`（破坏性：写真实系统剪贴板）与 `e2e-perf-gate`（性能门禁，独占一次调用）。性能门禁守护"文件夹监视器只监视 Markdown 文件"这条修复：在一个塞满非 Markdown 构建产物的文件夹里打开并立刻切换文档时，断言主进程事件循环不会被卡住（尖峰数与最大卡顿均有阈值），并同时跑带硬阈值的大文档 Phase-03 门禁（它也会先打印完整诊断报告）。`e2e-perf-diag` 是按需的诊断 project，只跑慢速、无阈值的文件夹切换诊断；带硬阈值的大文档门禁已归入 `e2e-perf-gate`（ADR-0034）：
 
   ```bash
   npm run e2e:perf-diag                                  # 合成 fixture

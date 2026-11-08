@@ -1,4 +1,4 @@
-// Export dialog e2e — PLAN C20 补 ⑦ (E12) and C20 补 ⑤ (E11, second half).
+// Export dialog e2e — PLAN C20 addendum 7 (E12) and C20 addendum 5 (E11, second half).
 //
 // E11: "Export HTML" is ONE action with ONE implementation. Clicking the preview bar's export
 // button must open the very same dialog as the global bar's button — a second implementation

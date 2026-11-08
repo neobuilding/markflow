@@ -3,15 +3,6 @@ import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/laun
 import { test } from '../helpers/fixtures'
 import { ALL_INLINE_AT, VIEWPORTS } from '../helpers/viewports'
 import { expectTooltipText } from '../helpers/tooltip'
-import {
-  expectClipboardAfter,
-  readClipboardText,
-  snapshotClipboard,
-  restoreClipboard,
-  clipboardSkipMessage,
-  CLIPBOARD_SPEC_SKIP_REASON,
-  type ClipboardSnapshot,
-} from '../helpers/clipboard'
 
 // C20 / ADR-0024 §10 + ADR-0025 P2 (option B): the app has THREE bars — a re-scoped global bar
 // (file commands), an editor pane bar (format / find-replace / undo-redo / read-only) and a
@@ -21,17 +12,11 @@ import {
 // the same button side by side).
 test.describe('pane toolbars', () => {
   let handle: AppHandle
-  // The copy test writes the REAL system clipboard. Snapshot it first so afterEach restores the
-  // user's own content; when it cannot be restored the test skips instead of destroying it. The
-  // snapshot is only taken when clipboard specs run here, so a normal local run writes nothing
-  // (see helpers/clipboard).
-  let snap: ClipboardSnapshot | undefined
-  test.beforeEach(async ({ clipboardE2e }) => {
+
+  test.beforeEach(async () => {
     handle = await launchApp()
-    snap = clipboardE2e ? await snapshotClipboard(handle) : undefined
   })
   test.afterEach(async () => {
-    await restoreClipboard(handle, snap)
     await closeApp(handle)
   })
 
@@ -328,51 +313,6 @@ test.describe('pane toolbars', () => {
     // No wait: the click lands inside the 400ms window.
     await page.getByTestId('view-preview').click()
     await expect(page.locator('article.markdown-preview')).toContainText('TYPED-BEFORE-SWITCH')
-  })
-
-  test('the preview bar copies the rendered content to the system clipboard', async ({
-    clipboardE2e,
-  }) => {
-    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
-    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
-    // Never overwrite a clipboard we cannot put back.
-    test.skip(!snap?.restorable, clipboardSkipMessage(snap))
-    const { page } = handle
-    await waitForAppReady(page)
-    await createDocAndType(page, 'hello world')
-    await expect(page.locator('article.markdown-preview')).toContainText('hello world')
-
-    // The bar reuses the ONE rich-copy implementation (previewCopy.requestRichCopy), which selects
-    // the whole article when nothing is selected — so the clipboard carries the rendered text.
-    await expectClipboardAfter(
-      handle,
-      () => page.getByTestId('preview-copy-btn').click(),
-      () => readClipboardText(handle),
-      'hello world',
-    )
-  })
-
-  test('the inline Copy rendered HTML command writes the HTML source to the clipboard', async ({
-    clipboardE2e,
-  }) => {
-    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
-    test.skip(!snap?.restorable, clipboardSkipMessage(snap))
-    const { page } = handle
-    await waitForAppReady(page)
-    await createDocAndType(page, 'hello world')
-    await expect(page.locator('article.markdown-preview')).toContainText('hello world')
-
-    // All four preview commands fit at 368px, so the conditional trigger is ABSENT. Copy
-    // rendered HTML must therefore be reachable as an ordinary inline button, not a menu entry.
-    await expect(page.getByTestId('preview-more-btn')).toHaveCount(0)
-    await expectClipboardAfter(
-      handle,
-      () => page.getByTestId('preview-copy-html-btn').click(),
-      () => readClipboardText(handle),
-      'hello world',
-    )
-    // It is the HTML SOURCE (plain text), distinct from the rich-text copy command.
-    expect(await readClipboardText(handle)).toContain('<')
   })
 
   test('a narrow preview column shows the conditional More with the overflowed commands', async () => {

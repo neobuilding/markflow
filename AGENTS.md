@@ -18,8 +18,9 @@ Single-context: one `CONTEXT.md` at the root plus `docs/adr/`. See `docs/agents/
 
 ### Testing conventions
 
-Path-shape and filesystem rules that keep the unit suite deterministic across Windows and Linux
-CI. See `docs/agents/testing.md`.
+Choosing a test layer, locking a repository convention with a contract guard, proving a regression
+can fail, and keeping the unit suite deterministic across Windows and Linux CI. See
+`docs/agents/testing.md`.
 
 ### UI control reuse
 

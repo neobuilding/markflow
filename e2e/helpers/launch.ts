@@ -45,7 +45,7 @@ export interface AppHandle {
 /**
  * A single native confirm-box invocation as seen at the `electron.dialog.showMessageBox`
  * boundary. This is exactly what the OS would render, so it is the faithful thing to
- * assert on for "文案/按钮" (copy / buttons).
+ * assert on for dialog copy and button labels.
  */
 export interface ConfirmCall {
   /** Dialog body copy (e.g. the unsaved-changes message). */
@@ -238,7 +238,7 @@ async function closeAppInternal(handle: AppHandle): Promise<void> {
   // (electron/main/handlers/dialog.ts) invoked from the renderer over the `dialog:confirm`
   // IPC; Playwright cannot click native OS dialog buttons, so we spy `showMessageBox`
   // (installConfirmSpy) to record + auto-answer. This is the same mechanism
-  // e2e/specs/quit-unsaved-regression.e2e.spec.ts uses (there answering `false` to keep
+  // e2e/app/quit-unsaved-regression.e2e.spec.ts uses (there answering `false` to keep
   // editing); here we answer `1` (Discard).
   //
   // Crucially this does NOT bypass the dirty scenario: tryCloseWorkspace() still takes

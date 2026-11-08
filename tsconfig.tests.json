@@ -37,8 +37,8 @@
     "test-setup.ts",
     "e2e/**/*.ts",
     "e2e/integration/**/*.mjs",
-    // Tooling: root-level configs are Node-side programs that nothing else compiles. eslint
-    // ignores `**/*.config.ts` for linting, so this program is their only gate.
+    // Tooling: root-level configs are Node-side programs that nothing else type-checks. They are
+    // linted too (eslint.config.mjs covers `*.config.ts`); this program is their type gate.
     "*.config.ts",
     "*.config.cjs",
     "eslint.config.mjs"

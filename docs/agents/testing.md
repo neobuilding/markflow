@@ -66,44 +66,35 @@ interrupted mid-test leaves the test payload behind.
 
 So they run only where that cost buys something. The six specs that touch the clipboard
 (`select-all-copy-fidelity`, `pane-toolbars`, `preload-contract`, `formula-copy-image`,
-`copy-once-no-drop-diagrams`, `context-menu`) are matched by the **`e2e-clipboard`** project in
-`playwright.config.ts` — the only project that sets the `clipboardE2e` option
-(`e2e/helpers/fixtures.ts`). Every other project leaves it false:
+`copy-once-no-drop-diagrams`, `context-menu`) live **exclusively** in `e2e/clipboard/`, which is the
+`testDir` of the **`e2e-clipboard`** project — the only project that sets the `clipboardE2e`
+option (`e2e/helpers/fixtures.ts`). No other project collects those files, so `npm run e2e:app`
+cannot touch the user's clipboard; "one spec file, one project" is pinned by ADR-0034.
 
 ```bash
-npm run e2e:app        # those specs are reported as skipped, with a reason
-npm run e2e:clipboard  # the project runs them for real; CI does too via `e2e:full`
+npm run e2e:app        # never collects e2e/clipboard/ — no clipboard writes at all
+npm run e2e:clipboard  # runs the 21 real-clipboard cases; CI does too via `e2e:full`
 ```
 
-A spec reads the option from `helpers/fixtures.ts` and gates itself before it touches the
-clipboard:
+The destructive lifecycle — gate → launch → snapshot → restore → close — lives in **one** place, the
+`clipboardApp` fixture in `e2e/helpers/fixtures.ts`. Getting that order wrong is the one failure in
+this suite that damages something outside the repository, so it must not be copied into six specs
+(where it had already drifted apart: three skipped before launching the app, three launched first
+and snapshotted conditionally). Each spec takes the app from that fixture and does nothing else:
 
 ```ts
-test.beforeEach(async ({ clipboardE2e }) => {
-  test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
-  // … launch, snapshot, run
+let handle: AppHandle
+test.beforeEach(async ({ clipboardApp }) => {
+  handle = clipboardApp
 })
 ```
 
-It captures its snapshot only when the option is set — `restoreClipboard` treats `undefined` as
-"nothing to do", so a run in any other project performs no clipboard write at all (not even putting
-back what was already there).
+The fixture skips the test when the option is off, so a spec cannot reach the clipboard in a project
+that is not allowed to write it; it snapshots the clipboard before the app can change anything,
+restores that snapshot afterwards (also when the test failed), and closes the app last.
 
-Why an option and not an environment variable: what a run is allowed to do stays visible in the
-config, next to the project that allows it, instead of hiding in a variable a developer has to know
-about. And a test switch must never reach the app either (ADR 0016,
-`electron/main/test-support/no-test-env-switches.test.ts`).
-
-Two unit tests guard the arrangement (they live in `e2e/`, and `vitest.config.ts` picks up
-`e2e/**/*.test.ts` — a pattern that cannot match a `*.e2e.spec.ts` spec):
-
-- `e2e/guards/clipboard-project.test.ts` — the project claims exactly the specs that touch the
-  clipboard, each of them imports the extended `test` and gates itself on the option, and no other
-  project may set it. It also asserts that the option is _wired_ to the exported
-  `CLIPBOARD_E2E_DEFAULT` constant: checking the constant alone would stay green if the fixture
-  were hard-wired to `true`. The failure it prevents is silent: a clipboard spec missing from the
-  project would write the user's clipboard inside `npm run e2e:app`, and nothing would fail.
-- `e2e/helpers/clipboard.test.ts` — the skip reasons a developer reads in a report.
+The guards under `e2e/guards/` are the source of truth for which convention each locks; see
+`## Contract guards` for the shape their assertions take.
 
 Coverage of the same handler boundary that needs no real clipboard lives in
 `electron/main/handlers/app.test.ts` (mocked `clipboard`, `ClipboardItem` from the electron export).
@@ -124,6 +115,70 @@ Production code must not care whether the host implements the API: it reads the 
 (`window.matchMedia?.(…)`) or an explicit existence guard, so a missing API degrades to a defined
 behaviour instead of a crash. A test that has to stub an API is also a reminder that the production
 path needs the same guard — otherwise the suite passes and the app throws.
+
+## Choosing the test layer
+
+Put a case at the lowest layer that can catch the bug it guards. A unit test with a
+pure function, the in-memory `createMemoryDiskIO()` fake, or a jsdom render fails
+faster and points closer to the cause than launching the app, so reach for a higher
+layer only when the behaviour under test does not happen at the lower one. This keeps
+the expensive layers thin — a guideline about feedback speed, not a quota for how many
+cases each layer holds.
+
+Ask what a case actually verifies before asking whether a unit test could go red for
+the same bug. A stub can supply the asserted value (an OS colour preference, a mocked
+clipboard) but cannot prove the real path reached the code; that is why ADR-0033 lists
+both Unit locks and E2E locks, and why "one mutation cannot speak for two behaviours".
+A feature having unit coverage therefore does not settle where its e2e case belongs.
+
+When an e2e case is a candidate for removal, decide which situation applies:
+
+- **The behaviour still needs guarding.** Cover it at the lowest layer that can produce
+  the asserted value, and use a mutation check to prove the replacement goes red when
+  the fix is reverted and green again when it is restored (see "Regression tests must
+  be able to fail"). If it stays green, record that as "this scenario did not reach the
+  failure path in that run" — never as "it cannot fail" — and keep the e2e case while
+  the reproduction rate is raised.
+- **The case no longer verifies anything** — it cannot fail, duplicates another case,
+  or the behaviour it guarded is gone. Remove it without inventing a replacement test,
+  and record which of those reasons applies in the change.
+
+A flaky e2e is evidence: raise the reproduction rate before downgrading the test.
+
+## Contract guards
+
+A _contract guard_ (see Glossary) follows four rules.
+
+**Keep contract guards in the Vitest suite.** They inherit assertions, failure output, reporting
+and watch; a separate CI script has to rebuild those and then needs a guard of its own.
+
+**Assert the logic you wrote.** When you add or change logic in a config file — arithmetic,
+environment branching, path composition — keep it in an exported pure function a unit test can
+call. Asserting that Playwright APPLIES `timeout`, `retries` or `trace` is the framework's own
+contract; restating it goes red on an upgrade that changed nothing you own. Pinning the values WE
+wrote into the config is a different act, covered by the next rule.
+
+**Pin a value only when you can name where the number came from besides this file.** A figure
+calibrated in a decision record or a frozen baseline has that provenance and stays pinned; a figure
+whose only source is the line being asserted is a change detector. Prefer a relation where one
+exists ("at most one retry", "the budget follows the machine's parallelism"), and prefer a floor
+over an exact count where the count only ever grows.
+
+**Choose the assertion shape in this order:** an imported object or exported declaration → a parsed
+structure (config object, workflow argv, JSON) → a narrow extraction from source text → an
+occurrence count. A failure message names the convention broken and the repair.
+
+**A guard is finished when:**
+
+- A mutation turns it red and restoring turns green (see _mutation check_).
+- Every collection it iterates carries an explicit expectation. `[].every(...)` is `true` and a
+  zero-iteration loop is silent, so a vacuous guard passes by default.
+- Its patterns describe the current repository. A regex naming a renamed directory, a glob handed
+  to `new RegExp`, or a snapshot recorded from a broken state cannot fail.
+- Every invariant a decision record lists as "must not change" has either an executable check or a
+  recorded reason for having none.
+- Comments describe only what the assertion detects; an exclusion guaranteed by structure is
+  documented as structure.
 
 ## Regression tests must be able to fail
 
@@ -285,7 +340,7 @@ numbers (`e2e/helpers/viewports.ts`):
 
 Entering an environment is per CASE, not per file: a spec that needs a different window gets its own
 test case for it, while the case that stays in the default environment keeps asserting the default
-layout. `e2e/specs/pane-toolbars.e2e.spec.ts` has both — one case asserts the split-mode ownership in
+layout. `e2e/app/pane-toolbars.e2e.spec.ts` has both — one case asserts the split-mode ownership in
 the default (partially overflowed) environment, and a second, dedicated case enters `wide` to assert
 the fully expanded format cluster.
 
@@ -306,6 +361,14 @@ environment.
 
 Test-infrastructure terms used above.
 
+- **contract guard**: a Vitest-collected `*.test.ts` that locks a repository convention — which
+  project owns a spec, which invocations CI runs, which values a decision record froze — rather
+  than application behaviour. _Avoid_: "unit test of the config", "policy script".
+- **mutation check**: a one-off, manual check — break the behaviour under test,
+  confirm the test goes red, restore it, and confirm green again. Evidence that this
+  test can fail, not a coverage number; distinct from automated mutation testing
+  (seeded mutants, a mutation score). _Avoid_: "proves it cannot fail".
+  See "Regression tests must be able to fail" for the full procedure.
 - **viewport (e2e)**: the web **content area** the app renders into — what `page.setViewportSize()`
   sets. Distinct from the OS window's outer frame (title bar + borders). All width-coupled layout is
   driven by the content area, never the OS frame. _Avoid_: window size, OS window.

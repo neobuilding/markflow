@@ -14,7 +14,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:
 import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Repo root = two levels up from this file (e2e/specs/).
+// Repo root = two levels up from this file (e2e/app/).
 const __here = fileURLToPath(import.meta.url)
 const repoRoot = join(__here, '..', '..')
 

@@ -1,24 +1,14 @@
-// Context-menu e2e ( / / , acceptance keyboard + real right-click)
+// Context-menu e2e (right-click menu / acceptance keyboard + real right-click)
 // Covers the three P0 surfaces with a REAL Chromium right-click (not jsdom):
 //   - editor: menu opens at the pointer; cut/copy are enabled when a selection
-// survives the right-click (G4 selection retention + command snapshot, /);
-// preview: generic / link variants render the expected items ;
-// sidebar: right-clicking a document row shows the file menu ;
-// keyboard: Shift+F10 opens the menu on the focused surface ( G11)
+//     survives the right-click (G4 selection retention + command snapshot, acceptance)
+//   - preview: generic / link variants render the expected items
+//   - sidebar: right-clicking a document row shows the file menu
+//   - keyboard: Shift+F10 opens the menu on the focused surface (G11)
 import { expect, type Page } from '@playwright/test'
 import type { ElectronApplication } from 'playwright'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { test } from '../helpers/fixtures'
-import {
-  readClipboardHtml,
-  readClipboardText,
-  readClipboardTypes,
-  snapshotClipboard,
-  restoreClipboard,
-  clipboardSkipMessage,
-  CLIPBOARD_SPEC_SKIP_REASON,
-  type ClipboardSnapshot,
-} from '../helpers/clipboard'
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
@@ -107,18 +97,11 @@ async function measureItemContrast(
 
 test.describe('context menus', () => {
   let handle: AppHandle
-  // One test in this block copies to the REAL system clipboard; preserve the user's content around
-  // every test in the block so the restore always runs, whichever test touched it. Outside the
-  // `e2e-clipboard` project the snapshot is skipped, which makes the restore a no-op: any other run
-  // writes nothing (see helpers/clipboard).
-  let snap: ClipboardSnapshot | undefined
 
-  test.beforeEach(async ({ clipboardE2e }) => {
+  test.beforeEach(async () => {
     handle = await launchApp()
-    snap = clipboardE2e ? await snapshotClipboard(handle) : undefined
   })
   test.afterEach(async () => {
-    await restoreClipboard(handle, snap)
     await closeApp(handle)
   })
 
@@ -166,75 +149,6 @@ test.describe('context menus', () => {
     await expect(page.getByTestId('preview-copy')).toBeVisible()
     await expect(page.getByTestId('preview-select-all')).toBeVisible()
     await expect(page.getByTestId('preview-view-editor')).toBeVisible()
-  })
-
-  // Mechanism guard. The menu's "Copy" fires `document.execCommand('copy')` and
-  // relies on the resulting `copy` event reaching the preview <article>'s handler (which writes
-  // the CLEAN payload: internal attrs stripped, images inlined). That is NOT self-evident: the
-  // Radix menu content lives in a PORTAL under document.body, so if focus sat on the menu item the
-  // event could be dispatched OUTSIDE #root/<article> and React's delegated onCopy would never
-  // run — silently falling back to the browser's "dirty" native copy (R6/R3 broken, images not
-  // inlined). jsdom cannot catch that (no execCommand), so the mechanism is pinned here with a REAL
-  // Chromium copy event plus a read-back of the real system clipboard. Empirically the event DOES
-  // reach the article (probe below) — this test is the regression guard that keeps it that way.
-  test('preview: menu Copy reaches the preview copy handler and lands a clean payload (R3/R6)', async ({
-    clipboardE2e,
-  }) => {
-    // Destructive: runs in the e2e-clipboard project only (see helpers/clipboard.ts).
-    test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)
-    // Never overwrite a clipboard we cannot put back.
-    test.skip(!snap?.restorable, clipboardSkipMessage(snap))
-    const { page } = handle
-    await waitForAppReady(page)
-    await createDocAndType(page, '# Title\n\n```js\nconst x = 1\n```\n')
-    await page.getByTestId('view-preview').click()
-    const article = page.locator('.markdown-preview')
-    await expect(article).toBeVisible()
-    // Record where every `copy` event lands (capture phase sees it regardless of target).
-    await page.evaluate(() => {
-      const w = window as any
-      w.__copyProbe = { count: 0, inArticle: false }
-      document.addEventListener(
-        'copy',
-        (e) => {
-          const t = e.target as HTMLElement | null
-          w.__copyProbe.count += 1
-          w.__copyProbe.inArticle = !!t?.closest?.('article.markdown-preview')
-        },
-        true,
-      )
-    })
-    // Right-click the code block → generic variant (pre → not image / link / mermaid).
-    await article.locator('pre').first().click({ button: 'right' })
-    await page.getByTestId('preview-copy').click()
-    await expect
-      .poll(() => page.evaluate(() => (window as any).__copyProbe.count))
-      .toBeGreaterThan(0)
-    // The event must have reached the article, otherwise our clean writer is bypassed.
-    expect(await page.evaluate(() => (window as any).__copyProbe.inArticle)).toBe(true)
-    // …and the REAL system clipboard (read back from the main process) must hold the clean
-    // payload: the code text is present, and none of the pipeline's internal markers leaked.
-    // Electron 44 replaced `readHTML()` with `read()` + `ClipboardItem.getType(mime)`.
-    await expect.poll(() => readClipboardText(handle), { timeout: 15_000 }).toContain('const x = 1')
-    const [html, types, text] = await Promise.all([
-      readClipboardHtml(handle),
-      readClipboardTypes(handle),
-      readClipboardText(handle),
-    ])
-    // Both halves must be present (the browser packed text/plain + text/html from setData).
-    expect(types).toContain('text/html')
-    // The html keeps the semantic structure; the code text is split by hljs <span>s, so match
-    // the tag + a token rather than a contiguous source line.
-    expect(html).toContain('<pre')
-    expect(html).toContain('const')
-    expect(text).toContain('const x = 1')
-    // R6: no internal marker survived into the pasted HTML.
-    expect(html).not.toContain('data-lang')
-    expect(html).not.toContain('data-line')
-    expect(html).not.toContain('data-mermaid')
-    expect(html).not.toContain('data-baked')
-    // markdown-it-anchor's heading tabindex must be stripped too.
-    expect(html).not.toContain('tabindex')
   })
 
   test('preview: right-clicking a link shows open/copy-link/copy/select-all', async () => {

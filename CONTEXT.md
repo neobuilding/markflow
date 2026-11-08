@@ -438,6 +438,32 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
 - **Fully bundled** — both the main process (`dist/electron/index.js`, no bare `require()` except Node builtins) and the renderer are self-contained Vite outputs, so the packaged app ships **no `node_modules`** (`electron-builder.json5` excludes them). Consequence: a dependency that is _read at runtime_ instead of being bundled works in dev and fails only in the packaged build — sign off dependency changes by running `npm run dist` and launching `release/win-unpacked/MarkFlow.exe`. See `docs/adr/0015-build-output-layout-and-bundle.md`.
 - **Electron runtime floor** — the ~180 MB Chromium + Node payload every Electron app carries regardless of app-code size. The dominant component of `MarkFlow.exe`; it cannot be reduced without changing frameworks (e.g. Tauri). Measured: 367 MB for Electron 44 (`electron.exe` alone is 235 MB).
 
+## Testing infrastructure (e2e)
+
+- **Playwright project** — one run configuration (its own `use`, `workers`, `retries`), **not** an
+  owner of test files. Commands select projects by name (`--project=`); CI knows names, never spec
+  paths.
+- **Spec collection** — the files a project runs, determined by `testDir` (recursive scan root) plus
+  `testMatch` (a filter relative to that root). In this repo every project owns **its own
+  directory** and no project may set a `testMatch`, so the directory _is_ the ownership boundary:
+  the rule is **one spec file, one project** (ADR-0034), locked by the
+  `e2e/guards/project-ownership.test.ts` unit test rather than by a manual `--list` check.
+- **Perf gate** — a fast, deterministic pass/fail performance check on every CI build. The
+  large-document gate also emits its full diagnostic report _before_ asserting, so "gate" and
+  "report" are two capabilities of one run, not two tests.
+- **Perf diagnostic** — an on-demand, deliberately slow run that produces numbers instead of a
+  verdict. It is kept out of CI so it cannot slow the pipeline; `retries` is 0 because repeating a
+  measurement would corrupt the numbers.
+- **Anti-drift** — a gate and the diagnostic it was calibrated from must drive the same code path.
+  This is achieved by **sharing a helper**, never by sharing a spec file; two copies of a threshold
+  are two sources of truth (ADR-0034).
+- **Test axis** — the mechanism a test actually proves. A unit test can lock a binding table while
+  an e2e test proves the keystroke reaches the editor past the native menu: different axes, so a
+  unit test existing does **not** make the e2e test redundant. The authoritative rule for choosing a
+  layer — the **mutation check**, the two removal situations, and "a flaky e2e is evidence" — is
+  **Choosing the test layer** in `docs/agents/testing.md`, whose glossary also owns the term
+  _mutation check_. Do not redefine those terms here.
+
 ## Repo conventions
 
 - **Create-PR Action** — in-repo GitHub Action (`actions/create-pr`) that idempotently creates/refreshes PRs;

@@ -35,8 +35,9 @@ Two suites must never run concurrently:
 - `e2e-clipboard` writes the **real system clipboard** (Playwright cannot intercept it; tests verify
   a genuine write and restore it afterwards). Concurrent writes would stomp each other and break the
   "put it back" invariant.
-- `e2e-perf-gate` / `e2e-perf-diag` assert **hard timing thresholds**; parallelism would corrupt the
-  measurements.
+- `e2e-perf-gate` asserts **hard timing thresholds**; `e2e-perf-diag` produces timing measurements
+  without thresholds. Both are corrupted by parallelism, so both keep their serial worker cap
+  (amended 2026-11-07: ADR-0034 restored the diagnostic project's threshold-free role).
 
 One framework property was believed to shape the whole design: **Playwright runs projects
 sequentially** (each project is its own phase), so an invocation naming several projects runs them
@@ -64,6 +65,12 @@ NOT relaxed: the app is still ~3x faster than the frozen 2644ms baseline.
    ```ts
    workers: Math.max(1, Math.min(availableParallelism(), 8) - 1)
    ```
+
+   _(Clarified 2026-11-08, without changing the decision: the shipped `playwright.config.ts`
+   uses a headroom of **two** (`- 2`), and has done so since before this round of work. The intent
+   above — an adaptive budget that never over-subscribes the host — is unchanged. The contract
+   guard pins relations whose oracle is the host's real `availableParallelism()` instead of
+   restating the formula. See ADR-0034.)_
 
    - Local (many cores) → up to **7** workers.
    - CI (2-core runner) → **1** (the formula self-limits; CI never over-subscribes the host).

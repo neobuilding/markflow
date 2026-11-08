@@ -1,5 +1,5 @@
 // Export parity e2e (PLAN C33 / ADR-0024 §11)
-// "预览 = 导出" must be an ASSERTION, not a wish. This spec renders the SAME document twice —
+// "preview = export" must be an ASSERTION, not a wish. This spec renders the SAME document twice —
 // once in the live preview, once as the standalone HTML the export button writes — and compares
 // the COMPUTED styles of the code block and of a highlight.js token.
 //

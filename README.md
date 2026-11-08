@@ -222,27 +222,32 @@ npm run e2e:full        # End-to-end: drives the REAL Electron app via Playwrigh
   shared Vite dev server and waits for `dist/electron/index.js`, so the main process must be built
   first (`npm run build`). Each spec then launches its own Electron instance. On headless Linux you
   must run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e:full`.
-- **E2E script family**: `e2e:app` (functional/behavioral specs only), `e2e:clipboard` (the specs that
-  write the _real_ system clipboard), `e2e:perf-gate` (performance regression gate only),
-  `e2e:perf-diag` (threshold-free diagnostics, on demand), and `e2e:full` — `e2e-app` +
-  `e2e-clipboard` + `e2e-perf-gate` in a **single** Playwright run, which is what CI executes. One
-  run matters: it keeps a single global setup (one Vite dev server) and a single report
-  (`playwright-report/`, `reports/e2e/junit.xml`) covering all suites.
-- **Clipboard specs are their own project**: the tests that write the _real_ system clipboard
+- **E2E script family**: `e2e:app` (functional/behavioral specs), `e2e:clipboard` (specs that write
+  the _real_ system clipboard), `e2e:perf-gate` (CI performance gate), `e2e:perf-diag` (on-demand
+  diagnostics), and `e2e:full` — the CI combination, run as **two separate Playwright invocations**:
+  first `--project=e2e-app --project=e2e-clipboard` (produces `playwright-report/` and
+  `reports/e2e/junit.xml`), then `--project=e2e-perf-gate` **on its own** with
+  `--reporter=line --output=test-results/perf-gate`. Playwright schedules the projects of one
+  invocation concurrently, so the timing gate must not share a machine with the app specs
+  (ADR-0027); the reporter/output flags keep the second run from overwriting the first run's
+  reports. See `e2e/guards/e2e-parallelism.test.ts`.
+- **Clipboard specs are their own project**: the 21 cases that write the _real_ system clipboard
   (`select-all-copy-fidelity`, `pane-toolbars`, `preload-contract`, `formula-copy-image`,
   `copy-once-no-drop-diagrams`, `context-menu`) are destructive — they overwrite whatever you had
-  copied and only put it back afterwards — so they belong to the `e2e-clipboard` project instead of
-  `e2e-app`. `npm run e2e:app` reports them as skipped (they read the `clipboardE2e` option, which
-  only that project sets); `npm run e2e:clipboard` runs them for real, and CI does too through
-  `npm run e2e:full`. A single spec still runs, e.g.
-  `npm run e2e:clipboard -- e2e/specs/context-menu.e2e.spec.ts`. See `e2e/helpers/clipboard.ts` for
+  copied and only put it back afterwards — so they live exclusively in `e2e/clipboard/`, the
+  `testDir` of `e2e-clipboard`. `npm run e2e:app` never collects that directory (ADR-0034);
+  `npm run e2e:clipboard` runs them for real, and CI does too through `npm run e2e:full`. A single
+  spec still runs, e.g.
+  `npm run e2e:clipboard -- e2e/clipboard/context-menu.e2e.spec.ts`. See `e2e/helpers/clipboard.ts` for
   why, and `electron/main/handlers/app.test.ts` for the same OS boundary covered without touching a
   real clipboard.
-- **Performance**: `npm run e2e:full` composes two Playwright projects — `e2e-app` (functional) and
-  `e2e-perf-gate`. The gate asserts that opening a folder buried in non-Markdown build output
-  and immediately switching documents does not stall the main-process event loop, which is the
-  regression guard for the folder watcher watching markdown only. A threshold-free diagnostic spec
-  sits beside it and is run on demand when numbers (not pass/fail) are what you need:
+- **Performance**: `e2e:full` runs three Playwright projects in total — `e2e-app` (functional),
+  `e2e-clipboard` (destructive: real system clipboard) and `e2e-perf-gate` (the gate, in its own
+  invocation). The gate project contains two specs: the folder-watch stall gate
+  (`switch-perf-gate`) and the large-document Phase-03 gate (`large-doc-perf`), which also prints a
+  full diagnostic report and can freeze a baseline with `PERF_UPDATE_BASELINE=1`. The on-demand
+  `e2e-perf-diag` project holds the slow, threshold-free folder-switch diagnostic (`switch-perf`)
+  only; the large-document gate belongs to `e2e-perf-gate` (ADR-0034). Run diagnostics with:
 
   ```bash
   npm run e2e:perf-diag                              # synthetic fixture

@@ -37,7 +37,7 @@ import type { AppHandle } from './launch'
 // that sets the `clipboardE2e` option:
 //
 //   npm run e2e:clipboard                       # the whole project
-//   npm run e2e:clipboard -- e2e/specs/context-menu.e2e.spec.ts
+//   npm run e2e:clipboard -- e2e/clipboard/context-menu.e2e.spec.ts
 //
 // A spec reads the option (`test` comes from helpers/fixtures.ts) and gates itself with
 // `test.skip(!clipboardE2e, CLIPBOARD_SPEC_SKIP_REASON)` before it touches the clipboard, and

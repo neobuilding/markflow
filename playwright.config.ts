@@ -21,8 +21,10 @@ import { fileURLToPath } from 'node:url'
 import type { ClipboardOptions } from './e2e/helpers/fixtures'
 
 export default defineConfig<ClipboardOptions>({
-  testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'specs'),
-  testMatch: /.*\.e2e\.spec\.ts/,
+  // No global `testDir` and no `testMatch` override: each project owns its own directory, so the
+  // directory IS the only collection boundary (ADR-0034). Playwright's default testMatch picks
+  // up `*.e2e.spec.ts`; `e2e/guards/project-ownership.test.ts` asserts that no other test file
+  // can slip into those directories.
   // Serial WITHIN a file (a spec's tests run in order in one worker), but
   // PARALLEL ACROSS files via the worker pool below. Each test still launches
   // its own Electron instance with a private --user-data-dir (e2e/helpers/launch.ts),
@@ -95,20 +97,19 @@ export default defineConfig<ClipboardOptions>({
       // No project-level `workers`: e2e-app inherits the global budget above, so the suite
       // parallelises across files on a many-core dev box.
       name: 'e2e-app',
+      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'app'),
     },
     // ── Clipboard: its own project, because it is destructive ────────────────
     //
-    // These six specs write the REAL system clipboard — Playwright cannot intercept it, and mocking
+    // These specs write the REAL system clipboard — Playwright cannot intercept it, and mocking
     // it would defeat the point ("no throw" is not a clipboard write). They overwrite whatever the
-    // user copied and put it back afterwards, so a plain `npm run e2e:app` must not run them: they
-    // read the `clipboardE2e` option (e2e/helpers/fixtures.ts), which only this project sets.
-    // `npm run e2e:full` includes it, so CI runs them for real.
+    // user copied and put it back afterwards, so only this project may set `clipboardE2e`.
+    // The directory IS the boundary: every spec here is a clipboard case (ADR-0034).
     {
       name: 'e2e-clipboard',
       workers: 1, // writes the REAL system clipboard — must never run concurrently
+      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'clipboard'),
       use: { clipboardE2e: true },
-      testMatch:
-        /(?:select-all-copy-fidelity|pane-toolbars|preload-contract|formula-copy-image|copy-once-no-drop-diagrams|context-menu)\.e2e\.spec\.ts$/,
     },
     // ── Performance gate: measured in its OWN invocation ─────────────────────
     //
@@ -119,12 +120,11 @@ export default defineConfig<ClipboardOptions>({
     {
       name: 'e2e-perf-gate',
       workers: 1, // timing-sensitive thresholds; parallelism would corrupt measurements
-      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf'),
-      // Both gates in one project: the chokidar folder-switch gate and the large-document
-      // gate. The large-document one IS the diagnostic spec (large-doc-perf) — it carries
-      // the calibrated thresholds itself, so gate and diagnostic can never drift apart
-      // (the same reason perf-fixture.ts is shared by switch-perf and its gate).
-      testMatch: /(?:switch-perf-gate|large-doc-perf)\.e2e\.spec\.ts$/,
+      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf-gate'),
+      // The folder-switch stall gate and the large-document Phase-03 gate. The large-document
+      // spec prints its full diagnostic report and can freeze a baseline BEFORE asserting, so
+      // the gate run keeps every diagnostic capability. Anti-drift comes from shared helpers
+      // (perf-fixture.ts), NOT from registering one spec in two projects (ADR-0034).
       timeout: 600_000,
       // Inherits the global retries (1 on CI) so a noisy shared runner cannot
       // turn a one-off scheduling hiccup into a red build.
@@ -140,17 +140,14 @@ export default defineConfig<ClipboardOptions>({
     //   e2e-perf-gate  → runs in CI on every PR, has hard thresholds, and gets its
     //                    own `playwright test` invocation (pinned by
     //                    e2e/guards/e2e-parallelism.test.ts).
-    //   e2e-perf-diag  → diagnostic only, no thresholds, run by hand.
+    //   e2e-perf-diag  → the slow, threshold-free folder-switch diagnostic, run by hand.
     {
       name: 'e2e-perf-diag',
       workers: 1, // diagnostic timings must be measured serially
-      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf'),
-      // On-demand diagnostics, never run by `npm run e2e:full` (which composes its
-      // scripts explicitly): the folder-switch scenario and the large-document scenario
-      // the Phase-03 candidates (mermaid lazy-render / image size / block incremental)
-      // are judged against. `e2e-perf-gate` is excluded on purpose — that one IS a CI
-      // gate and belongs to the e2e-perf-gate project.
-      testMatch: /(?:switch|large-doc)-perf\.e2e\.spec\.ts$/,
+      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'perf-diag'),
+      // On-demand only, never run by `npm run e2e:full` or CI. It reloads the app several times
+      // and is slow by design. The large-document gate belongs to `e2e-perf-gate` instead:
+      // ADR-0034 restores this project's original, disjoint role.
       timeout: 600_000,
       retries: 0,
     },

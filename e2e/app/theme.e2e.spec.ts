@@ -141,7 +141,7 @@ test.describe('theme entry (ADR-0028)', () => {
       .poll(previewTheme)
       .toEqual({ attr: 'dark', darkDisabled: false, lightDisabled: true })
 
-    // Switching to 跟随系统 still sees the dark OS preference on the first apply.
+    // Switching to "Follow system" still sees the dark OS preference on the first apply.
     await page.evaluate(() => (window as any).__uiStore.getState().setTheme('system'))
     await expect
       .poll(previewTheme)
