@@ -11,7 +11,7 @@ import { useT } from '../../i18n'
 // `globals.css` overrides cannot leak in (shadow isolation), which is the whole point — if the
 // preview borrowed the app's styling, the feature would prove nothing.
 //
-// Two hard constraints, both measured (PLAN §0.0.1 (4) S1/S2):
+// Two hard constraints, both measured (S1/S2):
 //   S1  A shadow root does NOT register fonts. Chromium only picks up `@font-face` rules that
 //       live in the HOST document, so the KaTeX font declarations go to `document.head` while
 //       the document CSS goes into the shadow root.
@@ -128,7 +128,7 @@ export function ExportPreview({ theme }: { theme: 'light' | 'dark' }): React.Rea
         const cached = bodyCache.current?.ready === exportReady ? bodyCache.current.html : undefined
         // Images are always inlined for the preview: in the non-inline mode the export rewrites
         // `appdoc://` to a RELATIVE path, which inside a shadow root would resolve against the
-        // host document's base URL and break every image (PLAN §0.0.1 (4) W3).
+        // host document's base URL and break every image (measured constraint W3).
         const built = await buildExportParts({ theme, embedImages: true, body: cached })
         bodyCache.current = { ready: exportReady, html: built.body }
         if (!cancelled) {

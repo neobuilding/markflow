@@ -122,6 +122,10 @@ describe('the e2e parallelism contract', () => {
       config.retries,
       'ADR-0034: more than one retry masks a genuine failure as a flake',
     ).toBeLessThanOrEqual(1)
+    expect(
+      projects.length,
+      'the retry check must actually visit the configured projects',
+    ).toBeGreaterThan(0)
     for (const project of projects) {
       if (project.name === 'e2e-perf-diag') {
         expect(project.retries, 'the timing diagnostic must never retry').toBe(0)
@@ -137,6 +141,9 @@ describe('the e2e parallelism contract', () => {
   it('runs exactly the projects npm run e2e:full runs', () => {
     const inScript = e2eFullInvocations().flatMap(projectsIn)
     const inWorkflow = [...new Set(workflowPlaywrightLines().flatMap(projectsIn))].sort()
+    expect(inWorkflow.length, 'the CI workflow must actually name projects to run').toBeGreaterThan(
+      0,
+    )
     expect(inWorkflow).toEqual([...new Set(inScript)].sort())
   })
 

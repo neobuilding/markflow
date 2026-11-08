@@ -130,6 +130,10 @@ files` becomes **`3 tests in 3 files`**. `e2e-app` stops re-running 66 ordinary 
   49 files (app 210/40, clipboard 21/6, perf-gate 2/2, perf-diag 1/1, no overlap); `npm test`
   153 files / 2510 tests passed; `npm run typecheck` and `npm run lint` exit 0.
 
+  _(Updated 2026-11-08: later review rounds added contract guards, so the suite is now 155 files /
+  2534 tests; Playwright collection is unchanged at 234 tests in 49 files. The figures above record
+  the state on 2026-11-07 and stay intact because decision records are append-only.)_
+
 - **Historical paths left intact:** earlier ADRs (0015, 0024, 0025, 0027) and both troubleshooting
   docs mention `e2e/specs/…` / `e2e/perf/…` as they existed at the time. Decision records are
   append-only, so those references were not rewritten; the troubleshooting pair carries a dated
@@ -162,8 +166,8 @@ files` becomes **`3 tests in 3 files`**. `e2e-app` stops re-running 66 ordinary 
   with an independent oracle, not change-detectors, so they stay pinned; the clipboard file count
   became a lower bound; the `e2e-perf-diag` filename allowlist became a narrow "no `expect(` in
   diagnostic specs" semantic check; and the fixture wiring became an exported declaration the guard
-  asserts as data. The second-round `eslint.config.mjs` override was reverted (it crossed §3.4's
-  "eslint unchanged" line) in favour of a file-level disable in `e2e/helpers/fixtures.ts`. The
+  asserts as data. The second-round `eslint.config.mjs` override was reverted (it crossed the
+  plan's "eslint unchanged" line) in favour of a file-level disable in `e2e/helpers/fixtures.ts`. The
   guards remain in the vitest suite: an independent policy script would have needed its own tests,
   and coverage was already excluded.
 

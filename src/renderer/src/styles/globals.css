@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 
-/* D-B (plan-03 §4.1): markdown styling now comes from github-markdown-css, injected at runtime
+/* markdown styling now comes from github-markdown-css, injected at runtime
    as the single source of truth (the same sheet the exporter uses). No Tailwind Typography /
    `.prose` plugin — its styles are relocated to `.markdown-body` below. */
 
@@ -182,7 +182,7 @@ body {
    it on the editor root so a click reliably focuses the contenteditable. (Full theme override
    lives further down in "CodeMirror theme overrides".) */
 
-/* ─── Markdown Preview (github-markdown-css is the single source of truth; keep only a minimal container here, plan-03 §4.1) ─── */
+/* ─── Markdown Preview (github-markdown-css is the single source of truth; keep only a minimal container here) ─── */
 .markdown-preview {
   user-select: text;
   width: 100%;
@@ -197,7 +197,7 @@ body {
    The only thing this file contributes is the VALUE bridge (--md-pre-* above), which maps the
    export-scoped variables to the live app tokens. */
 
-/* D-B (plan-03 §4.1): the Typography plugin is gone, so the --tw-prose-* variable mapping is
+/* the Typography plugin is gone, so the --tw-prose-* variable mapping is
    dead. github-markdown-css supplies its own Primer variables and is the single source of truth. */
 
 /* ─── GitHub-style alerts (remark-github-alerts → .markdown-alert) ───
@@ -368,7 +368,7 @@ svg[id^='mermaid-'] {
 
 /* ── Shared floating "card" surface for the find widgets ───────────────────
    Both the editor find panel and the preview find bar use this exact class so
-   the two find surfaces speak one visual language (plan §3.1: the find widget
+   the two find surfaces speak one visual language (the find widget
    floats in place and never takes a layout row — VS Code style). The editor's
    CodeMirror panel is positioned via
    `.cm-panels-top` (below); the preview wraps the class on its own absolute

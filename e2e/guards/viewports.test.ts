@@ -96,6 +96,10 @@ describe('the named e2e environments', () => {
   })
 
   it('keeps every environment at or above the window floor', () => {
+    expect(
+      Object.keys(VIEWPORTS).length,
+      'the named-environment table must not be empty',
+    ).toBeGreaterThan(0)
     for (const [name, viewport] of Object.entries(VIEWPORTS)) {
       expect(viewport.width, `${name} is narrower than the app can be`).toBeGreaterThanOrEqual(
         WINDOW_FLOOR,

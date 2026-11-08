@@ -7,7 +7,7 @@
 // Youdao / Obsidian) silently dropped them. The diagrams reappeared only on a SECOND copy, once the
 // bake had settled (the user's manual observation: scroll-to-reveal → copy → no loss).
 //
-// Fix (plan-preview-refactor D): the bake now awaits the PNG pass before declaring itself complete,
+// Fix (bake-order): the bake now awaits the PNG pass before declaring itself complete,
 // and the synchronous `copy` handler — when it finds the bake not ready — defers, finishes the bake,
 // REBUILDS the payload and re-fires the native copy. So a SINGLE user action always yields a
 // complete payload.

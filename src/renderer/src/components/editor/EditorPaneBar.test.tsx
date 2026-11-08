@@ -36,7 +36,7 @@ class MockResizeObserver {
   unobserve(): void {}
   disconnect(): void {}
 }
-// docs/agents/testing.md:121 — a stubbed global must be restored afterwards.
+// docs/agents/testing.md, "Browser APIs jsdom does not implement" — restore stubbed globals.
 const OriginalResizeObserver = globalThis.ResizeObserver
 
 // Report a column width to every live observer.

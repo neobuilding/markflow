@@ -13,8 +13,6 @@ not in its own rationale.
 - **Reverses:** the design doc §4 rule R3 ("预览不提供常驻顶部工具条") and that doc's
   single-shared-top-band layout model.
 - **Amends:** ADR-0024 §1.1 (rewritten), §1.3 (rewritten), §5.3 (extended), §7.1 (rewritten).
-- **Related:** `docs.local/MarkFlow-UI-Review-Final-2026-10-13_1/README-revised-2026-10-27.md`,
-  `docs.local/PLAN-ui-refactor-2026-10-27.md`.
 
 ---
 
@@ -51,7 +49,7 @@ defended.
 
 ### 2.3 Measured palette — extracted from the SVG fills, not eyeballed
 
-From `docs.local/…/images/*.svg` (`fill="#…"`, unique values):
+From the review diagrams' SVG fills (`fill="#…"`, unique values; assets are local and not committed):
 
 ```
 accent   #2563eb (blue-600)      tint      #eaf2ff

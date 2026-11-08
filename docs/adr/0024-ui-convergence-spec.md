@@ -25,7 +25,7 @@ independently of the branch that introduced them.
 
 The old accent `--color-accent: #5e6ad2` (Radix `indigo-9`) read as a generic admin-dashboard
 default and belonged to **no system** — neutral-grey chrome with a foreign indigo pinned onto it.
-The review diagrams (`docs.local/…/images/*.svg`) use one coherent **cool-blue** system instead,
+The review diagrams (local SVG review assets, not committed) use one coherent **cool-blue** system instead,
 and that coherence — not any single colour — is why they read better than the app did. **The
 diagrams' palette is adopted as the product palette**, subject to one accessibility correction.
 

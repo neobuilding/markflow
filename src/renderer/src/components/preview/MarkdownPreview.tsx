@@ -82,7 +82,8 @@ function applyMarkdownBodyTheme(theme: ThemeMode): boolean {
   else if (theme === 'dark') isDark = true
   else
     // Same existence guard as App.tsx and the theme effect below: a truthy but non-callable
-    // matchMedia must degrade to light instead of throwing (docs/agents/testing.md:123-126).
+    // matchMedia must degrade to light instead of throwing (docs/agents/testing.md,
+    // "Browser APIs jsdom does not implement").
     isDark =
       typeof window !== 'undefined' && typeof window.matchMedia === 'function'
         ? window.matchMedia('(prefers-color-scheme: dark)').matches

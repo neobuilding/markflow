@@ -8,9 +8,9 @@
 //     happen on every switch?
 //   * Are long tasks / IPC round-trips involved?
 //
-// It is excluded from `npm run e2e:full` (and therefore from CI) on purpose it
+// It is excluded from `npm run e2e:full` (and therefore from CI) on purpose: it
 // reloads the app several times and is slow by design. The regression gate that
-// DOES run in CI lives beside it in switch-perf-gate.e2e.spec.ts and shares
+// DOES run in CI lives in e2e/perf-gate/switch-perf-gate.e2e.spec.ts and shares
 // every helper through e2e/helpers/perf-fixture.ts.
 //
 // Reproduces the reported scenario: right after launch, open a folder and

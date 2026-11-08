@@ -29,11 +29,11 @@ function reportWidth(width: number) {
     )
   })
 }
-// docs/agents/testing.md:121 — stubbed globals must be restored afterwards.
+// docs/agents/testing.md, "Browser APIs jsdom does not implement" — restore stubbed globals.
 const OriginalResizeObserver = globalThis.ResizeObserver
 const OriginalApi = (window as unknown as { api?: unknown }).api
 // A later test replaces Element.prototype.scrollIntoView directly; save the original so the stub
-// cannot leak into the rest of the suite (docs/agents/testing.md:121).
+// cannot leak into the rest of the suite (see "Browser APIs jsdom does not implement").
 const OriginalScrollIntoView = Element.prototype.scrollIntoView
 beforeEach(() => {
   observers.length = 0

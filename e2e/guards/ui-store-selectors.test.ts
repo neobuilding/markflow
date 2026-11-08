@@ -47,7 +47,9 @@ describe('renderer UI store subscriptions', () => {
   it('never subscribes to the whole store with an identity selector', () => {
     // `= useUIStore()` also catches the multi-line destructuring form `} =\n  useUIStore()`.
     // `.getState()` / `.subscribe()` are imperative reads and are deliberately allowed.
-    const offenders = sourceFiles(RENDERER_SRC).filter((file) =>
+    const files = sourceFiles(RENDERER_SRC)
+    expect(files.length, 'the renderer source scan must find files').toBeGreaterThan(0)
+    const offenders = files.filter((file) =>
       /=\s*useUIStore\(\s*\)/.test(withoutComments(readFileSync(file, 'utf-8'))),
     )
     expect(
@@ -67,7 +69,9 @@ describe('renderer UI store subscriptions', () => {
     // zustand v5 + React 19 compare snapshots with Object.is. A selector that builds a new object
     // on every call reports "getSnapshot should be cached" and can loop forever. Use one primitive
     // selector per field instead (or `useShallow`, which this repo has no precedent for).
-    const offenders = sourceFiles(RENDERER_SRC).filter((file) =>
+    const files = sourceFiles(RENDERER_SRC)
+    expect(files.length, 'the renderer source scan must find files').toBeGreaterThan(0)
+    const offenders = files.filter((file) =>
       /useUIStore\(\s*\(\s*\w+\s*\)\s*=>\s*\(\s*\{/.test(
         withoutComments(readFileSync(file, 'utf-8')),
       ),

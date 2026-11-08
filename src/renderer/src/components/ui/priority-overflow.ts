@@ -82,7 +82,7 @@ export function usePriorityOverflow(
   const [width, setWidth] = useState<number | null>(null)
   useEffect(() => {
     const el = ref.current
-    // docs/agents/testing.md:123-126 — production code must not assume the host implements an
+    // docs/agents/testing.md, "Browser APIs jsdom does not implement": code must not assume an
     // optional browser API; a missing ResizeObserver degrades to the fully expanded first paint.
     if (!el || typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver((entries) => {

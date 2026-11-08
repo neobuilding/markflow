@@ -26,7 +26,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, isAbsolute } from 'node:path'
 import config from '../../playwright.config'
 import { specFilesUnder, strayTestFilesUnder } from './scan-specs'
-import { ROOT, globToRegExp } from './repo'
+import { ROOT, repoSource, globToRegExp } from './repo'
 
 const E2E_ROOT = join(ROOT, 'e2e')
 const PROJECT_NAMES = ['e2e-app', 'e2e-clipboard', 'e2e-perf-gate', 'e2e-perf-diag'] as const
@@ -117,6 +117,24 @@ describe('ADR-0034: one e2e spec file, one project', () => {
     }
   })
 
+  it('matches the project names the npm e2e scripts actually select', () => {
+    // Renaming a project means touching playwright.config.ts, package.json and ci.yml. The
+    // ci.yml ↔ e2e:full comparison lives in e2e-parallelism.test.ts; this one binds config.projects
+    // to the npm scripts, so PROJECT_NAMES cannot drift away from what people actually run.
+    const pkg = JSON.parse(repoSource('package.json')) as { scripts: Record<string, string> }
+    const selected = [
+      ...new Set(
+        Object.entries(pkg.scripts)
+          .filter(([name]) => name.startsWith('e2e'))
+          .flatMap(([, command]) => [...command.matchAll(/--project=(\S+)/g)].map((m) => m[1])),
+      ),
+    ].sort()
+    expect(
+      (config.projects ?? []).map((p) => p.name).sort(),
+      'every project in playwright.config.ts must be selectable from an npm e2e script, and vice versa',
+    ).toEqual(selected)
+  })
+
   it('defines exactly the four projects, each with its own distinct testDir', () => {
     expect((config.projects ?? []).map((p) => p.name).sort()).toEqual([...PROJECT_NAMES].sort())
     expect(new Set(Object.values(dirs)).size).toBe(PROJECT_NAMES.length)
@@ -176,7 +194,7 @@ describe('ADR-0034: one e2e spec file, one project', () => {
   })
 
   it('never loses a clipboard CASE, not just a clipboard file', () => {
-    // The file check above only notices a whole spec disappearing. §3.5 requires twenty-one
+    // The file check above only notices a whole spec disappearing. The acceptance table requires twenty-one
     // clipboard cases, and deleting one `test(...)` from a spec that stays in place would leave the
     // destructive suite quietly thinner while every file-level assertion stayed green.
     const cases = filesByProject['e2e-clipboard'].reduce(

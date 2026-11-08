@@ -233,9 +233,9 @@ because one mutation cannot speak for two behaviours:
   command the way React does.
 - **"…" gone → first inline command** (todo ④, second half, measured 2026-11-05): disabling ONLY the
   widen branch (`visible >= total` → `visible > total`, so the hand-off cannot fire when the trigger
-  disappears) turns the SAME e2e RED at its widen step (`expect.poll(activeId).toBe('fmt-# -')`,
-  line 444) while its fold step passes — so the two directions are pinned by two independent
-  mutations, not by one shared red.
+  disappears) turns the SAME e2e RED at its widen step (`expect.poll(activeId).toBe('fmt-# -')`
+  in `e2e/app/pane-toolbars.e2e.spec.ts`) while its fold step passes — so the two directions are
+  pinned by two independent mutations, not by one shared red.
 - **A focus outside the bar** (todo ⑤): disabling the stale-focus guard turns "a focus in the
   editor pane is not pulled into the toolbar when a command folds" RED
   (`Expected: focused / Received: inactive`). The same mutation leaves the fold case GREEN, which

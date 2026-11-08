@@ -40,7 +40,7 @@ export default defineConfig<ClipboardOptions>({
   // honours the CPU affinity mask AND the container's cgroup CPU quota, so it stays honest on a
   // CI runner that is limited to fewer cores than its host — `os.cpus().length` would report
   // the HOST's core count there and over-subscribe the runner.
-  // Local (many cores) → up to 7 workers; CI (2-core runner) → 2.
+  // Local (many cores) → up to 6 workers; CI (2-core runner) → 1.
   // The clipboard / perf projects below override this to 1: they are destructive
   // (real system clipboard) or timing-sensitive (perf thresholds).
   workers: Math.max(1, Math.min(availableParallelism(), 8) - 2),

@@ -1,4 +1,4 @@
-// DIAGNOSTIC performance spec — ONE very large document (e2e/fixtures/large-doc/demo-large.en.md,
+// Performance GATE + diagnostic report — ONE very large document (e2e/fixtures/large-doc/demo-large.en.md,
 // a committed copy of examples/demo-large.en.md).
 //
 // This spec RECORDS numbers and additionally GATES the Phase-03 outcomes with calibrated

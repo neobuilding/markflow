@@ -103,7 +103,10 @@ describe('the ' + PROJECT_NAME + ' Playwright project', () => {
   it('detects at least one clipboard spec, so the checks below cannot pass vacuously', () => {
     // If the import regex ever stops matching (helper renamed, specifier rewritten),
     // clipboardSpecs collapses to [] and 'covers exactly' would pass against nothing.
-    expect(clipboardSpecs.length).toBeGreaterThan(0)
+    expect(
+      clipboardSpecs.length,
+      'the clipboard-spec marker must still find specs — fix the marker, not this expectation',
+    ).toBeGreaterThan(0)
   })
 
   it('covers exactly the specs that touch the clipboard', () => {
@@ -144,16 +147,26 @@ describe('the ' + PROJECT_NAME + ' Playwright project', () => {
     const otherDirs = projects
       .filter((p) => p.name !== PROJECT_NAME && typeof p.testDir === 'string')
       .map((p) => p.testDir as string)
+    expect(
+      otherDirs.length,
+      'the cross-project scan must actually visit the other project directories',
+    ).toBeGreaterThan(0)
+    const scanned = otherDirs.flatMap((dir) => specFilesUnder(dir))
+    expect(
+      scanned.length,
+      'the cross-project scan must actually read spec files, not empty directories',
+    ).toBeGreaterThan(0)
     const offenders: string[] = []
-    for (const dir of otherDirs) {
-      for (const file of specFilesUnder(dir)) {
-        const src = readFileSync(file, 'utf-8')
-        if (reachesClipboard(src)) {
-          offenders.push(file)
-        }
+    for (const file of scanned) {
+      const src = readFileSync(file, 'utf-8')
+      if (reachesClipboard(src)) {
+        offenders.push(file)
       }
     }
-    expect(offenders).toEqual([])
+    expect(
+      offenders,
+      'a clipboard spec outside e2e/clipboard/ would overwrite the user clipboard in e2e:app',
+    ).toEqual([])
   })
 
   it('keeps the ownership guard in place, so the wider contract cannot be deleted unnoticed', () => {
