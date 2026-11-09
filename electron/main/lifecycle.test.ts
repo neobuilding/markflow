@@ -150,8 +150,9 @@ vi.mock('./model/folderWatcher', () => ({
 }))
 
 // Mock the temp-cleanup module so the will-quit handler's cleanup calls are observable
-// (we assert they fire with the right path and respect the e2e-skip branch) without
-// touching the real filesystem or spawning a detached deleter inside the unit suite.
+// (we assert they fire with the right path, in the right order, in EVERY mode — ADR-0016
+// removed the test-only e2e-skip branch) without touching the real filesystem or
+// spawning a detached deleter inside the unit suite.
 vi.mock('./lib/temp-cleanup', () => ({
   removeOwnTempDir: vi.fn(() => true),
   scheduleRemoveAfterExit: vi.fn(),
@@ -409,7 +410,7 @@ describe('main process — before-quit safety net', () => {
 })
 
 describe('main process — will-quit watcher teardown', () => {
-  it('awaits stopFolderWatching, removes its own temp dir and schedules the deferred removal', async () => {
+  it('runs BOTH temp-cleanup calls synchronously before the awaited watcher close', async () => {
     // will-quit fires after all windows are closed and before the process tears down.
     // The watcher must be closed (awaited) here so chokidar's native handles release,
     // and THEN the app must remove its own user-data-dir so %TEMP% stays clean.
@@ -419,9 +420,22 @@ describe('main process — will-quit watcher teardown', () => {
       h.stopFolderWatchingCalled = false
       await h.appHandlers['will-quit']({ preventDefault: vi.fn() })
       const tempCleanup = await import('./lib/temp-cleanup.js')
+      const folderWatcher = await import('./model/folderWatcher.js')
+      // Temp cleanup must run FIRST — synchronously, BEFORE the async folder-watcher
+      // close. If it were gated behind the awaited close, a process that exits before
+      // the await settles would silently skip %TEMP% cleanup and rot the temp dir.
+      expect(folderWatcher.stopFolderWatching).toHaveBeenCalled()
+      // `toHaveBeenCalledBefore` takes a MockInstance; the mocked module's static type is the real
+      // `() => Promise<void>` signature, so narrow it the same way the rejection test below does.
+      expect(tempCleanup.removeOwnTempDir).toHaveBeenCalledBefore(
+        folderWatcher.stopFolderWatching as ReturnType<typeof vi.fn>,
+      )
+      // ADR-0036 §4 pins BOTH halves of "first and synchronously": moving just the
+      // deferred-deleter scheduling behind the awaited close used to stay green.
+      expect(tempCleanup.scheduleRemoveAfterExit).toHaveBeenCalledBefore(
+        folderWatcher.stopFolderWatching as ReturnType<typeof vi.fn>,
+      )
       expect(h.stopFolderWatchingCalled).toBe(true)
-      // Cleanup runs only AFTER stopFolderWatching has resolved (it is awaited just
-      // above), so its invocation proves the handles were released before exit.
       expect(tempCleanup.removeOwnTempDir).toHaveBeenCalledWith('/fake/userData')
       // Regression guard: the exit-time cleanup twice did NOTHING because the deferred
       // deleter was never spawned. Chromium re-creates Preferences / Local State during

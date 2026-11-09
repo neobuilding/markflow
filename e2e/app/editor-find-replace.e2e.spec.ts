@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { VIEWPORTS } from '../helpers/viewports'
+import { resetAppState } from '../helpers/reset'
 
 // Editor find/replace is now powered by MarkFlow's shared FindWidget (top-anchored, VS Code
 // style) instead of CodeMirror's native panel. The entry points (`Ctrl/Cmd+H` and the toolbar
@@ -8,13 +9,22 @@ import { VIEWPORTS } from '../helpers/viewports'
 // `editor-find-input`, `editor-find-replace`, `editor-find-count-next` (next), `editor-find-replace-btn`
 // (replace current). The preview pane is read-only and never offers replace, but has its own
 // find bar (`preview-find-*`), covered here too.
+// Launch Electron ONCE for the file and reset state before each case. Serial mode is required
+// because these cases share one app instance; the reset deletes every document (so memory-only
+// drafts cannot collide on file_path) and reloads the renderer (so panels, modals, viewMode,
+// viewport and store flags all return to their boot state). Independent test() cases are kept on
+// purpose: a failure still names exactly one scenario and retries only that scenario.
+test.describe.configure({ mode: 'serial' })
 test.describe('find and replace', () => {
   let handle: AppHandle
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
   })
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
+  })
+  test.beforeEach(async () => {
+    await resetAppState(handle)
   })
 
   async function createDocAndType(page: Page, text: string): Promise<void> {

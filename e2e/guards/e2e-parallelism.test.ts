@@ -29,14 +29,62 @@
 // projects may write the real clipboard, how CI is orchestrated) rather than application logic.
 import { describe, it, expect } from 'vitest'
 import { availableParallelism } from 'node:os'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import config from '../../playwright.config'
-import { e2eFullInvocations, playwrightCommandsIn, repoSource } from './repo'
+import { specFilesUnder } from './scan-specs'
+import { ROOT, e2eFullInvocations, playwrightCommandsIn, repoSource } from './repo'
 
 const projects = config.projects ?? []
 const projectOf = (name: string) => projects.find((p) => p.name === name)
 
 /** The projects that must run one-at-a-time, whatever the global budget says. */
-const SERIAL_PROJECTS = ['e2e-clipboard', 'e2e-perf-gate', 'e2e-perf-diag']
+const SERIAL_PROJECTS = [
+  'e2e-clipboard',
+  'e2e-perf-gate',
+  'e2e-perf-diag',
+  // Teardown-only: a single reader of the run-scoped residue registry. Two gate
+  // workers would both try to clean up the same leaked directories.
+  'residue-gate',
+]
+
+/**
+ * Which helper modules allocate temp dirs, DERIVED from their source rather than a
+ * name list. `launch.ts` / `temp.ts` do it directly, but `fixtures.ts` (launchApp in
+ * the clipboard fixture) and `perf-fixture.ts` (mkTempDir) do it on a spec's behalf —
+ * a project importing ONLY a wrapper must not slip past the residue gate wiring.
+ */
+const HELPERS_DIR = join(ROOT, 'e2e', 'helpers')
+const ALLOCATION_API_CALL = /\b(?:mkdtempSync|mkTempDir|recordAllocation|launchApp)\s*\(/
+const allocatingHelpers = new Set(
+  readdirSync(HELPERS_DIR)
+    .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
+    .filter((file) => ALLOCATION_API_CALL.test(readFileSync(join(HELPERS_DIR, file), 'utf-8')))
+    .map((file) => file.slice(0, -'.ts'.length)),
+)
+
+/** Specs stay one level below e2e/ and import helpers as ../helpers/... (ADR-0034). */
+const HELPER_IMPORT = /from\s+['"]\.\.\/helpers\/([^'"]+)['"]/g
+
+/**
+ * A project is temp-allocating when any of its specs imports an allocation-capable
+ * helper. `specFilesUnder` is the ONE recursive, sorted walk all guards share, so this
+ * scan cannot drift from ADR-0034's ownership boundary by depth or OS ordering.
+ */
+function allocatesTempDirs(testDir: string): boolean {
+  return specFilesUnder(testDir).some((file) =>
+    [...readFileSync(file, 'utf-8').matchAll(HELPER_IMPORT)].some((match) =>
+      allocatingHelpers.has(match[1]),
+    ),
+  )
+}
+
+const RESIDUE_GATED_PROJECTS = projects
+  .filter(
+    (p): p is (typeof projects)[number] & { name: string; testDir: string } =>
+      p.name !== 'residue-gate' && typeof p.testDir === 'string' && allocatesTempDirs(p.testDir),
+  )
+  .map((p) => p.name)
 
 /** The project that must NOT be capped — it is the one that parallelises. */
 const PARALLEL_PROJECT = 'e2e-app'
@@ -58,6 +106,46 @@ describe('the e2e parallelism contract', () => {
     for (const name of SERIAL_PROJECTS) {
       expect(projectOf(name)?.workers, name + ' must run with workers: 1').toBe(1)
     }
+  })
+
+  it('wires every temp-allocating project to the residue-gate teardown', () => {
+    // The gated set is DERIVED from the specs (see RESIDUE_GATED_PROJECTS above), so this
+    // check survives new projects without an edit here. A teardown project is only reached
+    // through `teardown:` — Playwright does not infer it. Deleting one of those lines
+    // would leave every other guard green while the run silently stopped auditing part of
+    // the suite. This is the executable half of ADR-0036's "zero-residue gate" (verified:
+    // `--project=e2e-app` and every `--shard=x/4` DO schedule the teardown project).
+    expect(projectOf('residue-gate'), 'the residue-gate project must exist').toBeDefined()
+    // Every collection this guard iterates must carry an explicit expectation: a
+    // zero-iteration loop is a vacuous green (docs/agents/testing.md, "Contract guards").
+    expect(projects.length, 'the config must actually declare projects').toBeGreaterThan(0)
+    for (const project of projects) {
+      expect(
+        typeof project.testDir,
+        `${project.name} must declare its own testDir (ADR-0034), or the scan silently skips it`,
+      ).toBe('string')
+    }
+    expect(
+      allocatingHelpers.size,
+      'the helper scan must find the modules that allocate temp dirs',
+    ).toBeGreaterThan(0)
+    expect(
+      RESIDUE_GATED_PROJECTS.length,
+      'the derivation must find at least one temp-allocating project, or the checks below are vacuous',
+    ).toBeGreaterThan(0)
+    for (const name of RESIDUE_GATED_PROJECTS) {
+      expect(projectOf(name)?.teardown, `${name} must teardown into residue-gate`).toBe(
+        'residue-gate',
+      )
+    }
+    // `retries: 0` is OUR value and must stay pinned: the gate deletes leaked dirs
+    // before asserting, so a retry would face an empty leftover list and pass green.
+    // Playwright itself already rejects a teardown project with `dependencies`
+    // ("Teardown project ... must not have dependencies"), so restating that here
+    // would only go red on a framework change — see testing.md, "Assert the logic
+    // you wrote".
+    expect(projectOf('residue-gate')?.retries).toBe(0)
+    expect(projectOf('residue-gate')?.teardown).toBeUndefined()
   })
 
   it('gives e2e-app the global adaptive budget (no project-level cap)', () => {
@@ -127,8 +215,8 @@ describe('the e2e parallelism contract', () => {
       'the retry check must actually visit the configured projects',
     ).toBeGreaterThan(0)
     for (const project of projects) {
-      if (project.name === 'e2e-perf-diag') {
-        expect(project.retries, 'the timing diagnostic must never retry').toBe(0)
+      if (project.name === 'e2e-perf-diag' || project.name === 'residue-gate') {
+        expect(project.retries, `${project.name} must never retry`).toBe(0)
       } else {
         expect(
           project.retries,

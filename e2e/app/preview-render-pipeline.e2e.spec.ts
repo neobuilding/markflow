@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkTempDir } from '../helpers/temp'
 import { VIEWPORTS } from '../helpers/viewports'
+import { resetAppState } from '../helpers/reset'
 
 // Self-contained test data: a committed copy of examples/demo.en.md (4 mermaid diagrams)
 // lives under e2e/fixtures so this spec never depends on the examples/ tree.
@@ -28,17 +29,24 @@ const DIAGRAM_FIXTURE = join(
 // suite; the existing preview e2e specs — mermaid/katex/context-menu/save-export — would fail
 // loudly if the DOM shape or the mermaid baking broke, e.g. this suite is what catches a bad
 // `data-mermaid-slot` placeholder shape that stops the SVG from being baked in.)
+// Reuse ONE Electron instance (serial); `resetAppState` clears documents, workspace root,
+// viewport and renderer state between cases.
+test.describe.configure({ mode: 'serial' })
 test.describe('preview render pipeline', () => {
   let handle: AppHandle
   let scratch: string
 
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
     scratch = mkTempDir('markflow-e2e-')
   })
 
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
+  })
+
+  test.beforeEach(async () => {
+    await resetAppState(handle)
   })
 
   // Write the document to disk and open it through the real import IPC + UI store, so the

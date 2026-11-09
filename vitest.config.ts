@@ -97,9 +97,11 @@ export default defineConfig({
         'src/renderer/src/lib/parseClient.ts',
         'src/renderer/src/lib/scrollSync.ts',
         // Renderer components: DOM / native integration surface. Per the repo's coverage policy
-        // (CONTRIBUTING.md: "DOM/native excluded") this surface is held out of the 100% gate and is
-        // covered instead by the Playwright e2e suites (sidebar-search, command-palette, editor-pane,
-        // …). The unit-testable logic surface above remains held to 100%.
+        // (CONTRIBUTING.md: "DOM/native excluded") this surface is held out of the 100% gate. Real
+        // DOM / native behaviour is covered by the Playwright e2e suites (sidebar-search,
+        // command-palette, editor-pane, …); component-level wiring that a jsdom render CAN prove
+        // is also guarded by component UTs (e.g. SidebarSearch's controls reaching the search IPC
+        // boundary). The unit-testable logic surface above remains held to 100%.
         'src/renderer/src/components/**/*.{ts,tsx}',
         // actions/create-pr entry/integration surface that cannot be covered by
         // the in-process test runner: cli-render.mjs is launched as a child

@@ -43,7 +43,7 @@ import { tmpdir } from 'node:os'
 export const OWN_TEMP_DIR_NAME = 'markflow'
 
 /** Wait long enough for this process (and its Chromium children) to fully exit. */
-const DEFER_DELAY_MS = 2_000
+export const DEFER_DELAY_MS = 2_000
 
 /** Native surface this module touches, bundled for injection (see `docs/agents/testing.md`). */
 export interface TempCleanupDeps {
@@ -108,14 +108,41 @@ export function removeOwnTempDir(path: string, deps: TempCleanupDeps = {}): bool
  * Deliberately NOT relying on the OS: Windows has no "delete when closed" primitive short
  * of MOVEFILE_DELAY_UNTIL_REBOOT, which would defer the cleanup to the next boot.
  */
+export const RETRY_GRACE_MS = 6_000
+export const RETRY_INTERVAL_MS = 250
+
+/**
+ * Worst-case wall clock from `will-quit` until the detached deleter gives up:
+ * the initial defer PLUS the whole retry window. The e2e residue gate must wait
+ * at least this long before declaring a directory leaked (see e2e/residue-gate).
+ */
+export const DELETER_MAX_LIFETIME_MS = DEFER_DELAY_MS + RETRY_GRACE_MS
+
+/**
+ * Build the detached deleter script as a pure string so a unit test can assert
+ * its retry behaviour without spawning a real child process. `start` is set on
+ * the FIRST attempt, not when the script is parsed — otherwise the 2s defer is
+ * charged against the retry budget and the window silently shrinks to 4s.
+ */
+export function buildDeleterScript(path: string): string {
+  return (
+    `var p=${JSON.stringify(path)};var start=0;` +
+    `setTimeout(function attempt(){if(!start)start=Date.now();` +
+    `try{require('node:fs').rmSync(p,{recursive:true,force:true});}` +
+    `catch(e){if(Date.now()-start<${RETRY_GRACE_MS}){setTimeout(attempt,${RETRY_INTERVAL_MS});return;}return;}},${DEFER_DELAY_MS})`
+  )
+}
+
 export function scheduleRemoveAfterExit(path: string, deps: TempCleanupDeps = {}): void {
   const d = resolveDeps(deps)
   if (!isOwnTempDir(path, d.basename)) return
   try {
-    const script =
-      `setTimeout(function () { try { require('node:fs').rmSync(${JSON.stringify(path)}, ` +
-      `{ recursive: true, force: true }) } catch (e) {} }, ${DEFER_DELAY_MS})`
-    const child = d.spawn(process.execPath, ['-e', script], {
+    // Wait for the app (and its Chromium children) to fully exit, then remove the
+    // directory — RETRYING on a transient EPERM so a single failed attempt during
+    // Chromium's teardown flush no longer leaves the directory behind. The grace
+    // window is a safety net; if even that fails, the e2e residue gate catches the
+    // leak and cleans it up.
+    const child = d.spawn(process.execPath, ['-e', buildDeleterScript(path)], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,

@@ -16,7 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "e2e:app": "playwright test --project=e2e-app",
+    "e2e:app": "playwright test --project=e2e-app --project=residue-gate",
     "e2e:clipboard": "playwright test --project=e2e-clipboard",
     "e2e:perf-diag": "playwright test --project=e2e-perf-diag",
     "e2e:perf-gate": "playwright test --project=e2e-perf-gate",

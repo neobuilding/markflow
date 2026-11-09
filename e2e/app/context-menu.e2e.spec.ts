@@ -12,6 +12,7 @@ import { test } from '../helpers/fixtures'
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
+import { resetAppState } from '../helpers/reset'
 
 // Destructive-action confirm dialog ---------------------------------
 // `dialog:confirm` is implemented in the MAIN process via Electron's `dialog.showMessageBox`
@@ -95,14 +96,21 @@ async function measureItemContrast(
   }, testId)
 }
 
+// Each describe reuses ONE Electron instance (serial). `resetAppState` clears documents,
+// workspace root, viewport and renderer state between cases; the confirm spy is installed per
+// case (it lives on the main-process dialog, which the reload leaves intact).
+test.describe.configure({ mode: 'serial' })
 test.describe('context menus', () => {
   let handle: AppHandle
 
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
   })
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
+  })
+  test.beforeEach(async () => {
+    await resetAppState(handle)
   })
 
   // Create a memory-only draft through the real sidebar "+" button (handleCreate),
@@ -250,11 +258,14 @@ test.describe('context menus', () => {
 test.describe('context menus — M3 surfaces (status bar / search / file-details / resize / folder / welcome)', () => {
   let handle: AppHandle
 
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
   })
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
+  })
+  test.beforeEach(async () => {
+    await resetAppState(handle)
   })
 
   async function createDocAndType(page: Page, text: string): Promise<void> {
@@ -439,11 +450,14 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
 //   - go-up       (empty-folder bar) navigates to the parent folder
 test.describe('M3 write-operation menus (supplement)', () => {
   let handle: AppHandle
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
   })
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
+  })
+  test.beforeEach(async () => {
+    await resetAppState(handle)
   })
 
   function scratchDir(files: Record<string, string>): string {

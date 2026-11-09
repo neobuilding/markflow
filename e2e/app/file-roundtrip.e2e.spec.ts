@@ -4,15 +4,17 @@ import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
 
+// One app launch for the whole file; each scenario keeps its own labelled step and uses a distinct
+// file name, so nothing leaks between them.
 test.describe('file round-trip (open / edit / save / reopen)', () => {
   let handle: AppHandle
   let scratch: string
 
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
     scratch = mkTempDir('markflow-e2e-')
   })
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
   })
 
@@ -30,90 +32,86 @@ test.describe('file round-trip (open / edit / save / reopen)', () => {
     )
   }
 
-  test('opening a disk markdown file loads it into the editor', async () => {
+  test('open, save, and export a real disk document', async () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // Write a real .md file to disk, then "open" it via the same import IPC
-    // the Open File dialog would use.
-    const file = join(scratch, 'sample.md')
-    writeFileSync(file, '# Hello from disk\n\nThis came from a file.', 'utf-8')
+    await test.step('opening a disk markdown file loads it into the editor', async () => {
+      // Write a real .md file to disk, then "open" it via the same import IPC
+      // the Open File dialog would use.
+      const file = join(scratch, 'sample.md')
+      writeFileSync(file, '# Hello from disk\n\nThis came from a file.', 'utf-8')
 
-    const id = await page.evaluate(
-      (f) => window.api.documents.import(f).then((d: any) => d.id),
-      file,
-    )
-    expect(id).toBeTruthy()
+      const id = await page.evaluate(
+        (f) => window.api.documents.import(f).then((d: any) => d.id),
+        file,
+      )
+      expect(id).toBeTruthy()
 
-    await activateById(page, id)
+      await activateById(page, id)
 
-    // The editor shows the file's content.
-    await expect(page.locator('.cm-content')).toBeVisible()
-    await expect(page.locator('.cm-content')).toContainText('Hello from disk')
-  })
+      // The editor shows the file's content.
+      await expect(page.locator('.cm-content')).toBeVisible()
+      await expect(page.locator('.cm-content')).toContainText('Hello from disk')
+    })
 
-  test('editing then Save As writes the new content back to disk', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
+    await test.step('editing then Save As writes the new content back to disk', async () => {
+      const file = join(scratch, 'editme.md')
+      writeFileSync(file, '# Original\n\nbefore', 'utf-8')
+      const id = await page.evaluate(
+        (f) => window.api.documents.import(f).then((d: any) => d.id),
+        file,
+      )
+      await activateById(page, id, true)
 
-    const file = join(scratch, 'editme.md')
-    writeFileSync(file, '# Original\n\nbefore', 'utf-8')
-    const id = await page.evaluate(
-      (f) => window.api.documents.import(f).then((d: any) => d.id),
-      file,
-    )
-    await activateById(page, id, true)
+      // Type into the editor.
+      const editor = page.locator('.cm-content')
+      await editor.click()
+      await page.keyboard.type(' APPENDED')
+      await expect(editor).toContainText('APPENDED')
 
-    // Type into the editor.
-    const editor = page.locator('.cm-content')
-    await editor.click()
-    await page.keyboard.type(' APPENDED')
-    await expect(editor).toContainText('APPENDED')
+      // Read the live editor text and Save As to a new path.
+      const outPath = join(scratch, 'saved.md')
+      const liveText = await editor.innerText()
+      const saved = await page.evaluate(
+        (args) =>
+          window.api.documents
+            .saveAs(args.id, args.out, { title: 'saved', content: args.text })
+            .then((r: any) => r?.filePath ?? null),
+        { id, out: outPath, text: liveText },
+      )
+      expect(saved).toBe(outPath)
+      expect(existsSync(outPath)).toBe(true)
+      const onDisk = readFileSync(outPath, 'utf-8')
+      expect(onDisk).toContain('APPENDED')
 
-    // Read the live editor text and Save As to a new path.
-    const outPath = join(scratch, 'saved.md')
-    const liveText = await editor.innerText()
-    const saved = await page.evaluate(
-      (args) =>
-        window.api.documents
-          .saveAs(args.id, args.out, { title: 'saved', content: args.text })
-          .then((r: any) => r?.filePath ?? null),
-      { id, out: outPath, text: liveText },
-    )
-    expect(saved).toBe(outPath)
-    expect(existsSync(outPath)).toBe(true)
-    const onDisk = readFileSync(outPath, 'utf-8')
-    expect(onDisk).toContain('APPENDED')
+      // Re-open the saved file and confirm the edit survived the round-trip.
+      const reopenId = await page.evaluate(
+        (f) => window.api.documents.import(f).then((d: any) => d.id),
+        outPath,
+      )
+      await activateById(page, reopenId)
+      await expect(page.locator('.cm-content')).toContainText('APPENDED')
+    })
 
-    // Re-open the saved file and confirm the edit survived the round-trip.
-    const reopenId = await page.evaluate(
-      (f) => window.api.documents.import(f).then((d: any) => d.id),
-      outPath,
-    )
-    await activateById(page, reopenId)
-    await expect(page.locator('.cm-content')).toContainText('APPENDED')
-  })
+    await test.step('the Export as HTML dialog opens from the toolbar and shows its controls', async () => {
+      // Need an open document for the export button to be present.
+      await page.getByTestId('new-document-btn').click()
+      await expect(page.locator('.cm-content')).toBeVisible()
 
-  test('the Export as HTML dialog opens from the toolbar and shows its controls', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
+      // Open the export dialog via the toolbar button.
+      await page.getByTestId('export-btn').click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
 
-    // Need an open document for the export button to be present.
-    await page.getByTestId('new-document-btn').click()
-    await expect(page.locator('.cm-content')).toBeVisible()
+      // Key controls are present: title, theme selector, Export action.
+      await expect(dialog.getByRole('heading', { name: /export as html/i })).toBeVisible()
+      await expect(dialog.locator('select')).toBeVisible()
+      await expect(dialog.getByRole('button', { name: 'Export' })).toBeVisible()
 
-    // Open the export dialog via the toolbar button.
-    await page.getByTestId('export-btn').click()
-    const dialog = page.getByRole('dialog')
-    await expect(dialog).toBeVisible()
-
-    // Key controls are present: title, theme selector, Export action.
-    await expect(dialog.getByRole('heading', { name: /export as html/i })).toBeVisible()
-    await expect(dialog.locator('select')).toBeVisible()
-    await expect(dialog.getByRole('button', { name: 'Export' })).toBeVisible()
-
-    // Close it again (cancel) does not trigger the native save picker
-    await dialog.getByText('Cancel').click()
-    await expect(dialog).toBeHidden()
+      // Close it again (cancel) does not trigger the native save picker
+      await dialog.getByText('Cancel').click()
+      await expect(dialog).toBeHidden()
+    })
   })
 })

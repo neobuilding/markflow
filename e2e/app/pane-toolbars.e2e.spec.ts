@@ -3,6 +3,7 @@ import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/laun
 import { test } from '../helpers/fixtures'
 import { ALL_INLINE_AT, VIEWPORTS } from '../helpers/viewports'
 import { expectTooltipText } from '../helpers/tooltip'
+import { resetAppState } from '../helpers/reset'
 
 // C20 / ADR-0024 §10 + ADR-0025 P2 (option B): the app has THREE bars — a re-scoped global bar
 // (file commands), an editor pane bar (format / find-replace / undo-redo / read-only) and a
@@ -10,14 +11,20 @@ import { expectTooltipText } from '../helpers/tooltip'
 // each column carries its own bar, and the export entry point follows the preview's visibility:
 // exactly ONE export button is ever on screen (trade-off 46 — two peer toolbars must not carry
 // the same button side by side).
+// Reuse ONE Electron instance (serial). These cases change viewport width and focus, so the
+// shared `resetAppState` is essential: it restores the standard viewport and reloads the renderer.
+test.describe.configure({ mode: 'serial' })
 test.describe('pane toolbars', () => {
   let handle: AppHandle
 
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
   })
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
+  })
+  test.beforeEach(async () => {
+    await resetAppState(handle)
   })
 
   async function createDocAndType(page: Page, text: string): Promise<void> {

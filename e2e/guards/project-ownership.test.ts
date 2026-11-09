@@ -18,7 +18,7 @@
 //
 // It catches a file no project collects (orphaned into `e2e/` root or a leftover directory), and it
 // keeps working when specs are added or removed, which a hard-coded total does not. DOUBLE
-// collection is excluded structurally, not by this assertion: the four `testDir`s must be disjoint
+// collection is excluded structurally, not by this assertion: every `testDir` must be disjoint
 // and non-nested, and no project may set a `testMatch`. A spec COPIED into a second directory is a
 // new, independently collected file — that is what the clipboard exact-coverage check notices.
 import { describe, it, expect } from 'vitest'
@@ -29,7 +29,17 @@ import { specFilesUnder, strayTestFilesUnder } from './scan-specs'
 import { ROOT, repoSource, globToRegExp } from './repo'
 
 const E2E_ROOT = join(ROOT, 'e2e')
-const PROJECT_NAMES = ['e2e-app', 'e2e-clipboard', 'e2e-perf-gate', 'e2e-perf-diag'] as const
+const PROJECT_NAMES = [
+  'e2e-app',
+  'e2e-clipboard',
+  'e2e-perf-gate',
+  'e2e-perf-diag',
+  // Teardown-only project (see e2e/residue-gate): it is wired as the `teardown` of
+  // every temp-allocating project, including the on-demand e2e-perf-diag. e2e:app
+  // names it explicitly so that this guard's name set stays in lockstep; the wiring
+  // itself is pinned by e2e-parallelism.test.ts.
+  'residue-gate',
+] as const
 type ProjectName = (typeof PROJECT_NAMES)[number]
 
 function testDirOf(name: string): string {
@@ -135,7 +145,7 @@ describe('ADR-0034: one e2e spec file, one project', () => {
     ).toEqual(selected)
   })
 
-  it('defines exactly the four projects, each with its own distinct testDir', () => {
+  it(`defines exactly the ${PROJECT_NAMES.length} projects, each with its own distinct testDir`, () => {
     expect((config.projects ?? []).map((p) => p.name).sort()).toEqual([...PROJECT_NAMES].sort())
     expect(new Set(Object.values(dirs)).size).toBe(PROJECT_NAMES.length)
   })
@@ -150,7 +160,7 @@ describe('ADR-0034: one e2e spec file, one project', () => {
     }
   })
 
-  it('keeps the four testDirs disjoint and non-nested', () => {
+  it('keeps every testDir disjoint and non-nested', () => {
     for (const a of PROJECT_NAMES) {
       for (const b of PROJECT_NAMES) {
         if (a === b) continue

@@ -57,6 +57,57 @@ suite was green while the machine slowly filled up. A `try/finally` + `rmSync` a
 it is skipped when a test fails mid-way, so prefer the helper. Production code follows the same
 rule (`mf-print-*` in `export.ts` removes its temp dir in `finally`).
 
+### A clean run must leave zero residue — the residue gate proves it
+
+The registry above only makes a _leak possible to clean up_; it does not _prove_ cleanup ran. A
+regression that made the app's `will-quit` cleanup silently no-op would still pass every test
+while leaving directories behind. So the e2e layer adds a **residue gate** (ADR-0036):
+
+- `e2e/helpers/temp.ts` appends every allocated directory to a **run-scoped** registry
+  `e2e/.residue-registry/<process.pid>.jsonl` (`recordAllocation(dir)`); `mkTempDir` calls it.
+  `untrackTempDir` does **not**, so the gate also verifies the app
+  removed directories it was expected to own. `global-setup.ts` calls `resetResidueRegistry()` at
+  the start of each run, so a crashed worker's stale list never leaks into the next run. A write
+  failure is **loud**, not best-effort: the registry is the gate's only input, and an unrecorded
+  allocation is invisible residue. The gate itself never deletes the registry — doing so raced a
+  live worker. The three bookkeeping wirings are pinned by `e2e/guards/residue-registry.test.ts`,
+  whose ignore-rule check is a pure function with a UT covering both LF and CRLF checkouts.
+- Every temp-allocating project (`e2e-app`, `e2e-clipboard`, `e2e-perf-gate`, and the on-demand
+  `e2e-perf-diag`) sets
+  `teardown: 'residue-gate'`, pinned by `e2e/guards/e2e-parallelism.test.ts`. That guard **derives**
+  the set: it scans each project's specs (through the shared `scan-specs.ts`) for imports of helper
+  modules that allocate temp dirs — the helper set itself is derived from helper sources, so a spec
+  importing only a wrapper such as `fixtures.ts` / `perf-fixture.ts` cannot escape. Playwright's
+  `--project` filtering and all four `--shard`s pulling the teardown project in were verified with
+  `--list`, not pinned by a Vitest guard (framework behaviour, see "Assert the logic you wrote").
+  The single spec reads the registry, captures **evidence** of leftovers, cleans them, and only
+  **then** asserts on the captured list. A leftover is a real failed test (JUnit `failed`, not a
+  run-level `error`).
+- The gate waits ONE shared deadline, derived from the app deleter's worst case
+  (`DEFER_DELAY_MS + RETRY_GRACE_MS`, exported from `temp-cleanup.ts`) plus a margin. A shorter
+  hardcoded grace turns a slow-but-successful delete into a false red; `temp.test.ts` pins the
+  relation.
+- The gate checks only paths **this run registered** — it never scans `%TEMP%/markflow-*` by
+  prefix, so it can never touch a live instance's profile. It is a verifier, not a sweeper.
+
+**Test pyramid:** the audit logic (`readResidueRegistry` / `findResidue` / `cleanupResidue`), the
+registry bookkeeping (`recordAllocation` / `resetResidueRegistry`), the harness ownership path
+(`mkTempDir` / `untrackTempDir` / `cleanupTempDirs`) and the `closeApp()` decision matrix
+(`classifyCloseFailure`) are all unit-tested in `e2e/helpers/*.test.ts` with injected fs/clock —
+including a deliberately leaked directory being **reported**, a **loud** write failure, an
+untracked allocation still being registered, and the full `2×2×2` decision matrix. The old
+"harness reclaims the temp dirs it allocated" e2e case was pure fs logic (its own comment said "No
+Electron launch needed") and was moved down to the unit layer after a mutation check; only the
+app-owned `will-quit` removal stays in e2e because it needs a real Electron quit. The deleter's
+retry script is driven in a `vm` by `temp-cleanup.test.ts`, and `resetAppState` (the serial-mode
+reset) is unit-tested in `e2e/helpers/reset.test.ts` while `e2e/guards/serial-reset.test.ts` keeps
+the "every serial spec resets in `beforeEach`" convention executable. The e2e gate spec only
+orchestrates; it must never be the only place that can prove the gate can go red.
+
+This pins the production side too: `will-quit` runs its cleanup synchronously and _first_, before
+the awaited `stopFolderWatching()`, and `closeApp()` throws on a quit timeout instead of reporting
+a silent "closed". A normal exit that leaks is now a defect that CI sees.
+
 ## The OS clipboard is its own Playwright project
 
 Playwright cannot intercept the real clipboard, and mocking it would defeat the point of the specs
@@ -144,6 +195,40 @@ When an e2e case is a candidate for removal, decide which situation applies:
   and record which of those reasons applies in the change.
 
 A flaky e2e is evidence: raise the reproduction rate before downgrading the test.
+
+### Reducing e2e cost without losing coverage
+
+The expensive part of an e2e case is the Electron launch, not its assertions. When a file has
+many small cases, reduce launches rather than delete assertions (ADR-0035). Two patterns:
+
+- **Independent read-only cases:** one `test()` with `test.step()` segments and a single
+  `beforeAll`/`afterAll` launch. Order steps so earlier ones cannot pollute later ones.
+- **Stateful cases:** keep independent `test()` cases, add
+  `test.describe.configure({ mode: 'serial' })`, launch once in `beforeAll`, and call the shared
+  `e2e/helpers/reset.ts` helper in `beforeEach`. A single mega-test is NOT an acceptable
+  alternative: the first failing step would abort every later assertion. Serial mode also means a
+  retry re-runs the whole group from `beforeAll` — verify the group still passes with
+  `--retries=0` before relying on it.
+
+The reset must cover both processes — `page.reload()` only rebuilds the renderer, while documents,
+workspace root, viewport **and main-process monkey patches** live outside it. `resetAppState()`
+therefore deletes all documents, clears the workspace root, restores the standard viewport,
+restores `dialog.showMessageBox` (confirm spies are installed in the MAIN process and a page reload
+does not undo them), clears both confirm-call recorders — otherwise a previous case's recorded call
+makes `.poll(calls.length).toBeGreaterThan(0)` pass vacuously — and finally reloads. This
+reproduces the per-test user-data-dir isolation documented in `e2e/helpers/launch.ts`. Any spec
+using the serial pattern MUST call the helper; adding a case that sets main-process state without
+extending the helper will leak into later cases.
+
+### Concurrency of reused instances
+
+`fullyParallel: false` means cases are serial **within a file** and parallel **across files**. A
+reused instance is therefore never accessed by two workers at once, and each spec file still gets
+its own Electron process with its own user-data-dir. Serial mode does change two things to be aware
+of: a failing case skips the rest of its group, and CI's `retries: 1` re-runs the whole group from
+`beforeAll` (verified: hooks stay paired, no leaked process). Verify groups with `--retries=0`
+first. Cross-file parallelism is unaffected — a full `--project=e2e-app` run with the default
+worker pool passes with the merged and unmerged specs interleaved.
 
 ## Contract guards
 
@@ -378,6 +463,17 @@ Test-infrastructure terms used above.
 - **content area vs OS window**: the content area is the layout viewport (`setViewportSize` controls
   it); the OS window is the outer frame around it. Pinning the content area is deterministic; pinning
   the OS window is not, because the frame varies by platform, theme, and DPI.
+- **residue gate**: a teardown-time project that fails a run when a temp directory that run
+  allocated still exists. _Avoid_: sweeper, startup cleanup, `%TEMP%` scan.
+- **run-scoped registry**: the on-disk, per-worker list of temp directories the current run
+  allocated; the residue gate's only input. _Avoid_: global temp-dir listing, residue sweep.
+- **teardown project**: a project reached only through another project's `teardown:` field, unless
+  an npm script names it explicitly to keep a guard's project-name set in sync (ADR-0036); it
+  runs after that project, and its failure is a real test failure. _Avoid_: globalTeardown,
+  dependency project.
+- **sweeper**: cleanup that deletes directories it did not allocate, inferring ownership from a
+  name prefix or age. Rejected (ADR-0017). A **verifier** checks only paths it registered;
+  a sweeper guesses. _Avoid_: residue gate, cleanup-on-startup.
 
 ## Terminology
 

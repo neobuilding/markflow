@@ -8,17 +8,22 @@ import { mkTempDir } from '../helpers/temp'
 // view. Content search lives in the Search view — there is no mode switch any more, so filename
 // globs are the Ctrl/Cmd+K "Go to file" palette's job (see command-palette.e2e.spec.ts).
 // The Search view's own state is session-only and never persisted (Q20).
-// DOM is addressed by testids: activity-bar-{files,search}, resident-search-{input,box},
-// search-{include,exclude,match,group,summary,diagnostic}, search-advanced-toggles-{ab,.*}.
+//
+// One app launch for the whole file. The steps are ORDERED so earlier ones cannot pollute later
+// ones: the localStorage / styling / empty-state checks run before any file is imported, the
+// grouped-count step imports exactly the two files it counts, and the jump step searches a token
+// that exists in exactly one file. Seven pure-algorithm examples (regex / whole-word / scope /
+// invalid patterns) were moved to `electron/main/lib/content-match.test.ts`,
+// `electron/main/lib/scope-filter.test.ts` and `electron/main/ipc/search.test.ts`.
 test.describe('sidebar Search view (ADR-0023)', () => {
   let handle: AppHandle
   let scratch: string
 
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
     scratch = mkTempDir('markflow-e2e-sidebar-search-')
   })
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
   })
 
@@ -57,264 +62,127 @@ test.describe('sidebar Search view (ADR-0023)', () => {
     }, scratch)
   }
 
+  // The Files/Search tabs are mutually exclusive, so clicking the Search tab when the view is
+  // already open would toggle it CLOSED. Steps share one app instance, so make this idempotent.
   async function openSearchView(page: Page): Promise<void> {
-    await page.getByTestId('activity-bar-search').click()
-    await expect(page.getByTestId('resident-search-input')).toBeVisible()
+    const input = page.getByTestId('resident-search-input')
+    if ((await input.count()) === 0) {
+      await page.getByTestId('activity-bar-search').click()
+    }
+    await expect(input).toBeVisible()
   }
 
-  test('is reached through the sidebar tab and its state is never persisted', async () => {
+  test('Search view surface, grouped results, and hit navigation', async () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // The tree is the default surface; the Search tab is the other one. `aria-expanded` is
-    // asserted alongside `aria-selected`: both must agree that a panel is actually showing.
-    await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-expanded', 'true')
-    await expect(page.getByTestId('resident-search-input')).toHaveCount(0)
+    await test.step('is reached through the sidebar tab and its state is never persisted', async () => {
+      // The tree is the default surface; the Search tab is the other one. `aria-expanded` is
+      // asserted alongside `aria-selected`: both must agree that a panel is actually showing.
+      await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-selected', 'true')
+      await expect(page.getByTestId('activity-bar-files')).toHaveAttribute('aria-expanded', 'true')
+      await expect(page.getByTestId('resident-search-input')).toHaveCount(0)
 
-    await openSearchView(page)
-    await expect(page.getByTestId('activity-bar-search')).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByTestId('activity-bar-search')).toHaveAttribute('aria-expanded', 'true')
+      await openSearchView(page)
+      await expect(page.getByTestId('activity-bar-search')).toHaveAttribute('aria-selected', 'true')
+      await expect(page.getByTestId('activity-bar-search')).toHaveAttribute('aria-expanded', 'true')
 
-    // Nothing about the chosen surface is written to persistent storage (Q20).
-    const persisted = await page.evaluate(() =>
-      Object.keys(window.localStorage).filter((k) => /search|sidebar|view/i.test(k)),
-    )
-    expect(persisted).toHaveLength(0)
+      // Nothing about the chosen surface is written to persistent storage (Q20).
+      const persisted = await page.evaluate(() =>
+        Object.keys(window.localStorage).filter((k) => /search|sidebar|view/i.test(k)),
+      )
+      expect(persisted).toHaveLength(0)
 
-    // Switching back is possible, which is the whole point of a mutually exclusive pair.
-    await page.getByTestId('activity-bar-files').click()
-    await expect(page.getByTestId('resident-search-input')).toHaveCount(0)
-  })
-
-  test('groups hits per file with per-group counts and the global summary', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-
-    // Two files, three total occurrences of "needle".
-    await importFile(page, 'alpha.md', 'needle one\n\nsecond needle here\n')
-    await importFile(page, 'beta.md', 'a needle in beta\n')
-
-    await openSearchView(page)
-    await page.getByTestId('resident-search-input').pressSequentially('needle')
-
-    // One group per file, one row per in-document occurrence.
-    await expect(page.getByTestId('search-group')).toHaveCount(2)
-    await expect(page.getByTestId('search-match')).toHaveCount(3)
-
-    // Global hit summary.
-    await expect(page.getByTestId('search-summary')).toContainText('3 matches in 2 files')
-
-    // Per-group hit counts (order-independent).
-    await expect(page.getByTestId('search-group').filter({ hasText: 'Alpha' })).toContainText('2')
-    await expect(page.getByTestId('search-group').filter({ hasText: 'Beta' })).toContainText('1')
-  })
-
-  test('clicking a hit in the open document jumps the editor to the hit offset', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-
-    // A single, already-open document: clicking its hit selects the match in place.
-    await importFile(page, 'solo.md', 'alpha needle beta')
-    await expect(page.locator('.cm-content')).toContainText('alpha needle beta')
-
-    await openSearchView(page)
-    await page.getByTestId('resident-search-input').pressSequentially('needle')
-    await expect(page.getByTestId('search-match')).toHaveCount(1)
-
-    await page.getByTestId('search-match').first().click()
-
-    // The jump placed a selection on the matched range in the editor.
-    await expect(page.locator('.cm-content')).toBeVisible()
-    await expect
-      .poll(async () => page.locator('.cm-selectionBackground').count(), { timeout: 5000 })
-      .toBeGreaterThan(0)
-  })
-
-  test('the query field is styled as a field, not as static text', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openSearchView(page)
-
-    // Regression: the magnifier, a borderless transparent <input> and the clear button floated
-    // loose on the panel background, so the query box read as a caption rather than a field.
-    const box = page.getByTestId('resident-search-box')
-    await expect(box).toBeVisible()
-    const style = await box.evaluate((el) => {
-      const cs = getComputedStyle(el)
-      return { borderTop: cs.borderTopWidth, background: cs.backgroundColor }
+      // Switching back is possible, which is the whole point of a mutually exclusive pair.
+      await page.getByTestId('activity-bar-files').click()
+      await expect(page.getByTestId('resident-search-input')).toHaveCount(0)
     })
-    expect(parseFloat(style.borderTop)).toBeGreaterThan(0)
-    expect(style.background).not.toBe('rgba(0, 0, 0, 0)')
 
-    const fieldBox = await box.boundingBox()
-    expect(fieldBox).not.toBeNull()
+    await test.step('the query field is styled as a field, not as static text', async () => {
+      await openSearchView(page)
 
-    // The magnifier sits INSIDE the field's bounds.
-    const iconBox = await box.locator('svg').first().boundingBox()
-    expect(iconBox).not.toBeNull()
-    expect(iconBox!.x).toBeGreaterThanOrEqual(fieldBox!.x)
-    expect(iconBox!.x + iconBox!.width).toBeLessThanOrEqual(fieldBox!.x + fieldBox!.width)
-  })
+      // Regression: the magnifier, a borderless transparent <input> and the clear button floated
+      // loose on the panel background, so the query box read as a caption rather than a field.
+      const box = page.getByTestId('resident-search-box')
+      await expect(box).toBeVisible()
+      const style = await box.evaluate((el) => {
+        const cs = getComputedStyle(el)
+        return { borderTop: cs.borderTopWidth, background: cs.backgroundColor }
+      })
+      expect(parseFloat(style.borderTop)).toBeGreaterThan(0)
+      expect(style.background).not.toBe('rgba(0, 0, 0, 0)')
 
-  // The include/exclude pair replaces the old scope popover, and `exclude` must win
-  // over the include side (D19).
-  test('the exclude pattern removes a file the include side would match', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-    await importFile(page, 'docs/keep.md', 'needle in docs\n')
-    await importFile(page, 'archive/drop.md', 'needle in archive\n')
+      const fieldBox = await box.boundingBox()
+      expect(fieldBox).not.toBeNull()
 
-    await openSearchView(page)
-    await page.getByTestId('search-toggle-details').click()
-    await page.getByTestId('search-include').fill('**/*.md')
-    await page.getByTestId('resident-search-input').pressSequentially('needle')
+      // The magnifier sits INSIDE the field's bounds.
+      const iconBox = await box.locator('svg').first().boundingBox()
+      expect(iconBox).not.toBeNull()
+      expect(iconBox!.x).toBeGreaterThanOrEqual(fieldBox!.x)
+      expect(iconBox!.x + iconBox!.width).toBeLessThanOrEqual(fieldBox!.x + fieldBox!.width)
+    })
 
-    await expect(page.getByTestId('search-group')).toHaveCount(2)
+    // The Search view's empty state speaks for ITSELF (Q7): it used to borrow the command
+    // palette's `palette.startTyping` string, so the sidebar quoted another surface. It now has
+    // its own key (`sidebar.searchEmptyState`) — the empty state names the results area.
+    await test.step('the empty state names the results area with its own copy (Q7)', async () => {
+      // No query yet → the empty state is on screen with the sidebar's own wording.
+      await expect(page.getByText('Search results', { exact: true })).toBeVisible()
+      // The palette's wording must NOT leak into the sidebar.
+      await expect(page.getByText('Start typing', { exact: false })).toHaveCount(0)
+    })
 
-    // Excluding `./archive` must drop exactly one of them, not filter by nothing (D19).
-    await page.getByTestId('search-exclude').fill('./archive')
-    await expect(page.getByTestId('search-group')).toHaveCount(1)
-    await expect(page.getByTestId('search-group').first()).toContainText('keep')
-  })
+    await test.step('Ctrl+Shift+F switches to the Search view and focuses its input', async () => {
+      // This file contains no "needle", so it cannot perturb the grouped-count step below.
+      await importFile(page, 'solo.md', 'body text\n')
+      await expect(page.locator('.cm-content')).toBeVisible()
 
-  // An unparseable pattern must NOT silently widen the scope to "everything" (D27).
-  test('an invalid exclude pattern blocks the query instead of ignoring it', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-    await importFile(page, 'alpha.md', 'needle in alpha\n')
+      const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
+      await page.locator('.cm-content').click()
+      await page.keyboard.press(`${mod}+Shift+F`)
 
-    await openSearchView(page)
-    await page.getByTestId('search-toggle-details').click()
-    await page.getByTestId('search-exclude').fill('a[bc')
-    await page.getByTestId('resident-search-input').pressSequentially('needle')
+      await expect(page.getByTestId('resident-search-input')).toBeVisible()
+      await expect(page.getByTestId('resident-search-input')).toBeFocused()
+      // ONE shortcut, ONE owner — the mirror of the Ctrl+H guard in editor-find-replace: opening
+      // the Search view must NOT also open the editor's find panel.
+      await expect(page.getByTestId('editor-find')).toBeHidden()
+    })
 
-    await expect(page.getByTestId('search-diagnostic')).toBeVisible()
-    // No results are listed while the query is blocked.
-    await expect(page.getByTestId('search-match')).toHaveCount(0)
-  })
+    await test.step('groups hits per file with per-group counts and the global summary', async () => {
+      await openWorkspace(page)
 
-  test('Ctrl+Shift+F switches to the Search view and focuses its input, from the editor', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await importFile(page, 'solo.md', 'body text\n')
-    await expect(page.locator('.cm-content')).toBeVisible()
+      // Two files, three total occurrences of "needle" (solo.md above has none).
+      await importFile(page, 'alpha.md', 'needle one\n\nsecond needle here\n')
+      await importFile(page, 'beta.md', 'a needle in beta\n')
 
-    const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
-    await page.locator('.cm-content').click()
-    await page.keyboard.press(`${mod}+Shift+F`)
+      await openSearchView(page)
+      await page.getByTestId('resident-search-input').pressSequentially('needle')
 
-    await expect(page.getByTestId('resident-search-input')).toBeVisible()
-    await expect(page.getByTestId('resident-search-input')).toBeFocused()
-    // ONE shortcut, ONE owner — the mirror of the Ctrl+H guard in editor-find-replace: opening the
-    // Search view must NOT also open the editor's find panel.
-    await expect(page.getByTestId('editor-find')).toBeHidden()
-  })
+      // One group per file, one row per in-document occurrence.
+      await expect(page.getByTestId('search-group')).toHaveCount(2)
+      await expect(page.getByTestId('search-match')).toHaveCount(3)
 
-  // §13.1 / D30 / D31: the `.*` toggle turns the query into a JS regular expression, shared by
-  // display, counting and replace (one compiled matcher). A regex-only construct must match where
-  // the same literal text matches nothing.
-  test('regex mode matches a pattern the literal query would not (D30/D31)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-    await importFile(page, 'alpha.md', 'needle one\nsecond needle here\n')
+      // Global hit summary.
+      await expect(page.getByTestId('search-summary')).toContainText('3 matches in 2 files')
 
-    await openSearchView(page)
-    // Turn on regex FIRST, then type a pattern whose `e+` only makes sense as a regex.
-    await page.getByTestId('search-advanced-toggles-.*').click()
-    await page.getByTestId('resident-search-input').pressSequentially('ne+dle')
-    await expect(page.getByTestId('search-match')).toHaveCount(2)
+      // Per-group hit counts (order-independent).
+      await expect(page.getByTestId('search-group').filter({ hasText: 'Alpha' })).toContainText('2')
+      await expect(page.getByTestId('search-group').filter({ hasText: 'Beta' })).toContainText('1')
+    })
 
-    // Turn it back off: the same text is now a literal phrase with a plus and matches nothing.
-    await page.getByTestId('search-advanced-toggles-.*').click()
-    await expect(page.getByTestId('search-match')).toHaveCount(0)
-  })
+    await test.step('clicking a hit in the open document jumps the editor to the hit offset', async () => {
+      // A token that exists in EXACTLY ONE file, so the earlier "needle" files cannot add rows.
+      await importFile(page, 'jump.md', 'alpha ZUNIQUEHIT omega')
+      await page.getByTestId('resident-search-input').fill('ZUNIQUEHIT')
+      await expect(page.getByTestId('search-match')).toHaveCount(1)
 
-  // §13.4 / D34 / D35: whole-word matching on UAX #29 boundaries. A partial-word occurrence must
-  // NOT count — "needle" is not a word inside "needles" or "pineneedle".
-  test('whole-word mode skips partial-word occurrences (D34/D35)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-    await importFile(page, 'words.md', 'needles and pineneedle here\n')
+      await page.getByTestId('search-match').first().click()
 
-    await openSearchView(page)
-    // Literal "needle" appears inside both words → two hits.
-    await page.getByTestId('resident-search-input').pressSequentially('needle')
-    await expect(page.getByTestId('search-match')).toHaveCount(2)
-
-    // Whole-word: neither is a standalone word → zero hits.
-    await page.getByTestId('search-advanced-toggles-ab').click()
-    await expect(page.getByTestId('search-match')).toHaveCount(0)
-  })
-
-  // §13.4 / D35: ICU ships a dictionary for Han, so a Chinese word IS one word segment — whole-word
-  // matching must work for Chinese, the exact bug the naive `\w`/`\p{L}` approaches get wrong.
-  test('whole-word mode matches Chinese on UAX #29 boundaries (D35)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-    await importFile(page, 'cn.md', '这是中文文本，中文很重要\n')
-
-    await openSearchView(page)
-    await page.getByTestId('search-advanced-toggles-ab').click()
-    // Both occurrences of the Chinese word are standalone word segments.
-    await page.getByTestId('resident-search-input').pressSequentially('中文')
-    await expect(page.getByTestId('search-match')).toHaveCount(2)
-  })
-
-  // §13.7 / D33: a regex that does not compile is a BLOCKING failure, not a silent fallback to
-  // literal search. The user must see the inline diagnostic and get zero results.
-  test('an invalid regex blocks the query with an inline diagnostic (D33)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-    await importFile(page, 'alpha.md', 'needle in alpha\n')
-
-    await openSearchView(page)
-    await page.getByTestId('search-advanced-toggles-.*').click()
-    await page.getByTestId('resident-search-input').pressSequentially('(unclosed')
-
-    // Fail-closed: the diagnostic is shown (role=alert) and no results leak through.
-    await expect(page.getByTestId('search-diagnostic')).toBeVisible()
-    await expect(page.getByTestId('search-match')).toHaveCount(0)
-  })
-
-  // §13.6 / D32 / D36: the literal two-character sequence `\n` expands to a line terminator, so a
-  // regex can span lines; a literal `.` (regex) still does NOT match a newline.
-  test('regex newline escape matches across lines, a literal dot does not (D32/D36)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openWorkspace(page)
-    await importFile(page, 'cross.md', 'first\nsecond line\n')
-
-    await openSearchView(page)
-    await page.getByTestId('search-advanced-toggles-.*').click()
-    // Single-line regex: `.` does not cross the newline → no hit.
-    await page.getByTestId('resident-search-input').pressSequentially('first.second')
-    await expect(page.getByTestId('search-match')).toHaveCount(0)
-
-    // The `\n` escape spans the break: exactly one cross-line hit.
-    await page.getByTestId('resident-search-input').fill('first\\nsecond')
-    await expect(page.getByTestId('search-match')).toHaveCount(1)
-  })
-
-  // The Search view's empty state speaks for ITSELF (Q7): it used to borrow the command
-  // palette's `palette.startTyping` string, so the sidebar quoted another surface. It now has
-  // its own key (`sidebar.searchEmptyState`) — the empty state names the results area.
-  test('the empty state names the results area with its own copy (Q7)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    await openSearchView(page)
-
-    // No query yet → the empty state is on screen with the sidebar's own wording.
-    await expect(page.getByText('Search results', { exact: true })).toBeVisible()
-    // The palette's wording must NOT leak into the sidebar.
-    await expect(page.getByText('Start typing', { exact: false })).toHaveCount(0)
+      // The jump placed a selection on the matched range in the editor.
+      await expect(page.locator('.cm-content')).toBeVisible()
+      await expect
+        .poll(async () => page.locator('.cm-selectionBackground').count(), { timeout: 5000 })
+        .toBeGreaterThan(0)
+    })
   })
 })

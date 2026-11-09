@@ -1,13 +1,8 @@
-// Export dialog e2e — PLAN C20 addendum 7 (E12) and C20 addendum 5 (E11, second half).
+// Export dialog e2e — E11 (one export entry point), E12 (disabled while rendering), E13 (shadow
+// root parity).
 //
-// E11: "Export HTML" is ONE action with ONE implementation. Clicking the preview bar's export
-// button must open the very same dialog as the global bar's button — a second implementation
-// would be exactly the drift ADR-0024 §10 trade-off 46 forbids. The "only one export button on
-// screen" rule (the entry point follows the preview's visibility) is asserted too.
-//
-// E12: while the document has not finished rendering, the export must be DISABLED (and say so)
-// instead of writing the previous document's cached HTML or showing an error the user cannot
-// act on.
+// One app launch for the whole file; each scenario keeps its own labelled step. Every step closes
+// its modal before the next, and the dark-theme step runs LAST so it cannot tint the light one.
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 
@@ -89,134 +84,135 @@ async function openExportPreview(
   return { dialog, host, appPreview }
 }
 
+async function closeDialog(page: Page, dialog: Locator) {
+  await dialog.getByText('Cancel').click()
+  await expect(dialog).toBeHidden()
+  // The next scenario starts from the app's default light theme / ready state.
+  await page.evaluate(() => (window as any).__uiStore.getState().setExportReady(true))
+}
+
 test.describe('export dialog', () => {
   let handle: AppHandle
 
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
   })
-
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
   })
 
-  test('the preview bar opens the same export dialog, and only one export button is on screen', async () => {
+  test('one export entry point, rendering guard, and shadow-root parity', async () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    await page.getByTestId('new-document-btn').click()
-    await expect(page.locator('.cm-content')).toBeVisible()
+    await test.step('the preview bar opens the same dialog and only one export button is on screen', async () => {
+      await page.getByTestId('new-document-btn').click()
+      await expect(page.locator('.cm-content')).toBeVisible()
 
-    // Split view ⇒ the preview is visible ⇒ the export entry point lives on the PREVIEW bar.
-    await page.getByTestId('view-split').click()
-    await expect(page.locator('.markdown-preview')).toBeVisible()
+      // Split view ⇒ the preview is visible ⇒ the export entry point lives on the PREVIEW bar.
+      await page.getByTestId('view-split').click()
+      await expect(page.locator('.markdown-preview')).toBeVisible()
 
-    // Exactly ONE export button on screen (the global bar's is hidden while the preview shows).
-    await expect(page.getByTestId('export-btn')).toHaveCount(1)
+      // Exactly ONE export button on screen (the global bar's is hidden while the preview shows).
+      await expect(page.getByTestId('export-btn')).toHaveCount(1)
 
-    await page.getByTestId('export-btn').click()
-    const dialog = page.getByRole('dialog')
-    await expect(dialog).toBeVisible()
-    // The same dialog as the global bar's entry point: same title, same target-path field.
-    await expect(dialog.getByText('Export as HTML')).toBeVisible()
-    await expect(dialog.locator('input[readonly]')).toBeVisible()
-  })
-
-  test('the export button is disabled while the document is still rendering (E12)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-
-    await page.getByTestId('new-document-btn').click()
-    await expect(page.locator('.cm-content')).toBeVisible()
-
-    // Simulate the "rendering in flight" window deterministically: the store flag is what the
-    // preview flips while a document switch or a pending parse is in progress.
-    //
-    // WAIT for the just-typed document's own parse to fully settle FIRST. MarkdownPreview flips
-    // exportReady → true inside the async parseMarkdown().then(...) callback; if we forced false
-    // while that parse was still in flight, its later callback would clobber our false back to
-    // true, and the button would read "Export" instead of "Preparing…" (race → element not found).
-    await page.waitForFunction(() => (window as any).__uiStore.getState().exportReady === true)
-    await page.evaluate(() => {
-      ;(window as any).__uiStore.getState().setExportReady(false)
+      await page.getByTestId('export-btn').click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      // The same dialog as the global bar's entry point: same title, same target-path field.
+      await expect(dialog.getByText('Export as HTML')).toBeVisible()
+      await expect(dialog.locator('input[readonly]')).toBeVisible()
+      await closeDialog(page, dialog)
     })
 
-    await page.getByTestId('export-btn').first().click()
-    const dialog = page.getByRole('dialog')
-    await expect(dialog).toBeVisible()
+    await test.step('the export button is disabled while the document is still rendering (E12)', async () => {
+      // Simulate the "rendering in flight" window deterministically: the store flag is what the
+      // preview flips while a document switch or a pending parse is in progress.
+      //
+      // WAIT for the just-typed document's own parse to fully settle FIRST. MarkdownPreview flips
+      // exportReady → true inside the async parseMarkdown().then(...) callback; if we forced false
+      // while that parse was still in flight, its later callback would clobber our false back to
+      // true, and the button would read "Export" instead of "Preparing…" (race → element not found).
+      await page.waitForFunction(() => (window as any).__uiStore.getState().exportReady === true)
+      await page.evaluate(() => {
+        ;(window as any).__uiStore.getState().setExportReady(false)
+      })
 
-    const exportBtn = dialog.getByRole('button', { name: 'Preparing…' })
-    await expect(exportBtn).toBeDisabled()
+      await page.getByTestId('export-btn').first().click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
 
-    // Once the document has rendered, the same button becomes actionable.
-    await page.evaluate(() => {
-      ;(window as any).__uiStore.getState().setExportReady(true)
+      const exportBtn = dialog.getByRole('button', { name: 'Preparing…' })
+      await expect(exportBtn).toBeDisabled()
+
+      // Once the document has rendered, the same button becomes actionable.
+      await page.evaluate(() => {
+        ;(window as any).__uiStore.getState().setExportReady(true)
+      })
+      await expect(dialog.getByRole('button', { name: 'Export' })).toBeEnabled()
+      await closeDialog(page, dialog)
     })
-    await expect(dialog.getByRole('button', { name: 'Export' })).toBeEnabled()
-  })
 
-  test('the export preview renders the EXPORT document in a shadow root (E13)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
-    const { host, appPreview } = await openExportPreview(page)
+    await test.step('the export preview renders the EXPORT document in a shadow root (E13)', async () => {
+      const { dialog, host, appPreview } = await openExportPreview(page)
 
-    const shadow = await probeShadow(host)
+      const shadow = await probeShadow(host)
 
-    expect(shadow, 'the preview must live in a shadow root').not.toBeNull()
-    expect(shadow!.hasMarkdownBody).toBe(true)
-    expect(shadow!.theme).toBe('light')
-    // The export's own stylesheet is inlined (the shared .markdown-body overrides).
-    expect(shadow!.hasExportCss).toBe(true)
-    // S2: `body` does not match inside a shadow root, so the export's body-level padding has to
-    // be applied to the preview container instead.
-    expect(shadow!.containerPadding).toBe('24px')
-    // S1: a shadow root does not register fonts, so the @font-face rules live in the HOST
-    // document instead of the shadow root.
-    expect(shadow!.hasFontFace).toBe(false)
-    const hostFonts = await page.evaluate(() => ({
-      declared: (
-        document.getElementById('markflow-export-preview-fonts')?.textContent ?? ''
-      ).includes('@font-face'),
-      // FontFaceSet lists every DECLARED face, whether or not it has been loaded yet — so this
-      // proves the KaTeX faces are really registered with the host document, not just present
-      // as dead CSS text.
-      katexFaces: Array.from(document.fonts).filter((f) => /KaTeX/i.test(f.family)).length,
-    }))
-    expect(hostFonts.declared).toBe(true)
-    expect(
-      hostFonts.katexFaces,
-      'the KaTeX faces must be registered in the host document',
-    ).toBeGreaterThan(10)
+      expect(shadow, 'the preview must live in a shadow root').not.toBeNull()
+      expect(shadow!.hasMarkdownBody).toBe(true)
+      expect(shadow!.theme).toBe('light')
+      // The export's own stylesheet is inlined (the shared .markdown-body overrides).
+      expect(shadow!.hasExportCss).toBe(true)
+      // S2: `body` does not match inside a shadow root, so the export's body-level padding has to
+      // be applied to the preview container instead.
+      expect(shadow!.containerPadding).toBe('24px')
+      // S1: a shadow root does not register fonts, so the @font-face rules live in the HOST
+      // document instead of the shadow root.
+      expect(shadow!.hasFontFace).toBe(false)
+      const hostFonts = await page.evaluate(() => ({
+        declared: (
+          document.getElementById('markflow-export-preview-fonts')?.textContent ?? ''
+        ).includes('@font-face'),
+        // FontFaceSet lists every DECLARED face, whether or not it has been loaded yet — so this
+        // proves the KaTeX faces are really registered with the host document, not just present
+        // as dead CSS text.
+        katexFaces: Array.from(document.fonts).filter((f) => /KaTeX/i.test(f.family)).length,
+      }))
+      expect(hostFonts.declared).toBe(true)
+      expect(
+        hostFonts.katexFaces,
+        'the KaTeX faces must be registered in the host document',
+      ).toBeGreaterThan(10)
 
-    // C33 parity, now asserted through the preview: the export preview and the app preview
-    // must agree on the code-block box and on the syntax colors.
-    const app = await probeAppPreview(appPreview)
-    expect(shadow!.preBg).toBe(app.preBg)
-    expect(shadow!.preRadius).toBe(app.preRadius)
-    expect(shadow!.keywordColor).toBe(app.keywordColor)
-  })
+      // C33 parity, now asserted through the preview: the export preview and the app preview
+      // must agree on the code-block box and on the syntax colors.
+      const app = await probeAppPreview(appPreview)
+      expect(shadow!.preBg).toBe(app.preBg)
+      expect(shadow!.preRadius).toBe(app.preRadius)
+      expect(shadow!.keywordColor).toBe(app.keywordColor)
+      await closeDialog(page, dialog)
+    })
 
-  test('the export preview follows the dark theme (E13)', async () => {
-    const { page } = handle
-    await waitForAppReady(page)
+    // Runs LAST: it switches the theme to dark, which would otherwise tint the light-theme step.
+    await test.step('the export preview follows the dark theme (E13)', async () => {
+      // C20 ⑨ W1: the preview follows the theme the EXPORT will use, not the app's own styling.
+      await page.evaluate(() => (window as any).__uiStore.getState().setTheme('dark'))
+      const { host, appPreview } = await openExportPreview(page)
 
-    // C20 ⑨ W1: the preview follows the theme the EXPORT will use, not the app's own styling.
-    await page.evaluate(() => (window as any).__uiStore.getState().setTheme('dark'))
-    const { host, appPreview } = await openExportPreview(page)
+      const shadow = await probeShadow(host)
+      expect(shadow, 'the preview must live in a shadow root').not.toBeNull()
+      expect(shadow!.theme).toBe('dark')
 
-    const shadow = await probeShadow(host)
-    expect(shadow, 'the preview must live in a shadow root').not.toBeNull()
-    expect(shadow!.theme).toBe('dark')
-
-    // The dark code-block box and the dark syntax palette must match the app preview exactly
-    // (C33's invariant, now proven through the export preview).
-    const app = await probeAppPreview(appPreview)
-    expect(shadow!.preBg).toBe(app.preBg)
-    expect(shadow!.preRadius).toBe(app.preRadius)
-    expect(shadow!.keywordColor).toBe(app.keywordColor)
-    // Anti-vacuity: the light palette puts keywords at a near-black colour and the dark palette
-    // at #ff7b72 (markdownExport.css, dark hljs block), so this value also proves the DARK sheet
-    // was applied rather than merely "some" colour.
-    expect(shadow!.keywordColor).toBe('rgb(255, 123, 114)')
+      // The dark code-block box and the dark syntax palette must match the app preview exactly
+      // (C33's invariant, now proven through the export preview).
+      const app = await probeAppPreview(appPreview)
+      expect(shadow!.preBg).toBe(app.preBg)
+      expect(shadow!.preRadius).toBe(app.preRadius)
+      expect(shadow!.keywordColor).toBe(app.keywordColor)
+      // Anti-vacuity: the light palette puts keywords at a near-black colour and the dark palette
+      // at #ff7b72 (markdownExport.css, dark hljs block), so this value also proves the DARK sheet
+      // was applied rather than merely "some" colour.
+      expect(shadow!.keywordColor).toBe('rgb(255, 123, 114)')
+    })
   })
 })

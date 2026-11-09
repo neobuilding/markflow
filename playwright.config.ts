@@ -98,6 +98,11 @@ export default defineConfig<ClipboardOptions>({
       // parallelises across files on a many-core dev box.
       name: 'e2e-app',
       testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'app'),
+      // Residue gate (see e2e/residue-gate): Playwright runs it automatically AFTER every
+      // e2e-app test has finished, and its single test fails the run if any temp directory
+      // this run allocated survived. Verified: `--project=e2e-app` and every `--shard=x/4`
+      // still schedule the teardown project, so CI's project-filtered commands are covered.
+      teardown: 'residue-gate',
     },
     // ── Clipboard: its own project, because it is destructive ────────────────
     //
@@ -110,6 +115,10 @@ export default defineConfig<ClipboardOptions>({
       workers: 1, // writes the REAL system clipboard — must never run concurrently
       testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'clipboard'),
       use: { clipboardE2e: true },
+      // Same residue gate as e2e-app; with both teardown: 'residue-gate', the gate runs
+      // once AFTER e2e-app AND e2e-clipboard have both finished (it must not run between
+      // the two concurrent projects and mis-read the other's still-open directories).
+      teardown: 'residue-gate',
     },
     // ── Performance gate: measured in its OWN invocation ─────────────────────
     //
@@ -128,6 +137,7 @@ export default defineConfig<ClipboardOptions>({
       timeout: 600_000,
       // Inherits the global retries (1 on CI) so a noisy shared runner cannot
       // turn a one-off scheduling hiccup into a red build.
+      teardown: 'residue-gate',
     },
     // ── Performance: one CI gate + one on-demand diagnostic ──────────────────
     //
@@ -149,6 +159,36 @@ export default defineConfig<ClipboardOptions>({
       // and is slow by design. The large-document gate belongs to `e2e-perf-gate` instead:
       // ADR-0034 restores this project's original, disjoint role.
       timeout: 600_000,
+      retries: 0,
+      // Run by hand, but the same zero-residue contract applies (ADR-0036): launchApp
+      // allocates a temp dir, so the gate audits this project too. The `teardown:` link
+      // pulls residue-gate in even under --project filtering, so `npm run e2e:perf-diag`
+      // needs no explicit --project=residue-gate.
+      teardown: 'residue-gate',
+    },
+    // ── Residue gate: a teardown-only project ───────────────────────────
+    //
+    // Holds ONE test (e2e/residue-gate/residue-gate.e2e.spec.ts) that fails the run
+    // if any temp directory allocated this run survived. It is wired as the `teardown`
+    // of every temp-allocating project (e2e-app, e2e-clipboard, e2e-perf-gate, and the
+    // on-demand e2e-perf-diag), so Playwright runs it automatically AFTER those
+    // projects finish; a failure there is a REAL failed test (recorded by JUnit/CI),
+    // not merely a run-level "error not part of any test". Which projects must carry
+    // the link is DERIVED by e2e/guards/e2e-parallelism.test.ts from each project's
+    // spec imports, not hardcoded there.
+    //
+    // `retries: 0` is mandatory: the gate CLEANS the leaked directories before asserting,
+    // so a retried run would face no leftovers and pass silently. The registry itself is
+    // wiped only by global-setup at the START of the next run, not by the gate, so a
+    // still-running worker's recordAllocation can never lose its evidence mid-run.
+    // This project has NO `dependencies` (Playwright forbids teardown projects from having
+    // them). `npm run e2e:app` names it explicitly only to keep the project-name guard's
+    // set in lockstep; CI reaches it purely through the `teardown` link above.
+    // e2e-parallelism.test.ts pins both the wiring and `retries: 0`.
+    {
+      name: 'residue-gate',
+      workers: 1,
+      testDir: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'residue-gate'),
       retries: 0,
     },
   ],

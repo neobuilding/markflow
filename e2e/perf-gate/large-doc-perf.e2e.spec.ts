@@ -109,7 +109,7 @@ test.describe('large document preview performance (diagnostic)', () => {
 
       // Work on a COPY: typing below must never be able to touch the committed
       // fixture, and relative `assets/*.png` refs keep resolving because the whole
-      // examples/ directory (md + assets) is copied together.
+      // e2e/fixtures/large-doc directory (md + assets) is copied together.
       const scratch = mkTempDir('markflow-perf-large-')
       cpSync(E2E_FIXTURE_DIR, scratch, { recursive: true })
       const docPath = join(scratch, LARGE_DOC_NAME)

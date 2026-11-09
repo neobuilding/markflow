@@ -1,13 +1,14 @@
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, type AppHandle } from '../helpers/launch'
-import { mkTempDir, cleanupTempDirs, untrackTempDir } from '../helpers/temp'
+import { untrackTempDir, RESIDUE_GRACE_MS } from '../helpers/temp'
 import { existsSync } from 'node:fs'
 
-// Each owner cleans up its own garbage, and nothing else's:
-//   - the APPLICATION removes its own user-data-dir when it quits (any mode);
-//   - the TEST HARNESS removes every temp dir it allocated.
-// These two tests pin both halves separately, so a regression in either one goes
-// red instead of being masked by the other.
+// Each owner cleans up its own garbage, and nothing else's. This spec keeps the
+// half that REQUIRES a real Electron quit (will-quit → app-owned removal); the
+// harness-owned half is pure fs logic and lives at the unit layer in
+// e2e/helpers/temp.test.ts ("temp directory ownership"). Splitting them by layer
+// keeps the expensive layer thin without losing either assertion (testing.md,
+// "Choosing the test layer").
 test.describe('each owner cleans up its own temp garbage', () => {
   test('app auto-removes its own user-data-dir when it quits', async () => {
     const handle: AppHandle = await launchApp()
@@ -25,23 +26,16 @@ test.describe('each owner cleans up its own temp garbage', () => {
     await closeApp(handle)
 
     // Graceful quit runs will-quit, which deletes the dir; Electron awaits that
-    // async handler, so it is gone by the time close() resolves.
+    // async handler, so it is usually gone by the time close() resolves. The
+    // deadline is DERIVED from the detached deleter's worst case (the same
+    // relation the residue gate pins): a hardcoded 5s was shorter than the
+    // deleter's 2s defer + 6s retry budget, which could turn a SLOW but
+    // successful delete into a false red.
     await expect
       .poll(() => existsSync(userDataDir), {
-        timeout: 5_000,
+        timeout: RESIDUE_GRACE_MS,
         message: 'app left its own user-data-dir behind after quit',
       })
       .toBe(false)
-  })
-
-  test('harness reclaims the temp dirs it allocated', async () => {
-    // No Electron launch needed: this exercises the harness side of the ownership
-    // contract directly, so the feedback stays fast and deterministic.
-    const scratch = mkTempDir('markflow-cleanup-spec-')
-    expect(existsSync(scratch)).toBe(true)
-
-    cleanupTempDirs()
-
-    expect(existsSync(scratch)).toBe(false)
   })
 })

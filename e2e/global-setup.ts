@@ -5,6 +5,7 @@ import { spawn, spawnSync, ChildProcess } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeFileSync, existsSync, unlinkSync, accessSync } from 'node:fs'
+import { resetResidueRegistry } from './helpers/temp'
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DEV_SERVER_URL = 'http://localhost:5174'
@@ -100,6 +101,11 @@ async function verifyElectronBinary(): Promise<void> {
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
+  // Drop any residue registry left by a crashed previous run so the gate only ever
+  // audits directories allocated by THIS run (not stale entries from a killed worker).
+  // Best-effort (the directory may not exist yet); unit-tested in temp.test.ts.
+  resetResidueRegistry()
+
   const vite = getViteBin()
   devServer = spawn(vite.command, [...vite.args, '--port', '5174', '--strictPort'], {
     cwd: PROJECT_ROOT,

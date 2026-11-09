@@ -8,14 +8,21 @@ import {
   AppHandle,
 } from '../helpers/launch'
 import { VIEWPORTS } from '../helpers/viewports'
+import { resetAppState } from '../helpers/reset'
 
+// Reuse ONE Electron instance (serial) instead of launching per case; `resetAppState` restores
+// both processes between cases so drafts, viewport, workspace root and store flags cannot leak.
+test.describe.configure({ mode: 'serial' })
 test.describe('document lifecycle', () => {
   let handle: AppHandle
-  test.beforeEach(async () => {
+  test.beforeAll(async () => {
     handle = await launchApp()
   })
-  test.afterEach(async () => {
+  test.afterAll(async () => {
     await closeApp(handle)
+  })
+  test.beforeEach(async () => {
+    await resetAppState(handle)
   })
 
   // Create a document through the REAL sidebar "+" button (handleCreate), which
