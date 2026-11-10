@@ -167,7 +167,7 @@ if (sample.length > 0 && isPlainAsciiText(sample)) return { enc: 'utf-8', confid
 - `playwright.config.ts` 拆出两个 project：`electron-perf-gate`（testMatch `switch-perf-gate`）+ `electron-perf`（testMatch `switch-perf`）。
 - `package.json`：`e2e = playwright test --project=electron-app --project=electron-perf-gate`（门禁随 `npm run e2e` 进 CI）。
 
-> **历史注记（2026-11-07）**：以上是 2026-08-31 引入时的**旧名称**，现已全部改名：`electron-app` → `e2e-app`、`electron-perf-gate` → `e2e-perf-gate`、`electron-perf` → `e2e-perf-diag`，并新增 `e2e-clipboard`；spec 文件本身也换了目录（`e2e/specs/` → `e2e/app/`、`e2e/perf/` → `e2e/perf-gate/` 与 `e2e/perf-diag/`）；`npm run e2e:perf` 脚本**已不存在**，按需诊断请用 `npm run e2e:perf-diag`，CI 组合请用 `npm run e2e:full`（两次 Playwright 调用，性能门禁独占第二次）。此外 2026-09-21 曾让 `e2e-perf-diag` 也收集 `large-doc-perf`（一度并非完全"无阈值"），ADR-0034 实施后该重叠已移除、诊断 project 重新变为无阈值；详见 `docs/adr/0034-e2e-spec-files-belong-to-one-project.md`。
+> **历史注记（2026-11-07）**：以上是 2026-08-31 引入时的**旧名称**，现已全部改名：`electron-app` → `e2e-app`、`electron-perf-gate` → `e2e-perf-gate`、`electron-perf` → `e2e-perf-diag`，并新增 `e2e-clipboard`；spec 文件本身也换了目录（`e2e/specs/` → `e2e/app/`、`e2e/perf/` → `e2e/perf-gate/` 与 `e2e/perf-diag/`）；`npm run e2e:perf` 脚本**已不存在**，按需诊断请用 `npm run e2e:perf-diag`，CI 组合请用 `npm run e2e:full`（两次 Playwright 调用，性能门禁独占第二次）。此外 2026-09-21 曾让 `e2e-perf-diag` 也收集 `large-doc-perf`（一度并非完全"无阈值"），ADR-0034 实施后该重叠已移除、诊断 project 重新变为无阈值；详见 `docs/adr/0034-e2e-spec-files-belong-to-one-project.md`。截至 2026-11-11，CI 实际为 4 个 `e2e-app-shard` 分片 job 加 1 个 `e2e-serial`（clipboard 与 perf-gate 各一次独立调用）；`e2e:full` 只是覆盖相同 project 的本地组合，并非 CI 执行的命令。
 
 ### 5.2 统一阈值（不区分本地/CI）
 
@@ -213,7 +213,7 @@ const MAX_LAG_MS = Number(process.env.PERF_MAX_LAG ?? 250)
 | 退出回归 e2e                  | `e2e/app/quit-unsaved-regression.e2e.spec.ts` | `requestCloseWindow` 走真实 close              |
 | 确定性"只监视 markdown"断言   | `e2e/app/folder-watch.e2e.spec.ts`            | "only watches markdown" 用例（无时序依赖）     |
 | e2e 启动/清理                 | `e2e/helpers/launch.ts`                       | `launchApp` / `closeApp`（防僵尸进程树）       |
-| CI 配置                       | `.github/workflows/ci.yml`                    | `npm run e2e:full`（含 perf-gate）             |
+| CI 配置                       | `.github/workflows/ci.yml`                    | `e2e-app-shard`（4 分片）、`e2e-serial`        |
 
 ---
 

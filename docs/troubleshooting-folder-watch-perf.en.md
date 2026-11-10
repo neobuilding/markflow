@@ -215,6 +215,9 @@ Test: `expect(r.enc).toBe('gbk')`.
 > invocations, with the perf gate owning the second). Also note that `e2e-perf-diag` has collected
 > `large-doc-perf` between 2026-09-21 and ADR-0034, which briefly made it not entirely
 > threshold-free; that overlap has been removed and the diagnostic project is threshold-free again.
+> As of 2026-11-11, CI runs four `e2e-app-shard` jobs plus one `e2e-serial` job (clipboard and
+> perf-gate in separate invocations); `e2e:full` is only the local combination covering the same
+> projects, not the command CI executes.
 > See `docs/adr/0034-e2e-spec-files-belong-to-one-project.md`.
 
 ### 5.2 Unified threshold (no local/CI split)
@@ -264,7 +267,7 @@ const MAX_LAG_MS = Number(process.env.PERF_MAX_LAG ?? 250)
 | quit-regression e2e                     | `e2e/app/quit-unsaved-regression.e2e.spec.ts` | `requestCloseWindow` real close                     |
 | deterministic "markdown-only" assertion | `e2e/app/folder-watch.e2e.spec.ts`            | "only watches markdown" case (no timing dependence) |
 | e2e launch/teardown                     | `e2e/helpers/launch.ts`                       | `launchApp` / `closeApp` (kill process tree)        |
-| CI config                               | `.github/workflows/ci.yml`                    | `npm run e2e:full` (incl. perf-gate)                |
+| CI config                               | `.github/workflows/ci.yml`                    | `e2e-app-shard` (4 shards), `e2e-serial` (2 runs)   |
 
 ---
 

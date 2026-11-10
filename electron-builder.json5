@@ -9,9 +9,15 @@
   afterAllArtifactBuild: './scripts/after-all-artifact-build.mjs',
   // `asar` is a boolean in electron-builder 26 (AsarOptions only accepts `ordering` /
   // `smartUnpack`); it defaults to true, so app sources are packed into app.asar already.
-  // Maximum compression applies to the packaged archive (zip/dmg/AppImage), shrinking the
-  // shipped artifact. No native modules are bundled, so no asarUnpack is needed.
-  compression: 'maximum',
+  // Archive compression is `normal` for every target, not `maximum`: for zip targets
+  // electron-builder adds -mfb=258 -mpass=15 at `maximum`, which makes compression
+  // dramatically slower for a negligible size gain and dominated the Windows CI job.
+  // This is a root-level option: dmg and AppImage switch to their default compression
+  // too. Rejected alternatives: `maximum` (above), `ELECTRON_BUILDER_COMPRESSION_LEVEL`
+  // (would make local and CI disagree), and `asar: { compression: ... }` (invalid in
+  // electron-builder 26: AsarOptions only accepts `ordering` / `smartUnpack`).
+  // No native modules are bundled, so no asarUnpack is needed.
+  compression: 'normal',
   fileAssociations: [
     { ext: 'md', name: 'Markdown Document', role: 'Editor' },
     { ext: 'markdown', name: 'Markdown Document', role: 'Editor' },

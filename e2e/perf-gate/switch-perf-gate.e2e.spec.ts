@@ -1,4 +1,4 @@
-// PERFORMANCE REGRESSION GATE (runs in CI as part of `npm run e2e:full`).
+// PERFORMANCE REGRESSION GATE (runs in CI in the `e2e-serial` job's own invocation).
 //
 // Guards the chokidar-lag root cause: the folder watcher must watch MARKDOWN
 // ONLY. Opening a folder buried under non-md build output (coverage reports,

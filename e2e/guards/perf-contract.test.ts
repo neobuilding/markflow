@@ -104,7 +104,7 @@ describe('the performance gate contract', () => {
     }
   })
 
-  it('keeps the CI combination at two invocations, with the gate alone in the second', () => {
+  it('keeps the e2e:full combination at two invocations, with the gate alone in the second', () => {
     // Two invocations, not one: Playwright schedules the projects of ONE invocation concurrently,
     // so a shared machine is what made the gate measure 1602ms against a 1500ms threshold
     // (ADR-0027, e2e/guards/e2e-parallelism.test.ts).

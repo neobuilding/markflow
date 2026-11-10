@@ -131,8 +131,8 @@ NOT relaxed: the app is still ~3x faster than the frozen 2644ms baseline.
 - **Positive:** the worker count has exactly one knob — the config formula — so it cannot drift between
   local and CI due to a stray CLI flag, and the workflow cannot rot into a stale comment.
 - **Cost (accepted):** sharding multiplies the fixed setup — every shard job re-runs `npm ci` +
-  `npm run build` + `npx playwright install --with-deps` + Electron cache restore. This is the
-  explicit "setup tax" traded for the wall-clock win.
+  `npm run build` + `npx playwright install --with-deps`. This is the explicit "setup tax"
+  traded for the wall-clock win.
 - **Guard rail:** `e2e/guards/e2e-parallelism.test.ts` fails a unit test (not an opaque e2e timeout)
   if the clipboard / perf projects lose their `workers: 1` cap, if `e2e-app` gains a project-level cap,
   if the global budget is hardcoded, if a CI step starts passing `--workers`, if the projects CI

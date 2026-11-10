@@ -124,7 +124,7 @@ cannot touch the user's clipboard; "one spec file, one project" is pinned by ADR
 
 ```bash
 npm run e2e:app        # never collects e2e/clipboard/ — no clipboard writes at all
-npm run e2e:clipboard  # runs the 21 real-clipboard cases; CI does too via `e2e:full`
+npm run e2e:clipboard  # runs the 21 real-clipboard cases; CI runs the same project in `e2e-serial`
 ```
 
 The destructive lifecycle — gate → launch → snapshot → restore → close — lives in **one** place, the

@@ -130,16 +130,11 @@ files` becomes **`3 tests in 3 files`**. `e2e-app` stops re-running 66 ordinary 
   49 files (app 210/40, clipboard 21/6, perf-gate 2/2, perf-diag 1/1, no overlap); `npm test`
   153 files / 2510 tests passed; `npm run typecheck` and `npm run lint` exit 0.
 
-  _(Updated 2026-11-08: later review rounds added contract guards, so the suite is now 155 files /
-  2534 tests; Playwright collection is unchanged at 234 tests in 49 files. The figures above record
-  the state on 2026-11-07 and stay intact because decision records are append-only.)_
-
 - **Historical paths left intact:** earlier ADRs (0015, 0024, 0025, 0027) and both troubleshooting
-  docs mention `e2e/specs/…` / `e2e/perf/…` as they existed at the time. Decision records are
-  append-only, so those references were not rewritten; the troubleshooting pair carries a dated
-  historical note pointing here. All **current** guidance (`README.md`, `QUICKSTART.md`,
-  `docs/agents/testing.md`, `CONTEXT.md`) and every path reference in production/test code uses the
-  new directories.
+  docs mention `e2e/specs/…` / `e2e/perf/…` as they existed at the time; the troubleshooting pair
+  carries a dated historical note pointing here. All **current** guidance (`README.md`,
+  `QUICKSTART.md`, `docs/agents/testing.md`, `CONTEXT.md`) and every path reference in
+  production/test code uses the new directories.
 
 - **Guard rails (2026-11-07 code review):** `e2e/guards/project-ownership.test.ts` makes "one spec
   file, one project" executable: global `testDir` unset, no project-level `testMatch`, four distinct

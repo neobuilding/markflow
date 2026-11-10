@@ -70,7 +70,7 @@ markflow/
 | Layer             | Technology                                                                                                      |
 | ----------------- | --------------------------------------------------------------------------------------------------------------- |
 | Build             | Vite 8 + vite-plugin-electron                                                                                   |
-| Desktop           | Electron 43                                                                                                     |
+| Desktop           | Electron 44                                                                                                     |
 | Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                 |
 | UI Components     | Radix UI primitives (shadcn/ui style)                                                                           |
 | State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                          |
@@ -215,12 +215,12 @@ npm run dist
 
 # Build for specific platforms
 npm run dist:mac      # macOS (.dmg)
-npm run dist:win      # Windows (unpacked dir, no installer needed)
-npm run dist:linux    # Linux (.AppImage, .deb, .rpm)
+npm run dist:win      # Windows (.zip, portable — extract and run, no installer)
+npm run dist:linux    # Linux (.AppImage)
 ```
 
-The packaged application will be in the `release/win-unpacked/` directory. Zip this
-folder for distribution — users just extract and run `MarkFlow.exe`, no installation required.
+The packaged application is written to `release/`: `release/win-unpacked/` for local runs
+and `release/markflow-<version>-win.zip` for distribution.
 
 > **Windows build note**: `npm run dist:win` automatically runs a pre-build script
 > (`scripts/prepare-win-codesign.ps1`) that downloads and extracts only the Windows

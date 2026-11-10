@@ -253,27 +253,7 @@ jobs:
                   echo "::group::npm run build (e2e runner)"
                   npm run build
                   echo "::endgroup::"
-            # Reuse the Electron download cache (~/.cache/electron) so the
-            # first-time lazy install (electron/index.js's install.js, triggered by
-            # the first `import('electron')` in e2e) does not re-download the
-            # artifact on every run. This only speeds up that download; it does NOT
-            # affect the chrome-sandbox permission error that previously broke e2e
-            # under the non-root CI runner. That is fixed by passing --no-sandbox in
-            # e2e/helpers/launch.ts (and the global-setup probe). The fail-fast guard
-            # lives in e2e/global-setup.ts (verifyElectronBinary).
-            - name: Cache Electron binaries (e2e)
-              uses: actions/cache@v6
-              with:
-                  path: |
-                      ~/.cache/electron
-                      ~/.cache/electron-builder
-                      ~/Library/Caches/electron
-                      ~/Library/Caches/electron-builder
-                      %LOCALAPPDATA%\electron\Cache
-                      %LOCALAPPDATA%\electron-builder\Cache
-                  key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
-                  restore-keys: |
-                      ${{ runner.os }}-electron-
+
             # Shard the e2e-app project across the matrix — parallelism comes from
             # running N shards on N runners (each a dedicated 2-core machine), NOT from
             # --workers inside one job. The shard command deliberately omits --workers, so
@@ -352,27 +332,7 @@ jobs:
                   echo "::group::npm run build (e2e runner)"
                   npm run build
                   echo "::endgroup::"
-            # Reuse the Electron download cache (~/.cache/electron) so the
-            # first-time lazy install (electron/index.js's install.js, triggered by
-            # the first `import('electron')` in e2e) does not re-download the
-            # artifact on every run. This only speeds up that download; it does NOT
-            # affect the chrome-sandbox permission error that previously broke e2e
-            # under the non-root CI runner. That is fixed by passing --no-sandbox in
-            # e2e/helpers/launch.ts (and the global-setup probe). The fail-fast guard
-            # lives in e2e/global-setup.ts (verifyElectronBinary).
-            - name: Cache Electron binaries (e2e)
-              uses: actions/cache@v6
-              with:
-                  path: |
-                      ~/.cache/electron
-                      ~/.cache/electron-builder
-                      ~/Library/Caches/electron
-                      ~/Library/Caches/electron-builder
-                      %LOCALAPPDATA%\electron\Cache
-                      %LOCALAPPDATA%\electron-builder\Cache
-                  key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
-                  restore-keys: |
-                      ${{ runner.os }}-electron-
+
             - name: Run e2e clipboard
               # Hard wall-clock cap on the whole step. A bad/unexecutable Electron
               # binary is already caught fast in e2e/global-setup.ts
@@ -459,21 +419,6 @@ jobs:
             - uses: actions/setup-node@v7
               with: { node-version: 22, cache: npm }
 
-            # Reuse Electron / electron-builder download caches to speed up the build.
-            - name: Cache Electron binaries
-              uses: actions/cache@v6
-              with:
-                  path: |
-                      ~/.cache/electron
-                      ~/.cache/electron-builder
-                      ~/Library/Caches/electron
-                      ~/Library/Caches/electron-builder
-                      %LOCALAPPDATA%\electron\Cache
-                      %LOCALAPPDATA%\electron-builder\Cache
-                  key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
-                  restore-keys: |
-                      ${{ runner.os }}-electron-
-
             # Install Linux dependencies (missing ones cause the AppImage build to fail).
             - name: Install Linux dependencies
               if: matrix.target == 'linux'
@@ -514,11 +459,9 @@ jobs:
                     echo "::notice::Validation-only path — no version injection; build uses the base package.json version and release is skipped."
                   fi
 
-            - name: Build app
-              run: |
-                  echo "::group::npm run build (target=${{ matrix.target }})"
-                  npm run build
-                  echo "::endgroup::"
+            # `dist:*` scripts already run `npm run build`, so no separate build
+            # step is needed here. PRs build the same artifacts as releases but
+            # simply do not upload them.
             - name: Package distribution
               run: |
                   echo "::group::npm run dist:${{ matrix.target }}"

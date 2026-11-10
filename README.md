@@ -70,11 +70,11 @@ npm run dist
 
 # Build for specific platforms
 npm run dist:mac      # macOS (.dmg)
-npm run dist:win      # Windows (unpacked dir, no installer needed)
-npm run dist:linux    # Linux (.AppImage, .deb, .rpm)
+npm run dist:win      # Windows (.zip, portable — extract and run, no installer)
+npm run dist:linux    # Linux (.AppImage)
 ```
 
-The packaged application will be in the `release/win-unpacked/` directory. Zip this folder for distribution — users just extract and run `MarkFlow.exe`, no installation required.
+The packaged application is written to `release/`: `release/win-unpacked/` for local runs and `release/markflow-<version>-win.zip` for distribution.
 
 > **Windows build note**: `npm run dist:win` automatically runs a pre-build script (`scripts/prepare-win-codesign.ps1`) that downloads and extracts only the Windows code-signing tools, skipping macOS symbolic links that fail on non-administrator Windows accounts. No manual setup needed — just run `npm run dist:win` and it works.
 >
@@ -165,7 +165,7 @@ markflow/
 | Layer             | Technology                                                                                                      |
 | ----------------- | --------------------------------------------------------------------------------------------------------------- |
 | Build             | Vite 8 + vite-plugin-electron                                                                                   |
-| Desktop           | Electron 43                                                                                                     |
+| Desktop           | Electron 44                                                                                                     |
 | Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                 |
 | UI Components     | Radix UI primitives (shadcn/ui style)                                                                           |
 | State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                          |
@@ -183,8 +183,8 @@ markflow/
 The project uses `electron-builder` for cross-platform packaging:
 
 - **macOS**: `.dmg` (x64 + arm64 universal)
-- **Windows**: Unpacked directory (x64, green software — extract and run, no installer)
-- **Linux**: `.AppImage`, `.deb`, `.rpm`
+- **Windows**: `.zip` (x64, portable — extract and run, no installer)
+- **Linux**: `.AppImage` (x64)
 
 Configuration is in `electron-builder.json5`. Key settings:
 
@@ -224,7 +224,8 @@ npm run e2e:full        # End-to-end: drives the REAL Electron app via Playwrigh
   must run them under a virtual display, e.g. `xvfb-run --auto-servernum -- npm run e2e:full`.
 - **E2E script family**: `e2e:app` (functional/behavioral specs), `e2e:clipboard` (specs that write
   the _real_ system clipboard), `e2e:perf-gate` (CI performance gate), `e2e:perf-diag` (on-demand
-  diagnostics), and `e2e:full` — the CI combination, run as **two separate Playwright invocations**:
+  diagnostics), and `e2e:full` — the local combination matching CI's projects, run as **two
+  separate Playwright invocations**:
   first `--project=e2e-app --project=e2e-clipboard` (produces `playwright-report/` and
   `reports/e2e/junit.xml`), then `--project=e2e-perf-gate` **on its own** with
   `--reporter=line --output=test-results/perf-gate`. Playwright schedules the projects of one
@@ -236,7 +237,7 @@ npm run e2e:full        # End-to-end: drives the REAL Electron app via Playwrigh
   `copy-once-no-drop-diagrams`, `context-menu`) are destructive — they overwrite whatever you had
   copied and only put it back afterwards — so they live exclusively in `e2e/clipboard/`, the
   `testDir` of `e2e-clipboard`. `npm run e2e:app` never collects that directory (ADR-0034);
-  `npm run e2e:clipboard` runs them for real, and CI does too through `npm run e2e:full`. A single
+  `npm run e2e:clipboard` runs them for real, and CI runs the same project in `e2e-serial`. A single
   spec still runs, e.g.
   `npm run e2e:clipboard -- e2e/clipboard/context-menu.e2e.spec.ts`. See `e2e/helpers/clipboard.ts` for
   why, and `electron/main/handlers/app.test.ts` for the same OS boundary covered without touching a
@@ -284,28 +285,30 @@ actions/create-pr` + `npm run build:action`) in a step **before** `uses: ./actio
 
 ### CI pipeline (`.github/workflows/ci.yml`)
 
-Every job fans out in parallel — `version`, `quality`, `ut`, `e2e` and the three-platform `build` all
-start immediately (only `build` waits on `version`, whose computed version it injects):
+Every job fans out in parallel — `version`, `quality`, `ut`, the e2e jobs and the three-platform
+`build` all start immediately (only `build` waits on `version`, whose computed version it injects):
 
 - `quality` (ubuntu): `npm run quality` (Prettier + ESLint + Stylelint + Markdownlint + Secretlint +
   typecheck). It runs once and gates nothing on purpose: a style, rule or type violation must not hide
   the test and packaging results, so a single run reports every problem at once.
 - `ut` (ubuntu): unit tests + coverage (Vitest + jsdom; no Electron build needed).
-- `e2e` (ubuntu): Playwright browser install → `npm run build` → `npm run e2e:full` (under
-  `xvfb-run`). Quality/coverage/build are separate jobs, so the e2e job runs e2e only.
-  Each test job runs on its own runner (e2e does its own `npm ci` + a single `npm run build`), trading one
-  extra install for wall-clock time ≈ max(ut, e2e) instead of chained. The Playwright HTML report and
-  `test-results/` are uploaded as artifacts on every run (even on failure) for inspection.
+- `e2e-app-shard` (ubuntu, 4 parallel jobs): browser install → `npm run build` →
+  `npx playwright test --project=e2e-app --shard=<n>/4` under `xvfb-run`.
+- `e2e-serial` (ubuntu): the same setup, then two separate invocations —
+  `--project=e2e-clipboard` and `--project=e2e-perf-gate` — because the timing gate must not share
+  a machine with other specs. Each job runs on its own runner (own `npm ci` + one `npm run build`),
+  trading extra installs for wall-clock time. The Playwright HTML report and `test-results/` are
+  uploaded as artifacts on every run (even on failure) for inspection.
 
 The three-platform `build` job (`Build (macos-latest|windows-latest|ubuntu-latest)`) starts as soon as the
 version is computed and does **not** wait for the test suites, so packaging problems surface in the same
 run as test problems. It is the only three-platform build in the repo, used for both PR validation and
 releases.
 
-`release` is the pipeline's single gate: it needs `build`, `ut`, `e2e`, `quality` and `version`, so no
-artifact is ever tagged or drafted from a red run. On `pull_request` runs, superseded runs are cancelled
-automatically (`cancel-in-progress`); pushes to `main` are never cancelled, so an in-flight release build
-cannot be interrupted halfway.
+`release` is the pipeline's single gate: it needs `build`, `ut`, `e2e-app-shard`, `e2e-serial`,
+`quality` and `version`, so no artifact is ever tagged or drafted from a red run. On `pull_request`
+runs, superseded runs are cancelled automatically (`cancel-in-progress`); pushes to `main` are never
+cancelled, so an in-flight release build cannot be interrupted halfway.
 
 ### Viewing test results
 
