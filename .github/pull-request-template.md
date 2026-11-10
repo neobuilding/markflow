@@ -38,8 +38,12 @@ Please include a summary of the change and which issue is fixed. Please also inc
 {{commits}}
 <!-- /AUTO:commits -->
 
+<!-- AUTO:screenshots-before -->
 ## Screenshots
 
 ### Before
+<!-- /AUTO:screenshots-before -->
 
+<!-- AUTO:screenshots-after -->
 ### After
+<!-- /AUTO:screenshots-after -->
