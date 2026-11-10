@@ -23,6 +23,16 @@ template and AUTO-block body management.
   so the action adapts to any repo's PR template instead of hard-coding a fixed
   set. Human-written content outside the blocks (Description, notes) is preserved
   verbatim.
+- On refresh, existing blocks are updated in place and blocks **added to the
+  template after the PR was opened** are appended to the body in template order
+  — including blocks added mid-template or deleted from the PR body by hand;
+  removing one for good requires deleting it from the template. A marker-free
+  legacy body keeps its text first and gets every block appended after it. A
+  subsequent re-run is a no-op. See ADR-0005 for the per-segment reset contract.
+- Template text **outside** the markers is never synced to an existing PR. To
+  make static text (e.g. a `## Description` prompt) reach one, wrap it in an
+  AUTO block — keep that block to headings/prompts and put human content outside
+  the markers, since block contents reset to the template on every refresh.
 - Each block may contain `{{placeholder}}` tokens. A token is rendered by a
   **block plugin** — a `(ctx) => string` generator looked up in the block
   registry. Built-in plugins (`title` / `issue` / `commits`) ship with the
@@ -206,10 +216,13 @@ machines without git, or to just inspect the template structure).
 
 #### Previewing a _refresh_ (existing PR) render
 
-"Refresh" means merging the freshly rendered body into an **existing** PR body
-(the action keeps human-written text outside the `<!-- AUTO:… -->` blocks and
-only updates the blocks in place). The merge is part of `renderTemplate`, so you
-preview a refresh in one step by passing the existing body via `--existing`:
+"Refresh" means merging the freshly rendered body into an **existing** PR body:
+human-written text outside the `<!-- AUTO:… -->` blocks is kept, existing blocks
+are updated in place, and blocks the template has gained since the PR was
+created are appended at the end in template order (for a marker-free legacy
+body, that means all of them, after the original text). The merge is part of
+`renderTemplate`, so you preview a refresh in one step by passing the existing
+body via `--existing`:
 
 ```bash
 node actions/create-pr/src/cli-render.mjs \
@@ -222,4 +235,5 @@ node actions/create-pr/src/cli-render.mjs \
 This shows exactly what the action would write back to GitHub on a refresh
 (`action: 'updated'`), without needing a token, `gh`, or a live PR. The refresh
 merge is a pure, local operation — `renderTemplate` refreshes each AUTO block in
-place and preserves human-written text outside the blocks.
+place, appends newly introduced blocks, and preserves human-written text outside
+the blocks.

@@ -17,6 +17,7 @@
 //       * injected git present but revParse fails       -> `<base>`
 //       * noGit (no git service)                        -> `<base>`
 import { describe, it, expect, vi } from 'vitest'
+import { tmpdir } from 'node:os'
 import { renderTemplate } from './render-template.mjs'
 
 // A fake git service. It never touches the filesystem or spawns a process; the
@@ -125,15 +126,104 @@ describe('renderTemplate — single rendering entry point', () => {
     expect(refreshed).not.toContain('- old commit')
   })
 
-  it('passes options through (base, blocksDir) without error', async () => {
+  it('backfills template blocks added after the PR was created (regression: PR #58)', async () => {
+    const grownTemplate = [
+      SAMPLE_TEMPLATE.trimEnd(),
+      '',
+      '<!-- AUTO:screenshots-before -->',
+      '## Screenshots',
+      '',
+      '### Before',
+      '<!-- /AUTO:screenshots-before -->',
+      '',
+      '<!-- AUTO:screenshots-after -->',
+      '### After',
+      '<!-- /AUTO:screenshots-after -->',
+      '',
+    ].join('\n')
+    // A PR body created from the OLD template: commits are stale and there are
+    // no screenshots markers anywhere.
+    const existing = [
+      '<!-- AUTO:title -->',
+      '# Ui refactor',
+      '<!-- /AUTO:title -->',
+      '',
+      'human note kept',
+      '',
+      '<!-- AUTO:commits -->',
+      '## Commits',
+      '',
+      '- old commit',
+      '<!-- /AUTO:commits -->',
+      '',
+    ].join('\n')
+    const opts = {
+      head: 'feature/ui-refactor',
+      template: grownTemplate,
+      git: makeFakeGit({ revParseValue: 'abc123' }),
+    }
+
+    const refreshed = await renderTemplate({ ...opts, existingBody: existing })
+
+    // New blocks reach the existing PR body on a refresh.
+    expect(refreshed).toContain('<!-- AUTO:screenshots-before -->')
+    expect(refreshed).toContain('### Before')
+    expect(refreshed).toContain('<!-- AUTO:screenshots-after -->')
+    expect(refreshed).toContain('### After')
+    // Old blocks are refreshed and human text is preserved.
+    expect(refreshed).toContain('did a thing')
+    expect(refreshed).not.toContain('- old commit')
+    expect(refreshed).toContain('human note kept')
+    // A second refresh is a no-op: no duplicated blocks, byte-identical body.
+    expect(await renderTemplate({ ...opts, existingBody: refreshed })).toBe(refreshed)
+  })
+
+  it('preserves screenshots outside the markers on a refresh (regression: PR #58)', async () => {
+    const template = [
+      '<!-- AUTO:before -->',
+      '### Before',
+      '<!-- /AUTO:before -->',
+      '',
+      '<!-- AUTO:after -->',
+      '### After',
+      '<!-- /AUTO:after -->',
+      '',
+    ].join('\n')
+    // Human content sits between the two AUTO blocks and after the last one.
+    const existing = [
+      '<!-- AUTO:before -->',
+      '### Before',
+      '<!-- /AUTO:before -->',
+      '',
+      '![before](b.png)',
+      '',
+      '<!-- AUTO:after -->',
+      '### After',
+      '<!-- /AUTO:after -->',
+      '',
+      '![after](a.png)',
+    ].join('\n')
+    const opts = { head: 'feature/x', template, noGit: true }
+
+    const refreshed = await renderTemplate({ ...opts, existingBody: existing })
+
+    expect(refreshed).toContain('![before](b.png)')
+    expect(refreshed).toContain('![after](a.png)')
+    // A second refresh is byte-identical: no reset, no duplicated blocks.
+    expect(await renderTemplate({ ...opts, existingBody: refreshed })).toBe(refreshed)
+  })
+
+  it('honours the base option when resolving the commit range', async () => {
+    const git = makeFakeGit({ revParseValue: 'abc123' })
     const body = await renderTemplate({
       head: 'feature/opts',
       base: 'develop',
       template: SAMPLE_TEMPLATE,
-      git: makeFakeGit({ revParseValue: 'abc123' }),
+      git,
     })
-    expect(typeof body).toBe('string')
-    expect(body.length).toBeGreaterThan(0)
+    expect(git.revParse).toHaveBeenCalledWith('origin/develop')
+    expect(body).toContain('# Opts')
+    expect(body).toContain('did a thing')
   })
 
   it('omits the git service and still renders when noGit is set', async () => {
@@ -197,5 +287,27 @@ describe('renderTemplate — single rendering entry point', () => {
     expect(body).toContain('123') // issue plugin extracted #123 from the head
     expect(body).toContain('- [x] Bug fix') // types plugin ticked Bug fix (fix/ prefix)
     expect(body).toContain('## Commits') // commits block still rendered (logRange)
+  })
+
+  it('loads repo-side block plugins when the cwd is not the repo root', async () => {
+    // Regression: `npm test` inside actions/create-pr and `local-test-render`
+    // run with a different cwd than the Action. The default blocks dir used to
+    // be resolved from process.cwd(), so the `types` plugin silently vanished
+    // and {{types}} stayed verbatim in the body.
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpdir())
+    try {
+      vi.resetModules()
+      const { renderTemplate: freshRender } = await import('./render-template.mjs')
+      const body = await freshRender({
+        head: 'fix/#123-login',
+        template: ISSUE_AND_TYPE_TEMPLATE,
+        noGit: true,
+      })
+      expect(body).toContain('- [x] Bug fix')
+      expect(body).not.toContain('{{types}}')
+    } finally {
+      cwdSpy.mockRestore()
+      vi.resetModules()
+    }
   })
 })
