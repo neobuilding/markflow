@@ -244,9 +244,12 @@ test.describe('pane toolbars', () => {
     // The sidebar toggle is gone from this bar.
     await expect(page.getByTestId('sidebar-toggle-btn')).toHaveCount(0)
 
-    // With no document open the bar shows only what can act (Quick Open + Close) — ADR-0024 §9.
+    // With no document open the bar shows only what can act: Quick Open alone. Every
+    // document-scoped command — Save / Save-As / Reload / file details / export / Close — is gated
+    // on `activeDocumentId` (ADR-0024 §9, amended 2026-11-12: Close is gated too; with no document
+    // there is nothing to close, so the button is hidden rather than left inert).
     await expect(globalBar.getByTestId('save-btn')).toHaveCount(0)
-    await expect(globalBar.getByTestId('close-btn')).toBeVisible()
+    await expect(globalBar.getByTestId('close-btn')).toHaveCount(0)
   })
 
   test('the export button follows the preview visibility — exactly one is on screen', async () => {
@@ -479,5 +482,141 @@ test.describe('pane toolbars', () => {
         bar.evaluate((el) => el.querySelectorAll('button[data-command-index]').length),
       )
       .toBeLessThan(12)
+  })
+
+  // R5 plan A: no standalone print preview window — the user watches the MAIN window's own
+  // preview pane. That window must NOT be whole-window disabled (setEnabled(false) would freeze
+  // the preview), so blocking is FINE-GRAINED: the editor goes read-only, every file/document
+  // shortcut is refused, and the renderer draws no overlay, while the preview stays reachable.
+  // This drives the printing flag directly (a real OS print dialog cannot be driven from a test).
+  test('printing locks the document but leaves the main window preview usable (R5 plan A)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'print me')
+    await page.getByTestId('view-split').click()
+
+    const preview = page.getByTestId('preview-pane')
+    await expect(preview).toBeVisible()
+    const box = (await preview.boundingBox())!
+    const editorContent = page.locator('.cm-content')
+
+    // Enter edit mode explicitly so the read-only transition is observable in the DOM.
+    await page.evaluate(() => (window as any).__uiStore.getState().setEditable(true))
+    await expect(editorContent).toHaveAttribute('contenteditable', 'true')
+    const idBefore = await page.evaluate(
+      () => (window as any).__uiStore.getState().activeDocumentId,
+    )
+
+    await page.evaluate(() => (window as any).__uiStore.getState().setPrinting(true))
+    // The non-blocking indicator lives in the status bar, not over the content.
+    await expect(page.getByText(/Printing/)).toBeVisible()
+
+    // 1. Editor is read-only for the duration of the print transaction.
+    await expect(editorContent).toHaveAttribute('contenteditable', 'false')
+
+    // 2. The preview pane is still hit-testable: no overlay, and no OS-level window disable.
+    const hit = await page.evaluate(
+      ({ x, y }) =>
+        document.elementFromPoint(x, y)?.closest('[data-testid="preview-pane"]') !== null,
+      { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+    )
+    expect(hit, 'a full-screen overlay must not sit between the pointer and the preview').toBe(true)
+
+    // 3. File shortcuts are refused by the print-mode lock (renderer keydown guard, store guard
+    //    and the native menu accelerators that send menu events all have to agree).
+    await page.keyboard.press('Control+n')
+    await page.keyboard.press('Control+w')
+    expect(
+      await page.evaluate(() => (window as any).__uiStore.getState().activeDocumentId),
+      'Ctrl+N/Ctrl+W must not create or close a document while printing',
+    ).toBe(idBefore)
+
+    // Ending printing restores the previous edit mode — no permanent state damage.
+    await page.evaluate(() => (window as any).__uiStore.getState().setPrinting(false))
+    await expect(editorContent).toHaveAttribute('contenteditable', 'true')
+  })
+
+  // User report 2026-11-13: "the main window disables many features…but these toolbar buttons are still not disabled". The store
+  // guard and the NATIVE menu already stood down, but the three toolbars kept rendering enabled
+  // buttons that silently did nothing. A disabled ACTION must look disabled, and must come back
+  // when the print window closes. Read-only affordances (view mode, find, copy) stay available —
+  // the preview is meant to remain scrollable while the system dialog is up (R5 plan A).
+  test('printing visibly disables the locked controls on all three toolbars', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await createDocAndType(page, 'locked')
+    await page.getByTestId('view-edit').click()
+    await page.evaluate(() => (window as any).__uiStore.getState().setEditable(true))
+
+    const globalBar = [
+      'editor-goto-file-btn',
+      'new-document-btn',
+      'save-btn',
+      'save-as-btn',
+      'reload-btn',
+      'file-details-btn',
+      'close-btn',
+      'export-btn',
+    ]
+    const editorBar = [
+      'editor-readonly-btn',
+      'editor-replace-btn',
+      'editor-undo-btn',
+      'editor-redo-btn',
+    ]
+
+    const disabledOf = async (id: string): Promise<string> => {
+      const btn = page.getByTestId(id)
+      if ((await btn.count()) === 0) return 'absent'
+      return (await btn.isDisabled()) ? 'disabled' : 'ENABLED'
+    }
+
+    try {
+      await page.evaluate(() => (window as any).__uiStore.getState().setPrinting(true))
+
+      for (const id of [...globalBar, ...editorBar]) {
+        expect(await disabledOf(id), `${id} must be disabled while printing`).toBe('disabled')
+      }
+      const fmtButtons = await page.locator('[data-testid^="fmt-"]').all()
+      expect(
+        fmtButtons.length,
+        'the format buttons must be rendered inline in edit-only mode',
+      ).toBe(7)
+      for (const btn of fmtButtons) {
+        expect(
+          await btn.isDisabled(),
+          `${await btn.getAttribute('data-testid')} must be disabled while printing`,
+        ).toBe(true)
+      }
+      // Still usable: view switching and find do not mutate the document.
+      for (const id of ['view-edit', 'view-split', 'view-preview', 'editor-find-btn']) {
+        expect(await disabledOf(id), `${id} must stay available during printing`).toBe('ENABLED')
+      }
+
+      // The preview bar carries the export button when the preview is visible.
+      await page.getByTestId('view-split').click()
+      expect(await disabledOf('export-btn'), 'preview-bar export must be disabled').toBe('disabled')
+      for (const id of ['preview-find-btn', 'preview-copy-btn', 'preview-copy-html-btn']) {
+        expect(await disabledOf(id), `${id} must stay available during printing`).toBe('ENABLED')
+      }
+
+      // Closing the print window restores every one of them (no permanent lock).
+      await page.evaluate(() => (window as any).__uiStore.getState().setPrinting(false))
+      for (const id of [
+        'reload-btn',
+        'file-details-btn',
+        'close-btn',
+        'export-btn',
+        'preview-copy-btn',
+      ]) {
+        expect(await disabledOf(id), `${id} must be enabled again after printing`).toBe('ENABLED')
+      }
+      await page.getByTestId('view-edit').click()
+      for (const id of ['editor-readonly-btn', 'editor-replace-btn', 'export-btn']) {
+        expect(await disabledOf(id), `${id} must be enabled again after printing`).toBe('ENABLED')
+      }
+    } finally {
+      await page.evaluate(() => (window as any).__uiStore.getState().setPrinting(false))
+    }
   })
 })

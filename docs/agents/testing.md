@@ -416,12 +416,13 @@ deterministic. The same assertion therefore behaves the same on a laptop and on 
 A spec that is _about_ a particular width enters a named environment instead of typing its own
 numbers (`e2e/helpers/viewports.ts`):
 
-| Environment | Size        | What it exercises                                                                              |
-| ----------- | ----------- | ---------------------------------------------------------------------------------------------- |
-| `standard`  | 1024 × 768  | the default: the editor toolbar is PARTIALLY overflowed (pane 368 < 472)                       |
-| `wide`      | 1280 × 900  | every editor command is INLINE (pane 496 >= 472)                                               |
-| `narrow`    | 800 × 600   | the narrow fixture size (at the app's window floor); MORE commands are in "…" (pane 256 < 472) |
-| `baseline`  | 2560 × 1440 | the E9 visual baselines (the bars are 2272px / 1136px wide)                                    |
+| Environment | Size        | What it exercises                                                                                                         |
+| ----------- | ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `standard`  | 1024 × 768  | the default: the editor toolbar is PARTIALLY overflowed (pane 368 < 472)                                                  |
+| `wide`      | 1280 × 900  | every editor command is INLINE (pane 496 >= 472)                                                                          |
+| `narrow`    | 800 × 600   | the narrow fixture size (at the app's window floor); MORE commands are in "…" (pane 256 < 472)                            |
+| `short`     | 900 × 560   | deliberately shorter than the export dialog's natural height, so its "clamped inside the window" contract can be asserted |
+| `baseline`  | 2560 × 1440 | the E9 visual baselines (the bars are 2272px / 1136px wide)                                                               |
 
 Entering an environment is per CASE, not per file: a spec that needs a different window gets its own
 test case for it, while the case that stays in the default environment keeps asserting the default

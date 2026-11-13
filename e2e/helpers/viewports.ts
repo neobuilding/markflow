@@ -44,6 +44,12 @@ export const VIEWPORTS = {
   /** The narrow fixture size (at the window floor of 800), used by the responsive specs. */
   narrow: { width: 800, height: 600 },
   /**
+   * Deliberately SHORT (900x560): the export dialog's natural height (~650px) exceeds it, so the
+   * R4 bounds regression can assert the dialog is clamped INSIDE the app window instead of
+   * overflowing past its bottom edge. Width stays above the window floor (800).
+   */
+  short: { width: 900, height: 560 },
+  /**
    * The environment the committed E9 visual baselines were captured in: the global bar is 2272px
    * wide and a pane bar 1136px, i.e. a 2560px content area (2272 = 2560 - 288, and one column is
    * half of that). The visual spec enters it, so the baselines stay valid AND stop depending on the

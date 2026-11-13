@@ -4,6 +4,11 @@ import { onIpc } from './_shared'
 export const onMenuEvent = (
   event:
     | 'new-document'
+    // "New File…" — when a folder is open, the SAME dialog the sidebar's inline row feeds
+    // (`documents:create` with `memoryOnly: false`). Kept in step with `MenuEvent` in
+    // `src/renderer/src/vite-env.d.ts`: the two lists are hand-maintained, so a channel added on
+    // one side only would silently never be subscribed.
+    | 'new-file'
     | 'save'
     | 'save-as'
     | 'reload'

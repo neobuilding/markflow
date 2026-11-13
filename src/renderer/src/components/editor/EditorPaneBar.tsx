@@ -25,7 +25,7 @@ import {
   DropdownMenuSeparator,
 } from '../ui/dropdown-menu'
 import { useT, type TranslationKey } from '../../i18n'
-import { useUIStore } from '../../store/ui'
+import { useUIStore, selectFileLocked } from '../../store/ui'
 import { useEditorHistory } from '../../store/editorHistory'
 import { formatShortcut } from '../../lib/utils'
 import { FORMAT_SHORTCUTS, type FormatActionId } from '../../lib/format-shortcuts'
@@ -90,6 +90,10 @@ interface BarCommand {
 export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactElement {
   const { t } = useT()
   const toggleEditable = useUIStore((s) => s.toggleEditable)
+  // R5 plan A: printing makes the editor read-only and refuses edits / switches in the store.
+  // The bar must show the same state — an enabled "Bold" that silently does nothing is a bug.
+  // Read-only affordances (find) deliberately stay available.
+  const fileLocked = useUIStore(selectFileLocked)
   const canUndo = useEditorHistory((s) => s.canUndo)
   const canRedo = useEditorHistory((s) => s.canRedo)
   const barRef = useRef<HTMLDivElement>(null)
@@ -117,7 +121,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
         label: t(label ?? tip),
         menuLabel: tipText(btn),
         tip: tipText(btn),
-        disabled: !editable,
+        disabled: !editable || fileLocked,
         onClick: () => insertMarkdown(before, after),
         testId: `fmt-${before}-${after}`,
       }
@@ -138,7 +142,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
       icon: Replace,
       label: replaceLabel,
       menuLabel: replaceLabel,
-      disabled: false,
+      disabled: fileLocked,
       onClick: () => document.dispatchEvent(new CustomEvent('markdown:replace')),
       testId: 'editor-replace-btn',
     },
@@ -148,7 +152,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
       icon: Undo2,
       label: t('ctx.undo'),
       menuLabel: t('ctx.undo'),
-      disabled: !editable || !canUndo,
+      disabled: !editable || !canUndo || fileLocked,
       onClick: () => document.dispatchEvent(new CustomEvent('markdown:undo')),
       testId: 'editor-undo-btn',
     },
@@ -158,7 +162,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
       icon: Redo2,
       label: t('ctx.redo'),
       menuLabel: t('ctx.redo'),
-      disabled: !editable || !canRedo,
+      disabled: !editable || !canRedo || fileLocked,
       onClick: () => document.dispatchEvent(new CustomEvent('markdown:redo')),
       testId: 'editor-redo-btn',
     },
@@ -170,7 +174,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
       // overflow entry state the ACTION (WCAG 2.4.6 / 4.1.2). Edit is the active / pressed state.
       label: editable ? t('editor.edit') : t('editor.readOnly'),
       menuLabel: editable ? t('editor.switchReadOnly') : t('editor.switchEdit'),
-      disabled: false,
+      disabled: fileLocked,
       onClick: () => toggleEditable(),
       testId: 'editor-readonly-btn',
       pressed: editable,

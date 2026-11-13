@@ -37,6 +37,7 @@ let allDocs: Document[] = [
 ]
 
 const createMock = vi.fn(async () => ({ id: 'new', title: 'Untitled', filePath: '' }))
+const createDraftMock = vi.fn(async () => {})
 const deleteMock = vi.fn()
 const openPathsMock = vi.fn()
 const openFolderMock = vi.fn()
@@ -80,6 +81,7 @@ vi.mock('../../hooks/useDocuments', () => ({
   useDeleteFolder: () => ({ mutateAsync: deleteFolderMock, isPending: false }),
   useUndoRename: () => ({ mutateAsync: undoRenameMock, isPending: false }),
   useFolderDirs: () => ({ data: folderDirs }),
+  createDraft: () => createDraftMock(),
 }))
 
 function mount() {
@@ -117,6 +119,7 @@ beforeEach(() => {
     },
   }
   createMock.mockReset()
+  createDraftMock.mockReset()
   deleteMock.mockReset()
   openPathsMock.mockReset()
   openFolderMock.mockReset()
@@ -203,7 +206,7 @@ describe('Sidebar', () => {
     expect(await screen.findAllByTestId('doc-item')).toHaveLength(2)
   })
 
-  it('hides a folder that holds no Markdown document by default (能力 7)', async () => {
+  it('hides a folder that holds no Markdown document by default', async () => {
     useUIStore.getState().setActiveFolder('/docs')
     folderDirs = ['/docs/empty']
     mount()
@@ -213,7 +216,7 @@ describe('Sidebar', () => {
     expect(screen.queryByText('empty')).toBeNull()
   })
 
-  it('shows every folder once "Show All Folders" is turned on (能力 7)', async () => {
+  it('shows every folder once "Show All Folders" is turned on', async () => {
     useUIStore.getState().setActiveFolder('/docs')
     useUIStore.getState().setShowAllFolders(true)
     folderDirs = ['/docs/empty']
@@ -231,7 +234,7 @@ describe('Sidebar', () => {
     expect(await screen.findByText('empty')).toBeInTheDocument()
   })
 
-  it('creates a folder directly under the current folder (能力 7)', async () => {
+  it('creates a folder directly under the current folder', async () => {
     useUIStore.getState().setActiveFolder('/docs')
     mount()
     // The current folder has no tree row of its own, so the entry lives in its own bar.
@@ -272,10 +275,37 @@ describe('Sidebar', () => {
     expect(screen.queryByTestId('folder-name-input')).not.toBeNull()
   })
 
-  it('creates a new document via the new button', async () => {
+  // The sidebar's + button is filesystem-bound: it opens the inline naming row that writes a
+  // real .md file. The always-available in-memory "New Draft" moved to the global toolbar.
+  it('hides the New File button entirely when no folder is open', () => {
+    useUIStore.getState().setActiveFolder(null)
     mount()
-    fireEvent.click(screen.getByTestId('new-document-btn'))
-    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    expect(screen.queryByTestId('side-new-file-btn')).toBeNull()
+    expect(screen.queryByTestId('new-document-btn')).toBeNull()
+  })
+
+  it('opens the inline New File naming row from the sidebar button', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.click(await screen.findByTestId('side-new-file-btn'))
+    expect(await screen.findByTestId('file-create-row')).toBeTruthy()
+    // No document is created until the user commits a name — a click must not write a file.
+    expect(createMock).not.toHaveBeenCalled()
+    expect(createDraftMock).not.toHaveBeenCalled()
+  })
+
+  it('routes the sidebar New Draft entries through the shared createDraft action', async () => {
+    const saved = [...allDocs]
+    allDocs.length = 0 // welcome state appears only when there are no drafts
+    try {
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('sidebar-welcome-state'))
+      fireEvent.click(await screen.findByTestId('side-new-document'))
+      await waitFor(() => expect(createDraftMock).toHaveBeenCalledTimes(1))
+    } finally {
+      allDocs.length = 0
+      allDocs.push(...saved)
+    }
   })
 
   it('deletes a document via the context menu', async () => {
@@ -397,20 +427,30 @@ describe('Sidebar — interactions', () => {
   })
 
   // D23 / §5.9: the two create paths must ask BEFORE creating — creating first and switching
-  // second would leave an orphan draft on disk if the switch was then refused.
-  it('guards the new-document button when there are unsaved edits', async () => {
-    useUIStore.getState().setActiveDocumentId('b')
-    useUIStore.getState().setActiveDocumentTitle('Note B')
-    useUIStore.getState().setDirty(true)
-    const api = {
-      dialog: { openFiles: vi.fn(), openFolderPath: vi.fn(), confirm: vi.fn(async () => false) },
+  // second would leave an orphan draft on disk if the switch was then refused. The draft guard
+  // now lives in the shared createDraft() action (pinned in useDocuments.test.tsx); here we pin
+  // that the sidebar merely DELEGATES to it and never writes a file itself.
+  it('delegates New Draft to the shared action even with unsaved edits', async () => {
+    const saved = [...allDocs]
+    allDocs.length = 0
+    try {
+      // This describe's beforeEach pins an active folder, so the welcome state would never
+      // show. Clear it (the welcome state requires !activeFolder && no drafts) to exercise the
+      // sidebar's New Draft delegation from the empty state.
+      useUIStore.getState().setActiveFolder(null)
+      useUIStore.getState().setActiveDocumentId('b')
+      useUIStore.getState().setActiveDocumentTitle('Note B')
+      useUIStore.getState().setDirty(true)
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('sidebar-welcome-state'))
+      fireEvent.click(await screen.findByTestId('side-new-document'))
+      await waitFor(() => expect(createDraftMock).toHaveBeenCalledTimes(1))
+      expect(createMock).not.toHaveBeenCalled()
+      expect(useUIStore.getState().activeDocumentId).toBe('b')
+    } finally {
+      allDocs.length = 0
+      allDocs.push(...saved)
     }
-    ;(window as unknown as { api: unknown }).api = api
-    mount()
-    fireEvent.click(screen.getByTestId('new-document-btn'))
-    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
-    expect(createMock).not.toHaveBeenCalled()
-    expect(useUIStore.getState().activeDocumentId).toBe('b')
   })
 
   it('guards the inline new-file row when there are unsaved edits', async () => {
@@ -1163,6 +1203,23 @@ describe('Sidebar — current folder bar context menu', () => {
     )
   })
 
+  // R5 plan A: printing is a document transaction too. The sidebar's file/workspace controls
+  // must grey out with the same `workspaceLocked` flag that exporting uses.
+  it('disables file and workspace controls while printing', async () => {
+    useUIStore.getState().setPrinting(true)
+    try {
+      mount()
+      expect(screen.getByTestId('side-new-file-btn')).toBeDisabled()
+      fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+      expect(await screen.findByTestId('side-close-workspace')).toHaveAttribute(
+        'aria-disabled',
+        'true',
+      )
+    } finally {
+      useUIStore.getState().setPrinting(false)
+    }
+  })
+
   it('closes the workspace from the context menu (confirming discard)', async () => {
     useUIStore.getState().setDirty(true)
     mount()
@@ -1329,7 +1386,7 @@ describe('Sidebar — folder row context menu', () => {
     await waitFor(() => expect(screen.getByText('c.md')).toBeInTheDocument())
   })
 
-  it('creates a subfolder via the inline-edit menu item (能力 7)', async () => {
+  it('creates a subfolder via the inline-edit menu item', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-expand')) // expand /docs so its children render
@@ -1351,7 +1408,7 @@ describe('Sidebar — folder row context menu', () => {
     expect(sub.compareDocumentPosition(file) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('renames a folder via the inline-edit menu item (能力 7)', async () => {
+  it('renames a folder via the inline-edit menu item', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     await userEvent.click(await screen.findByTestId('side-rename-folder'))
@@ -1371,7 +1428,7 @@ describe('Sidebar — folder row context menu', () => {
     expect(input.className).toContain('text-base')
   })
 
-  it('deletes a folder to trash behind a confirmation (能力 7)', async () => {
+  it('deletes a folder to trash behind a confirmation', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-delete-folder'))
@@ -1428,7 +1485,7 @@ describe('Sidebar — folder row context menu', () => {
     expect(createMock).not.toHaveBeenCalled()
   })
 
-  it('surfaces a failed folder create without crashing (能力 7)', async () => {
+  it('surfaces a failed folder create without crashing', async () => {
     createFolderMock.mockRejectedValueOnce(new Error('boom'))
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
@@ -1442,7 +1499,7 @@ describe('Sidebar — folder row context menu', () => {
     await waitFor(() => expect(createFolderMock).toHaveBeenCalled())
   })
 
-  it('resets the sidebar width from the resize-handle menu (能力 7)', async () => {
+  it('resets the sidebar width from the resize-handle menu', async () => {
     mount()
     const handle = screen.getByTitle(/Drag to resize sidebar/i)
     await userEvent.pointer({ keys: '[MouseLeft>]', target: handle })
@@ -1541,7 +1598,7 @@ describe('Sidebar — folder high-order items', () => {
     alert.mockRestore()
   })
 
-  it('surfaces a failed folder delete to the user instead of swallowing it (能力 7)', async () => {
+  it('surfaces a failed folder delete to the user instead of swallowing it', async () => {
     deleteFolderMock.mockRejectedValueOnce(new Error('boom'))
     // The failure used to be console-only, leaving the folder in the tree with no explanation.
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
@@ -1632,7 +1689,7 @@ describe('Sidebar — folder high-order items', () => {
     await waitFor(() => expect(renameFolderMock).toHaveBeenCalled())
   })
 
-  it('deletes the active folder from the current-folder-bar menu (能力 7)', async () => {
+  it('deletes the active folder from the current-folder-bar menu', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
     fireEvent.click(await screen.findByTestId('side-delete-folder'))
@@ -2067,7 +2124,14 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
   })
 
   it('shows a note when the main process refuses the new file (EEXIST)', async () => {
-    createMock.mockRejectedValueOnce(Object.assign(new Error('EEXIST'), { code: 'EEXIST' }))
+    // The EXACT shape the renderer receives: ipcRenderer.invoke re-throws a plain Error whose only
+    // own properties are stack/message, so the Node `code` never survives the bridge. Mocking a
+    // `code` here would test a shape production cannot produce.
+    createMock.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'documents:create': Error: EEXIST: file already exists, open '/docs/brandnew.md'",
+      ),
+    )
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
     fireEvent.click(await screen.findByTestId('side-bg-new-file'))

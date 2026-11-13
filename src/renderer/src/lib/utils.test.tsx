@@ -16,6 +16,8 @@ import {
   findTreeNode,
   siblingBasenames,
   invalidBaseName,
+  resolveNewFileTarget,
+  isAlreadyExistsError,
   foldName,
   isWindows,
   pathCaseSensitive,
@@ -860,6 +862,64 @@ describe('invalidBaseName', () => {
     // The inline input cancels an empty name itself, so it is not "invalid" here.
     expect(invalidBaseName('')).toBe(false)
     expect(invalidBaseName('   ')).toBe(false)
+  })
+})
+
+// The renderer never sees the Node error `code`: `ipcRenderer.invoke` re-throws a plain Error whose
+// own properties are only `stack` and `message` (measured against the real bridge). Matching the
+// message is therefore the ONLY branch that fires in production — the `code` branch is kept for
+// in-process callers, not as the primary path.
+describe('isAlreadyExistsError', () => {
+  it('matches the exact rejection the IPC bridge produces', () => {
+    expect(
+      isAlreadyExistsError(
+        new Error(
+          "Error invoking remote method 'documents:create': Error: EEXIST: file already exists, open 'D:\\notes\\a.md'",
+        ),
+      ),
+    ).toBe(true)
+  })
+
+  it('still honours a structured EEXIST code when a caller passes one', () => {
+    expect(isAlreadyExistsError(Object.assign(new Error('boom'), { code: 'EEXIST' }))).toBe(true)
+  })
+
+  it('matches the other duplicate-name wordings the main process can use', () => {
+    expect(isAlreadyExistsError(new Error('FILE_EXISTS'))).toBe(true)
+    expect(isAlreadyExistsError(new Error('a file already exists here'))).toBe(true)
+  })
+
+  it('rejects unrelated failures and non-Error values', () => {
+    expect(isAlreadyExistsError(new Error('EACCES: permission denied'))).toBe(false)
+    expect(isAlreadyExistsError('disk full')).toBe(false)
+    expect(isAlreadyExistsError(null)).toBe(false)
+    expect(isAlreadyExistsError(undefined)).toBe(false)
+  })
+})
+
+// ADR-0011: what the user sees in the name field is what lands on disk. The sidebar's inline row and
+// the File ▸ New File… dialog share this resolver, so a typed extension can never produce
+// `notes.md.md` on one surface and `notes.md` on the other.
+describe('resolveNewFileTarget (name + extension for a create)', () => {
+  it('uses a typed Markdown extension exactly as typed, overriding the default', () => {
+    expect(resolveNewFileTarget('notes', '.md')).toEqual({ title: 'notes', ext: '.md' })
+    expect(resolveNewFileTarget('notes.markdown', '.md')).toEqual({
+      title: 'notes',
+      ext: '.markdown',
+    })
+    // Case is folded onto the extension set (the selector only ever offers the lowercase spelling).
+    expect(resolveNewFileTarget('notes.MDX', '.md')).toEqual({ title: 'notes', ext: '.mdx' })
+  })
+
+  it('refuses an unsupported extension instead of creating `notes.txt.md`', () => {
+    expect(resolveNewFileTarget('notes.txt', '.md')).toBeNull()
+    expect(resolveNewFileTarget('v1.2', '.md')).toBeNull()
+  })
+
+  it('appends the fallback extension when the name carries no suffix', () => {
+    // A dotted PHRASE keeps its dots: only a trailing `.<alnum>` run counts as an extension.
+    expect(resolveNewFileTarget('v1.2 notes', '.mdx')).toEqual({ title: 'v1.2 notes', ext: '.mdx' })
+    expect(resolveNewFileTarget('  spaced  ', '.md')).toEqual({ title: 'spaced', ext: '.md' })
   })
 })
 

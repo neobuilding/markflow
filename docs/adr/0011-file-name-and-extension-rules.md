@@ -5,6 +5,12 @@
 - **Related:** ADR-0010 (sidebar folder filtering)
 - **Amended:** 2026-09 — duplicate and invalid names are **refused** (no `-N` suffix, no silent overwrite),
   the bare-name commit is **held** until a second Enter, and name comparison is case-insensitive off Linux.
+- **Amended:** 2026-11-12 — the **File ▸ New File…** dialog (which writes a real file into the open folder)
+  applies the SAME rule through `resolveNewFileTarget` (`src/renderer/src/lib/utils.ts`), so the two create
+  surfaces cannot disagree: a supported Markdown extension typed into the name field wins over the extension
+  selector (`notes.md` stays `notes.md`, never `notes.md.md`), an unsupported one is **refused** rather than
+  written as an unopenable `notes.txt.md`, and only a bare name takes the selector's extension. The dialog
+  commits in one click — the "held bare name" of §Decision belongs to the inline row's live typing.
 
 ## Context
 

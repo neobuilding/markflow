@@ -75,6 +75,31 @@ afterEach(() => {
 })
 
 describe('EditorPaneBar', () => {
+  // R5 plan A: printing makes the editor read-only. Editing commands must be visibly disabled,
+  // while FIND (a read-only affordance) stays available so the preview can still be searched.
+  it('disables editing commands while printing and restores them afterwards', () => {
+    renderBar(true)
+    try {
+      act(() => useUIStore.getState().setPrinting(true))
+      for (const id of [
+        'fmt-# -',
+        'fmt-**-**',
+        'editor-replace-btn',
+        'editor-undo-btn',
+        'editor-redo-btn',
+        'editor-readonly-btn',
+      ]) {
+        expect(screen.getByTestId(id), id).toBeDisabled()
+      }
+      expect(screen.getByTestId('editor-find-btn')).not.toBeDisabled()
+    } finally {
+      act(() => useUIStore.getState().setPrinting(false))
+    }
+    expect(screen.getByTestId('editor-readonly-btn')).not.toBeDisabled()
+    expect(screen.getByTestId('editor-replace-btn')).not.toBeDisabled()
+    expect(screen.getByTestId('fmt-# -')).not.toBeDisabled()
+  })
+
   it('renders the 7-button format cluster in the expanded layout', () => {
     renderBar(true)
     expect(screen.getByTestId('fmt-# -')).toBeInTheDocument()

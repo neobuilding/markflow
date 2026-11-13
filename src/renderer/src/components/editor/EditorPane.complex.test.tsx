@@ -130,7 +130,7 @@ beforeEach(() => {
       unmaximize: vi.fn(async () => {}),
       isMaximized: vi.fn(async () => false),
     },
-    menu: { setEditable: vi.fn(), setHasDocument: vi.fn(), setPrinting: vi.fn() },
+    menu: { setEditable: vi.fn(), setHasDocument: vi.fn(), setFileLocked: vi.fn() },
     clipboard: { writeText: vi.fn(async () => {}) },
     onMenuEvent: vi.fn(() => noopUnsub),
     onFileChanged: vi.fn(() => noopUnsub),

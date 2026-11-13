@@ -132,7 +132,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
     if (isDocSwitch) {
       setSanitizedHtml(sanitizeHtml(''))
       setLoading(true)
-      // C20 补 ⑦: during a document switch the export cache still holds the PREVIOUS
+      // C20 add ⑦: during a document switch the export cache still holds the PREVIOUS
       // document's HTML, so the export must be disabled until this document has parsed.
       useUIStore.getState().setExportReady(false)
     }
@@ -166,7 +166,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           setExportMermaidSlots(res.mermaid)
           setExportHtml(clean)
           setExportContent(content)
-          // C20 补 ⑦: the cache now holds THIS document's complete render — the export
+          // C20 add ⑦: the cache now holds THIS document's complete render — the export
           // dialog may be enabled (E12).
           useUIStore.getState().setExportReady(true)
           setSanitizedHtml(clean)
@@ -293,7 +293,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
       }
     }
     apply()
-    // 跟随系统 must keep following AFTER the choice is made. The OS preference can change
+    // Follow System must keep following AFTER the choice is made. The OS preference can change
     // while the app is open, and Electron's nativeTheme.themeSource update is asynchronous:
     // switching dark → system often still reads "dark" on the first apply, so the preview
     // would stay on the dark sheet forever. App.tsx installs the same listener for the

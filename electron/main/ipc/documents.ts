@@ -631,7 +631,7 @@ export function registerDocumentHandlers(
           : join(getDefaultDocsDir(io), folderPath)
         : getDefaultDocsDir(io)
       // D20: with a workspace root open, the new file must land inside it. Refusing is the
-      // documented behaviour ("根外路径拒绝并提示"); the renderer never hits this — it passes the
+      // documented behaviour ("rejects out-of-root paths with a prompt"); the renderer never hits this — it passes the
       // open folder (activeFolder) as folderPath whenever a root exists.
       const workspaceRoot = getWorkspaceRoot()
       if (workspaceRoot && !isDirInFolder(baseDir, workspaceRoot)) {

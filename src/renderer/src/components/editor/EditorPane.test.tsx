@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { EditorView } from '@codemirror/view'
 import { render, waitFor, act, fireEvent, screen } from '@testing-library/react'
-import { FileText, Search } from 'lucide-react'
+import { FileInput, Search } from 'lucide-react'
 import { TooltipProvider } from '../ui/tooltip'
 import { EditorPane } from './EditorPane'
 import { useUIStore } from '../../store/ui'
@@ -19,6 +19,9 @@ const h = vi.hoisted(() => ({
   // The keystroke-frame text Save must see; deliberately different from the preview mirror.
   authoritativeContent: '# A',
   commitDraft: vi.fn(),
+  createDraft: vi.fn(async () => {}),
+  // "An unsaved draft already exists" — flips the empty-state New Draft entry to disabled.
+  hasDraft: false,
   saveMutateAsync: vi.fn(
     async (_params: { id: string; updates: { title: string; content: string } }) => ({
       id: 'a',
@@ -59,6 +62,8 @@ vi.mock('../../hooks/useDocuments', () => ({
     })),
     isPending: false,
   }),
+  useHasMemoryOnlyDraft: () => h.hasDraft,
+  createDraft: h.createDraft,
 }))
 
 vi.mock('../../hooks/useLocalDocument', () => ({
@@ -95,6 +100,8 @@ beforeEach(() => {
   h.editingTitle = false
   h.authoritativeContent = '# A'
   h.commitDraft.mockClear()
+  h.createDraft.mockClear()
+  h.hasDraft = false
   h.saveMutateAsync.mockClear()
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setEditable(true)
@@ -177,14 +184,16 @@ describe('EditorPane — Quick Open trigger (D22)', () => {
 
   // PLAN C6 (R5): Quick Open must NOT wear a magnifier — it sits one icon away from the
   // in-document find button (⌘F), and two adjacent magnifiers read as the same action.
-  // Compared against the icon library's OWN output rather than a class name, so a lucide
-  // upgrade cannot quietly turn this into a no-op assertion.
-  it('uses a document glyph, not a magnifier, for the Quick Open trigger', () => {
+  // It must also NOT wear a bare document glyph (FileText): that reads as "create a new file",
+  // which is the button right next to it. FileInput's arrow-into-a-file glyph says "jump to
+  // a file". Compared against the icon library's OWN output so a lucide upgrade cannot turn
+  // this into a no-op assertion.
+  it('uses a jump-to-file glyph, not a magnifier or a bare document, for Quick Open', () => {
     const magnifier = render(<Search size={16} />).container.querySelector('svg')!
-    const docGlyph = render(<FileText size={16} />).container.querySelector('svg')!
+    const jumpGlyph = render(<FileInput size={16} />).container.querySelector('svg')!
     mount()
     const icon = screen.getByTestId('editor-goto-file-btn').querySelector('svg')!
-    expect(icon.outerHTML).toBe(docGlyph.outerHTML)
+    expect(icon.outerHTML).toBe(jumpGlyph.outerHTML)
     expect(icon.outerHTML).not.toBe(magnifier.outerHTML)
     // PLAN C23 / ADR-0024 §1.3: chrome main controls wear 16px icons.
     expect(icon.getAttribute('width')).toBe('16')
@@ -275,7 +284,7 @@ describe('EditorPane pendingFileAction rename', () => {
   })
 })
 
-describe('EditorPane pendingFileAction save / saveAs / reload (能力 6)', () => {
+describe('EditorPane pendingFileAction save / saveAs / reload', () => {
   it('saves when a save is requested for the active, editable, loaded doc', async () => {
     mount()
     act(() => {
@@ -490,13 +499,28 @@ describe('EditorPane file context menus', () => {
 })
 
 describe('EditorPane empty-state context menu', () => {
+  // At most one unsaved draft: the empty-state entry greys out once a draft exists, so this menu
+  // and the toolbar read the same rule instead of drifting apart.
+  it('disables its New Draft entry while an unsaved draft already exists', async () => {
+    h.hasDraft = true
+    useUIStore.getState().setActiveDocumentId(null)
+    mount()
+    const empty = await screen.findByTestId('editor-empty-state')
+    fireEvent.contextMenu(empty)
+    const item = await screen.findByTestId('ed-new-document')
+    // Radix exposes the disabled state as aria-disabled + data-disabled, not the HTML attribute.
+    expect(item.getAttribute('data-disabled')).not.toBeNull()
+  })
+
   it('offers create / search / open actions from the right-click menu', async () => {
     useUIStore.getState().setActiveDocumentId(null)
     mount()
     const empty = await screen.findByTestId('editor-empty-state')
     fireEvent.contextMenu(empty)
     fireEvent.click(await screen.findByTestId('ed-new-document'))
-    expect(useUIStore.getState().newDocOpen).toBe(true)
+    // "New Draft" is a direct in-memory create (VS Code Ctrl+N parity), not a dialog.
+    expect(h.createDraft).toHaveBeenCalledTimes(1)
+    expect(useUIStore.getState().newDocOpen).toBe(false)
 
     fireEvent.contextMenu(empty)
     fireEvent.click(await screen.findByTestId('ed-search-documents'))

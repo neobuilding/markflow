@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react'
 import '../../i18n'
 import { PreviewToolbar } from './PreviewToolbar'
+import { useUIStore } from '../../store/ui'
 import { TooltipProvider } from '../ui/tooltip'
 
 // jsdom has no layout, so the bar's ResizeObserver needs a controllable width source. The
@@ -65,6 +66,21 @@ function setup(content: React.ReactNode) {
 }
 
 describe('PreviewToolbar', () => {
+  // R5 plan A: `setExportOpen` is refused during a print transaction, so this bar's export button
+  // must be visibly disabled. Read-only commands (find / copy) stay live.
+  it('disables export while printing and restores it afterwards', () => {
+    setup(<p>hello</p>)
+    try {
+      act(() => useUIStore.getState().setPrinting(true))
+      expect(screen.getByTestId('export-btn')).toBeDisabled()
+      expect(screen.getByTestId('preview-find-btn')).not.toBeDisabled()
+      expect(screen.getByTestId('preview-copy-btn')).not.toBeDisabled()
+    } finally {
+      act(() => useUIStore.getState().setPrinting(false))
+    }
+    expect(screen.getByTestId('export-btn')).not.toBeDisabled()
+  })
+
   it('opens the find panel from the search button', () => {
     setup(<p>hello</p>)
     fireEvent.click(screen.getByTestId('preview-find-btn'))

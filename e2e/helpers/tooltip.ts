@@ -3,14 +3,14 @@ import { expect, type Page, type Locator } from '@playwright/test'
 /**
  * Hover a trigger and return its tooltip.
  *
- * The tooltip opens on a **pointermove** over the trigger, so a hover that lands before the
- * trigger is mounted is simply LOST — the bubble then never opens, no matter how long the test
- * waits for it. Under the suite's parallel load (one shared Vite dev server, one Electron instance
- * per worker) that race is real: the renderer can still be mounting when the test hovers.
+ * The tooltip opens on a **pointermove** over the trigger, so a hover that lands while the renderer
+ * is janky is simply LOST — the bubble then never opens, no matter how long the test waits. Under the
+ * suite's parallel load (one shared Vite dev server, one Electron instance per worker) that race is
+ * real and non-deterministic: a single bare `.hover()` can lose its pointermove.
  *
- * So the hover is RETRIED until the bubble is actually on screen. The assertion itself stays
- * strict — the caller still checks the tooltip's text or colours; only the way the bubble is
- * summoned becomes resilient.
+ * So each hover attempt is made resilient (see `summonTooltip`) AND retried by the callers'
+ * `expect.poll` until the bubble is actually on screen. The assertion itself stays strict — the caller
+ * still checks the tooltip's text or colours; only the way the bubble is summoned changes.
  *
  * @param testId  the trigger's test id
  * @param hasText optional text the tooltip must contain (used to pick the right bubble when
@@ -21,10 +21,7 @@ export async function hoverTooltip(page: Page, testId: string, hasText?: string)
   await expect
     .poll(
       async () => {
-        // Park the pointer away from the bar first, so the previous bubble is gone and the
-        // assertion cannot latch onto it (it fades out asynchronously).
-        await page.mouse.move(0, 0)
-        await page.getByTestId(testId).hover()
+        await summonTooltip(page, testId)
         return tip.first().isVisible()
       },
       { timeout: 20_000, message: `tooltip of ${testId}` },
@@ -45,8 +42,7 @@ export async function expectTooltipText(
   await expect
     .poll(
       async () => {
-        await page.mouse.move(0, 0)
-        await page.getByTestId(testId).hover()
+        await summonTooltip(page, testId)
         const tip = page.getByRole('tooltip')
         if (!(await tip.first().isVisible())) return false
         return (await tip.first().textContent())?.includes(expected) ?? false
@@ -69,8 +65,7 @@ export async function readTooltipColors(
   await expect
     .poll(
       async () => {
-        await page.mouse.move(0, 0)
-        await page.getByTestId(testId).hover()
+        await summonTooltip(page, testId)
         const tip = page.getByRole('tooltip')
         if (!(await tip.first().isVisible())) return false
         colors = await tip
@@ -90,4 +85,29 @@ export async function readTooltipColors(
     )
     .toBe(true)
   return colors as unknown as { bg: string; fg: string; border: string }
+}
+
+/**
+ * One resilient hover attempt.
+ *
+ * A bare `page.getByTestId(id).hover()` dispatches the pointermove, and under parallel load the
+ * renderer can drop it — Radix then never opens the bubble. Two extra settles make each attempt
+ * actually land:
+ *
+ *   1. park the pointer at (0,0) and wait a tick — lets any previous bubble finish fading and lets the
+ *      page register the pointer leaving, so Radix's pointer-grace state is cleared and the next
+ *      trigger's pointermove is not swallowed;
+ *   2. after moving onto the trigger, wait a tick — lets the renderer process the pointermove and Radix
+ *      open the (animated) bubble before the caller reads it.
+ *
+ * The hover itself is given a short timeout and swallowed, so a momentarily non-actionable trigger
+ * fails this attempt fast and the surrounding `expect.poll` simply retries on the next tick. Retrying
+ * the whole sequence is what survives the race a single attempt cannot.
+ */
+async function summonTooltip(page: Page, testId: string): Promise<void> {
+  const trigger = page.getByTestId(testId)
+  await page.mouse.move(0, 0)
+  await page.waitForTimeout(30)
+  await trigger.hover({ timeout: 2000 }).catch(() => {})
+  await page.waitForTimeout(30)
 }

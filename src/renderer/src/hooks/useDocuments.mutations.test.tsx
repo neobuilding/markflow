@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('useSetEol (能力 6)', () => {
+describe('useSetEol', () => {
   it('calls documents.setEol and invalidates the eol query', async () => {
     const { result } = mountHook(() => useSetEol())
     await act(async () => {
@@ -76,7 +76,7 @@ describe('useSetEol (能力 6)', () => {
   })
 })
 
-describe('useDetectEncoding (能力 11)', () => {
+describe('useDetectEncoding', () => {
   it('calls documents.detectEncoding', async () => {
     const { result } = mountHook(() => useDetectEncoding())
     await act(async () => {
@@ -86,7 +86,7 @@ describe('useDetectEncoding (能力 11)', () => {
   })
 })
 
-describe('useCreateFolder (能力 7)', () => {
+describe('useCreateFolder', () => {
   it('calls documents.createFolder and invalidates the documents list', async () => {
     const { result } = mountHook(() => useCreateFolder())
     await act(async () => {
@@ -96,7 +96,7 @@ describe('useCreateFolder (能力 7)', () => {
   })
 })
 
-describe('useRenameFolder (能力 7)', () => {
+describe('useRenameFolder', () => {
   it('calls documents.renameFolder and invalidates the documents list', async () => {
     const { result } = mountHook(() => useRenameFolder())
     await act(async () => {
@@ -244,7 +244,7 @@ describe('useRenameFile', () => {
   })
 })
 
-describe('useDeleteFolder (能力 7)', () => {
+describe('useDeleteFolder', () => {
   it('calls documents.deleteFolder and invalidates the documents list', async () => {
     const { result } = mountHook(() => useDeleteFolder())
     await act(async () => {
@@ -254,7 +254,7 @@ describe('useDeleteFolder (能力 7)', () => {
   })
 })
 
-describe('useUndoRename (能力 7)', () => {
+describe('useUndoRename', () => {
   it('calls documents.undoRename and invalidates the documents list on success', async () => {
     const { result } = mountHook(() => useUndoRename())
     await act(async () => {

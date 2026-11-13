@@ -9,14 +9,22 @@ import {
 } from '../helpers/launch'
 import { VIEWPORTS } from '../helpers/viewports'
 import { resetAppState } from '../helpers/reset'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { mkTempDir } from '../helpers/temp'
 
 // Reuse ONE Electron instance (serial) instead of launching per case; `resetAppState` restores
 // both processes between cases so drafts, viewport, workspace root and store flags cannot leak.
 test.describe.configure({ mode: 'serial' })
 test.describe('document lifecycle', () => {
   let handle: AppHandle
+  let scratch: string
   test.beforeAll(async () => {
     handle = await launchApp()
+    // One real file on disk. A draft is the only document the app can create in one click, and
+    // only ONE unsaved draft may exist at a time (the New Draft control is disabled while one is
+    // open) — so the two documents a switch needs are a file plus that draft.
+    scratch = mkTempDir('markflow-e2e-lifecycle-')
   })
   test.afterAll(async () => {
     await closeApp(handle)
@@ -32,6 +40,56 @@ test.describe('document lifecycle', () => {
     await page.getByTestId('new-document-btn').click()
     await expect(page.locator('.cm-content')).toBeVisible()
   }
+
+  // Open a workspace holding ONE real file, through the same IPC pipeline the "Open Folder" menu
+  // uses: setWorkspaceRoot -> importMany -> setActiveFolder, and activate the imported file.
+  //
+  // The file is (re)written on every call: `resetAppState` deletes the documents of the previous
+  // case, and deleting a FILE document moves the file to the OS trash — a file seeded once in
+  // beforeAll would be gone by the time the next case opened the workspace.
+  async function openWorkspaceWithFile(page: Page): Promise<void> {
+    writeFileSync(join(scratch, 'other.md'), '# Other document\n', 'utf-8')
+    await page.evaluate(async (root) => {
+      const w = window as any
+      const { markdownFiles } = await w.api.files.resolvePaths([root])
+      // Root FIRST: opening REPLACES the workspace (ADR-0023), so it must be set before the import.
+      await w.api.documents.setWorkspaceRoot(root)
+      const imported = await w.api.documents.importMany(markdownFiles)
+      const ui = w.__uiStore.getState()
+      ui.setActiveFolder(root)
+      if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)
+      w.__queryClient.invalidateQueries({ queryKey: ['documents'] })
+    }, scratch)
+  }
+
+  // Read a native menu item's live enabled flag from the MAIN process. The renderer only mirrors
+  // the state over IPC, so this is the only place the real item can be observed.
+  function nativeMenuItemEnabled(h: AppHandle, id: string): Promise<boolean | undefined> {
+    return h.electronApp.evaluate(
+      ({ Menu }, itemId) => Menu.getApplicationMenu()?.getMenuItemById(itemId)?.enabled,
+      id,
+    )
+  }
+
+  // At most one unsaved draft is a cross-process rule. The toolbar button disables itself, and the
+  // native File > New Draft item must follow through the `menu:set-has-draft` sync — otherwise the
+  // menu (and its ⌘N accelerator) is the one entry point that still invites a second draft.
+  test('the native File > New Draft item follows the at-most-one-draft rule', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    // No draft yet: the item is in its normal enabled state.
+    await expect.poll(() => nativeMenuItemEnabled(handle, 'new-draft')).toBe(true)
+
+    await createViaButton(page)
+    await expect.poll(() => nativeMenuItemEnabled(handle, 'new-draft')).toBe(false)
+    await expect(page.getByTestId('new-document-btn')).toBeDisabled()
+
+    // Closing the unsaved draft deletes it from the main-process store, which must re-enable the
+    // item — the rule is a state, not a one-way latch.
+    await page.getByTestId('close-btn').click()
+    await expect.poll(() => nativeMenuItemEnabled(handle, 'new-draft')).toBe(true)
+  })
 
   test('creating a document shows it in the editor and supports view modes', async () => {
     const { page } = handle
@@ -86,8 +144,9 @@ test.describe('document lifecycle', () => {
     const { page } = handle
     await waitForAppReady(page)
 
-    // Create two documents (the second becomes active + editable).
-    await createViaButton(page)
+    // Two documents: a real file on disk plus one draft (the draft becomes active + editable).
+    // Only ONE unsaved draft may exist at a time, so the pair cannot be two drafts.
+    await openWorkspaceWithFile(page)
     await createViaButton(page)
 
     // handleCreate opens the new draft in edit mode.
@@ -151,10 +210,15 @@ test.describe('document lifecycle', () => {
     }
     const editor = page.locator('.cm-content')
 
-    // These are UNSAVED drafts, so a switch reloads `# Untitled`. That is fine: the case asserts
-    // that no PREVIOUS document text ever leaks in, not that unsaved typing survives a switch.
-    await createViaButton(page) // A
+    // These are UNSAVED documents, so a switch reloads the stored content. That is fine: the case
+    // asserts that no PREVIOUS document text ever leaks in, not that unsaved typing survives a
+    // switch. Only ONE unsaved draft may exist at a time (the New Draft control is disabled while
+    // one is open), so the pair is a real file on disk (A) plus that draft (B).
+    await openWorkspaceWithFile(page) // A: a real file on disk
     const alphaId = await activeId()
+    // The editor mounts once the activated document's detail query resolves.
+    await expect(page.locator('.cm-content')).toBeVisible()
+    await makeEditable()
     await editor.click()
     await page.keyboard.type('ALPHA-DOC')
 
@@ -285,10 +349,11 @@ test.describe('document lifecycle', () => {
   test('switching inside the debounce window still prompts instead of discarding silently', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    // Two real drafts so the sidebar has a switch target.
-    await createViaButton(page) // B (active)
-    await page.evaluate(() => (window as any).__uiStore.getState().setDirty(false))
-    await createViaButton(page) // A (active)
+    // Two documents so the sidebar has a switch target: a real file on disk plus one draft. Only
+    // ONE unsaved draft may exist at a time (the New Draft control is disabled while one is
+    // open), so the pair cannot be two drafts.
+    await openWorkspaceWithFile(page) // A (the file on disk)
+    await createViaButton(page) // B (the draft — active, and the one that gets the unsaved edit)
     const activeId = await page.evaluate(
       () => (window as any).__uiStore.getState().activeDocumentId as string,
     )

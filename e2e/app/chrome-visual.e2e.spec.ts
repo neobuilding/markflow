@@ -58,8 +58,13 @@ test.describe('chrome visual baseline (E9)', () => {
   })
 
   async function openSplit(page: AppHandle['page']): Promise<void> {
-    await page.getByTestId('new-document-btn').click()
-    await expect(page.locator('.cm-content')).toBeVisible()
+    // Only ONE unsaved draft may exist at a time (the New Draft control is disabled once one is
+    // open), so reuse the document that is already open instead of asking for a second one. The
+    // pane bars show the document title, which is the same "Untitled" either way.
+    if ((await page.locator('.cm-content').count()) === 0) {
+      await page.getByTestId('new-document-btn').click()
+      await expect(page.locator('.cm-content')).toBeVisible()
+    }
     await page.getByTestId('view-split').click()
     await expect(page.getByTestId('preview-pane-bar')).toBeVisible()
     await expect(page.getByTestId('editor-pane-bar')).toBeVisible()

@@ -64,7 +64,7 @@ beforeEach(() => {
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setTheme('light')
   useUIStore.getState().setExporting(false)
-  // C20 补 ⑦: the export cache's readiness is mirrored in the store; the "ready" case is the
+  // C20 add ⑦: the export cache's readiness is mirrored in the store; the "ready" case is the
   // default for the existing assertions (the not-ready path has its own test below).
   useUIStore.getState().setExportReady(true)
   ;(window as unknown as { api: unknown }).api = {
@@ -98,7 +98,7 @@ describe('ExportDialog', () => {
   it("renders the export preview in a shadow root with the export's styles (C20 ⑨)", async () => {
     useUIStore.getState().setExportOpen(true)
     render(<ExportDialog />)
-    const host = await screen.findByTestId('export-preview-host')
+    const host = await screen.findByTestId('export-preview')
     await waitFor(() => expect(host.shadowRoot?.querySelector('.markdown-body')).not.toBeNull())
     const root = host.shadowRoot!
     // The preview must show the export's styling, not the app's: the export's sheet is inlined
@@ -127,7 +127,7 @@ describe('ExportDialog', () => {
   it('re-renders the preview when the theme choice changes (C20 ⑨)', async () => {
     useUIStore.getState().setExportOpen(true)
     render(<ExportDialog />)
-    const host = await screen.findByTestId('export-preview-host')
+    const host = await screen.findByTestId('export-preview')
     await waitFor(() => expect(host.shadowRoot?.querySelector('.markdown-body')).not.toBeNull())
     expect(host.shadowRoot!.querySelector('.markdown-body')!.getAttribute('data-theme')).toBe(
       'light',
@@ -495,5 +495,118 @@ describe('ExportDialog', () => {
     fireEvent.contextMenu(input)
     fireEvent.click(await screen.findByTestId('exp-copy-full-path'))
     expect(writeText).toHaveBeenCalledWith('')
+  })
+})
+
+// R4: the dialog is a standard window — draggable and resizable. The POINTER path is driven by the
+// e2e suite (real mouse, real layout); the KEYBOARD parity (arrow keys, Shift = 40px, clamping) is
+// pure arithmetic over the frozen geometry, so it belongs here. jsdom has no layout: every element
+// reports a zero rect, so the dialog's own box is stubbed to a real one.
+function stubDialogBox(dialog: HTMLElement): void {
+  dialog.getBoundingClientRect = () =>
+    ({
+      left: 100,
+      top: 80,
+      right: 772,
+      bottom: 560,
+      width: 672,
+      height: 480,
+      x: 100,
+      y: 80,
+      toJSON: () => ({}),
+    }) as DOMRect
+}
+
+async function openDialogWithBox(): Promise<{ dialog: HTMLElement; header: HTMLElement }> {
+  useUIStore.getState().setExportOpen(true)
+  render(<ExportDialog />)
+  await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+  const dialog = screen.getByRole('dialog')
+  stubDialogBox(dialog)
+  return { dialog, header: screen.getByTestId('export-dialog-header') }
+}
+
+describe('ExportDialog — keyboard window operations (R4)', () => {
+  it('moves itself with the arrow keys on the title bar and clamps at the viewport edge', async () => {
+    const { dialog, header } = await openDialogWithBox()
+
+    fireEvent.keyDown(header, { key: 'ArrowLeft' })
+    expect(dialog.style.left).toBe('84px')
+    expect(dialog.style.top).toBe('80px')
+
+    // Shift = the coarse step.
+    fireEvent.keyDown(header, { key: 'ArrowDown', shiftKey: true })
+    expect(dialog.style.top).toBe('120px')
+
+    // Repeated left/up presses stop at the window's top-left corner instead of going negative.
+    for (let i = 0; i < 10; i++) fireEvent.keyDown(header, { key: 'ArrowUp' })
+    expect(dialog.style.top).toBe('0px')
+
+    // A key the dialog does not own is not claimed.
+    fireEvent.keyDown(header, { key: 'a' })
+    expect(dialog.style.top).toBe('0px')
+  })
+
+  it('resizes with the arrow keys and keeps the opposite edge fixed', async () => {
+    const { dialog } = await openDialogWithBox()
+    const se = screen.getByTestId('export-dialog-resize-se')
+
+    // One axis per key: ArrowRight widens and leaves the height alone, ArrowDown grows downward.
+    fireEvent.keyDown(se, { key: 'ArrowRight' })
+    expect(dialog.style.width).toBe('688px')
+    expect(dialog.style.height).toBe('480px')
+    fireEvent.keyDown(se, { key: 'ArrowDown', shiftKey: true })
+    expect(dialog.style.height).toBe('520px')
+    // The OPPOSITE key pulls the same edge back in (a south handle's ArrowUp is not a no-op).
+    fireEvent.keyDown(se, { key: 'ArrowUp' })
+    expect(dialog.style.height).toBe('504px')
+
+    // Growing from the WEST edge moves the left edge leftward and pins the right one.
+    const rightBefore = parseFloat(dialog.style.left) + parseFloat(dialog.style.width)
+    const w = screen.getByTestId('export-dialog-resize-w')
+    fireEvent.keyDown(w, { key: 'ArrowLeft' })
+    expect(dialog.style.width).toBe('704px')
+    expect(dialog.style.left).toBe('84px')
+    expect(parseFloat(dialog.style.left) + parseFloat(dialog.style.width)).toBe(rightBefore)
+    // …and ArrowRight shrinks it from the same edge, right edge still pinned.
+    fireEvent.keyDown(w, { key: 'ArrowRight' })
+    expect(dialog.style.width).toBe('688px')
+    expect(dialog.style.left).toBe('100px')
+
+    // Shrinking stops at the dialog's minimum size.
+    for (let i = 0; i < 40; i++) fireEvent.keyDown(se, { key: 'ArrowLeft' })
+    expect(dialog.style.width).toBe('480px')
+
+    // A vertical key on a side handle that owns no vertical edge is not claimed: the event stays
+    // unhandled instead of resizing nothing and pretending to own the key.
+    const e = screen.getByTestId('export-dialog-resize-e')
+    const heightBefore = dialog.style.height
+    expect(fireEvent.keyDown(e, { key: 'ArrowUp' }), 'the key must not be preventDefault-ed').toBe(
+      true,
+    )
+    expect(dialog.style.height).toBe(heightBefore)
+  })
+})
+
+// User report 2026-11-13 ("opened edge-to-edge…centered with margins"): the dialog owns a capped,
+// viewport-relative height and the base slide-up animation is cancelled in BOTH states. Cancelling
+// it only before the first drag let `animate-slide-up` restart once `rect` was frozen, teleporting
+// the dialog 3.4px down on a bare resize-edge click (caught by the e2e teleport regression).
+describe('ExportDialog — centred geometry (R4 follow-up)', () => {
+  it('cancels the slide-up animation before and after the geometry is frozen', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.className, 'the default height is viewport-relative and capped').toContain(
+      'h-[88vh]',
+    )
+    expect(dialog.className, 'the height ceiling for large windows').toContain('max-h-[960px]')
+    expect(dialog.style.animation).toBe('none')
+
+    stubDialogBox(dialog)
+    fireEvent.keyDown(screen.getByTestId('export-dialog-header'), { key: 'ArrowRight' })
+    expect(dialog.style.left).toBe('116px')
+    expect(dialog.style.animation, 'the animation must not restart after a drag').toBe('none')
   })
 })

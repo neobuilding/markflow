@@ -12,7 +12,7 @@ import {
   PenLine,
 } from 'lucide-react'
 import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
-import { useUIStore } from '../../store/ui'
+import { useUIStore, selectFileLocked } from '../../store/ui'
 import {
   useDocument,
   useUpdateDocument,
@@ -20,6 +20,8 @@ import {
   useOpenFolder,
   useSaveDocumentAs,
   useReloadDocument,
+  createDraft,
+  useHasMemoryOnlyDraft,
 } from '../../hooks/useDocuments'
 import { MarkdownEditor } from './MarkdownEditor'
 import { MarkdownPreview } from '../preview/MarkdownPreview'
@@ -92,6 +94,10 @@ export function EditorPane(): React.ReactElement {
   const activeDocumentId = useUIStore((s) => s.activeDocumentId)
   const viewMode = useUIStore((s) => s.viewMode)
   const editable = useUIStore((s) => s.editable)
+  // R5 plan A: while the system print dialog is up the document is locked (read-only), but the
+  // main window stays enabled so the PREVIEW pane can be scrolled. The lock is UI-level, not a
+  // whole-window disable — see store/ui.ts for the switch/close guards.
+  const fileLocked = useUIStore(selectFileLocked)
   const externalChange = useUIStore((s) => s.externalChange)
   // Actions are stable references created once by the store initializer, so reading them via
   // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
@@ -144,6 +150,9 @@ export function EditorPane(): React.ReactElement {
   const reloadMut = useReloadDocument()
   const openPathsMut = useOpenPaths()
   const openFolderMut = useOpenFolder()
+  // At most one unsaved draft: once a memory-only document exists, New Draft is disabled here too
+  // (the editor empty-state menu is its own visible control for the same rule).
+  const draftExists = useHasMemoryOnlyDraft()
 
   const {
     localContent,
@@ -670,7 +679,8 @@ export function EditorPane(): React.ReactElement {
           <ContextMenuContent>
             <ContextMenuItem
               data-testid="ed-new-document"
-              onClick={() => useUIStore.getState().setNewDocOpen(true)}
+              disabled={draftExists || fileLocked}
+              onClick={() => void createDraft()}
             >
               <Plus size={13} /> {t('sidebar.newDraft')}
             </ContextMenuItem>
@@ -1049,7 +1059,7 @@ export function EditorPane(): React.ReactElement {
                 content={editorContent}
                 onImmediateChange={onImmediateChange}
                 onChange={onEditorChange}
-                editable={editable}
+                editable={editable && !fileLocked}
                 docId={activeDocumentId}
                 filePath={doc?.filePath ?? null}
                 selectionOffset={selectionOffset}

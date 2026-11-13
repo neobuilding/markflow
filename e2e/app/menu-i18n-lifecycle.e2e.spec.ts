@@ -214,12 +214,12 @@ test.describe('native menu i18n + quit lifecycle', () => {
     await waitForAppReady(page)
 
     // menu.ts (, moved with its handlers into registerMenuHandlers) exposes
-    // setEditable / setHasDocument / setPrinting to the renderer. After the split
+    // setEditable / setHasDocument / setFileLocked to the renderer. After the split
     // these must still deliver to the menu without throwing.
     await page.evaluate(() => {
       window.api.menu.setEditable(true)
       window.api.menu.setHasDocument(true)
-      window.api.menu.setPrinting(false)
+      window.api.menu.setFileLocked(false)
     })
     // If the handlers weren't registered (e.g. registerMenuHandlers) the calls
     // would still resolve (fire-and-forget), so we additionally verify the menu

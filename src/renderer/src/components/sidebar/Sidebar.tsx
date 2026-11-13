@@ -41,12 +41,13 @@ import {
   createRowIndex,
   siblingBasenames,
   invalidBaseName,
+  isAlreadyExistsError,
   foldName,
   type FileTreeNode,
 } from '../../lib/utils'
 import { splitMemoryOnlyDocs, memoryOnlyLeaf } from '../../lib/sidebarDrafts'
 import { useT } from '../../i18n'
-import { useUIStore } from '../../store/ui'
+import { useUIStore, selectFileLocked } from '../../store/ui'
 import {
   useDocuments,
   useDeleteDocument,
@@ -59,6 +60,7 @@ import {
   useDeleteFolder,
   useUndoRename,
   useFolderDirs,
+  createDraft,
 } from '../../hooks/useDocuments'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -311,9 +313,10 @@ export function Sidebar(): React.ReactElement | null {
   useEffect(() => {
     document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`)
   }, [sidebarWidth])
-  // Exporting (or with the export dialog open) hard-locks every "close" action, so the
-  // current-folder bar's "Close Workspace" item must grey out too
-  const workspaceLocked = useUIStore((s) => s.exporting || s.exportOpen)
+  // Exporting, the export dialog, and PRINTING all hard-lock workspace/document transactions
+  // (R5 plan A). Every sidebar control that opens or closes a file must grey out with them —
+  // the store would refuse the action anyway, so an enabled-looking button would be a lie.
+  const fileLocked = useUIStore(selectFileLocked)
 
   // ── Folder expand state ──
   // Lifted out of `TreeRow` (which used to own one `useState` per node) so an ancestor can
@@ -372,7 +375,7 @@ export function Sidebar(): React.ReactElement | null {
   )
 
   // What the sidebar shows: the model with the document-less folders filtered out, unless
-  // 显示所有文件夹 is ON or the folder is pinned. Folders created this session ARE the pins
+  // Show All Folders is ON or the folder is pinned. Folders created this session ARE the pins
   // (`recentlyCreatedFolders`): an empty folder is filtered out by default, so without them
   // naming a new folder would look like it did nothing.
   const tree = useMemo(
@@ -418,22 +421,12 @@ export function Sidebar(): React.ReactElement | null {
     openFolderMut.mutate(folderPath)
   }, [openFolderMut])
 
-  const handleCreate = useCallback(async () => {
-    // Same "ask first" ordering as the inline row below (ADR-0023).
-    const ui = useUIStore.getState()
-    if (ui.dirty) {
-      const discard = await window.api.dialog.confirm({
-        message: t('app.unsavedSwitch', { title: ui.activeDocumentTitle ?? '' }),
-        okText: t('app.confirmDiscard'),
-        cancelText: t('app.confirmKeep'),
-      })
-      if (!discard) return
-    }
-    const doc = await createMut.mutateAsync({ title: 'Untitled' })
-    setActiveDocumentId(doc.id)
-    useUIStore.getState().setEditable(true) // new documents are editable by default
-    useUIStore.getState().setIsNewUnsaved(true) // first Save will prompt for a path
-  }, [createMut, setActiveDocumentId, t])
+  // The sidebar's remaining "New Draft" entries (empty state / background context menu) are
+  // memory-only and do not depend on a folder, so they share the ONE draft action with the
+  // global toolbar and Ctrl/Cmd+N (ADR-0023 guard included).
+  const handleCreate = useCallback(() => {
+    void createDraft()
+  }, [])
 
   // Document select / delete / star / details: reused by the doc tree (including subfolders).
   // Returns whether the switch actually happened (false if the user cancelled the dirty
@@ -618,14 +611,12 @@ export function Sidebar(): React.ReactElement | null {
         // input open so the user can pick another name instead of losing what they typed, and
         // say WHY under the input: same-name is the common case (surfaced with the live-check
         // wording), everything else a generic "could not create" note.
-        // A local structural type, not `NodeJS.ErrnoException`: the renderer is built with the web
-        // tsconfig, which has no @types/node, so the NodeJS namespace does not exist here.
-        const code = (e as { code?: string })?.code
+        // The clash has to be read off the message, not `error.code`: the IPC bridge drops the
+        // Node error code (see isAlreadyExistsError).
         setFolderHint({
-          text:
-            code === 'EEXIST'
-              ? t('sidebar.nameExists', { name })
-              : t('sidebar.createFailed', { name }),
+          text: isAlreadyExistsError(e)
+            ? t('sidebar.nameExists', { name })
+            : t('sidebar.createFailed', { name }),
         })
       }
     },
@@ -742,15 +733,12 @@ export function Sidebar(): React.ReactElement | null {
         }
       } catch (e) {
         // A name clash (EEXIST) or any other failure rejects the mutation. Keep the inline
-        // input open (see submitFolderName) and say why under it.
-        // A local structural type, not `NodeJS.ErrnoException`: the renderer is built with the web
-        // tsconfig, which has no @types/node, so the NodeJS namespace does not exist here.
-        const code = (e as { code?: string })?.code
+        // input open (see submitFolderName) and say why under it — off the message, since the IPC
+        // bridge drops the Node error code (see isAlreadyExistsError).
         setFileHint({
-          text:
-            code === 'EEXIST'
-              ? t('sidebar.nameExists', { name: resolved.name })
-              : t('sidebar.createFailed', { name: resolved.name }),
+          text: isAlreadyExistsError(e)
+            ? t('sidebar.nameExists', { name: resolved.name })
+            : t('sidebar.createFailed', { name: resolved.name }),
         })
       }
       return undefined
@@ -1016,7 +1004,7 @@ export function Sidebar(): React.ReactElement | null {
                     aria-label={t('sidebar.openFolder')}
                     data-testid="import-folder-btn"
                     onClick={handleImportFolder}
-                    disabled={openFolderMut.isPending}
+                    disabled={openFolderMut.isPending || fileLocked}
                   >
                     <Folder size={16} />
                   </Button>
@@ -1025,23 +1013,28 @@ export function Sidebar(): React.ReactElement | null {
                   {t('sidebar.openFolder')} ({formatShortcut('⌘⇧O')})
                 </TooltipContent>
               </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={t('sidebar.newDraft')}
-                    onClick={handleCreate}
-                    disabled={createMut.isPending}
-                    data-testid="new-document-btn"
-                  >
-                    <Plus size={16} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t('sidebar.newDraft')} ({formatShortcut('⌘N')})
-                </TooltipContent>
-              </Tooltip>
+              {/* "New File" is filesystem-bound: it opens the inline name row that writes a real
+                  Markdown file into the open folder. With no active folder there is nowhere to
+                  write, so the button is hidden entirely rather than disabled (the global toolbar
+                  owns the always-available in-memory "New Draft" action). Deliberately NOT bound
+                  to Ctrl/Cmd+N — that shortcut belongs to New Draft. */}
+              {activeFolder && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t('sidebar.newFile')}
+                      onClick={() => setFileEdit({ mode: 'create', parentPath: activeFolder })}
+                      data-testid="side-new-file-btn"
+                      disabled={fileLocked}
+                    >
+                      <Plus size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('sidebar.newFile')}</TooltipContent>
+                </Tooltip>
+              )}
               {/* "Show All Folders": opt-in reveal of folders that hold no Markdown. Only
                 meaningful while a folder is open. Shares one store flag with the
                 background right-click menu, so the two can never disagree. */}
@@ -1124,6 +1117,7 @@ export function Sidebar(): React.ReactElement | null {
                         className="h-6 w-6"
                         data-testid="close-workspace-btn"
                         onClick={confirmCloseWorkspace}
+                        disabled={fileLocked}
                       >
                         <X size={12} />
                       </Button>
@@ -1183,7 +1177,7 @@ export function Sidebar(): React.ReactElement | null {
                 <ContextMenuSeparator />
                 <ContextMenuItem
                   data-testid="side-close-workspace"
-                  disabled={workspaceLocked}
+                  disabled={fileLocked}
                   onClick={() => void confirmCloseWorkspace()}
                 >
                   <X size={13} /> {t('menu.closeWorkspace')}

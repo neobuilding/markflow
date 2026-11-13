@@ -77,6 +77,15 @@ test.describe('toolbar icon tiles (design fig 02/04)', () => {
     await page.getByTestId('view-split').click()
     await expect(page.getByTestId('editor-pane')).toBeVisible()
     await expect(page.getByTestId('preview-pane')).toBeVisible()
+    // The New Draft click above leaves its icon tile transitioning (hover fill + glyph colour back
+    // to the white rest fill / muted glyph). Wait for BOTH to settle so the tile probe below reads
+    // each button's REST-state tokens, not a mid-transition blend. `toHaveCSS` retries until the
+    // value matches, so this is robust to the 100ms transition regardless of exact timing.
+    await expect(page.getByTestId('new-document-btn')).toHaveCSS(
+      'background-color',
+      'rgb(255, 255, 255)',
+    )
+    await expect(page.getByTestId('new-document-btn')).toHaveCSS('color', 'rgb(83, 97, 118)')
   }
 
   test('every bar icon is a white tile with the cool-blue edge and the muted glyph', async () => {

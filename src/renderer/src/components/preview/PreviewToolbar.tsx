@@ -8,6 +8,7 @@ import {
   type FindToggleState,
 } from '../../lib/find-toggles'
 import { useT } from '../../i18n'
+import { useUIStore, selectFileLocked } from '../../store/ui'
 import { requestRichCopy } from '../../lib/previewCopy'
 import { formatShortcut } from '../../lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -175,6 +176,9 @@ export function PreviewToolbar({
   onExport,
 }: PreviewToolbarProps): React.ReactElement {
   const { t } = useT()
+  // R5 plan A: `setExportOpen` is refused while printing, so the export entry point on this bar
+  // must be visibly disabled too. Find / copy stay available — they do not touch the document.
+  const fileLocked = useUIStore(selectFileLocked)
   const [findOpen, setFindOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [toggleState, setToggleState] = useState<FindToggleState>({
@@ -357,6 +361,7 @@ export function PreviewToolbar({
     label: string
     tip?: string
     testId: string
+    disabled?: boolean
   }> = [
     { key: 'find', icon: Search, label: t('preview.find'), testId: 'preview-find-btn' },
     ...(previewVisible
@@ -367,6 +372,7 @@ export function PreviewToolbar({
             label: t('editor.export'),
             tip: t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧X') }),
             testId: 'export-btn',
+            disabled: fileLocked,
           },
         ]
       : []),
@@ -402,6 +408,7 @@ export function PreviewToolbar({
             data-testid={cmd.testId}
             data-command-index={commands.findIndex((c) => c.key === cmd.key)}
             aria-label={cmd.label}
+            disabled={cmd.disabled}
             onClick={() => runCommand(cmd.key)}
           >
             <Icon size={16} />
@@ -445,6 +452,7 @@ export function PreviewToolbar({
                 <DropdownMenuItem
                   key={cmd.key}
                   data-testid={cmd.testId}
+                  disabled={cmd.disabled}
                   onClick={() => runCommand(cmd.key)}
                 >
                   <Icon size={13} />

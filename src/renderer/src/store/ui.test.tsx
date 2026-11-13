@@ -123,6 +123,9 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().setFileDetailsId('fd')
     expect(useUIStore.getState().fileDetailsId).toBe('fd')
 
+    // R5 plan A: opening the export dialog is refused while printing, so clear the flag that the
+    // earlier "printing" assertion left set before exercising this setter.
+    useUIStore.getState().setPrinting(false)
     useUIStore.getState().setExportOpen(true)
     useUIStore.getState().setExporting(true)
     expect(useUIStore.getState().exportOpen).toBe(true)
@@ -197,6 +200,47 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().closeWorkspace()
     expect(useUIStore.getState().activeDocumentId).toBe('x')
     s.setExportOpen(false)
+  })
+
+  // R5 plan A: with the standalone print PREVIEW window gone, the main window stays interactive
+  // so its preview pane can be scrolled. The old mainWindow.setEnabled(false) whole-window lock is
+  // therefore replaced by a store-level transaction lock: no editing, no switching/closing files,
+  // no opening the export dialog — or the print job could be built from a different document.
+  it('printing locks document switches/closes and the export dialog, and releases them afterwards', async () => {
+    const s = useUIStore.getState()
+    s.setActiveDocumentId('doc-a')
+    s.setActiveFolder('/workspace')
+    s.setDirty(false)
+    s.setPrinting(true)
+
+    expect(await s.selectDocument('doc-b'), 'switching files must be refused').toBe(false)
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-a')
+    expect(await s.openDocumentAt('doc-b', 0, 10), 'opening another file must be refused').toBe(
+      false,
+    )
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-a')
+
+    useUIStore.getState().closeDocument()
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-a')
+    useUIStore.getState().closeWorkspace()
+    expect(useUIStore.getState().activeFolder).toBe('/workspace')
+    useUIStore.getState().setExportOpen(true)
+    expect(useUIStore.getState().exportOpen, 'the export dialog must not open').toBe(false)
+
+    // The edit/read-only toggle is a document mutation too: flipping it while printing would let
+    // the document silently become editable the moment the system dialog closes.
+    const editableBefore = useUIStore.getState().editable
+    useUIStore.getState().toggleEditable()
+    expect(useUIStore.getState().editable, 'the edit-mode toggle must be refused').toBe(
+      editableBefore,
+    )
+
+    // No permanent state corruption: the lock is gone as soon as printing ends.
+    s.setPrinting(false)
+    useUIStore.getState().toggleEditable()
+    expect(useUIStore.getState().editable, 'the toggle works again').toBe(!editableBefore)
+    expect(await useUIStore.getState().selectDocument('doc-b')).toBe(true)
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-b')
   })
 
   it('closeWorkspace removes an unsaved memory-only draft via the api', async () => {

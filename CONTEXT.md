@@ -21,6 +21,12 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **.mdx handling** — `.mdx` files open, list, and preview like regular Markdown (extension shown in the
   sidebar). JSX / embedded components are **not** parsed (true MDX compilation is a deferred RFC); `.mdx` is
   currently treated as plain Markdown.
+- **New Draft vs New File…** — two distinct create actions, deliberately not duplicates. **New Draft**
+  (`Ctrl/Cmd+N`, global toolbar, editor empty state) is filesystem-independent: it opens a memory-only draft
+  with no dialog and only **one** may exist at a time (every entry point disables itself while one is alive,
+  ADR-0006). **New File…** (File menu, sidebar `+`, sidebar context menus) is filesystem-bound: it names and
+  writes a real Markdown file into the **open folder**, so it is unavailable with no folder open, and it
+  resolves the typed name through `resolveNewFileTarget` (ADR-0011).
 - **Read-only by default** — files open read-only to prevent accidental edits; toggle to Edit mode anytime.
 - **Renaming is a file operation, not an edit** — renaming from the sidebar is an inline, immediate on-disk
   move (`documents:rename-file`): it does **not** require Edit mode, does not switch the document into edit
@@ -415,6 +421,31 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
 - **TypeScript 7 + ESLint TS6 shim** — the app builds on TS7 while `typescript-eslint` v8 still needs TS6 for
   the linter; `scripts/install-eslint-ts6.mjs` installs the TS6 checker side-by-side purely for lint. A
   documented transitional measure. See `docs/adr/0007-typescript7-eslint-ts6-shim.md`.
+
+## Printing & windows
+
+- **Main window** — the MarkFlow editor window: the only window the user normally sees, containing the
+  editor, the **Preview pane**, the sidebar and the toolbars. _Avoid_: "preview window" — the preview is a
+  pane inside this window, not a separate window.
+- **Print host window** — a hidden, never-visible window that holds the rendered document for a print
+  job and is the owner of the **System print dialog**. It must be set to `opacity 0` **before**
+  `show()`: showing it first paints one opaque frame even if `setOpacity(0)` runs immediately after
+  (the "a small preview window flashes by" report of 2026-11-13). _Avoid_: "print preview window",
+  "print window", "preview window", "hidden owner" — these names caused repeated misdiagnosis.
+- **System print dialog** — the OS-provided modal dialog for choosing a printer, copies and page setup.
+  It is owned by the **Print host window**; while it is open the **Main window** refuses document and
+  file mutations but keeps its **Preview pane** scrollable. Every toolbar button / context-menu item
+  for a refused action is **visibly disabled** during that time and returns to its normal state when
+  the dialog closes; read-only affordances (view mode, Find, Copy, preview scrolling) stay available.
+  _Avoid_: "print window" when referring to the host, "print dialog" when referring to the host.
+- **File lock (`fileLocked`)** — the capability that a document/file-set action is currently locked,
+  derived as `printing || exporting || exportOpen`. UI controls and store guards ask THIS, never the raw
+  trigger flags: a future trigger source is added in exactly one place (`selectFileLocked` in
+  `store/ui.ts`) and every lock-aware control follows. The native menu receives a single boolean over
+  `menu:set-file-locked`, mirrored from a store-level subscription, so adding a trigger source changes no
+  IPC or menu code. _Avoid_ naming the capability after any single trigger (`printing`), which would
+  force edits at every call site when a second trigger appears. See
+  `docs/adr/0024-ui-convergence-spec.md` ("fileLocked capability").
 
 ## App architecture
 

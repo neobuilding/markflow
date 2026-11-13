@@ -144,7 +144,7 @@ test.describe('preload bridge contract (api/* split)', () => {
       expect.objectContaining({
         setEditable: 'function',
         setHasDocument: 'function',
-        setPrinting: 'function',
+        setFileLocked: 'function',
       }),
     )
     // clipboard (writeText / writeImage / writeSvg): the only api group this contract never

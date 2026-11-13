@@ -44,6 +44,14 @@ function removeHostFontCss(): void {
   document.getElementById(HOST_FONT_STYLE_ID)?.remove()
 }
 
+// Which ExportPreview instance currently owns the shared host-document font <style>. A shadow root
+// does not register @font-face, so the faces live on a single <style id={HOST_FONT_STYLE_ID}> in
+// document.head (see S1). Because that element is shared by every instance, a deferred removal from
+// one unmount must NOT delete the sheet a newer instance has already re-created — so ownership is a
+// module-level identity, not a per-instance ref (the previous per-instance ref let a stale timer
+// remove a sheet a second instance already owned).
+let fontSheetOwner: object | null = null
+
 interface ShadowParts {
   css: HTMLStyleElement
   hostVars: HTMLStyleElement
@@ -103,15 +111,17 @@ export function ExportPreview({ theme }: { theme: 'light' | 'dark' }): React.Rea
   //
   // The removal is deferred one tick on purpose: React's StrictMode double-invokes effects in dev
   // (mount → cleanup → mount) while `parts` stays identical, so the styles effect does NOT re-run
-  // and a synchronous removal would leave the second mount without any @font-face. Letting the
-  // next mount claim the sheet again means only a REAL unmount removes it.
-  const fontSheetOwned = useRef(false)
+  // and a synchronous removal would leave the second mount without any @font-face. Ownership is a
+  // module-level identity (see `fontSheetOwner`): when this instance unmounts it clears the owner and
+  // only removes the shared sheet if no newer instance has since claimed it, so a stale deferred
+  // removal can never delete a sheet a second instance already owns.
+  const fontSheetToken = useRef<object>({})
   useEffect(() => {
-    fontSheetOwned.current = true
+    fontSheetOwner = fontSheetToken.current
     return () => {
-      fontSheetOwned.current = false
+      fontSheetOwner = null
       setTimeout(() => {
-        if (!fontSheetOwned.current) removeHostFontCss()
+        if (fontSheetOwner === null) removeHostFontCss()
       }, 0)
     }
   }, [])
@@ -152,7 +162,16 @@ export function ExportPreview({ theme }: { theme: 'light' | 'dark' }): React.Rea
     ensureHostFontCss(parts.fontCss)
     const s = ensureShadow(host)
     s.css.textContent = parts.css
-    s.hostVars.textContent = `:host{${parts.rootVars}}`
+    // The preview host must paint the EXPORTED page's own background, not the app chrome's. In the
+    // standalone file the page is `<body class="markdown-body">`, whose `--bgColor-default` (white in
+    // light / #0d1117 in dark, from github-markdown-css) propagates to the whole canvas — so the page
+    // is edge-to-edge with no app-coloured margin. Mirroring that value on `:host` and using it for the
+    // host's own background removes the grey `--color-bg` ring the preview used to show around the page
+    // (the export's `body` padding lives on the transparent `.export-preview-container`, which only
+    // looked like a frame because the host behind it was the app colour). C20 ⑨: "the preview must show
+    // what the FILE will contain."
+    const pageBg = parts.theme === 'dark' ? '#0d1117' : '#ffffff'
+    s.hostVars.textContent = `:host{${parts.rootVars} --bgColor-default: ${pageBg};}`
     s.containerCss.textContent = `.export-preview-container{${parts.containerCss}}`
     s.print.textContent = parts.printCss
     s.markdownBody.setAttribute('data-theme', parts.theme)
@@ -168,19 +187,38 @@ export function ExportPreview({ theme }: { theme: 'light' | 'dark' }): React.Rea
 
   const showPending = !parts && !failed
 
+  // The dialog owns resizing (R4): it is draggable by its title bar and resizable from its edges,
+  // so the preview simply fills whatever space the dialog gives it. The min/max sizes that used to
+  // live on this pane now belong to the dialog's resize constraints.
+  //
+  // The host element is also the SCROLL container (the shadow tree lays out inside it), and it
+  // keeps the `group` role + label the pane carried before: the dialog's caption above it is a
+  // plain `<label>`, so without this the region a screen reader announces as "Preview" is gone.
   return (
-    <div
-      role="group"
-      aria-label={t('export.previewTitle')}
-      data-testid="export-preview"
-      className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] overflow-auto max-h-[40vh]"
-    >
-      <div ref={hostRef} data-testid="export-preview-host" />
-      {(showPending || failed) && (
-        <p className="text-2xs text-[var(--color-text-tertiary)] p-3">
-          {failed ? t('export.previewUnavailable') : t('export.preparing')}
-        </p>
-      )}
+    <div className="relative flex-1 min-h-0">
+      <div
+        ref={hostRef}
+        role="group"
+        aria-label={t('export.previewTitle')}
+        data-testid="export-preview"
+        className="relative w-full h-full overflow-auto overscroll-contain rounded border border-[var(--color-border-strong)] bg-[var(--bgColor-default,#ffffff)]"
+      >
+        {(showPending || failed) && (
+          <p className="text-2xs text-[var(--color-text-tertiary)] p-3">
+            {failed ? t('export.previewUnavailable') : t('export.preparing')}
+          </p>
+        )}
+      </div>
+      {/* Sunken-well affordance ("the preview is a scroll viewport", NOT document content). It is a
+          SIBLING of the scroll container (not inside it, not a shadow-tree ::after) so it does NOT
+          scroll away with the page — a ::after anchored to the scroll container scrolls off on
+          scroll. It paints above the page as pure viewport chrome; pointer-events-none lets wheel
+          and clicks reach the host. Soft slate tint; near-invisible on the dark page, where
+          border-strong carries the boundary. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded shadow-[inset_0_2px_8px_rgba(15,23,42,0.12)]"
+      />
     </div>
   )
 }

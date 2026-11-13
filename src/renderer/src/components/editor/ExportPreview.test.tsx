@@ -38,7 +38,7 @@ vi.mock('../../lib/exportBake', () => ({
 }))
 
 function shadowOf(): ShadowRoot {
-  const host = screen.getByTestId('export-preview-host')
+  const host = screen.getByTestId('export-preview')
   const root = host.shadowRoot
   if (!root) throw new Error('no shadow root')
   return root
@@ -81,9 +81,33 @@ describe('ExportPreview (C20 ⑨)', () => {
     expect(root.querySelector('style[data-export-part="container"]')?.textContent).toContain(
       'padding:24px;',
     )
+    // C20 ⑨: the host paints the EXPORTED page's own background (github-markdown-css
+    // `--bgColor-default`), NOT the app chrome, so the page fills the preview edge-to-edge with no
+    // grey `--color-bg` ring. The token is defined on `:host` and consumed by the host's own class.
+    expect(root.querySelector('style[data-export-part="host-vars"]')?.textContent).toContain(
+      '--bgColor-default: #ffffff;',
+    )
+    expect(screen.getByTestId('export-preview').className).toContain(
+      'bg-[var(--bgColor-default,#ffffff)]',
+    )
     expect(root.querySelector('.markdown-body')?.getAttribute('data-theme')).toBe('light')
     expect(root.querySelector('.export-preview-container')?.className).toBe(
       'export-preview-container',
+    )
+  })
+
+  it('paints the exported dark page background so the preview has no app-coloured margin (C20 ⑨)', async () => {
+    // The light case is covered by the "paints the export parts" test above; here we only need to
+    // prove the page colour follows the theme the EXPORT will use (dark token #0d1117), not the app
+    // chrome — which is what removes the grey ring around the page.
+    render(<ExportPreview theme="dark" />)
+    await waitFor(() =>
+      expect(
+        shadowOf().querySelector('style[data-export-part="host-vars"]')?.textContent,
+      ).toContain('--bgColor-default: #0d1117;'),
+    )
+    expect(screen.getByTestId('export-preview').className).toContain(
+      'bg-[var(--bgColor-default,#ffffff)]',
     )
   })
 
@@ -126,5 +150,25 @@ describe('ExportPreview (C20 ⑨)', () => {
     render(<ExportPreview theme="light" />)
     expect(await screen.findByText('Preview unavailable.')).toBeInTheDocument()
     errorSpy.mockRestore()
+  })
+
+  // R4: the preview fills whatever space the dialog gives it; dragging/resizing now lives on the
+  // dialog surface itself, so the preview carries no resize affordance of its own.
+  it('fills its container and exposes no resize handle of its own', () => {
+    render(<ExportPreview theme="light" />)
+    const preview = screen.getByTestId('export-preview')
+    expect(preview).toBeInTheDocument()
+    expect(screen.queryByTestId('export-preview-resize-handle')).toBeNull()
+    expect(preview.className).toContain('w-full')
+    expect(preview.className).toContain('h-full')
+  })
+
+  // The dialog's caption above the pane is a plain <label>, which names nothing on its own: the
+  // pane has to announce itself, or the export preview becomes an unlabelled region.
+  it('announces itself as the labelled Preview group', () => {
+    render(<ExportPreview theme="light" />)
+    expect(screen.getByRole('group', { name: 'Preview' })).toBe(
+      screen.getByTestId('export-preview'),
+    )
   })
 })

@@ -257,7 +257,7 @@ interface UIState {
 
   // Whether the export cache holds a COMPLETE render of the CURRENT document.
   // The cache itself lives in a non-reactive singleton (lib/exportStore), so the readiness has
-  // to be mirrored here to drive the dialog's button state (C20 补 ⑦ / E12). It flips to false
+  // to be mirrored here to drive the dialog's button state (C20 add ⑦ / E12). It flips to false
   // while a document switch or a parse is in flight — during that window the cache still holds
   // the PREVIOUS document's HTML, so exporting would silently write the wrong file.
   exportReady: boolean
@@ -289,6 +289,13 @@ const initialSearch = {
   searchScopeFocusNonce: 0,
   panelFocusNonce: 0,
 }
+
+// The single capability that decides whether document/file-set actions are locked. A component or
+// store guard asks THIS, never the raw trigger flags (`printing` / `exporting` / `exportOpen`) — so a
+// future trigger source (e.g. a sync-in-flight flag) is added in exactly one place: this expression.
+// Every lock-aware control then follows automatically. See docs/adr/0024-ui-convergence-spec.md
+// ("fileLocked capability").
+export const selectFileLocked = (s: UIState): boolean => s.printing || s.exporting || s.exportOpen
 
 export const useUIStore = create<UIState>((set, get) => ({
   sidebarOpen: true,
@@ -332,6 +339,10 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
 
   selectDocument: async (id) => {
+    // R5 plan A: printing is a document transaction. The MAIN window stays interactive so its
+    // preview pane can be scrolled, but switching files here would make the queued print job
+    // describe a different document than the one the user is looking at.
+    if (selectFileLocked(get())) return false
     const state = get()
     if (id === state.activeDocumentId) return true
     // Not dirty → nothing to ask. Kept synchronous (no `await`) so a clean switch still lands in
@@ -350,6 +361,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
 
   openDocumentAt: async (id, start, end) => {
+    if (selectFileLocked(get())) return false
     const state = get()
     if (id !== state.activeDocumentId && state.dirty) {
       if (!(await get().guardUnsavedSwitch())) return false
@@ -364,13 +376,20 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   editable: false,
   setEditable: (editable) => set({ editable }),
-  toggleEditable: () => set((s) => ({ editable: !s.editable })),
+  // The edit/read-only toggle is a document mutation too — refuse it while printing (R5 plan A),
+  // otherwise the document would silently become editable the moment the print dialog closes.
+  toggleEditable: () => {
+    if (selectFileLocked(get())) return
+    set((s) => ({ editable: !s.editable }))
+  },
 
-  // While exporting or with the export dialog open, forbid closing the current file/workspace:
-  // this is a hard guarantee covering all call paths (menu shortcuts, sidebar close button, etc.),
-  // ensuring "exporting HTML never closes the current file or workspace".
+  // While exporting, with the export dialog open, or WHILE PRINTING, forbid closing the current
+  // file/workspace: this is a hard guarantee covering all call paths (menu shortcuts, sidebar
+  // close button, tab close, quit), ensuring the queued output never loses its source document.
+  // Printing used to be enforced by mainWindow.setEnabled(false); plan A keeps the main window
+  // interactive for preview scrolling, so the guarantee now lives here (R5).
   closeDocument: () => {
-    if (get().exporting || get().exportOpen) return
+    if (selectFileLocked(get())) return
     // A memory-only draft that was never saved to disk has no file and only a store entry.
     // Remove that orphan store entry on close so we don't leave a zombie draft
     const id = get().activeDocumentId
@@ -396,7 +415,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
 
   closeWorkspace: () => {
-    if (get().exporting || get().exportOpen) return
+    if (selectFileLocked(get())) return
     const id = get().activeDocumentId
     if (id && get().isNewUnsaved) {
       void deleteUnsavedDraft(id)
@@ -505,7 +524,14 @@ export const useUIStore = create<UIState>((set, get) => ({
   setFileDetailsId: (id) => set({ fileDetailsId: id }),
 
   exportOpen: false,
-  setExportOpen: (open) => set({ exportOpen: open }),
+  // Closing the export dialog is always allowed; OPENING one while printing is not (it is another
+  // document-mutating surface). R5 plan A fine-grained print-mode lock.
+  setExportOpen: (open) => {
+    // Only the OPENING of the dialog is refused while locked; CLOSING must stay open or the dialog
+    // could never release once `fileLocked` is true (the lock includes `exportOpen` itself).
+    if (open && selectFileLocked(get())) return
+    set({ exportOpen: open })
+  },
 
   exportReady: false,
   setExportReady: (v) => set({ exportReady: v }),
@@ -519,6 +545,21 @@ export const useUIStore = create<UIState>((set, get) => ({
   isNewUnsaved: false,
   setIsNewUnsaved: (v) => set({ isNewUnsaved: v }),
 }))
+
+// Mirror the file-locked capability to the native menu. Centralised here so adding a future trigger
+// source means editing ONLY the `selectFileLocked` expression above — no caller, IPC bridge, or menu
+// handler changes (the "one place" rule of the fileLocked capability). `window.api` may be absent under
+// unit tests (hence the optional chains); a failing mirror must never break the store update, so it is
+// swallowed like the old in-place bridge was.
+useUIStore.subscribe((s, prev) => {
+  const next = selectFileLocked(s)
+  if (next === selectFileLocked(prev)) return
+  try {
+    window.api?.menu?.setFileLocked?.(next)
+  } catch (err) {
+    console.error('Failed to mirror fileLocked to the native menu', err)
+  }
+})
 
 // e2e test hook: expose the real UI store (dev only, tree-shaven from prod builds)
 // so end-to-end tests can drive the same store instance the app uses.

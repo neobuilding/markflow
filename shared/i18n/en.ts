@@ -252,6 +252,8 @@ export const en = {
   'export.failed': 'Export failed. Please try again.',
   'export.previewNotReady': 'The document is still rendering. Please try again in a moment.',
   'export.preparing': 'Preparing…',
+  'export.dragHandle': 'Drag to move',
+  'export.resizeHandle': 'Resize (arrow keys)',
   'export.overwritePrompt':
     'File "{{path}}" already exists. Are you sure you want to overwrite it? This action cannot be undone.',
   'export.cancel': 'Cancel',
@@ -274,12 +276,18 @@ export const en = {
   'details.close': 'Close',
 
   // ── New document dialog ────────────────────────────────────────────────
-  'new.title': 'New Draft',
-  'new.documentTitle': 'Document title',
+  'new.title': 'New File',
+  'new.documentTitle': 'File name',
   'new.extension': 'Extension',
   'new.untitled': 'Untitled',
   'new.cancel': 'Cancel',
   'new.create': 'Create',
+  'new.noFolder': 'Open a folder before creating a file.',
+  'new.nameExists': 'A file named "{{name}}" already exists here.',
+  'new.invalidName': '"{{name}}" is not a valid file name.',
+  'new.unsupportedExt':
+    '"{{name}}" has an unsupported extension. Only Markdown files can be created here.',
+  'new.createFailed': 'Could not create the file: {{message}}',
 
   // ── App-level (native confirm / alert strings) ─────────────────────────
   // `{{title}}` names the document being left: "which unsaved file?" is the first thing a user
@@ -321,7 +329,6 @@ export const en = {
   'app.printNotReady':
     'Preview is not ready yet. Please switch to the preview or split view first.',
   'app.printFailed': 'Print failed: {{message}}',
-  'app.preparingPrint': 'Preparing to print…',
 
   // ── Error boundary ────────────────────────────────────────────────────
   'error.title': 'Something went wrong',
@@ -353,6 +360,7 @@ export const en = {
   'menu.english': 'English',
   'menu.chinese': '简体中文',
   'menu.newDraft': 'New Draft',
+  'menu.newFile': 'New File…',
   'menu.openFile': 'Open File…',
   'menu.openFolder': 'Open Folder…',
   'menu.save': 'Save',

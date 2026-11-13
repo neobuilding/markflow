@@ -7,6 +7,17 @@ import { TooltipProvider } from '../ui/tooltip'
 import { useUIStore } from '../../store/ui'
 import { formatShortcut } from '../../lib/utils'
 
+const h = vi.hoisted(() => {
+  const createDraft = vi.fn(async () => {})
+  // The "at most one draft" predicate the button's disabled state is derived from.
+  const hasDraft = vi.fn(() => false)
+  return { createDraft, hasDraft }
+})
+vi.mock('../../hooks/useDocuments', () => ({
+  createDraft: () => h.createDraft(),
+  useHasMemoryOnlyDraft: () => h.hasDraft(),
+}))
+
 // The global toolbar was extracted from `EditorPane` into its own component (ADR-0030). This suite
 // locks the contract that extraction must preserve: the same actions, the same wiring, and the
 // same store-driven visibility — plus the fact that the sidebar toggle BUTTON is gone from it
@@ -19,6 +30,8 @@ describe('GlobalToolbar', () => {
   const onClose = vi.fn()
 
   beforeEach(() => {
+    h.createDraft.mockClear()
+    h.hasDraft.mockClear()
     onSave.mockClear()
     onSaveAs.mockClear()
     onReload.mockClear()
@@ -53,10 +66,104 @@ describe('GlobalToolbar', () => {
     )
   }
 
-  it('renders the quick-open trigger and the close button', () => {
+  it('renders the quick-open trigger and the close button when a document is open', () => {
+    useUIStore.setState({ activeDocumentId: 'doc-1' })
     mount()
     expect(screen.getByTestId('editor-goto-file-btn')).toBeInTheDocument()
     expect(screen.getByTestId('close-btn')).toBeInTheDocument()
+  })
+
+  // The single direct-create entry point. It is unconditional: an in-memory draft needs no
+  // folder, unlike the sidebar's filesystem-bound "New File" button.
+  it('always renders the New Draft button, even with no document or folder open', () => {
+    useUIStore.setState({ activeDocumentId: null, activeFolder: null })
+    mount()
+    expect(screen.getByTestId('new-document-btn')).toBeInTheDocument()
+    expect(screen.getByTestId('new-document-btn')).not.toBeDisabled()
+  })
+
+  // At most one unsaved draft: the button is disabled while a memory-only draft already exists,
+  // so the user cannot start a second one from the toolbar.
+  it('disables the New Draft button while an unsaved draft already exists', () => {
+    h.hasDraft.mockReturnValueOnce(true)
+    mount()
+    expect(screen.getByTestId('new-document-btn')).toBeDisabled()
+  })
+
+  // R5 plan A (user report 2026-11-13): the store refuses every document transaction while the
+  // system print dialog is up, so each of these buttons must LOOK disabled — and come back when
+  // printing ends. The native menu already mirrors the flag; the toolbar did not.
+  it('disables every file command while printing and restores them afterwards', () => {
+    useUIStore.setState({
+      activeDocumentId: 'doc-1',
+      editable: true,
+      dirty: true,
+      viewMode: 'edit',
+    })
+    mount()
+    const ids = [
+      'editor-goto-file-btn',
+      'new-document-btn',
+      'save-btn',
+      'save-as-btn',
+      'reload-btn',
+      'file-details-btn',
+      'export-btn',
+      'close-btn',
+    ]
+    try {
+      act(() => useUIStore.getState().setPrinting(true))
+      for (const id of ids) expect(screen.getByTestId(id), id).toBeDisabled()
+    } finally {
+      act(() => useUIStore.getState().setPrinting(false))
+    }
+    for (const id of ids) expect(screen.getByTestId(id), id).not.toBeDisabled()
+  })
+
+  // The capability is fileLocked, NOT the printing trigger alone: exporting must lock the same
+  // controls without any of them subscribing to `exporting`. This is the regression the fileLocked
+  // capability exists to prevent — adding a trigger source changes one selector, not seven components.
+  it('disables every file command while exporting (capability, not the printing trigger)', () => {
+    useUIStore.setState({
+      activeDocumentId: 'doc-1',
+      editable: true,
+      dirty: true,
+      viewMode: 'edit',
+    })
+    mount()
+    const ids = [
+      'editor-goto-file-btn',
+      'new-document-btn',
+      'save-btn',
+      'save-as-btn',
+      'reload-btn',
+      'file-details-btn',
+      'export-btn',
+      'close-btn',
+    ]
+    try {
+      act(() => useUIStore.getState().setExporting(true))
+      for (const id of ids) expect(screen.getByTestId(id), id).toBeDisabled()
+    } finally {
+      act(() => useUIStore.getState().setExporting(false))
+    }
+    for (const id of ids) expect(screen.getByTestId(id), id).not.toBeDisabled()
+  })
+
+  it('creates a memory-only draft and opens no dialog from the New Draft button', () => {
+    mount()
+    fireEvent.click(screen.getByTestId('new-document-btn'))
+    expect(h.createDraft).toHaveBeenCalledTimes(1)
+    expect(useUIStore.getState().newDocOpen).toBe(false)
+  })
+
+  it('gives Quick Open the jump glyph and New Draft the former document glyph', () => {
+    mount()
+    const goto = screen.getByTestId('editor-goto-file-btn').querySelector('svg')!.outerHTML
+    const draft = screen.getByTestId('new-document-btn').querySelector('svg')!.outerHTML
+    // Not a magnifier (adjacent find button wears one), and not the same glyph as New Draft —
+    // the original complaint was that "Go to file" looked like "create a file".
+    expect(goto).not.toBe(draft)
   })
 
   // The sidebar toggle button was removed from the global bar (ADR-0030 / Q2a). Its absence is
@@ -79,6 +186,7 @@ describe('GlobalToolbar', () => {
     expect(screen.queryByTestId('save-as-btn')).toBeNull()
     expect(screen.queryByTestId('reload-btn')).toBeNull()
     expect(screen.queryByTestId('file-details-btn')).toBeNull()
+    expect(screen.queryByTestId('close-btn')).toBeNull()
   })
 
   it('wires save, save-as, reload and close to the handlers it was given', () => {

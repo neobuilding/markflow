@@ -673,7 +673,7 @@ describe('MarkdownPreview', () => {
       const dark = document.getElementById('md-body-dark') as HTMLStyleElement
       expect(dark.disabled).toBe(false)
 
-      // Entering 跟随系统 does not synchronously change what Electron's nativeTheme reports:
+      // Entering Follow System does not synchronously change what Electron's nativeTheme reports:
       // the media query can still say "dark" for one frame after the choice is forwarded.
       act(() => useUIStore.getState().setTheme('system'))
       expect(dark.disabled).toBe(false)

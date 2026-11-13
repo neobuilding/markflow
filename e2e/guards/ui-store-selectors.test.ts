@@ -82,6 +82,31 @@ describe('renderer UI store subscriptions', () => {
     ).toEqual([])
   })
 
+  it('locks controls from selectFileLocked, not the raw trigger flags', () => {
+    // The "document/file-set action is locked" capability (fileLocked) is the single source of truth
+    // for disabling controls. A component that subscribes to `printing` / `exporting` / `exportOpen`
+    // directly re-bakes a trigger event into the UI, so a future trigger source added to
+    // `selectFileLocked` would silently leave the buttons enabled — the regression this refactor
+    // fixed. StatusBar shows the "Printing…" status text (a readout, not a lock decision) and
+    // ExportDialog reads `exportOpen` only to decide whether to render itself; both are exempt.
+    const exempt = new Set([
+      'src/renderer/src/components/editor/StatusBar.tsx',
+      'src/renderer/src/components/editor/ExportDialog.tsx',
+    ])
+    const files = sourceFiles(RENDERER_SRC)
+    const offenders = files.filter((file) => {
+      const rel = file.slice(ROOT.length + 1).replace(/\\/g, '/')
+      if (exempt.has(rel)) return false
+      return /useUIStore\(\s*\(\s*\w+\s*\)\s*=>\s*s\.(printing|exporting|exportOpen)\s*\)/.test(
+        withoutComments(readFileSync(file, 'utf-8')),
+      )
+    })
+    expect(
+      offenders.map((file) => file.slice(ROOT.length + 1).replace(/\\/g, '/')),
+      'subscribe to selectFileLocked instead of the raw trigger flag',
+    ).toEqual([])
+  })
+
   it('keeps the editor selection offset referentially stable', () => {
     // A fresh object on every render used to re-run MarkdownEditor's full-document sync effect
     // while a search jump was pending (Vercel rerender-dependencies).

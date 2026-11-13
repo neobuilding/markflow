@@ -220,6 +220,8 @@ export const zhCN: Record<TranslationKey, string> = {
   'export.previewTitle': '预览',
   'export.previewNote': '预览按单文件渲染（图片已内联），并显示全文所有图表。',
   'export.previewUnavailable': '无法生成预览。',
+  'export.dragHandle': '拖动以移动',
+  'export.resizeHandle': '调整尺寸（方向键）',
   'export.failed': '导出失败，请重试。',
   'export.previewNotReady': '文档尚未完成渲染，请稍候重试。',
   'export.preparing': '准备中…',
@@ -243,12 +245,17 @@ export const zhCN: Record<TranslationKey, string> = {
   'details.close': '关闭',
 
   // ── New document dialog ────────────────────────────────────────────────
-  'new.title': '新建草稿',
-  'new.documentTitle': '文档标题',
+  'new.title': '新建文件',
+  'new.documentTitle': '文件名',
   'new.extension': '扩展名',
   'new.untitled': '未命名',
   'new.cancel': '取消',
   'new.create': '创建',
+  'new.noFolder': '请先打开文件夹，再新建文件。',
+  'new.nameExists': '此处已存在名为"{{name}}"的文件。',
+  'new.invalidName': '"{{name}}"不是合法的文件名。',
+  'new.unsupportedExt': '"{{name}}"的扩展名不受支持，此处只能创建 Markdown 文件。',
+  'new.createFailed': '创建文件失败：{{message}}',
 
   // ── App-level (native confirm / alert strings) ─────────────────────────
   // {{title}} 点名正在离开的文档：弹窗出现时用户第一个想知道的就是「哪篇没保存」。
@@ -283,7 +290,6 @@ export const zhCN: Record<TranslationKey, string> = {
   'app.ok': '确定',
   'app.printNotReady': '预览尚未就绪。请先切换到预览或分屏视图。',
   'app.printFailed': '打印失败：{{message}}',
-  'app.preparingPrint': '正在准备打印…',
 
   // ── Error boundary ────────────────────────────────────────────────────
   'error.title': '出错了',
@@ -314,6 +320,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.english': 'English',
   'menu.chinese': '简体中文',
   'menu.newDraft': '新建草稿',
+  'menu.newFile': '新建文件…',
   'menu.openFile': '打开文件…',
   'menu.openFolder': '打开文件夹…',
   'menu.save': '保存',

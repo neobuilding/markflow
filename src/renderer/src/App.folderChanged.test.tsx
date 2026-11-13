@@ -26,6 +26,30 @@ let folderCbs: FolderCb[] = []
 type RefreshCb = (data: { id: string }) => void
 let refreshCbs: RefreshCb[] = []
 
+// The shared New Draft action calls these directly (it is not a hook), so the fake bridge must
+// expose them or a Ctrl+N key press rejects with "not a function".
+const createSpy = vi.fn(async () => ({
+  id: 'draft-1',
+  title: 'Untitled',
+  filePath: '',
+  content: '',
+  wordCount: 0,
+  createdAt: 0,
+  updatedAt: 0,
+  memoryOnly: true,
+}))
+const menuApi = {
+  setEditable: vi.fn(),
+  setHasDocument: vi.fn(),
+  setHasFolder: vi.fn(),
+  setHasDraft: vi.fn(),
+  setFileLocked: vi.fn(),
+}
+
+// The document list App derives "an unsaved draft exists" from. Kept as a named spy so a test can
+// serve a memory-only draft for exactly one read.
+const listSpy = vi.fn(async (): Promise<unknown[]> => [])
+
 // App.tsx imports the `queryClient` singleton from ./lib/queryClient and calls
 // `queryClient.invalidateQueries` directly (NOT via useQueryClient). So the spy
 // must be attached to that same singleton, and the provider below must wrap it
@@ -50,9 +74,11 @@ function mountApp() {
     onMenuEvent: noop,
     onAppRequestQuit: noop,
     documents: {
-      list: vi.fn().mockResolvedValue([]),
+      list: listSpy,
       get: vi.fn().mockResolvedValue(null),
+      create: createSpy,
     },
+    menu: menuApi,
   }
   ;(window as unknown as { api: unknown }).api = api
   return render(
@@ -141,13 +167,38 @@ describe('App — app:folder-changed handler (integration)', () => {
   })
 })
 
+// "At most one unsaved draft" is a cross-process rule: the renderer owns the predicate, the native
+// menu owns the item. Without this mirror the File > New Draft item stayed enabled while a draft
+// existed — the one entry that still invited a second draft.
+describe('App — native menu draft gating', () => {
+  beforeEach(() => {
+    menuApi.setHasDraft.mockClear()
+    listSpy.mockClear()
+    // Keep a previous test's document list out of this cache: App reads it through React Query.
+    queryClient.clear()
+  })
+
+  it('reports no draft so File > New Draft stays enabled', async () => {
+    mountApp()
+    await waitFor(() => expect(menuApi.setHasDraft).toHaveBeenCalledWith(false))
+  })
+
+  it('reports an existing memory-only draft so File > New Draft greys out', async () => {
+    listSpy.mockResolvedValueOnce([{ id: 'draft-1', filePath: '' }])
+    mountApp()
+    await waitFor(() => expect(menuApi.setHasDraft).toHaveBeenCalledWith(true))
+  })
+})
+
 describe('App — window-level shortcut guards (modal owns the keyboard)', () => {
   beforeEach(() => {
     useUIStore.getState().setNewDocOpen(false)
+    useUIStore.getState().setDirty(false)
     useUIStore.setState({ sidebarOpen: false })
+    createSpy.mockClear()
   })
 
-  it('does not open the New Document dialog while a modal surface owns the keyboard', () => {
+  it('stands down while a modal surface owns the keyboard', () => {
     mountApp()
     const modal = document.createElement('div')
     modal.setAttribute('data-modal-surface', '')
@@ -155,16 +206,20 @@ describe('App — window-level shortcut guards (modal owns the keyboard)', () =>
     window.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true }),
     )
-    expect(useUIStore.getState().newDocOpen).toBe(false)
+    expect(createSpy).not.toHaveBeenCalled()
     modal.remove()
   })
 
-  it('opens the New Document dialog when no modal owns the keyboard', () => {
+  it('Ctrl+N creates an in-memory draft directly, with no dialog (VS Code parity)', async () => {
     mountApp()
     window.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true }),
     )
-    expect(useUIStore.getState().newDocOpen).toBe(true)
+    await waitFor(() => expect(createSpy).toHaveBeenCalledTimes(1))
+    expect(createSpy).toHaveBeenCalledWith({ title: 'Untitled', memoryOnly: true })
+    expect(useUIStore.getState().newDocOpen).toBe(false)
+    expect(useUIStore.getState().isNewUnsaved).toBe(true)
+    expect(useUIStore.getState().editable).toBe(true)
   })
 
   it('does not toggle the sidebar while a modal surface owns the keyboard', () => {

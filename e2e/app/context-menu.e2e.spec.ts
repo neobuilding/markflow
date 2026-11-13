@@ -939,6 +939,30 @@ test.describe('M3 write-operation menus (supplement)', () => {
     await expect.poll(() => existsSync(join(dir, 'alpha2.md')), { timeout: 15000 }).toBe(true)
   })
 
+  // R2 / R2.5: "New File…" (File menu) must create a REAL file in the open folder — not another
+  // memory-only draft. The unit suite mocks useCreateDocument, so this is the end-to-end proof that
+  // the dialog's folderPath + memoryOnly:false actually reach the filesystem and open the file.
+  test('File > New File… dialog writes a real file into the open folder and edits it', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const dir = mkTempDir('markflow-newfiledlg-')
+    writeFileSync(join(dir, 'alpha.md'), '# Alpha\n', 'utf-8')
+    await openFolder(page, dir, 1)
+
+    // Open the dialog the same way the native File > New File… item does (store flag).
+    await page.evaluate(() => (window as any).__uiStore.getState().setNewDocOpen(true))
+    const dialog = page.getByTestId('new-document-dialog')
+    await expect(dialog).toBeVisible()
+
+    await dialog.getByPlaceholder('Untitled').fill('Created')
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+
+    // The dialog closes, the file lands on disk, and the new file opens for editing (no Save-As).
+    await expect(dialog).toBeHidden()
+    await expect.poll(() => existsSync(join(dir, 'Created.md')), { timeout: 15000 }).toBe(true)
+    await expect(page.locator('.cm-content')).toBeVisible()
+  })
+
   test('sidebar: a duplicate folder name is refused without inventing a -N variant', async () => {
     const { page } = handle
     await waitForAppReady(page)

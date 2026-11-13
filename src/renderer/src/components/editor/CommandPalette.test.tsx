@@ -162,7 +162,7 @@ describe('CommandPalette', () => {
 
   // The ROW shows the path relative to the workspace root (it is what disambiguates two documents
   // with the same title); the context menu copies the ABSOLUTE one — asserted separately below.
-  it('shows the root-relative path for results that have one (能力 10)', async () => {
+  it('shows the root-relative path for results that have one', async () => {
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('a')
     render(<CommandPalette />)
@@ -337,7 +337,7 @@ describe('CommandPalette — result row context menu', () => {
     expect(useUIStore.getState().activeDocumentId).toBeNull()
   })
 
-  it('copies the on-disk file path (能力 10)', async () => {
+  it('copies the on-disk file path', async () => {
     render(<CommandPalette />)
     const rows = await screen.findAllByTestId('search-result')
     fireEvent.contextMenu(rows[0])

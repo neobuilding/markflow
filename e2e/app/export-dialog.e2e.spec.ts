@@ -5,6 +5,7 @@
 // its modal before the next, and the dark-theme step runs LAST so it cannot tint the light one.
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import { VIEWPORTS } from '../helpers/viewports'
 
 interface ShadowProbe {
   hasMarkdownBody: boolean
@@ -13,6 +14,7 @@ interface ShadowProbe {
   preBg: string | null
   preRadius: string | null
   keywordColor: string | null
+  pageBackgroundColor: string | null
   hasExportCss: boolean
   hasFontFace: boolean
 }
@@ -36,6 +38,7 @@ async function probeShadow(host: Locator): Promise<ShadowProbe | null> {
       preBg: pre ? getComputedStyle(pre).backgroundColor : null,
       preRadius: pre ? getComputedStyle(pre).borderRadius : null,
       keywordColor: keyword ? getComputedStyle(keyword).color : null,
+      pageBackgroundColor: md ? getComputedStyle(md).backgroundColor : null,
       hasExportCss: styles.includes('.markdown-body pre.hljs'),
       hasFontFace: styles.includes('@font-face'),
     }
@@ -63,10 +66,18 @@ async function probeAppPreview(pane: Locator): Promise<{
 async function openExportPreview(
   page: Page,
 ): Promise<{ dialog: Locator; host: Locator; appPreview: Locator }> {
-  await page.getByTestId('new-document-btn').click()
-  await expect(page.locator('.cm-content')).toBeVisible()
-  await page.locator('.cm-content').click()
-  await page.keyboard.type('# Heading\n\n```js\nconst x = 1\n```\n')
+  // Only ONE unsaved draft may exist at a time (the New Draft control is disabled once one is
+  // open), so reuse the document that is already open instead of asking for a second one — and
+  // type the sample content only once, so the second call does not double it.
+  const editor = page.locator('.cm-content')
+  if ((await editor.count()) === 0) {
+    await page.getByTestId('new-document-btn').click()
+    await expect(editor).toBeVisible()
+  }
+  await editor.click()
+  if (!(await editor.textContent())?.includes('const x = 1')) {
+    await page.keyboard.type('# Heading\n\n```js\nconst x = 1\n```\n')
+  }
 
   // Split view ⇒ the app preview (the pane) and the export preview (the dialog) can be
   // compared side by side.
@@ -78,7 +89,7 @@ async function openExportPreview(
   await page.getByTestId('export-btn').click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
-  const host = dialog.getByTestId('export-preview-host')
+  const host = dialog.getByTestId('export-preview')
   await expect(host).toBeVisible()
   await expect.poll(async () => (await probeShadow(host))?.hasMarkdownBody ?? false).toBe(true)
   return { dialog, host, appPreview }
@@ -166,6 +177,13 @@ test.describe('export dialog', () => {
       // S2: `body` does not match inside a shadow root, so the export's body-level padding has to
       // be applied to the preview container instead.
       expect(shadow!.containerPadding).toBe('24px')
+      // C20 ⑨ fidelity: the preview host paints the EXPORTED page's own background, so the page
+      // fills the preview edge-to-edge with no app-coloured (grey) margin ring. The host background
+      // must equal the markdown-body page colour, and must NOT be the app chrome colour (#f5f7fb).
+      const hostPageBg = await host.evaluate((el) => getComputedStyle(el).backgroundColor)
+      expect(hostPageBg, 'host bg must equal the page bg').toBe(shadow!.pageBackgroundColor)
+      expect(hostPageBg, 'host bg must not be the app chrome grey').toBe('rgb(255, 255, 255)')
+
       // S1: a shadow root does not register fonts, so the @font-face rules live in the HOST
       // document instead of the shadow root.
       expect(shadow!.hasFontFace).toBe(false)
@@ -197,7 +215,7 @@ test.describe('export dialog', () => {
     await test.step('the export preview follows the dark theme (E13)', async () => {
       // C20 ⑨ W1: the preview follows the theme the EXPORT will use, not the app's own styling.
       await page.evaluate(() => (window as any).__uiStore.getState().setTheme('dark'))
-      const { host, appPreview } = await openExportPreview(page)
+      const { dialog, host, appPreview } = await openExportPreview(page)
 
       const shadow = await probeShadow(host)
       expect(shadow, 'the preview must live in a shadow root').not.toBeNull()
@@ -213,6 +231,348 @@ test.describe('export dialog', () => {
       // at #ff7b72 (markdownExport.css, dark hljs block), so this value also proves the DARK sheet
       // was applied rather than merely "some" colour.
       expect(shadow!.keywordColor).toBe('rgb(255, 123, 114)')
+
+      // C20 ⑨ fidelity (dark): the host must equal the exported page colour (#0d1117 = rgb(13, 17, 23)),
+      // not the app chrome dark (#0f1419 = rgb(15, 20, 25)).
+      const hostPageBgDark = await host.evaluate((el) => getComputedStyle(el).backgroundColor)
+      expect(hostPageBgDark, 'dark host bg must equal the page bg').toBe(
+        shadow!.pageBackgroundColor,
+      )
+      expect(hostPageBgDark, 'dark host bg must not be the app chrome dark').toBe('rgb(13, 17, 23)')
+      // Close it: this case runs last, and a modal left open would intercept the next case's clicks.
+      await closeDialog(page, dialog)
     })
+  })
+
+  // R4: the dialog itself is a standard window — draggable by its title bar and resizable from its
+  // edges/corners (the old in-preview grip is gone). The unit suite proves the clamp arithmetic;
+  // here we drive the real pointers in a browser.
+  test('the export dialog can be dragged by its title bar and resized from its edges (R4)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    await page.evaluate(() => (window as any).__uiStore.getState().setTheme('light'))
+
+    const { dialog } = await openExportPreview(page)
+    const surface = dialog
+    const header = dialog.getByTestId('export-dialog-header')
+
+    const before = (await surface.boundingBox())!
+
+    // Drag the title bar up-left. Pointer capture keeps the move events flowing even outside the
+    // header, so the dialog should follow.
+    const hb = (await header.boundingBox())!
+    const sx = hb.x + hb.width / 2
+    const sy = hb.y + 10
+    await page.mouse.move(sx, sy)
+    await page.mouse.down()
+    await page.mouse.move(sx - 120, sy - 60, { steps: 6 })
+    await page.mouse.up()
+
+    const moved = (await surface.boundingBox())!
+    // Delta-exact, not just "moved somewhere": a earlier version of this suite only asserted
+    // "less than", which the (0,0) teleport bug also satisfied — that is how it slipped through.
+    // Both axes clamp at the viewport edges (left/top), so the expected position is clamp-aware.
+    expect(Math.abs(moved.x - Math.max(0, before.x - 120))).toBeLessThanOrEqual(2)
+    expect(Math.abs(moved.y - Math.max(0, before.y - 60))).toBeLessThanOrEqual(2)
+
+    // Resize from the SE corner: grow both width and height.
+    const se = dialog.getByTestId('export-dialog-resize-se')
+    const sb = (await se.boundingBox())!
+    await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(sb.x + sb.width / 2 + 120, sb.y + sb.height / 2 + 90, { steps: 6 })
+    await page.mouse.up()
+
+    const grown = (await surface.boundingBox())!
+    expect(grown.width).toBeGreaterThan(moved.width)
+    expect(grown.height).toBeGreaterThan(moved.height)
+
+    // All eight resize handles are present and focusable (keyboard parity).
+    for (const dir of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
+      const handleEl = dialog.getByTestId(`export-dialog-resize-${dir}`)
+      await expect(handleEl).toBeVisible()
+      await expect(handleEl).toHaveAttribute('role', 'separator')
+    }
+
+    await closeDialog(page, dialog)
+  })
+
+  // R4 teleport regression (user report 2026-11-12): a bare pointerdown on a resize edge used to
+  // TELEPORT the dialog. First the rect-set branch carried `!left-0 !top-0` important utilities,
+  // which beat the inline coordinates and pinned it to (0,0); after dropping them, the base
+  // `translate: -50% -50%` utility (Tailwind v4 compiles translate utilities to the CSS `translate`
+  // property, which `transform: none` does NOT clear) shifted it by half its own size. Freezing the
+  // geometry into `rect` must be visually a no-op, and a west drag must grow leftward with the
+  // RIGHT edge pinned.
+  test('a pointerdown on a resize edge never moves the dialog (R4 teleport regression)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const { dialog } = await openExportPreview(page)
+    const before = (await dialog.boundingBox())!
+
+    // 1) Bare click (down+up, no movement) on the west edge.
+    const edge = dialog.getByTestId('export-dialog-resize-w')
+    const eb = (await edge.boundingBox())!
+    const cx = eb.x + eb.width / 2
+    const cy = eb.y + eb.height / 2
+    await page.mouse.move(cx, cy)
+    await page.mouse.down()
+    await page.mouse.up()
+    await page.evaluate(
+      () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+    )
+    const clicked = (await dialog.boundingBox())!
+    expect(Math.abs(clicked.x - before.x), 'bare edge click must not move x').toBeLessThanOrEqual(2)
+    expect(Math.abs(clicked.y - before.y), 'bare edge click must not move y').toBeLessThanOrEqual(2)
+    expect(
+      Math.abs(clicked.width - before.width),
+      'bare edge click must not resize',
+    ).toBeLessThanOrEqual(2)
+
+    // 2) A real west drag: grows leftward, right edge pinned.
+    await page.mouse.move(cx, cy)
+    await page.mouse.down()
+    await page.mouse.move(cx - 30, cy, { steps: 4 })
+    await page.mouse.up()
+    const grown = (await dialog.boundingBox())!
+    expect(grown.width).toBeCloseTo(clicked.width + 30, 0)
+    expect(grown.x + grown.width).toBeCloseTo(clicked.x + clicked.width, 0)
+
+    await closeDialog(page, dialog)
+  })
+
+  // R4 bounds regression (user report 2026-11-12): the dialog used to overflow the app window on
+  // short viewports (the base DialogContent has no max-height, so the content height decided) and
+  // poked a few px past the bottom even after clamping, because the slide-up entry animation's
+  // transform offset can freeze mid-flight in a throttled renderer while the dialog is exactly
+  // viewport-tall. The default state must always fit inside the app window.
+  test('the export dialog opens fully inside the app window on a short viewport (R4 bounds)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    try {
+      await page.setViewportSize(VIEWPORTS.short)
+      await expect.poll(() => page.evaluate(() => window.innerHeight)).toBeLessThan(600)
+      const { dialog } = await openExportPreview(page)
+      const vw = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }))
+      // Let the entry animation settle, then require containment; if it never settles, the poll
+      // times out and the hard asserts below report the residual offset.
+      await expect
+        .poll(async () => {
+          const b = (await dialog.boundingBox())!
+          return Math.round(b.y + b.height) - vw.h
+        })
+        .toBeLessThanOrEqual(0)
+      const box = (await dialog.boundingBox())!
+      expect(box.x, 'left edge inside').toBeGreaterThanOrEqual(0)
+      expect(box.y, 'top edge inside').toBeGreaterThanOrEqual(0)
+      expect(box.x + box.width, 'right edge inside').toBeLessThanOrEqual(vw.w)
+      expect(box.y + box.height, 'bottom edge inside').toBeLessThanOrEqual(vw.h)
+      await closeDialog(page, dialog)
+    } finally {
+      await page.setViewportSize(VIEWPORTS.standard)
+    }
+  })
+
+  // R4 (user report 2026-11-12, "the top strip could not be dragged"): DialogContent's `p-6` used to put
+  // the title row 24px below the border, and the drag handler lived ONLY on that row. The band
+  // between the 8px N resize handle and the title was dead — measured dx=0 for y=10/14/18/22.
+  // The header hit area now covers the container padding, so the whole strip drags like a real
+  // title bar, while the topmost 8px still resizes from the north edge.
+  test('the whole top strip of the export dialog drags like a title bar (R4)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    const { dialog } = await openExportPreview(page)
+    const vw = await page.evaluate(() => window.innerWidth)
+
+    for (const dy of [10, 16, 22]) {
+      const box = (await dialog.boundingBox())!
+      const x = box.x + box.width / 2
+      const y = box.y + dy
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      await page.mouse.move(x + 40, y + 20, { steps: 4 })
+      await page.mouse.up()
+      const after = (await dialog.boundingBox())!
+      expect(
+        Math.abs(after.x - Math.min(box.x + 40, vw - box.width)),
+        `top strip y+${dy} must move the dialog`,
+      ).toBeLessThanOrEqual(2)
+      expect(
+        Math.abs(after.width - box.width),
+        `top strip y+${dy} must not resize`,
+      ).toBeLessThanOrEqual(2)
+    }
+
+    // The 8px N handle must STILL resize from the top edge — covering it with the drag area
+    // would silently remove north resizing.
+    const beforeN = (await dialog.boundingBox())!
+    const nx = beforeN.x + beforeN.width / 2
+    const ny = beforeN.y + 3
+    await page.mouse.move(nx, ny)
+    await page.mouse.down()
+    await page.mouse.move(nx, ny + 20, { steps: 4 })
+    await page.mouse.up()
+    const afterN = (await dialog.boundingBox())!
+    expect(afterN.height, 'N handle must still shrink the height from the top').toBeLessThan(
+      beforeN.height,
+    )
+
+    await closeDialog(page, dialog)
+  })
+
+  // R5 (user report 2026-11-13, "a print-preview sub-window still flashed by and vanished"): the owner BrowserWindow is
+  // created with show:false but was shown BEFORE setOpacity(0). Electron emits `show` with the
+  // window still fully opaque, so one painted frame of an 800x600 window was visible in the top
+  // left corner before it turned transparent. There is no OS print dialog in this test: the
+  // webContents.print stub resolves the production callback immediately, which keeps the loop
+  // deterministic and fast while still driving the real `export:print` IPC path.
+  test('the print owner window is transparent from its first visible frame (no flash)', async () => {
+    const { page, electronApp } = handle
+    await waitForAppReady(page)
+
+    await electronApp.evaluate(({ app }: any) => {
+      const p: any = { events: [], win: null, listener: null }
+      ;(globalThis as any).__printProbe = p
+      p.listener = (_e: any, win: any) => {
+        p.win = win
+        win.on('show', () => p.events.push({ event: 'show', opacity: win.getOpacity() }))
+        const wc = win.webContents as any
+        wc.print = (_opts: any, cb: any) => {
+          if (typeof cb === 'function') cb(true)
+        }
+      }
+      app.on('browser-window-created', p.listener)
+    })
+
+    try {
+      // Deliberately not awaited: if the stub ever stops landing, the OS dialog would block and
+      // this test must still be able to clean up the owner window instead of hanging the suite.
+      await page.evaluate(() => {
+        void (window as any).api.export.print('<html><body>print probe</body></html>')
+      })
+      const readShows = async () =>
+        await electronApp.evaluate(
+          () =>
+            ((globalThis as any).__printProbe?.events ?? []).filter(
+              (e: any) => e.event === 'show',
+            ) as Array<{ opacity: number }>,
+        )
+      await expect.poll(async () => (await readShows()).length).toBeGreaterThan(0)
+      const shows = await readShows()
+      expect(
+        shows.map((s) => s.opacity),
+        'opacity at the `show` event',
+      ).toEqual(shows.map(() => 0))
+    } finally {
+      await electronApp.evaluate(({ app }: any) => {
+        const p = (globalThis as any).__printProbe
+        if (p?.listener) app.removeListener('browser-window-created', p.listener)
+        if (p?.win && !p.win.isDestroyed()) p.win.destroy()
+        delete (globalThis as any).__printProbe
+      })
+    }
+  })
+
+  // R4 follow-up (user report 2026-11-13, "filled the whole window on open…leave space top and bottom…centered in the main window"):
+  // the preview pane's `min-h-[40vh]` made the dialog height == 40vh + ~345px of fixed content,
+  // so it filled 85% of a 768px window and 98.6% of a 560px one (4px of headroom). The dialog now
+  // owns its height (88vh, capped at 960px so a 1440px window does not dwarf it) and the guard
+  // below pins those numbers. Measured at three named environments, because a single viewport
+  // cannot catch a vh-proportional regression.
+  test('the export dialog is centered with breathing room on every viewport', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    try {
+      const { dialog } = await openExportPreview(page)
+      // Capping the dialog must not collapse the preview into nothing: the shadow host still owns
+      // the remaining flex space and scrolls internally.
+      const hostBox = await dialog.getByTestId('export-preview').boundingBox()
+      expect(hostBox?.height ?? 0, 'the export preview stays usable').toBeGreaterThan(150)
+      const measure = () =>
+        dialog.evaluate((el: any) => {
+          const r = el.getBoundingClientRect()
+          return {
+            top: r.top,
+            bottom: r.bottom,
+            hPct: (r.height / window.innerHeight) * 100,
+            centerDx: (r.left + r.right) / 2 - window.innerWidth / 2,
+            centerDy: (r.top + r.bottom) / 2 - window.innerHeight / 2,
+            vh: window.innerHeight,
+          }
+        })
+
+      // Each environment is ENTERED by name: e2e/guards/viewports.test.ts scans the spec text and
+      // rejects any viewport call whose argument is not a literal VIEWPORTS.<name>, so a loop over
+      // the names cannot be used here (not even inside a comment).
+      const assertGeometry = async (name: string, height: number) => {
+        await expect.poll(async () => (await measure()).vh).toBe(height)
+        const g = await measure()
+        expect(g.hPct, `${name}: height must stay below 89% of the window`).toBeLessThanOrEqual(89)
+        expect(g.top, `${name}: top breathing room`).toBeGreaterThanOrEqual(g.vh * 0.06 - 1)
+        expect(g.vh - g.bottom, `${name}: bottom breathing room`).toBeGreaterThanOrEqual(
+          g.vh * 0.06 - 1,
+        )
+        expect(Math.abs(g.centerDx), `${name}: horizontally centered`).toBeLessThanOrEqual(2)
+        expect(Math.abs(g.centerDy), `${name}: vertically centered`).toBeLessThanOrEqual(2)
+      }
+      await page.setViewportSize(VIEWPORTS.standard)
+      await assertGeometry('standard', VIEWPORTS.standard.height)
+      await page.setViewportSize(VIEWPORTS.short)
+      await assertGeometry('short', VIEWPORTS.short.height)
+      await page.setViewportSize(VIEWPORTS.baseline)
+      await assertGeometry('baseline', VIEWPORTS.baseline.height)
+      await page.setViewportSize(VIEWPORTS.standard)
+      await closeDialog(page, dialog)
+    } finally {
+      await page.setViewportSize(VIEWPORTS.standard)
+    }
+  })
+
+  // Modal anatomy regression (user report 2026-11-13): the inline-images checkbox, the target path
+  // and the actions used to share ONE scroll region with the preview, so a long document pushed
+  // them out of view. They are now pinned in a footer that never scrolls. Proven in the worst
+  // case — the SHORT viewport, where the demo document's preview definitely overflows — by
+  // asserting every option sits fully inside the dialog's bounds without any scrolling.
+  test('the export options stay pinned in the footer while the preview overflows', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    try {
+      await page.setViewportSize(VIEWPORTS.short)
+      const { dialog } = await openExportPreview(page)
+      // Worst case achieved: the preview content is taller than the stage, i.e. the situation
+      // that used to push the options out of view.
+      await expect
+        .poll(async () =>
+          dialog.evaluate((el: any) => {
+            const p = el.querySelector('[data-testid="export-preview"]')
+            return p ? p.scrollHeight - p.clientHeight : 0
+          }),
+        )
+        .toBeGreaterThan(0)
+      // The Export action reads its label from the store's readiness mirror; pin it so the
+      // assertion below targets the button by its settled name.
+      await page.evaluate(() => (window as any).__uiStore.getState().setExportReady(true))
+
+      const inside = async (locator: any, label: string) => {
+        const b = (await locator.boundingBox())!
+        const d = (await dialog.boundingBox())!
+        expect(b.y, `${label}: fully inside the dialog (top)`).toBeGreaterThanOrEqual(d.y)
+        expect(b.y + b.height, `${label}: fully inside the dialog (bottom)`).toBeLessThanOrEqual(
+          d.y + d.height,
+        )
+        expect(b.x, `${label}: fully inside the dialog (left)`).toBeGreaterThanOrEqual(d.x)
+        expect(b.x + b.width, `${label}: fully inside the dialog (right)`).toBeLessThanOrEqual(
+          d.x + d.width,
+        )
+        await expect(locator).toBeVisible()
+      }
+      await inside(dialog.locator('input[type="checkbox"]'), 'inline-images checkbox')
+      await inside(dialog.locator('input[readonly]'), 'target path')
+      await inside(dialog.getByText('Choose…'), 'choose button')
+      await inside(dialog.getByRole('button', { name: 'Export' }), 'export button')
+      await closeDialog(page, dialog)
+    } finally {
+      await page.setViewportSize(VIEWPORTS.standard)
+    }
   })
 })

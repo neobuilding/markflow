@@ -78,7 +78,7 @@ function renderPanel() {
   )
 }
 
-// The Search view owns a visible scope, so the mock has to be able to report the applied root 鈥?// that is what decides whether the include/exclude fields are usable.
+// The Search view owns a visible scope, so the mock has to be able to report the applied root —// that is what decides whether the include/exclude fields are usable.
 vi.mock('../../hooks/useSearch', () => ({
   useSearchView: () => ({
     data: {
@@ -232,7 +232,7 @@ describe('SidebarSearch (Search view)', () => {
     expect(useUIStore.getState().searchInclude).toBe('./docs')
   })
 
-  // A non-empty scope must never be hidden 鈥?that was the whole complaint that started this plan
+  // A non-empty scope must never be hidden —that was the whole complaint that started this plan
   //.
   it('forces the details block open when a scope is set', () => {
     useUIStore.setState({ searchInclude: './docs', searchDetailsOpen: false })

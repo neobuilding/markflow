@@ -240,7 +240,7 @@ describe('StatusBar', () => {
     expect(screen.getByText('UTF-8')).toBeInTheDocument()
   })
 
-  it('switches the line ending to CRLF on disk and reloads (能力 6)', async () => {
+  it('switches the line ending to CRLF on disk and reloads', async () => {
     render(<StatusBar />)
     fireEvent.click(await screen.findByText('LF'))
     fireEvent.click(await screen.findByText(/Switch to CRLF|切换为 CRLF/i))
@@ -270,7 +270,7 @@ describe('StatusBar', () => {
     expect(mockSetEol).not.toHaveBeenCalled()
   })
 
-  it('re-detects encoding from disk and applies it (能力 11)', async () => {
+  it('re-detects encoding from disk and applies it', async () => {
     mockDetect.mockResolvedValue({ enc: 'GB2312', confidence: 0.8 })
     render(<StatusBar />)
     fireEvent.click(await screen.findByTitle(/encoding/i))
@@ -281,7 +281,7 @@ describe('StatusBar', () => {
     )
   })
 
-  it('shows the detecting label while re-detection is in flight (能力 11)', async () => {
+  it('shows the detecting label while re-detection is in flight', async () => {
     let resolveDetect!: (v: { enc: string; confidence: number }) => void
     mockDetect.mockImplementationOnce(
       () =>
@@ -310,7 +310,7 @@ describe('StatusBar', () => {
     expect(await screen.findByText(/Re-detect encoding|重新检测编码/)).toBeDisabled()
   })
 
-  it('logs a failure when the line-ending switch rejects (能力 6)', async () => {
+  it('logs a failure when the line-ending switch rejects', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     mockSetEol.mockRejectedValueOnce(new Error('boom'))
     render(<StatusBar />)
@@ -320,7 +320,7 @@ describe('StatusBar', () => {
     errorSpy.mockRestore()
   })
 
-  it('logs a failure when re-detect encoding rejects (能力 11)', async () => {
+  it('logs a failure when re-detect encoding rejects', async () => {
     mockDetect.mockRejectedValueOnce(new Error('boom'))
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<StatusBar />)
@@ -330,7 +330,7 @@ describe('StatusBar', () => {
     errorSpy.mockRestore()
   })
 
-  it('switches the line ending to LF on disk and reloads (能力 6)', async () => {
+  it('switches the line ending to LF on disk and reloads', async () => {
     installApi(async () => '\r\n')
     render(<StatusBar />)
     fireEvent.click(await screen.findByText('CRLF'))
@@ -513,7 +513,7 @@ describe('StatusBar — context menus', () => {
     expect(await screen.findByTestId('sb-save')).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('switches the line ending to LF from the context menu after confirming (能力 6)', async () => {
+  it('switches the line ending to LF from the context menu after confirming', async () => {
     installApi(async () => '\r\n')
     render(<StatusBar />)
     fireEvent.contextMenu(await screen.findByText('CRLF'))

@@ -578,8 +578,8 @@ At the 192px minimum content width the primary row must not overflow and the que
 ## 9. Empty state (C8)
 
 With no document open the **global bar** shows only what can act: sidebar toggle, Quick Open (⌘K
-surfaced via its Tooltip, **not** a persistent chip) and Close. **Save / Save-As / Reload / file
-details / export / the view switch / find / replace / read-only toggle are all gated** — the first
+surfaced via its Tooltip, **not** a persistent chip). **Save / Save-As / Reload / file
+details / export / Close / the view switch / find / replace / read-only toggle are all gated** — the first
 group on `activeDocumentId`, the view switch on the document branch itself — together with the
 dividers that precede them: a lone divider floating after a button group is worse than none.
 
@@ -600,6 +600,38 @@ menu or `⌘\`. So the bar shows only **Quick Open (⌘K)** and **Close**.
 **Amended 2026-11-04 (ADR-0032):** Quick Open's chord is now **`⌘⇧K`** — `⌘K` belongs to the
 editor's **Link** action (the mainstream Markdown-editor binding), and Quick Open moved to the Shift
 chord. The bar's inventory is unchanged; only the advertised glyph is.
+
+**Amended 2026-11-12:** **Close** joins the gated group. With no document open there is nothing to
+close, so the button was a dead control — the very reasoning this section already applies to Find
+and to the read-only toggle. The toolbar hides it (the whole document-scoped cluster disappears
+together, dividers included); the native File ▸ Close File item instead stays in place but is
+disabled, so the menu's shape does not change with the document state.
+
+**Amended 2026-11-12 (New Draft):** the **New Draft** button is the one addition to this bar
+(ADR-0006). It is filesystem-independent, so it is the only create action that can act with no folder
+open — the sidebar's `+` is a "New File" and hides in that state. It is therefore **not** the New/Open
+duplicate the paragraph above keeps out. While an unsaved draft exists it is **disabled** rather than
+hidden, exactly like the editor empty-state entry and the native File ▸ New Draft item (ADR-0006
+§"At most one unsaved draft").
+
+**Amended 2026-11-13 (print mode is visible, not just enforced).** The print-mode transaction lock
+lived only in `store/ui.ts` and the native File menu, so the three toolbars kept rendering enabled
+buttons that silently did nothing. Every control whose action the store refuses — global bar, editor
+pane bar, preview pane bar, the right-click file menus and the sidebar's file/workspace buttons — is
+now `disabled` while `fileLocked` is true and returns to its prior state when it clears. Read-only
+affordances (view mode, Find, Copy, preview scrolling) deliberately stay enabled: the main window's
+preview is meant to remain usable while the OS dialog is up (R5 plan A). Guarded by component unit
+tests and `e2e/app/pane-toolbars.e2e.spec.ts`.
+
+**Amended 2026-11-13 (fileLocked capability, not the printing trigger).** The lock is named for the
+**capability** it grants — "document/file-set actions are locked" — not for the event that triggered it.
+The single selector `selectFileLocked` (`printing || exporting || exportOpen`) in `store/ui.ts` is the
+only place that enumerates triggers; every UI control and store guard subscribes to it (or, for raw
+read-outs, to `printing` alone). Adding a future trigger source (e.g. a sync-in-flight flag) therefore
+means editing one expression and nothing else — not six components and the native menu. The native menu
+gets one boolean over `menu:set-file-locked`, mirrored from a store-level subscription, so no IPC or
+menu handler changes either. The contract guard `e2e/guards/ui-store-selectors.test.ts` rejects any
+component that re-subscribes to a raw trigger flag for a lock decision, so the regression cannot return.
 
 ---
 
@@ -686,58 +718,40 @@ slim global bar:
   read-only ≈ **12 items**; at the 32–36px hit areas this design prefers (§2) that is **≈420px**,
   which does not fit a 20% column. The cluster is currently collapsed by a **viewport** breakpoint
   (`hidden md:flex`, `:1071`) — a window-width test that cannot see the pane width, so it still
-  renders in a narrow split column. Prescription: the editor pane bar collapses **by pane width**,
-  not by viewport — the formatting cluster folds into a single `Format` dropdown (7 → 1), and the
-  bar keeps a VS Code-style overflow (`…` past a 9-item cap, `editorTabsControl.ts:305-335`). The
+  renders in a narrow split column. **Collapse is driven by pane width, not viewport (trade-off 54):**
+  both pane bars overflow **progressively** — the lowest-priority command drops into a `…` menu one at
+  a time, and the `…` trigger appears only while something cannot be shown inline, so the bar is never
+  clipped in a narrow split. There is **no `Format` dropdown**: the seven formatting actions stay as
+  labelled buttons and overflow individually, so none hide behind an unlabelled control. The
   **global bar needs no overflow**: its command set is a strict **subset** of today's header row,
   which already renders the same commands plus find / replace / read-only / the formatting cluster
   with no overflow and no `…`.
-  **Amended 2026-10-31 (C20 implementation) — the pane bar's collapse is width-driven in TWO stages, not a count-based overflow.**
-  The prescription above names two mechanisms: the formatting cluster folds into a `Format` dropdown, and the bar "keeps a
-  VS Code-style overflow (`…` past a 9-item cap, `editorTabsControl.ts:305-335`)". Implemented as a literal 9-item **count**
-  cap, that overflow would be **unreachable**: the first stage already reduces the bar to 6 items (Format + find / replace /
-  undo / redo / read-only), so nothing could ever cross 9 — dead code by construction. The governing rule of trade-off 54 is
-  _"collapse by pane width, not by viewport"_, and the 9-item figure is VS Code's **rationale for folding at all**, not a
-  trigger; so the overflow is triggered by width, exactly like the fold:
-  - **wide** (≥ 420px): the full 12-item budget.
-  - **folded** (< 420px): the formatting cluster folds into `Format` (7 → 1), leaving 6 items.
-  - **minimal** (< 240px): undo / redo / read-only move into a `…` overflow (3 → 1), leaving 4 — the stage that actually keeps
-    a 20 %-column (`splitRatio` down to 0.2) from clipping the bar.
-    Find / replace stay inline in every stage: they are the primary entry points and must never be more than one level deep.
-    Two implementation facts worth recording: the formatting buttons are **disabled**, not hidden, while the pane is read-only
-    (a hidden cluster made the bar jump when the mode changed), and the read-only toggle's test id moved from
-    `toggle-editable-btn` to `editor-readonly-btn` now that it lives on the pane bar.
-    **Amended 2026-11-03 (review round 3):** the two stages are replaced by **ONE threshold and ONE
-    overflow** (ADR-0031 R-c/R-d). Above `FOLD_AT = 420` (measured on the bar's border box, i.e. the
-    column width) the twelve actions sit inline; below it the WHOLE bar is a single `…` menu whose
-    entries all carry a visible label. The `Format` dropdown and the `minimal` stage are gone: the
-    intermediate state hid the seven formatting actions behind an unlabelled control, which is exactly
-    the discoverability problem the round-3 review set out to close.
-    **Superseded 2026-11-04 (ADR-0031 §5):** the single `FOLD_AT = 420` threshold described above is
-    itself superseded — both pane bars now overflow progressively (priority+), one command at a time,
-    and the "…" trigger exists only while something cannot be shown inline. The visible-label rule and
-    the removal of the `Format` dropdown still stand.
-    **Amended 2026-10-31 (review round 17) — "export HTML" is ONE action whose entry point follows the preview's visibility, so only one export button is ever on screen.**
-    The preview and the exporter share **the same `github-markdown-css` sheet** (`globals.css` §"markdown styling now comes from
-    github-markdown-css … the same sheet the exporter uses"; `MarkdownPreview.tsx` repeats it), **the same sanitized HTML source**
-    (`exportStore`'s canonical preview HTML) and **the same mermaid bake** (`exportBake.prepareExportHtml`) — so the preview
-    shows the export's **content, structure, theme and overall layout**. **Amended 2026-10-31 (review round 18):** the preview
-    is _not_ pixel-identical to the exported file — the exporter inlines **fewer** stylesheets than the app applies
-    (it misses `highlight.js` token colours, the `.markdown-body` overrides in `globals.css`, and it leaves KaTeX's
-    `url(fonts/…)` unresolved; `data-theme` also sits on `<html>` while `.markdown-body` sits on `<body>`). Closing that gap is
-    **C33 (export parity)**, and until it lands an **export-time preview** — not the app preview — is the only honest way to show
-    the exported result. Placing the action next to the live rendering is still the mainstream pattern (Figma's export panel
-    sits against the artboard; Photoshop's export dialog carries a live preview): a button's position is decided by the
-    action's **precondition** (what the user must see first), not only by its target. Therefore: **preview visible
-    (preview-only / split) ⇒ the entry is on the preview bar;
-    edit-only (the preview pane is `hidden`) ⇒ the entry stays on the global bar**, where export is a plain file operation with
-    no visible effect to inspect and the `⌘⇧X` shortcut must not be stranded. The **visible** button always carries the `⌘⇧X`
-    label. If both bars ever showed it, it would be one action with one implementation (`setExportOpen(true)`) and one wording
-    (`editor.export`) — never a second export path — and two peer toolbars must not carry the same button side by side
-    (VS Code's Save appears once). The export also needs an **export-time preview** (a `srcdoc` iframe inside the export dialog,
-    always rendered with images inlined), because the app preview is not byte-identical to the exported file in three respects:
-    the theme can be overridden in the dialog, the preview renders mermaid lazily while the export bakes all of it, and
-    non-inlined images are rewritten to relative paths.
+  **Implementation constraints (current).** Find / replace stay inline at every width — they are the
+  primary entry points and must never be more than one level deep. The formatting buttons are
+  **disabled, not hidden**, while the pane is read-only (a hidden cluster made the bar jump when the
+  mode changed), and the read-only toggle's test id is `editor-readonly-btn` (moved from
+  `toggle-editable-btn` once it lived on the pane bar).
+  **Amended 2026-10-31 (review round 17) — "export HTML" is ONE action whose entry point follows the preview's visibility, so only one export button is ever on screen.**
+  The preview and the exporter share **the same `github-markdown-css` sheet** (`globals.css` §"markdown styling now comes from
+  github-markdown-css … the same sheet the exporter uses"; `MarkdownPreview.tsx` repeats it), **the same sanitized HTML source**
+  (`exportStore`'s canonical preview HTML) and **the same mermaid bake** (`exportBake.prepareExportHtml`) — so the preview
+  shows the export's **content, structure, theme and overall layout**. **Amended 2026-10-31 (review round 18):** the preview
+  is _not_ pixel-identical to the exported file — the exporter inlines **fewer** stylesheets than the app applies
+  (it misses `highlight.js` token colours, the `.markdown-body` overrides in `globals.css`, and it leaves KaTeX's
+  `url(fonts/…)` unresolved; `data-theme` also sits on `<html>` while `.markdown-body` sits on `<body>`). Closing that gap is
+  **C33 (export parity)**, and until it lands an **export-time preview** — not the app preview — is the only honest way to show
+  the exported result. Placing the action next to the live rendering is still the mainstream pattern (Figma's export panel
+  sits against the artboard; Photoshop's export dialog carries a live preview): a button's position is decided by the
+  action's **precondition** (what the user must see first), not only by its target. Therefore: **preview visible
+  (preview-only / split) ⇒ the entry is on the preview bar;
+  edit-only (the preview pane is `hidden`) ⇒ the entry stays on the global bar**, where export is a plain file operation with
+  no visible effect to inspect and the `⌘⇧X` shortcut must not be stranded. The **visible** button always carries the `⌘⇧X`
+  label. If both bars ever showed it, it would be one action with one implementation (`setExportOpen(true)`) and one wording
+  (`editor.export`) — never a second export path — and two peer toolbars must not carry the same button side by side
+  (VS Code's Save appears once). The export also needs an **export-time preview** (a `srcdoc` iframe inside the export dialog,
+  always rendered with images inlined), because the app preview is not byte-identical to the exported file in three respects:
+  the theme can be overridden in the dialog, the preview renders mermaid lazily while the export bakes all of it, and
+  non-inlined images are rewritten to relative paths.
 
 **Why the reversal.** The preview bar was deleted on the strength of a claim that it was
 "invisible with no buttons in it". That is false against 图 02, which draws a populated preview

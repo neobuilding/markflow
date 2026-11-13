@@ -152,7 +152,9 @@ describe('native menu', () => {
     menu.registerMenuHandlers()
     expect(typeof ipcHandlers['menu:set-editable']).toBe('function')
     expect(typeof ipcHandlers['menu:set-has-document']).toBe('function')
-    expect(typeof ipcHandlers['menu:set-printing']).toBe('function')
+    expect(typeof ipcHandlers['menu:set-has-folder']).toBe('function')
+    expect(typeof ipcHandlers['menu:set-has-draft']).toBe('function')
+    expect(typeof ipcHandlers['menu:set-file-locked']).toBe('function')
     expect(typeof ipcHandlers['app:set-language']).toBe('function')
   })
 
@@ -173,20 +175,50 @@ describe('native menu', () => {
     expect(menuItems['print']?.enabled).toBe(true)
   })
 
-  it('disables print while printing', () => {
+  // File > New File… writes a real file into the OPEN FOLDER; on the welcome screen there is
+  // nowhere to write, so the native item must be greyed out (not merely hidden).
+  it('keeps New File… disabled until the renderer reports an active folder', () => {
     menu.setupMenu()
     menu.registerMenuHandlers()
-    ipcHandlers['menu:set-has-document'](null, true)
-    ipcHandlers['menu:set-printing'](null, true)
-    expect(menuItems['print']?.enabled).toBe(false)
+    expect(menuItems['new-file']?.enabled).toBe(false)
+    ipcHandlers['menu:set-has-folder'](null, true)
+    expect(menuItems['new-file']?.enabled).toBe(true)
+    ipcHandlers['menu:set-has-folder'](null, false)
+    expect(menuItems['new-file']?.enabled).toBe(false)
   })
 
-  it('keeps print enabled when not printing and a doc is open', () => {
+  // At most one unsaved draft: the renderer reports draft presence so the native File > New Draft
+  // item greys out with the toolbar button. A disabled item also stops its ⌘N accelerator, so the
+  // menu can no longer invite a second draft.
+  it('disables New Draft while the renderer reports an existing draft', () => {
+    menu.setupMenu()
+    menu.registerMenuHandlers()
+    expect(menuItems['new-draft']?.enabled).toBe(true)
+    ipcHandlers['menu:set-has-draft'](null, true)
+    expect(menuItems['new-draft']?.enabled).toBe(false)
+    ipcHandlers['menu:set-has-draft'](null, false)
+    expect(menuItems['new-draft']?.enabled).toBe(true)
+  })
+
+  // The renderer sends ONE capability boolean (`fileLocked`) that covers printing, exporting and the
+  // export dialog being open; the native menu no longer needs to know which trigger is active.
+  it('disables document actions while fileLocked', () => {
     menu.setupMenu()
     menu.registerMenuHandlers()
     ipcHandlers['menu:set-has-document'](null, true)
-    ipcHandlers['menu:set-printing'](null, false)
+    ipcHandlers['menu:set-file-locked'](null, true)
+    expect(menuItems['print']?.enabled).toBe(false)
+    expect(menuItems['save']?.enabled).toBe(false)
+    expect(menuItems['export-html']?.enabled).toBe(false)
+  })
+
+  it('keeps document actions enabled when not fileLocked and a doc is open', () => {
+    menu.setupMenu()
+    menu.registerMenuHandlers()
+    ipcHandlers['menu:set-has-document'](null, true)
+    ipcHandlers['menu:set-file-locked'](null, false)
     expect(menuItems['print']?.enabled).toBe(true)
+    expect(menuItems['save']?.enabled).toBe(true)
   })
 
   it('invokes every menu command click without throwing', () => {
