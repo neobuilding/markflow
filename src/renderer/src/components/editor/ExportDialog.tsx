@@ -227,10 +227,13 @@ export function ExportDialog(): React.ReactElement {
   // parallel-load jank a geometry assertion can catch the stale (previous-test) position and report a
   // teleport (export-dialog R4 teleport flake). This MUST run before paint, so it is a layout effect
   // and cannot share the deferred setTimeout used by the other open-state resets below.
+  // `doc` is deliberately NOT a dependency: a background document-detail refresh must not
+  // re-center a dialog the user has already moved or resized. Keep the effect dependency on the
+  // primitive `open`; the target-path effect below still tracks `doc`, which is what it needs.
   useLayoutEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- single, converging reset that must precede paint
     if (open) setRect(null)
-  }, [open, doc])
+  }, [open])
 
   // Reset the remaining open-state (theme / embed / error / target) via setTimeout so the setStates are
   // not synchronous within the effect body (avoids cascading re-renders; satisfies

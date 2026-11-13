@@ -3,6 +3,8 @@
 //
 // One app launch for the whole file; each scenario keeps its own labelled step. Every step closes
 // its modal before the next, and the dark-theme step runs LAST so it cannot tint the light one.
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { VIEWPORTS } from '../helpers/viewports'
@@ -256,45 +258,118 @@ test.describe('export dialog', () => {
     const surface = dialog
     const header = dialog.getByTestId('export-dialog-header')
 
-    const before = (await surface.boundingBox())!
+    // Count pointer events so a failed geometry assertion can say WHICH link broke: no
+    // pointerdown, no pointermove, or no committed state. This file reuses ONE Electron page,
+    // so the listeners are always removed in `finally`.
+    await page.evaluate(() => {
+      const w = window as any
+      w.__r4Pointers = { down: 0, move: 0, up: 0 }
+      w.__r4Handlers = {
+        pointerdown: () => {
+          w.__r4Pointers.down += 1
+        },
+        pointermove: () => {
+          w.__r4Pointers.move += 1
+        },
+        pointerup: () => {
+          w.__r4Pointers.up += 1
+        },
+      }
+      for (const [name, handler] of Object.entries(w.__r4Handlers)) {
+        window.addEventListener(name, handler as EventListener, true)
+      }
+    })
 
-    // Drag the title bar up-left. Pointer capture keeps the move events flowing even outside the
-    // header, so the dialog should follow.
-    const hb = (await header.boundingBox())!
-    const sx = hb.x + hb.width / 2
-    const sy = hb.y + 10
-    await page.mouse.move(sx, sy)
-    await page.mouse.down()
-    await page.mouse.move(sx - 120, sy - 60, { steps: 6 })
-    await page.mouse.up()
+    try {
+      const before = (await surface.boundingBox())!
 
-    const moved = (await surface.boundingBox())!
-    // Delta-exact, not just "moved somewhere": a earlier version of this suite only asserted
-    // "less than", which the (0,0) teleport bug also satisfied — that is how it slipped through.
-    // Both axes clamp at the viewport edges (left/top), so the expected position is clamp-aware.
-    expect(Math.abs(moved.x - Math.max(0, before.x - 120))).toBeLessThanOrEqual(2)
-    expect(Math.abs(moved.y - Math.max(0, before.y - 60))).toBeLessThanOrEqual(2)
+      // Drag the title bar up-left. Pointer capture keeps the move events flowing even outside the
+      // header, so the dialog should follow.
+      const hb = (await header.boundingBox())!
+      const sx = hb.x + hb.width / 2
+      const sy = hb.y + 10
+      await page.mouse.move(sx, sy)
+      await page.mouse.down()
+      await page.mouse.move(sx - 120, sy - 60, { steps: 6 })
+      await page.mouse.up()
 
-    // Resize from the SE corner: grow both width and height.
-    const se = dialog.getByTestId('export-dialog-resize-se')
-    const sb = (await se.boundingBox())!
-    await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(sb.x + sb.width / 2 + 120, sb.y + sb.height / 2 + 90, { steps: 6 })
-    await page.mouse.up()
+      // A bare boundingBox() can still report the pre-drag layout while React has not committed
+      // the frozen geometry (the R4 teleport flake documented in ExportDialog.tsx). Wait for the
+      // inline geometry before reading either the moved box or the resize handle.
+      await expect.poll(async () => (await surface.getAttribute('style')) ?? '').toContain('left:')
 
-    const grown = (await surface.boundingBox())!
-    expect(grown.width).toBeGreaterThan(moved.width)
-    expect(grown.height).toBeGreaterThan(moved.height)
+      const moved = (await surface.boundingBox())!
+      // Delta-exact, not just "moved somewhere": a earlier version of this suite only asserted
+      // "less than", which the (0,0) teleport bug also satisfied — that is how it slipped through.
+      // Both axes clamp at the viewport edges (left/top), so the expected position is clamp-aware.
+      expect(Math.abs(moved.x - Math.max(0, before.x - 120))).toBeLessThanOrEqual(2)
+      expect(Math.abs(moved.y - Math.max(0, before.y - 60))).toBeLessThanOrEqual(2)
 
-    // All eight resize handles are present and focusable (keyboard parity).
-    for (const dir of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
-      const handleEl = dialog.getByTestId(`export-dialog-resize-${dir}`)
-      await expect(handleEl).toBeVisible()
-      await expect(handleEl).toHaveAttribute('role', 'separator')
+      // Resize from the SE corner: grow both width and height.
+      const se = dialog.getByTestId('export-dialog-resize-se')
+      const sb = (await se.boundingBox())!
+      await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(sb.x + sb.width / 2 + 120, sb.y + sb.height / 2 + 90, { steps: 6 })
+      await page.mouse.up()
+
+      // Auto-retrying assertions: a late React commit must not masquerade as a broken resize.
+      // On failure, attach the geometry and pointer counters so the next occurrence is diagnosable.
+      try {
+        await expect
+          .poll(async () => (await surface.boundingBox())?.width ?? 0)
+          .toBeGreaterThan(moved.width)
+        await expect
+          .poll(async () => (await surface.boundingBox())?.height ?? 0)
+          .toBeGreaterThan(moved.height)
+      } catch (error) {
+        const diagnostics = await page.evaluate(() => {
+          const w = window as any
+          const el = document.querySelector('[role="dialog"]')
+          return {
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            dialogStyle: el?.getAttribute('style') ?? null,
+            pointerCounts: w.__r4Pointers ?? null,
+          }
+        })
+        // `body` attachments live only in the result object; a `path` attachment is copied into
+        // test-results/attachments/, which CI uploads as an artifact.
+        const info = test.info()
+        const file = info.outputPath('export-dialog-geometry.json')
+        await mkdir(dirname(file), { recursive: true })
+        await writeFile(file, JSON.stringify(diagnostics, null, 2), 'utf-8')
+        await info.attach('export-dialog-geometry', {
+          path: file,
+          contentType: 'application/json',
+        })
+        throw error
+      }
+
+      // All eight resize handles are present and focusable (keyboard parity).
+      for (const dir of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
+        const handleEl = dialog.getByTestId(`export-dialog-resize-${dir}`)
+        await expect(handleEl).toBeVisible()
+        await expect(handleEl).toHaveAttribute('role', 'separator')
+      }
+
+      await closeDialog(page, dialog)
+    } finally {
+      await page.evaluate(() => {
+        const w = window as any
+        for (const [name, handler] of Object.entries(w.__r4Handlers ?? {})) {
+          window.removeEventListener(name, handler as EventListener, true)
+        }
+        delete w.__r4Handlers
+        delete w.__r4Pointers
+      })
+      // A failed assertion must not leave the modal open for the next case in this file.
+      if (await dialog.isVisible().catch(() => false)) {
+        await dialog
+          .getByText('Cancel')
+          .click({ timeout: 1000 })
+          .catch(() => {})
+      }
     }
-
-    await closeDialog(page, dialog)
   })
 
   // R4 teleport regression (user report 2026-11-12): a bare pointerdown on a resize edge used to

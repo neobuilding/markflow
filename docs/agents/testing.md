@@ -230,6 +230,40 @@ of: a failing case skips the rest of its group, and CI's `retries: 1` re-runs th
 first. Cross-file parallelism is unaffected — a full `--project=e2e-app` run with the default
 worker pool passes with the merged and unmerged specs interleaved.
 
+## Flaky e2e: retries, annotations and geometry assertions
+
+CI uses `retries: 1` (`playwright.config.ts`) and deliberately does NOT enable
+`failOnFlakyTests`: a transient failure that passes on retry stays a green job. Playwright's
+`github` reporter still writes a `::error` annotation for the failed attempt — it prints failure
+annotations when a test's outcome is `flaky` — and GitHub does not remove annotations when a retry
+succeeds. A green job with a red annotation is therefore expected, not a broken gate. Do not
+remove the `github` reporter to make the UI look clean; that deletes the failure detail.
+`dorny/test-reporter` and Codecov Test Analytics are where recurring flakes are tracked.
+
+`trace: 'retain-on-failure'` keeps the trace of the run that FAILED even when a later retry
+passes. `on-first-retry` recorded only the retry (usually the passing one) and discarded the only
+evidence of the original failure. No Vitest guard is written for this value, for two separate
+reasons: asserting that Playwright APPLIES `trace` restates the framework's own contract, and
+pinning the string we wrote into the config would only be a change detector — the value has no
+provenance outside this line (no decision record, no frozen baseline). These are "Assert the logic
+you wrote" and "Pin a value only when..." under Contract guards below. The reason we chose the
+value lives in the `playwright.config.ts` comment.
+
+**Geometry assertions must wait for the committed frame.** `locator.boundingBox()` reads the layout
+immediately; a React state update from a pointer drag may not have committed yet on a loaded CI
+runner. Assert the resulting state with `expect.poll(...)` and wait for the frozen inline geometry
+before reading a resize handle's box. Do not "fix" such a flake by shrinking the drag distance or
+switching to a wider viewport: the SE handle is only 16px, so a small drag never leaves it and the
+case stops exercising pointer capture — it would pass while the real interaction is broken.
+`ExportDialog.tsx` already records this as the R4 teleport flake.
+
+**Layer split.** State-only invariants belong in the unit layer: `ExportDialog.test.tsx` proves
+that a fresh document object with the same id does not re-center a dialog the user positioned. The
+e2e case owns only the real pointer path (drag, resize, keyboard parity). When its geometry
+assertions fail it attaches viewport size, the dialog's inline style and pointer-event counters as
+a JSON artifact, and removes its page-level listeners in `finally` because the spec reuses one
+Electron page across cases.
+
 ## Contract guards
 
 A _contract guard_ (see Glossary) follows four rules.

@@ -38,7 +38,11 @@ const buildExportParts = vi.fn(async (opts: { theme: 'light' | 'dark' }) => ({
 vi.mock('../../hooks/useDocuments', () => ({
   // Mirror the real hook: no active document means no data. This keeps the
   // "no document open" branch of the default-path effect reachable in tests.
-  useDocument: (id: string | null) => ({ data: id ? doc : undefined }),
+  // `__mockDocument` lets a case supply a DIFFERENT document object without changing the
+  // active id, so the geometry-reset scope can be exercised with a fresh reference.
+  useDocument: (id: string | null) => ({
+    data: id ? ((globalThis as any).__mockDocument ?? doc) : undefined,
+  }),
 }))
 vi.mock('../../lib/export', () => ({
   exportDocument: (...a: unknown[]) => (globalThis as any).__exportDocument(...a),
@@ -67,6 +71,7 @@ beforeEach(() => {
   // C20 add ⑦: the export cache's readiness is mirrored in the store; the "ready" case is the
   // default for the existing assertions (the not-ready path has its own test below).
   useUIStore.getState().setExportReady(true)
+  ;(globalThis as any).__mockDocument = doc
   ;(window as unknown as { api: unknown }).api = {
     dialog: { saveHtmlFile: vi.fn(async () => '/out.html') },
     documents: {
@@ -79,7 +84,10 @@ beforeEach(() => {
   getExportHtml.mockReturnValue('<h1>hi</h1>')
 })
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  delete (globalThis as any).__mockDocument
+})
 
 describe('ExportDialog', () => {
   it('renders nothing when closed', () => {
@@ -585,6 +593,30 @@ describe('ExportDialog — keyboard window operations (R4)', () => {
       true,
     )
     expect(dialog.style.height).toBe(heightBefore)
+  })
+})
+
+// The geometry reset belongs to OPENING the dialog, not to every document-detail refresh: a
+// fresh `doc` object with the same id must not re-center a window the user positioned.
+describe('ExportDialog — geometry reset scope (R4)', () => {
+  it('keeps a positioned dialog in place when the document details change', async () => {
+    useUIStore.getState().setExportOpen(true)
+    const { rerender } = render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    const dialog = screen.getByRole('dialog')
+    stubDialogBox(dialog)
+
+    // Positive assertion: the geometry is really frozen, not merely "not reset".
+    fireEvent.keyDown(screen.getByTestId('export-dialog-header'), { key: 'ArrowLeft' })
+    expect(dialog.style.left).toBe('84px')
+    expect(dialog.style.width).toBe('672px')
+
+    // Same active id, NEW object: exactly what a background detail refresh produces.
+    ;(globalThis as any).__mockDocument = { ...doc, title: 'Renamed' }
+    rerender(<ExportDialog />)
+
+    expect(screen.getByRole('dialog').style.left).toBe('84px')
+    expect(screen.getByRole('dialog').style.width).toBe('672px')
   })
 })
 

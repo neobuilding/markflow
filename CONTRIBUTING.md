@@ -252,10 +252,11 @@ and `release/markflow-<version>-win.zip` for distribution.
 > dir "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
 > ```
 >
-> Note: if you have set the `CSC_CACHE` environment variable, or specified a custom
-> `cache`/`winCodeSign` path in the `electron-builder` config, the cache location is
-> overridden. To force a re-download, delete the corresponding version folder under
-> that directory; the next `npm run dist:win` will fetch it again.
+> Note: `scripts/prepare-win-codesign.ps1` builds this path from `%LOCALAPPDATA%` and skips its
+> work when the `.win-only-extracted` marker exists in the version folder. To force a
+> re-download, delete that folder (or just the marker); the next `npm run dist:win` will fetch it
+> again. electron-builder honours `ELECTRON_BUILDER_CACHE` for its own cache root, so keep the two
+> locations aligned if you override it.
 
 ## Submitting Changes
 

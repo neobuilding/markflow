@@ -60,7 +60,11 @@ export default defineConfig<ClipboardOptions>({
   globalSetup: join(dirname(fileURLToPath(import.meta.url)), 'e2e', 'global-setup.ts'),
 
   use: {
-    trace: 'on-first-retry',
+    // Keep the trace of the run that FAILED, not just the retry. `on-first-retry` recorded the
+    // retry (which usually passes) and discarded the only evidence of the original failure —
+    // exactly what a flaky e2e leaves behind. `retain-on-failure` keeps a failed run's trace
+    // even when a later retry passes, and produces no extra artifact on a green run.
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },
