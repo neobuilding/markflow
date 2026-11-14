@@ -264,6 +264,53 @@ assertions fail it attaches viewport size, the dialog's inline style and pointer
 a JSON artifact, and removes its page-level listeners in `finally` because the spec reuses one
 Electron page across cases.
 
+### Export dialog geometry: one token set, two layers (R4)
+
+The unpositioned export dialog's size tokens (`92vw` / `1120px`, `88vh` / `960px`) live in ONE
+module, `src/renderer/src/lib/exportDialogGeometry.ts`. Both the inline CSS values and
+`defaultDialogRect()` — the pure function `ensureRect()` falls back to when
+`getBoundingClientRect()` reports a zero-sized box — are derived from it, so the CSS and the frozen
+rect cannot drift apart (ADR-0024 §1.5). Keeping the tokens out of the component file also leaves
+that file exporting only a component (`react-refresh/only-export-components`, a hard lint gate).
+Freezing that zero-sized reading verbatim pinned the dialog to `(0,0)`; the next `pointermove` then
+clamped it to `MIN_W × MIN_H` at the top-left corner. A `requestAnimationFrame` re-measure was
+rejected: the CSS geometry is already known from the tokens, so retrying would only restore the
+timing dependence. That rejection is recorded in the production comment.
+
+Layer split, following "Choosing the test layer" above:
+
+- **Unit** — the pure token→rect mapping at standard / capped / narrow viewports, the rendered CSS
+  values, the zero-box fallback (jsdom's zero rect is the REAL input, not a stubbed answer), and
+  the `pointermove` clamp that must keep the centred rect instead of `MIN_W × MIN_H` at `(0,0)`.
+- **E2E** — only real pointer paths: a bare edge click, a west drag, and reopening after a move.
+  Both sides of a comparison wait for the committed frame (`waitForCentredGeometry` /
+  `waitForFrozenGeometry`, which poll the inline style), so an early `boundingBox()` cannot
+  masquerade as a teleport. Failure artifacts carry viewport, inline style, computed box and
+  pointer-event counters; listeners are removed in `finally`. A style-only poll is necessary but
+  NOT sufficient: a multi-step drag can still have `pointermove` events queued when `left:` first
+  appears, so any box reused as a later baseline is polled until it reaches the expected position.
+  Measured 2026-11-15: a stale `(0,0)` baseline while the dialog had already been clamped to
+  `(81.93, 92.17)` made the SE resize look broken; repeating the case 3× was green, which is why
+  the baseline — not the resize — was hardened.
+
+  A second, independent trap is the **assertion shape**. Chromium can coalesce the intermediate
+  mousemoves of `page.mouse.move(..., { steps: N })` under load: on 2026-11-15 a `-30px` drag
+  delivered only `+15px`, while the spec waited on `width > clicked.width + 20` and then asserted
+  exactly `+30`. The number `962.0729141235352` was a sub-pixel CSS reading plus an arbitrary
+  margin — a change detector with no business meaning that times out for 10s on a partially
+  delivered drag. Geometry assertions must state the INVARIANT with an integer tolerance ("the
+  dialog grew while its right edge stayed pinned"), never an exact delivered delta and never a
+  raw floating-point box compared with `>`. Mutation evidence: forcing a 15px delivery turned the
+  old assertion RED with the exact reported numbers and the new one GREEN.
+
+Mutation evidence (measured, not inferred): replacing the zero-size guard with a plain `b` turns
+`ExportDialog — unmeasurable geometry` RED in both cases (`expected +0 to be close to 942.08`,
+`expected +0 to be close to 40.96`); restoring the guard turns the suite GREEN. The natural trigger
+under a 6-worker full run was NOT captured directly — a zero box is inferred from the exact
+`dx=40.96px` symptom reproduced by injection — so the failure-time artifact above is deliberate:
+the next occurrence records the inline rect that proves or disproves the inference. A flaky e2e is
+evidence; keep the reproduction rate high before downgrading the case.
+
 ## Contract guards
 
 A _contract guard_ (see Glossary) follows four rules.

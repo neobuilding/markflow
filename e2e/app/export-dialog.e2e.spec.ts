@@ -5,7 +5,7 @@
 // its modal before the next, and the dark-theme step runs LAST so it cannot tint the light one.
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { test, expect, type Locator, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { VIEWPORTS } from '../helpers/viewports'
 
@@ -102,6 +102,90 @@ async function closeDialog(page: Page, dialog: Locator) {
   await expect(dialog).toBeHidden()
   // The next scenario starts from the app's default light theme / ready state.
   await page.evaluate(() => (window as any).__uiStore.getState().setExportReady(true))
+}
+
+/**
+ * Capture pointer events so a failed geometry assertion can say WHICH link broke: no pointerdown,
+ * no pointermove, or no committed state. This file reuses ONE Electron page, so every caller MUST
+ * pair this with clearPointerCounters() in `finally`.
+ */
+async function installPointerCounters(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as any
+    w.__r4Pointers = { down: 0, move: 0, up: 0 }
+    w.__r4Handlers = {
+      pointerdown: () => {
+        w.__r4Pointers.down += 1
+      },
+      pointermove: () => {
+        w.__r4Pointers.move += 1
+      },
+      pointerup: () => {
+        w.__r4Pointers.up += 1
+      },
+    }
+    for (const [name, handler] of Object.entries(w.__r4Handlers)) {
+      window.addEventListener(name, handler as EventListener, true)
+    }
+  })
+}
+
+async function clearPointerCounters(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as any
+    for (const [name, handler] of Object.entries(w.__r4Handlers ?? {})) {
+      window.removeEventListener(name, handler as EventListener, true)
+    }
+    delete w.__r4Handlers
+    delete w.__r4Pointers
+  })
+}
+
+/**
+ * The geometry evidence required by docs/agents/testing.md ("Layer split"): viewport, inline
+ * style, computed box and pointer-event counters. A `path` attachment is copied into
+ * test-results/attachments/, which CI uploads as an artifact.
+ */
+async function attachGeometryDiagnostics(
+  page: Page,
+  info: TestInfo,
+  label: string,
+  extra: Record<string, unknown>,
+): Promise<void> {
+  const diagnostics = await page.evaluate(() => {
+    const w = window as any
+    const el = document.querySelector('[role="dialog"]')
+    const cs = el ? getComputedStyle(el) : null
+    return {
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      dialogStyle: el?.getAttribute('style') ?? null,
+      computed: cs
+        ? {
+            left: cs.left,
+            top: cs.top,
+            width: cs.width,
+            height: cs.height,
+            translate: cs.translate,
+            transform: cs.transform,
+          }
+        : null,
+      pointerCounts: w.__r4Pointers ?? null,
+    }
+  })
+  const file = info.outputPath(`${label}-geometry.json`)
+  await mkdir(dirname(file), { recursive: true })
+  await writeFile(file, JSON.stringify({ ...extra, diagnostics }, null, 2), 'utf-8')
+  await info.attach(`${label}-geometry`, { path: file, contentType: 'application/json' })
+}
+
+/** A geometry comparison may only read a box AFTER the frame that committed it. */
+async function waitForFrozenGeometry(dialog: Locator): Promise<void> {
+  await expect.poll(async () => (await dialog.getAttribute('style')) ?? '').toContain('left:')
+}
+
+/** The open-state reset must have landed: no inline `left:` means a stale rect is not painted. */
+async function waitForCentredGeometry(dialog: Locator): Promise<void> {
+  await expect.poll(async () => (await dialog.getAttribute('style')) ?? '').not.toContain('left:')
 }
 
 test.describe('export dialog', () => {
@@ -258,27 +342,8 @@ test.describe('export dialog', () => {
     const surface = dialog
     const header = dialog.getByTestId('export-dialog-header')
 
-    // Count pointer events so a failed geometry assertion can say WHICH link broke: no
-    // pointerdown, no pointermove, or no committed state. This file reuses ONE Electron page,
-    // so the listeners are always removed in `finally`.
-    await page.evaluate(() => {
-      const w = window as any
-      w.__r4Pointers = { down: 0, move: 0, up: 0 }
-      w.__r4Handlers = {
-        pointerdown: () => {
-          w.__r4Pointers.down += 1
-        },
-        pointermove: () => {
-          w.__r4Pointers.move += 1
-        },
-        pointerup: () => {
-          w.__r4Pointers.up += 1
-        },
-      }
-      for (const [name, handler] of Object.entries(w.__r4Handlers)) {
-        window.addEventListener(name, handler as EventListener, true)
-      }
-    })
+    // Count pointer events for the failure artifact below; cleared in `finally`.
+    await installPointerCounters(page)
 
     try {
       const before = (await surface.boundingBox())!
@@ -293,17 +358,26 @@ test.describe('export dialog', () => {
       await page.mouse.move(sx - 120, sy - 60, { steps: 6 })
       await page.mouse.up()
 
-      // A bare boundingBox() can still report the pre-drag layout while React has not committed
-      // the frozen geometry (the R4 teleport flake documented in ExportDialog.tsx). Wait for the
-      // inline geometry before reading either the moved box or the resize handle.
-      await expect.poll(async () => (await surface.getAttribute('style')) ?? '').toContain('left:')
+      // Wait for the inline geometry AND for the committed position. The six pointermove steps
+      // can still be queued when `left:` first appears; a mid-drag `moved` box makes every later
+      // delta assertion compare against the wrong baseline (measured: a stale (0,0) box while the
+      // dialog had already been clamped to (81.93, 92.17), so the SE resize looked broken).
+      await waitForFrozenGeometry(surface)
+      const expectedX = Math.max(0, before.x - 120)
+      const expectedY = Math.max(0, before.y - 60)
+      await expect
+        .poll(async () => Math.abs(((await surface.boundingBox())?.x ?? -1e6) - expectedX))
+        .toBeLessThanOrEqual(2)
+      await expect
+        .poll(async () => Math.abs(((await surface.boundingBox())?.y ?? -1e6) - expectedY))
+        .toBeLessThanOrEqual(2)
 
       const moved = (await surface.boundingBox())!
       // Delta-exact, not just "moved somewhere": a earlier version of this suite only asserted
       // "less than", which the (0,0) teleport bug also satisfied — that is how it slipped through.
       // Both axes clamp at the viewport edges (left/top), so the expected position is clamp-aware.
-      expect(Math.abs(moved.x - Math.max(0, before.x - 120))).toBeLessThanOrEqual(2)
-      expect(Math.abs(moved.y - Math.max(0, before.y - 60))).toBeLessThanOrEqual(2)
+      expect(Math.abs(moved.x - expectedX)).toBeLessThanOrEqual(2)
+      expect(Math.abs(moved.y - expectedY)).toBeLessThanOrEqual(2)
 
       // Resize from the SE corner: grow both width and height.
       const se = dialog.getByTestId('export-dialog-resize-se')
@@ -316,32 +390,16 @@ test.describe('export dialog', () => {
       // Auto-retrying assertions: a late React commit must not masquerade as a broken resize.
       // On failure, attach the geometry and pointer counters so the next occurrence is diagnosable.
       try {
+        // Integer deltas, not raw sub-pixel boxes: the assertion is "the SE corner grew the
+        // dialog", never "it exceeded a floating-point baseline by an unspecified fraction".
         await expect
-          .poll(async () => (await surface.boundingBox())?.width ?? 0)
-          .toBeGreaterThan(moved.width)
+          .poll(async () => Math.round(((await surface.boundingBox())?.width ?? 0) - moved.width))
+          .toBeGreaterThan(0)
         await expect
-          .poll(async () => (await surface.boundingBox())?.height ?? 0)
-          .toBeGreaterThan(moved.height)
+          .poll(async () => Math.round(((await surface.boundingBox())?.height ?? 0) - moved.height))
+          .toBeGreaterThan(0)
       } catch (error) {
-        const diagnostics = await page.evaluate(() => {
-          const w = window as any
-          const el = document.querySelector('[role="dialog"]')
-          return {
-            viewport: { width: window.innerWidth, height: window.innerHeight },
-            dialogStyle: el?.getAttribute('style') ?? null,
-            pointerCounts: w.__r4Pointers ?? null,
-          }
-        })
-        // `body` attachments live only in the result object; a `path` attachment is copied into
-        // test-results/attachments/, which CI uploads as an artifact.
-        const info = test.info()
-        const file = info.outputPath('export-dialog-geometry.json')
-        await mkdir(dirname(file), { recursive: true })
-        await writeFile(file, JSON.stringify(diagnostics, null, 2), 'utf-8')
-        await info.attach('export-dialog-geometry', {
-          path: file,
-          contentType: 'application/json',
-        })
+        await attachGeometryDiagnostics(page, test.info(), 'export-dialog', { moved })
         throw error
       }
 
@@ -354,14 +412,7 @@ test.describe('export dialog', () => {
 
       await closeDialog(page, dialog)
     } finally {
-      await page.evaluate(() => {
-        const w = window as any
-        for (const [name, handler] of Object.entries(w.__r4Handlers ?? {})) {
-          window.removeEventListener(name, handler as EventListener, true)
-        }
-        delete w.__r4Handlers
-        delete w.__r4Pointers
-      })
+      await clearPointerCounters(page)
       // A failed assertion must not leave the modal open for the next case in this file.
       if (await dialog.isVisible().catch(() => false)) {
         await dialog
@@ -383,37 +434,131 @@ test.describe('export dialog', () => {
     const { page } = handle
     await waitForAppReady(page)
     const { dialog } = await openExportPreview(page)
-    const before = (await dialog.boundingBox())!
+    await installPointerCounters(page)
+    try {
+      // Wait for the open-state reset FIRST: no inline `left:` means the dialog is back on the
+      // CSS-centred geometry, so an early boundingBox() cannot turn a stale rect into a fake
+      // teleport (docs/agents/testing.md, "geometry assertions must wait for the committed frame").
+      await waitForCentredGeometry(dialog)
+      const before = (await dialog.boundingBox())!
 
-    // 1) Bare click (down+up, no movement) on the west edge.
-    const edge = dialog.getByTestId('export-dialog-resize-w')
-    const eb = (await edge.boundingBox())!
-    const cx = eb.x + eb.width / 2
-    const cy = eb.y + eb.height / 2
-    await page.mouse.move(cx, cy)
-    await page.mouse.down()
-    await page.mouse.up()
-    await page.evaluate(
-      () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
-    )
-    const clicked = (await dialog.boundingBox())!
-    expect(Math.abs(clicked.x - before.x), 'bare edge click must not move x').toBeLessThanOrEqual(2)
-    expect(Math.abs(clicked.y - before.y), 'bare edge click must not move y').toBeLessThanOrEqual(2)
-    expect(
-      Math.abs(clicked.width - before.width),
-      'bare edge click must not resize',
-    ).toBeLessThanOrEqual(2)
+      // 1) Bare click (down+up, no movement) on the west edge.
+      const edge = dialog.getByTestId('export-dialog-resize-w')
+      const eb = (await edge.boundingBox())!
+      const cx = eb.x + eb.width / 2
+      const cy = eb.y + eb.height / 2
+      await page.mouse.move(cx, cy)
+      await page.mouse.down()
+      await page.mouse.up()
+      await waitForFrozenGeometry(dialog)
+      const clicked = (await dialog.boundingBox())!
+      try {
+        expect(
+          Math.abs(clicked.x - before.x),
+          'bare edge click must not move x',
+        ).toBeLessThanOrEqual(2)
+        expect(
+          Math.abs(clicked.y - before.y),
+          'bare edge click must not move y',
+        ).toBeLessThanOrEqual(2)
+        expect(
+          Math.abs(clicked.width - before.width),
+          'bare edge click must not resize',
+        ).toBeLessThanOrEqual(2)
+      } catch (error) {
+        // The inline rect says whether ensureRect() froze the real box or a zero-sized one.
+        await attachGeometryDiagnostics(page, test.info(), 'export-dialog-teleport', {
+          before,
+          clicked,
+        })
+        throw error
+      }
 
-    // 2) A real west drag: grows leftward, right edge pinned.
-    await page.mouse.move(cx, cy)
-    await page.mouse.down()
-    await page.mouse.move(cx - 30, cy, { steps: 4 })
-    await page.mouse.up()
-    const grown = (await dialog.boundingBox())!
-    expect(grown.width).toBeCloseTo(clicked.width + 30, 0)
-    expect(grown.x + grown.width).toBeCloseTo(clicked.x + clicked.width, 0)
+      // 2) A real west drag: grows leftward, right edge pinned.
+      await page.mouse.move(cx, cy)
+      await page.mouse.down()
+      await page.mouse.move(cx - 30, cy, { steps: 4 })
+      await page.mouse.up()
+      // Chromium can coalesce the intermediate mousemoves of a multi-step drag under load, so the
+      // delivered delta need NOT be the full 30px (measured 2026-11-15: a -30px drag committed
+      // only +15px). Assert the INVARIANT with an integer tolerance — never an exact delta, and
+      // never a sub-pixel floating-point baseline plus a magic margin like `clicked.width + 20`.
+      try {
+        await expect
+          .poll(async () => {
+            const b = await dialog.boundingBox()
+            return b ? Math.round(b.width - clicked.width) : 0
+          })
+          .toBeGreaterThan(0)
+      } catch (error) {
+        await attachGeometryDiagnostics(page, test.info(), 'export-dialog-west-drag', { clicked })
+        throw error
+      }
+      const grown = (await dialog.boundingBox())!
+      expect(grown.width, 'west drag grows the dialog').toBeGreaterThan(clicked.width)
+      expect(grown.x + grown.width, 'the right edge stays pinned').toBeCloseTo(
+        clicked.x + clicked.width,
+        0,
+      )
 
-    await closeDialog(page, dialog)
+      await closeDialog(page, dialog)
+    } finally {
+      await clearPointerCounters(page)
+      // A failed assertion must not leave the modal open for the next case in this file.
+      const openDialog = page.getByRole('dialog')
+      if (await openDialog.isVisible().catch(() => false)) {
+        await openDialog
+          .getByText('Cancel')
+          .click({ timeout: 1000 })
+          .catch(() => {})
+      }
+    }
+  })
+
+  // Reopening must reset the geometry (useLayoutEffect on `open`): a stale rect from the previous
+  // open would be painted and make a bare edge click report a teleport. This is a REAL pointer
+  // path, so it belongs in e2e; the zero-box fallback itself is locked in the unit layer.
+  test('reopening the dialog after a move re-centers it before a bare edge click (R4)', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+    try {
+      const { dialog } = await openExportPreview(page)
+      const hb = (await dialog.getByTestId('export-dialog-header').boundingBox())!
+      const sx = hb.x + hb.width / 2
+      const sy = hb.y + 10
+      await page.mouse.move(sx, sy)
+      await page.mouse.down()
+      await page.mouse.move(sx + 60, sy + 20, { steps: 4 })
+      await page.mouse.up()
+      await waitForFrozenGeometry(dialog)
+      await closeDialog(page, dialog)
+
+      const { dialog: reopened } = await openExportPreview(page)
+      await waitForCentredGeometry(reopened)
+      const before = (await reopened.boundingBox())!
+      const eb = (await reopened.getByTestId('export-dialog-resize-w').boundingBox())!
+      await page.mouse.move(eb.x + eb.width / 2, eb.y + eb.height / 2)
+      await page.mouse.down()
+      await page.mouse.up()
+      await waitForFrozenGeometry(reopened)
+      const after = (await reopened.boundingBox())!
+      expect(Math.abs(after.x - before.x), 'reopened dialog must not teleport').toBeLessThanOrEqual(
+        2,
+      )
+      expect(
+        Math.abs(after.width - before.width),
+        'reopened dialog must not resize',
+      ).toBeLessThanOrEqual(2)
+      await closeDialog(page, reopened)
+    } finally {
+      const openDialog = page.getByRole('dialog')
+      if (await openDialog.isVisible().catch(() => false)) {
+        await openDialog
+          .getByText('Cancel')
+          .click({ timeout: 1000 })
+          .catch(() => {})
+      }
+    }
   })
 
   // R4 bounds regression (user report 2026-11-12): the dialog used to overflow the app window on

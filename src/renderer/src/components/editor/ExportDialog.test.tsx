@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react'
 import { ExportDialog } from './ExportDialog'
+import { DIALOG_DEFAULT_CSS, defaultDialogRect } from '../../lib/exportDialogGeometry'
 import { useUIStore } from '../../store/ui'
 import type { Document } from '../../types'
 
@@ -620,6 +621,31 @@ describe('ExportDialog — geometry reset scope (R4)', () => {
   })
 })
 
+// The token→rect mapping is pure arithmetic, so it belongs at the BOTTOM of the test pyramid:
+// no Electron launch, no stubbed geometry. The cases include both caps and the narrow window floor.
+describe('defaultDialogRect (R4 geometry tokens)', () => {
+  it('derives the inline CSS from the same tokens as the rect function', () => {
+    // Provenance: user report 2026-11-13 and ADR-0024 §1.5's single-token rule. If the CSS half
+    // drifts from the arithmetic half, this guard and the rendered-style assertion below go red.
+    expect(DIALOG_DEFAULT_CSS.width).toBe('min(92vw, 1120px)')
+    expect(DIALOG_DEFAULT_CSS.height).toBe('min(88vh, 960px)')
+  })
+
+  it.each([
+    { name: 'standard', vw: 1024, vh: 768, x: 40.96, y: 46.08, w: 942.08, h: 675.84 },
+    { name: 'wide caps', vw: 2560, vh: 1440, x: 720, y: 240, w: 1120, h: 960 },
+    { name: 'narrow', vw: 800, vh: 600, x: 32, y: 36, w: 736, h: 528 },
+  ])('$name: $vw x $vh centres the capped size inside the viewport', ({ vw, vh, x, y, w, h }) => {
+    const r = defaultDialogRect(vw, vh)
+    expect(r.x).toBeCloseTo(x, 2)
+    expect(r.y).toBeCloseTo(y, 2)
+    expect(r.w).toBeCloseTo(w, 2)
+    expect(r.h).toBeCloseTo(h, 2)
+    expect(r.x + r.w, 'right edge stays inside').toBeLessThanOrEqual(vw)
+    expect(r.y + r.h, 'bottom edge stays inside').toBeLessThanOrEqual(vh)
+  })
+})
+
 // User report 2026-11-13 ("opened edge-to-edge…centered with margins"): the dialog owns a capped,
 // viewport-relative height and the base slide-up animation is cancelled in BOTH states. Cancelling
 // it only before the first drag let `animate-slide-up` restart once `rect` was frozen, teleporting
@@ -630,15 +656,78 @@ describe('ExportDialog — centred geometry (R4 follow-up)', () => {
     render(<ExportDialog />)
     await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
     const dialog = screen.getByRole('dialog')
-    expect(dialog.className, 'the default height is viewport-relative and capped').toContain(
-      'h-[88vh]',
+    // These values have provenance outside this test (user report 2026-11-13 and ADR-0024 §1.5's
+    // single-token rule), so pinning the rendered CSS detects a drift between the inline CSS and
+    // the pure rect function locked below.
+    expect(dialog.style.width, 'the default width is viewport-relative and capped').toBe(
+      'min(92vw, 1120px)',
     )
-    expect(dialog.className, 'the height ceiling for large windows').toContain('max-h-[960px]')
+    expect(dialog.style.height, 'the default height is viewport-relative and capped').toBe(
+      'min(88vh, 960px)',
+    )
     expect(dialog.style.animation).toBe('none')
 
     stubDialogBox(dialog)
     fireEvent.keyDown(screen.getByTestId('export-dialog-header'), { key: 'ArrowRight' })
     expect(dialog.style.left).toBe('116px')
     expect(dialog.style.animation, 'the animation must not restart after a drag').toBe('none')
+  })
+})
+
+// A zero-sized getBoundingClientRect() (a detached content node, styles not applied yet, or
+// parallel-load jank) used to be frozen verbatim: the dialog collapsed to (0,0) with zero width,
+// and the next pointermove clamped it to MIN_W x MIN_H at the top-left corner. Freezing the
+// geometry must stay a visual no-op even when the box cannot be measured.
+describe('ExportDialog — unmeasurable geometry (R4 teleport)', () => {
+  // Pinned CSS geometry at jsdom's 1024x768 viewport (see the pure token→rect table above). These
+  // are NOT a restatement of defaultDialogRect(), so reverting the fallback to the verbatim zero
+  // rect turns both cases RED.
+  const CENTRED = { x: 40.96, y: 46.08, w: 942.08, h: 675.84 }
+
+  async function openUnmeasurableDialog(): Promise<HTMLElement> {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    expect(window.innerWidth, 'the pinned geometry assumes jsdom 1024x768').toBe(1024)
+    expect(window.innerHeight).toBe(768)
+    return screen.getByRole('dialog')
+  }
+
+  it('freezes the CSS-centred geometry instead of a zero rect', async () => {
+    const dialog = await openUnmeasurableDialog()
+    // jsdom performs no layout, so every element reports a zero rect — exactly the reading that
+    // made the e2e bare-edge click teleport the dialog by 40.96px.
+    fireEvent.pointerDown(screen.getByTestId('export-dialog-resize-w'))
+
+    expect(parseFloat(dialog.style.width), 'the frozen width is the CSS width').toBeCloseTo(
+      CENTRED.w,
+      1,
+    )
+    expect(parseFloat(dialog.style.height), 'the frozen height is the CSS height').toBeCloseTo(
+      CENTRED.h,
+      1,
+    )
+    expect(parseFloat(dialog.style.left), 'the frozen left edge stays centred').toBeCloseTo(
+      CENTRED.x,
+      1,
+    )
+    expect(parseFloat(dialog.style.top), 'the frozen top edge stays centred').toBeCloseTo(
+      CENTRED.y,
+      1,
+    )
+  })
+
+  it('keeps the centred rect when a bare pointermove follows the unmeasurable box', async () => {
+    const dialog = await openUnmeasurableDialog()
+    const edge = screen.getByTestId('export-dialog-resize-w')
+    fireEvent.pointerDown(edge)
+    // dx=0. With the old zero rect, the MIN_W/MIN_H clamps pinned it to (0,0,480,420).
+    fireEvent.pointerMove(edge, { clientX: 0, clientY: 0 })
+
+    expect(parseFloat(dialog.style.left), 'left edge must not jump to 0').toBeCloseTo(CENTRED.x, 1)
+    expect(parseFloat(dialog.style.width), 'width must not collapse to MIN_W').toBeCloseTo(
+      CENTRED.w,
+      1,
+    )
   })
 })

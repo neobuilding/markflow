@@ -18,6 +18,11 @@ import {
 } from '../ui/context-menu'
 import { Copy } from 'lucide-react'
 import { useT } from '../../i18n'
+import {
+  DIALOG_DEFAULT_CSS,
+  defaultDialogRect,
+  type DialogRect,
+} from '../../lib/exportDialogGeometry'
 
 type ThemeChoice = 'current' | 'light' | 'dark'
 
@@ -70,7 +75,7 @@ export function ExportDialog(): React.ReactElement {
   // re-centers every time it opens. Until the first move/resize the dialog keeps Radix's default
   // centered layout (rect === null); the first interaction freezes its current geometry into `rect`.
   const contentRef = useRef<HTMLDivElement>(null)
-  const [rect, setRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [rect, setRect] = useState<DialogRect | null>(null)
   const dragRef = useRef<
     | { kind: 'move'; px: number; py: number; x: number; y: number; w: number; h: number }
     | {
@@ -92,21 +97,29 @@ export function ExportDialog(): React.ReactElement {
   // default size — so the resize path is floored above it too.
   const MIN_H = 420
 
-  const ensureRect = (): { x: number; y: number; w: number; h: number } => {
+  const ensureRect = (): DialogRect => {
     if (rect) return rect
     // Belt and braces: the frozen geometry must never exceed the viewport, or the subsequent
     // move/resize clamps (which bound against vw-x / vh-y) would inherit the overflow (R4).
     const vw = window.innerWidth
     const vh = window.innerHeight
     const b = contentRef.current?.getBoundingClientRect()
-    const next = b
-      ? {
-          x: Math.max(0, Math.min(b.left, vw - MIN_W)),
-          y: Math.max(0, Math.min(b.top, vh - MIN_H)),
-          w: Math.min(b.width, vw),
-          h: Math.min(b.height, vh),
-        }
-      : { x: vw / 2 - 336, y: vh / 2 - 240, w: 672, h: 480 }
+    // A zero-sized box means the content node was NOT measurable (detached node, styles not
+    // applied yet, or a throttled renderer under parallel e2e load). Freezing that reading
+    // verbatim pinned the dialog to (0,0) with zero width, and the next pointermove clamped it to
+    // MIN_W x MIN_H at the top-left corner — the R4 teleport regression (measured dx=40.96px).
+    // Rejected alternative: re-measure on the next animation frame. The CSS geometry is already
+    // known exactly from DIALOG_DEFAULT_GEOMETRY, so a retry would only restore the timing
+    // dependence; deriving the same rect is deterministic and is a visual no-op.
+    const next =
+      b && b.width > 0 && b.height > 0
+        ? {
+            x: Math.max(0, Math.min(b.left, vw - MIN_W)),
+            y: Math.max(0, Math.min(b.top, vh - MIN_H)),
+            w: Math.min(b.width, vw),
+            h: Math.min(b.height, vh),
+          }
+        : defaultDialogRect(vw, vh)
     setRect(next)
     return next
   }
@@ -350,15 +363,14 @@ export function ExportDialog(): React.ReactElement {
           // `!left-0`-style important utilities here: they would ALSO beat the inline coordinates
           // (important > inline) and pin the dialog to the top-left corner — measured 2026-11-12:
           // a bare pointerdown on any resize handle teleported the dialog to (0,0) (R4, user report).
-          // When NOT positioned, size the dialog viewport-relative so it auto-fills a comfortable
-          // share of the window with real margins (user report 2026-11-13, "felt too small…leave pleasing margins around it").
-          // Width: min(92vw, 1120px) — on a narrow window it hugs 92% width (~4% side margin each
-          // side); on a wide one it caps at 1120px so it never dwarfs the content. Height: 88vh
-          // capped at 960px, leaving ~6% breathing room top and bottom and never exceeding ~66% of a
-          // 1440px window. The base `left-1/2 top-1/2 -translate-x/y-1/2` centres it; the e2e geometry
-          // guard pins the numbers (height must stay below 89% of the window, top/bottom ≥ 6%).
-          // The base slide-up animation is cancelled by the inline style below.
-          'flex flex-col ' + (rect ? '' : 'w-[min(92vw,1120px)] max-w-none h-[88vh] max-h-[960px]')
+          // When NOT positioned, DIALOG_DEFAULT_CSS (below) sizes the dialog viewport-relative so
+          // it auto-fills a comfortable share of the window with real margins (user report
+          // 2026-11-13, "felt too small…leave pleasing margins around it"). Width min(92vw,1120px),
+          // height min(88vh,960px); the base `left-1/2 top-1/2 -translate-x/y-1/2` centres it and
+          // the e2e geometry guard still pins the numbers (height < 89% of the window, top/bottom
+          // ≥ 6%). Both values come from ONE token set shared with defaultDialogRect(); the base
+          // slide-up animation is cancelled by the inline style below.
+          'flex flex-col'
         }
         style={{
           // Cancel the base `animate-slide-up` in BOTH states. A plain `animate-none` utility does
@@ -383,7 +395,15 @@ export function ExportDialog(): React.ReactElement {
                 maxWidth: 'none',
                 maxHeight: 'none',
               }
-            : {}),
+            : {
+                // Derive the CSS from the SAME tokens as defaultDialogRect(). The base
+                // `w-full max-w-md` must not clamp the viewport-relative size. Tailwind arbitrary
+                // classes were removed because a second hand-maintained copy of every number
+                // drifts (ADR-0024 §1.5).
+                ...DIALOG_DEFAULT_CSS,
+                maxWidth: 'none',
+                maxHeight: 'none',
+              }),
         }}
       >
         <DialogHeader
