@@ -5,6 +5,10 @@
   "main": "dist/electron/index.js",
   "type": "module",
   "author": "MarkFlow Team",
+  "engines": {
+    "node": ">=22.22.2",
+    "npm": ">=9"
+  },
   "scripts": {
     "postinstall": "node scripts/install-eslint-ts6.mjs",
     "prepare": "husky",

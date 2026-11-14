@@ -121,7 +121,7 @@ jobs:
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-node@v7
-              with: { node-version: 22, cache: npm }
+              with: { node-version-file: .nvmrc, cache: npm }
             - run: npm ci
             - name: Run quality gate
               run: |
@@ -146,7 +146,7 @@ jobs:
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-node@v7
-              with: { node-version: 22, cache: npm }
+              with: { node-version-file: .nvmrc, cache: npm }
             - run: npm ci
             # The Create/Refresh PR Action under actions/create-pr/ is intentionally
             # self-contained: its runtime dep `@actions/core` lives ONLY in
@@ -244,7 +244,7 @@ jobs:
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-node@v7
-              with: { node-version: 22, cache: npm }
+              with: { node-version-file: .nvmrc, cache: npm }
             - run: npm ci
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
@@ -323,7 +323,7 @@ jobs:
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-node@v7
-              with: { node-version: 22, cache: npm }
+              with: { node-version-file: .nvmrc, cache: npm }
             - run: npm ci
             - name: Install Playwright browsers + OS deps
               run: npx playwright install --with-deps
@@ -417,7 +417,7 @@ jobs:
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-node@v7
-              with: { node-version: 22, cache: npm }
+              with: { node-version-file: .nvmrc, cache: npm }
 
             # Install Linux dependencies (missing ones cause the AppImage build to fail).
             - name: Install Linux dependencies
