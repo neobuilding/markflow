@@ -41,7 +41,7 @@
     "quality:fix": "npm run format && npm run lint:fix && npm run lint:css:fix && npm run lint:md:fix && npm run lint:secret && npm run typecheck",
     "dist": "npm run build && electron-builder",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/prepare-win-codesign.ps1 && npm run build && electron-builder --win",
+    "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux",
     "build:action": "npm --prefix actions/create-pr run build",
     "local-test-render": "node actions/create-pr/src/cli-render.mjs --head feature/my-branch",

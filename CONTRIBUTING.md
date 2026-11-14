@@ -228,43 +228,14 @@ npm run dist:linux    # Linux (.AppImage)
 The packaged application is written to `release/`: `release/win-unpacked/` for local runs
 and `release/markflow-<version>-win.zip` for distribution.
 
-> **Windows build note**: `npm run dist:win` automatically runs a pre-build script
-> (`scripts/prepare-win-codesign.ps1`) that downloads and extracts only the Windows
-> code-signing tools, skipping macOS symbolic links that fail on non-administrator
-> Windows accounts. No manual setup needed — just run `npm run dist:win` and it works.
->
-> If you encounter the error `Cannot create symbolic link`, either:
->
-> - Run the build again (the script should have pre-cached correctly), or
-> - Enable Windows **Developer Mode** (Settings → System → Developer options), or
-> - Run your terminal as Administrator.
->
-> **winCodeSign cache location**: if you see `[winCodeSign] Cache already prepared. Skipping.`
-> during a build, the code-signing tools are already cached. The default cache directory is:
->
-> ```
-> %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
-> ```
->
-> i.e. `C:\Users\<username>\AppData\Local\electron-builder\Cache\winCodeSign`, which
-> contains version folders named like `winCodeSign-2.x.x`.
->
-> To inspect or confirm the cache directory (cmd):
->
-> ```cmd
-> rem print the cache path
-> echo %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
-> rem list cached versions
-> dir "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
-> ```
->
-> Note: `scripts/prepare-win-codesign.ps1` builds this path from `%LOCALAPPDATA%` and skips its
-> work when the `.win-only-extracted` marker exists in the version folder. To force a
-> re-download, delete that folder (or just the marker); the next `npm run dist:win` will fetch it
-> again. The pre-build script does not read `ELECTRON_BUILDER_CACHE`: if you set it,
-> electron-builder looks for the tools elsewhere while the script still writes to
-> `%LOCALAPPDATA%`, so the prepared cache would be ignored. Leave it unset for `npm run dist:win`
-> (or update the script to use the same root).
+> **Windows build note**: `npm run dist:win` builds a portable `.zip` with no extra setup — it does
+> **not** download or use any code-signing toolset (the old `scripts/prepare-win-codesign.ps1`
+> pre-cache script was removed; electron-builder 26 never consumed it). The shipped `MarkFlow.exe`
+> is **unsigned** (`win.signExecutable: false`, see ADR-0037), so Windows SmartScreen / "unknown
+> publisher" may warn the first time you run it — click **More info → Run anyway**. Icons and version
+> info are applied via pure-JS `resedit`, independent of signing. To ship a trusted/signed exe,
+> remove `signExecutable: false` and supply a certificate (`win.certificateFile` + `CSC_KEY_PASSWORD`,
+> or `win.azureSignOptions` for Azure Trusted Signing).
 
 ## Submitting Changes
 

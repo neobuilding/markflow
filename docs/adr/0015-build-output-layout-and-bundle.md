@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Decided:** 2026-09-14
 - **Implemented:** 2026-09-14
+- **Related:** ADR-0037 (removed the Windows winCodeSign pre-cache script; see its `Amends`)
 
 ## Context
 

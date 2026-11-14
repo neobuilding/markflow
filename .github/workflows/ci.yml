@@ -465,8 +465,20 @@ jobs:
             - name: Package distribution
               run: |
                   echo "::group::npm run dist:${{ matrix.target }}"
-                  npm run dist:${{ matrix.target }}
+                  npm run dist:${{ matrix.target }} 2>&1 | tee "dist-${{ matrix.target }}.log"
                   echo "::endgroup::"
+
+            # ADR-0037: the Windows exe is shipped unsigned, so electron-builder must never
+            # attempt to download the winCodeSign toolset. Fail the build if it does.
+            - name: Assert no winCodeSign download (win)
+              if: matrix.target == 'win'
+              shell: bash
+              run: |
+                  if grep -q "downloading winCodeSign" "dist-win.log"; then
+                    echo "::error::electron-builder attempted to download winCodeSign — ADR-0037 regression"
+                    exit 1
+                  fi
+                  echo "::notice::No winCodeSign download observed (ADR-0037)."
 
             # Upload artifacts only on the release path (version non-empty); PRs only validate and do not upload (saves storage).
             # Only upload final release formats (dmg/zip/AppImage), excluding unpacked dirs and other intermediates

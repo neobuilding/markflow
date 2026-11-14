@@ -62,6 +62,12 @@
   },
   win: {
     executableName: 'MarkFlow',
+    // MarkFlow ships the Windows exe UNSIGNED — see ADR-0037. electron-builder 26 edits
+    // icon/version resources with pure-JS resedit (independent of signing), so disabling
+    // signing here only removes the otherwise-misleading system-signtool attempt; the
+    // prepare-win-codesign.ps1 pre-cache script was removed because electron-builder 26
+    // never consumed the toolset it extracted.
+    signExecutable: false,
     target: [
       {
         target: 'zip',

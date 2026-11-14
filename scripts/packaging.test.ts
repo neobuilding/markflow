@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 
 const CONFIG = readFileSync(join(process.cwd(), 'electron-builder.json5'), 'utf-8')
+const PACKAGE_JSON = readFileSync(join(process.cwd(), 'package.json'), 'utf-8')
 
 describe('electron-builder packaging config (ADR-0015)', () => {
   it('excludes node_modules from the packaged app', () => {
@@ -25,5 +26,16 @@ describe('electron-builder packaging config (ADR-0015)', () => {
     expect(CONFIG).toContain("'dist/electron/**/*'")
     expect(CONFIG).toContain("'dist/renderer/**/*'")
     expect(CONFIG).toContain("afterAllArtifactBuild: './scripts/after-all-artifact-build.mjs'")
+  })
+})
+
+describe('Windows packaging (ADR-0037)', () => {
+  it('does not reference the removed winCodeSign pre-cache script in dist:win', () => {
+    const distWin = JSON.parse(PACKAGE_JSON).scripts['dist:win']
+    expect(distWin).not.toContain('prepare-win-codesign.ps1')
+  })
+
+  it('explicitly opts out of signing the Windows exe', () => {
+    expect(CONFIG).toContain('signExecutable: false')
   })
 })

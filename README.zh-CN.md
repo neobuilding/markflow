@@ -84,32 +84,7 @@ npm run dist:linux    # Linux (.AppImage)
 
 打包产物输出到 `release/`。以 Windows 为例，本地运行使用 `release/win-unpacked/`，分发使用 `release/markflow-<version>-win.zip`；macOS 与 Linux 则在同目录生成 `.dmg` 与 `.AppImage`。
 
-> **Windows 构建说明**：`npm run dist:win` 会自动运行预构建脚本（`scripts/prepare-win-codesign.ps1`），只下载并解压 Windows 代码签名工具，跳过在非管理员 Windows 账户上会失败的 macOS 符号链接。无需手动配置 —— 直接运行 `npm run dist:win` 即可。
->
-> 如果遇到 `Cannot create symbolic link` 错误，可以：
->
-> - 重新运行构建（此时脚本应已正确预缓存），或
-> - 启用 Windows **开发者模式**（设置 → 系统 → 开发者选项），或
-> - 以管理员身份运行终端。
->
-> **winCodeSign 缓存位置**：构建时若看到 `[winCodeSign] Cache already prepared. Skipping.`，说明代码签名工具已缓存。默认缓存目录为：
->
-> ```
-> %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
-> ```
->
-> 即 `C:\Users\<用户名>\AppData\Local\electron-builder\Cache\winCodeSign`，目录内为形如 `winCodeSign-2.x.x` 的版本文件夹。
->
-> 查看或确认缓存目录（cmd）：
->
-> ```cmd
-> rem 打印缓存路径
-> echo %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
-> rem 列出已缓存的版本
-> dir "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
-> ```
->
-> 注意：`scripts/prepare-win-codesign.ps1` 用 `%LOCALAPPDATA%` 拼出该路径；只要版本文件夹内存在 `.win-only-extracted` 标记，脚本就会跳过准备工作。要强制重新下载，删除该版本文件夹（或只删除标记文件）即可，下次 `npm run dist:win` 会重新拉取。预构建脚本不读取 `ELECTRON_BUILDER_CACHE`：若设置了该变量，electron-builder 会去别处查找工具，而脚本仍写入 `%LOCALAPPDATA%`，预缓存会被忽略。运行 `npm run dist:win` 时请不要设置它（或让脚本改用同一根目录）。
+> **Windows 构建说明**：`npm run dist:win` 生成一个免安装的 `.zip`，无需额外配置——它**不会**下载或使用任何代码签名工具集（旧的 `scripts/prepare-win-codesign.ps1` 预缓存脚本已删除；electron-builder 26 从未读取它）。产物的 `MarkFlow.exe` **未签名**（`win.signExecutable: false`，见 ADR-0037），因此 Windows SmartScreen / "未知发布者" 可能在你首次运行时弹出警告——点击**"更多信息 → 仍要运行"** 即可。图标与版本信息由纯 JS 的 `resedit` 写入，与签名无关。若要分发受信任/已签名的 exe，移除 `signExecutable: false` 并提供证书（`win.certificateFile` + `CSC_KEY_PASSWORD`，或用于 Azure Trusted Signing 的 `win.azureSignOptions`）。
 
 ### 下载预构建版本
 

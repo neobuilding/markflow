@@ -21,11 +21,13 @@ npm run dev
 ## 打包
 
 ```bash
-npm run dist:win      # Windows .zip（免安装，解压即用）
+npm run dist:win      # Windows .zip（免安装，解压即用）— 未签名，首次运行可能被 SmartScreen 拦截
 npm run dist:mac      # macOS DMG
 npm run dist:linux    # Linux AppImage
 npm run dist          # 当前平台自动选择
 ```
+
+> **注意**：`npm run dist:win` 不再需要任何预缓存脚本（旧的 `scripts/prepare-win-codesign.ps1` 已删除，electron-builder 26 从未读取它）。Windows 产物 `MarkFlow.exe` 为**未签名**，首次运行可能被 SmartScreen 拦截，点击"更多信息 → 仍要运行"即可。详见 ADR-0037。
 
 ## 质量门禁
 

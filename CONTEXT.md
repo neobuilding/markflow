@@ -477,9 +477,10 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
 - **extractDir** — the per-toolset directory into which electron-builder extracts a downloaded
   archive, accompanied by a sibling status file that records a completed extraction. Its layout is
   an internal contract, not a stable public API.
-- **prepared cache** — the Windows-only toolset a pre-build script extracts and marks with its own
-  marker file. It is a separate artifact from an **extractDir**: a "cache already prepared" message
-  from that script describes only the script's own work, not a cache hit by electron-builder.
+- **prepared cache** — the Windows-only toolset a pre-build script _used to_ extract and mark with
+  its own marker file (that script was removed in ADR-0037; the term is retained for history). It is
+  a separate artifact from an **extractDir**: a "cache already prepared" message from that script
+  described only the script's own work, not a cache hit by electron-builder.
 
 ## Testing infrastructure (e2e)
 
