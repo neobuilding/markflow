@@ -24,16 +24,16 @@ amendment notes pointing at this ADR.
 
 ## 1. Requirement
 
-| #   | Requirement                                                                                                               |
-| --- | ------------------------------------------------------------------------------------------------------------------------- |
-| R-a | **⌘B applies Bold.** It no longer folds the content panel.                                                                |
-| R-b | The content panel is folded by *_⌘\*_ only, and ⌘B keeps **exactly one owner** (the renderer; no native accelerator).     |
-| R-c | The pane bar collapses at **ONE** width threshold into a **single "…" overflow** whose entries all carry a visible label. |
-| R-d | There is **no separate "Format" dropdown** and **no "minimal" stage** — one overflow, one threshold.                      |
-| R-e | The native menu's top-level order is **文件 / 编辑 / 视图 / 窗口 / 语言 / 帮助** (Language after Window, Help last).      |
-| R-f | The sidebar search's empty state uses **its own** i18n key instead of borrowing the command palette's.                    |
-| R-g | The global bar carries **no sidebar-toggle button**; with no document open it shows only Quick Open + Close.              |
-| R-h | The shortcuts stay **discoverable**: the activity-bar menu prints ⌘\, the Bold tooltip prints ⌘B.                         |
+| #   | Requirement                                                                                                                |
+| --- | -------------------------------------------------------------------------------------------------------------------------- |
+| R-a | **⌘B applies Bold.** It no longer folds the content panel.                                                                 |
+| R-b | The content panel is folded by *_⌘\*_ only, and ⌘B keeps **exactly one owner** (the renderer; no native accelerator).      |
+| R-c | The pane bar collapses at **ONE** width threshold into a **single "…" overflow** whose entries all carry a visible label.  |
+| R-d | There is **no separate "Format" dropdown** and **no "minimal" stage** — one overflow, one threshold.                       |
+| R-e | The native menu's top-level order is **File / Edit / View / Window / Language / Help** (Language after Window, Help last). |
+| R-f | The sidebar search's empty state uses **its own** i18n key instead of borrowing the command palette's.                     |
+| R-g | The global bar carries **no sidebar-toggle button**; with no document open it shows only Quick Open + Close.               |
+| R-h | The shortcuts stay **discoverable**: the activity-bar menu prints ⌘\, the Bold tooltip prints ⌘B.                          |
 
 ---
 
@@ -58,9 +58,10 @@ amendment notes pointing at this ADR.
   environment contract (`e2e/guards/viewports.test.ts`) is derived from the same constants.
   **(Superseded by §5:** the single `FOLD_AT` threshold became a per-command budget; measuring the
   border box is still the rule.**)**
-- **Menu order follows the platform convention**: 文件 / 编辑 / 视图 / 窗口 / 帮助 is the order every
-  mainstream desktop app uses (macOS, Windows, VS Code); 语言 is a MarkFlow-specific top-level menu,
-  so it sits after the platform's own menus and before 帮助, which is last by convention.
+- **Menu order follows the platform convention**: File / Edit / View / Window / Help is the order
+  every mainstream desktop app uses (macOS, Windows, VS Code); Language is a MarkFlow-specific
+  top-level menu, so it sits after the platform's own menus and before Help, which is last by
+  convention.
 - **The sidebar search's empty state is a different surface from the command palette.** Reusing
   `palette.startTyping` made the sidebar speak the palette's words; a dedicated key
   (`sidebar.searchEmptyState`) lets each surface name itself, in both locales.
@@ -73,6 +74,14 @@ amendment notes pointing at this ADR.
 > longer applies — both pane bars now overflow commands progressively and show "…" only while at
 > least one command is hidden. Items 1, 2, 4–6 and the visible-label rule still stand. Flagged per
 > `docs/agents/domain.md` (mark ADR conflicts explicitly rather than rewriting history).
+>
+> **Superseded in part (2026-11-14):** R-g's empty-state clause ("with no document open it shows
+> only Quick Open + Close") no longer matches the shipped UI. The global bar's empty state renders
+> **Quick Open + New Draft** — `Close` is hidden when no document is open (it has nothing to close)
+> and a `New Draft` (⌘N) action is always present instead. This is the deliberate, test-locked
+> behaviour (`GlobalToolbar.tsx` + `GlobalToolbar.test.tsx`). R-g's other clause (no sidebar-toggle
+> button) still stands. Flagged per `docs/agents/domain.md` (mark ADR conflicts explicitly rather
+> than rewriting history).
 
 1. **⌘B = Bold.** `App.tsx`'s window handler dispatches the editor's existing
    `markdown:insert` event with `{ before: '**', after: '**' }` — the very same channel the toolbar's
@@ -86,11 +95,11 @@ amendment notes pointing at this ADR.
    `FOLD_AT = 420`: above it the twelve actions are inline; below it the WHOLE bar is one "…" menu
    whose twelve entries each carry a visible label (the seven format actions, find, replace, undo,
    redo, read-only switch). The `Format` dropdown and the `minimal` stage are gone.
-4. **The native menu order is 文件 / 编辑 / 视图 / 窗口 / 语言 / 帮助.** The order is asserted by a
+4. **The native menu order is File / Edit / View / Window / Language / Help.** The order is asserted by a
    unit test (`electron/main/menu.test.ts`), so a future reordering fails a test rather than a
    screenshot.
 5. **The global bar carries no sidebar toggle.** The content panel is reachable from the
-   activity-bar menu, the native 视图 menu and ⌘\.
+   activity-bar menu, the native View menu and ⌘\.
 6. **The sidebar search's empty state uses `sidebar.searchEmptyState`**; the command palette keeps
    its own `palette.startTyping`.
 
@@ -105,6 +114,8 @@ amendment notes pointing at this ADR.
   still stands.**)**
 - ADR-0024 §9's empty-state rule is now "Quick Open + Close" (no sidebar toggle), and ADR-0024 §10's
   two-stage collapse description is superseded by this ADR's single threshold.
+  **(Superseded by the 2026-11-14 note in §3:** the empty state is Quick Open + New Draft, not
+  Quick Open + Close; this bullet is kept as written to preserve the original rationale.**)**
 - The old `⌘B` = toggle-panel binding is a **breaking change** and belongs in the release notes —
   the same treatment ADR-0024 §3 item 3 gave ⌘⇧E.
 - The i18n surface grew by one key per locale (`sidebar.searchEmptyState`) and shrank by two

@@ -189,6 +189,27 @@ describe('GlobalToolbar', () => {
     expect(screen.queryByTestId('close-btn')).toBeNull()
   })
 
+  // The empty state is "Quick Open + New Draft" in EVERY view mode — even edit-only, where Export
+  // normally lives on the global bar. No document-scoped button may appear. This pins the
+  // ADR-0031 R-g supersession (the spec said "Quick Open + Close"); the `viewMode: 'edit'` case is
+  // not covered by 'hides the file operations while no document is open', which mounts in split.
+  it('empty state shows only Quick Open + New Draft, even in edit-only mode', () => {
+    useUIStore.setState({ activeDocumentId: null, viewMode: 'edit' })
+    mount()
+    expect(screen.getByTestId('editor-goto-file-btn')).toBeInTheDocument()
+    expect(screen.getByTestId('new-document-btn')).toBeInTheDocument()
+    for (const id of [
+      'save-btn',
+      'save-as-btn',
+      'reload-btn',
+      'file-details-btn',
+      'export-btn',
+      'close-btn',
+    ]) {
+      expect(screen.queryByTestId(id), id).toBeNull()
+    }
+  })
+
   it('wires save, save-as, reload and close to the handlers it was given', () => {
     useUIStore.setState({ activeDocumentId: 'doc-1', editable: true, dirty: true })
     mount()

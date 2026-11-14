@@ -70,18 +70,18 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   pre-feature behavior.
   _Avoid_: "folder with md"
 - **Document-less folder / empty branch (不含文档的文件夹 / 空文件夹)** — a folder (and its subtree) that
-  contains no Markdown document anywhere. Hidden by default; revealed only when **显示所有文件夹** is ON or
+  contains no Markdown document anywhere. Hidden by default; revealed only when **Show All Folders** is ON or
   when it is a **recently-created folder**. "Empty" means no Markdown, not necessarily zero subfolders.
   _Avoid_: "empty folder" (imprecise — may contain subfolders)
 - **Recently-created folder (最近新建文件夹)** — a folder made this session and held in the in-memory
-  `recentlyCreated` set; force-shown even when **显示所有文件夹** is OFF, until it gains its first Markdown
+  `recentlyCreated` set; force-shown even when **Show All Folders** is OFF, until it gains its first Markdown
   document or the app restarts.
   _Avoid_: "new folder"
-- **显示所有文件夹 (show all folders)** — the opt-in sidebar toggle (default OFF) that reveals
+- **Show All Folders (显示所有文件夹)** — the opt-in sidebar toggle (default OFF) that reveals
   document-less folders by seeding `buildFileTree` with the on-disk directory listing. One source of truth
   (`useUIStore.showAllFolders`) shared by the toolbar button and the background-context-menu checkbox;
   in-memory only, never persisted. See `docs/adr/0010-sidebar-folder-filter-toggle.md`.
-  _Avoid_: "show empty folders" (a valid checkbox synonym, but the canonical toggle name is 显示所有文件夹)
+  _Avoid_: "show empty folders" (a valid checkbox synonym, but the canonical toggle name is Show All Folders)
 
 ## UI surfaces
 
@@ -99,10 +99,6 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   the activity bar.
 - **Content panel** — the sidebar region (file tree or search) that sits to the right of the activity
   bar and unmounts when the sidebar is collapsed.
-- **Global bar** — the single toolbar mounted above the content area in every view mode (Quick Open,
-  save, file details, close, the source/split/preview switch, title + path). It carries **no sidebar
-  toggle**: the content panel is folded from the **活动栏 (Activity bar)** right-click menu, the native
-  **视图** menu, or ⌘\.
 - **Editor pane bar** — the per-pane toolbar attached to the editor pane, holding the editor-only
   clusters (Markdown formatting, find/replace, undo/redo, read-only toggle). One per column in split
   mode. As the column narrows, commands move into the **conditional overflow trigger** one at a
@@ -218,7 +214,7 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   file details / export / close) — as opposed to the editor-only clusters, which live in the
   **editor pane bar**. **It is not a separate top bar**: adding one was
   rejected (ADR-0023 decision 7), so the dead `ui/titlebar.tsx` is deleted rather than revived.
-  _Avoid_: "title bar" / "顶栏" for this — MarkFlow has no dedicated title bar component.
+  _Avoid_: "title bar" / "top bar" for this — MarkFlow has no dedicated title bar component.
 - **Hit row (命中行)** — one in-document occurrence row inside a search group, carrying the line
   number plus the **document-wide character offsets** of the match, so it can place the editor
   cursor there.
@@ -357,12 +353,12 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   `theme === 'system'`, and sets `data-theme` on the `<article>`; the **exporter** follows it too (`export.ts`
   resolves `current` → UI theme, `system` → `matchMedia`). See
   `docs/adr/0018-preview-refactor-03-style-perf-media.md`.
-- **主题 submenu (Theme submenu)** — the native **视图 (View)** menu carries a **主题** submenu with three
-  radio entries: 浅色 / 深色 / 跟随系统 (Light / Dark / System). Picking one forwards the value to the
+- **Theme submenu (主题 submenu)** — the native **View** menu carries a **Theme** submenu with three
+  radio entries: Light / Dark / System. Picking one forwards the value to the
   renderer, which stores it and bridges it back to the main process (`app:set-theme` → `nativeTheme`), so the
   OS chrome follows too; the main process mirrors the value into the menu's radio checkmark. The choice is
-  **not persisted** — every launch starts at 跟随系统. See `docs/adr/0028-theme-entry.md`.
-- **跟随系统 (System)** — the default theme choice: the app resolves the OS `prefers-color-scheme` and
+  **not persisted** — every launch starts at System. See `docs/adr/0028-theme-entry.md`.
+- **System (跟随系统)** — the default theme choice: the app resolves the OS `prefers-color-scheme` and
   **follows it live** (a light↔dark switch while the app is open updates immediately, no restart). The
   renderer owns the resolution: `App.tsx` applies the `dark` class on `<html>` through the shared
   `resolveTheme` helper, and **both** `App.tsx` and `MarkdownPreview.tsx` install a media-query

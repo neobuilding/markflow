@@ -244,10 +244,12 @@ test.describe('pane toolbars', () => {
     // The sidebar toggle is gone from this bar.
     await expect(page.getByTestId('sidebar-toggle-btn')).toHaveCount(0)
 
-    // With no document open the bar shows only what can act: Quick Open alone. Every
-    // document-scoped command — Save / Save-As / Reload / file details / export / Close — is gated
-    // on `activeDocumentId` (ADR-0024 §9, amended 2026-11-12: Close is gated too; with no document
-    // there is nothing to close, so the button is hidden rather than left inert).
+    // With no document open the bar shows only the actions that need no document: Quick Open and
+    // New Draft (ADR-0031 §3 supersession of R-g). Every document-scoped command — Save / Save-As /
+    // Reload / file details / export / Close — is gated on `activeDocumentId` (ADR-0024 §9, amended
+    // 2026-11-12: Close is gated too; with no document there is nothing to close, so the button is
+    // hidden rather than left inert).
+    await expect(globalBar.getByTestId('new-document-btn')).toBeVisible()
     await expect(globalBar.getByTestId('save-btn')).toHaveCount(0)
     await expect(globalBar.getByTestId('close-btn')).toHaveCount(0)
   })
