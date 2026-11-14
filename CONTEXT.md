@@ -154,10 +154,12 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
 - **Document Store** — the in-memory `Map` (`electron/main/model/documentStore.ts`) holding loaded documents;
   the single source of truth in the main process. Replaced the old SQLite `:memory:` layer (see
   `docs/adr/0001-disk-driven-document-model.md`).
-- **minisearch index** — pure-JS full-text search (`electron/main/ipc/search.ts`), rebuilt per query, used
-  to rank **Search view** candidates. Under ADR-0023 it may only rank files that already have a literal
-  body hit, never expand the candidate set; **Quick Open** (file names / paths) does not use it. No native
-  dependency.
+- **Index-free search scanner** — a search approach that scans document bodies on every query and
+  keeps no persistent index. Its candidate set is exactly the set of literal body hits; display
+  counts, hit offsets and every replacement come from one shared matcher, and results are ordered
+  deterministically by root-relative path with no relevance score. **Quick Open** (file names /
+  paths) does not use it. _Avoid_: "search engine", "minisearch index" (a superseded design, not a
+  current component). _See also_: **Full-text search**, **Literal phrase query**.
 - **folderWatcher (chokidar)** — recursive watcher over the single `workspaceRoot` that syncs disk changes
   into the store; ignores non-Markdown and build output (`**/*.html`, `**/*.pdf`, `**/*.docx`, `**/*.tmp`).
 - **Markdown dual-write** — Markdown files are written to disk; there is no separate index file.
@@ -468,6 +470,16 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
 - **Font formats** — `.woff2` is the modern, smallest web font format supported by Electron/Chromium. KaTeX also ships `.woff` / `.ttf` for legacy browsers; `scripts/prune-fonts.ts` prunes those because KaTeX's CSS lists `.woff2` first, so the legacy copies are never requested.
 - **Fully bundled** — both the main process (`dist/electron/index.js`, no bare `require()` except Node builtins) and the renderer are self-contained Vite outputs, so the packaged app ships **no `node_modules`** (`electron-builder.json5` excludes them). Consequence: a dependency that is _read at runtime_ instead of being bundled works in dev and fails only in the packaged build — sign off dependency changes by running `npm run dist` and launching `release/win-unpacked/MarkFlow.exe`. See `docs/adr/0015-build-output-layout-and-bundle.md`.
 - **Electron runtime floor** — the Chromium + Node payload every Electron app carries regardless of app-code size.
+- **electron-builder cache root** — the directory where electron-builder stores downloaded toolset
+  archives and their extracted contents. An absolute `ELECTRON_BUILDER_CACHE` value relocates it;
+  it does not skip downloading anything. _Avoid_: calling a pre-build script's own directory "the
+  electron-builder cache".
+- **extractDir** — the per-toolset directory into which electron-builder extracts a downloaded
+  archive, accompanied by a sibling status file that records a completed extraction. Its layout is
+  an internal contract, not a stable public API.
+- **prepared cache** — the Windows-only toolset a pre-build script extracts and marks with its own
+  marker file. It is a separate artifact from an **extractDir**: a "cache already prepared" message
+  from that script describes only the script's own work, not a cache hit by electron-builder.
 
 ## Testing infrastructure (e2e)
 

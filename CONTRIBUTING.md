@@ -8,19 +8,25 @@ development environment, the conventions we follow, and how changes get released
 
 ## Code of Conduct
 
-By participating, you agree to uphold a respectful, harassment-free environment.
-(Add a `CODE_OF_CONDUCT.md` if your organization requires one.)
+By participating, you agree to uphold a respectful, harassment-free environment. See the
+[Code of Conduct](.github/CODE_OF_CONDUCT.md) for details.
 
 ## Development Setup
 
 ### Prerequisites
 
-- Node.js >= 22
-- npm >= 9
+- Node.js >= 22.22.2 — the floor is set by `jsdom` (`^22.22.2 || ^24.15.0 || >=26.0.0`) and
+  `lint-staged` (`>=22.22.1`), not by an arbitrary choice.
+- npm >= 9 — conservative floor: npm 9 writes `lockfileVersion: 3` by default (npm 7/8 can read it
+  but rewrite it as v2), and `overrides` needs >= 8.3. No dependency declares an npm 9 requirement.
+
+`package.json#engines` is the machine-readable declaration; `.nvmrc` is the single version
+selector for local development and CI (all `actions/setup-node` steps use `node-version-file`).
+`engine-strict` is intentionally **not** enabled: alongside the TS7 / `legacy-peer-deps`
+transition it would fail every `npm ci` on an old 22.x runner instead of warning.
 
 > 💡 No native toolchain is required: MarkFlow uses an in-memory document store and a
-> pure-JS search index (minisearch), so `npm install`
-> works without a C++ compiler.
+> pure-JS, index-free search scanner, so `npm install` works without a C++ compiler.
 
 ### Run the dev build
 
@@ -67,21 +73,21 @@ markflow/
 
 ## Tech Stack
 
-| Layer             | Technology                                                                                                      |
-| ----------------- | --------------------------------------------------------------------------------------------------------------- |
-| Build             | Vite 8 + vite-plugin-electron                                                                                   |
-| Desktop           | Electron 44                                                                                                     |
-| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                 |
-| UI Components     | Radix UI primitives (shadcn/ui style)                                                                           |
-| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                          |
-| Storage           | In-memory document store (Map) + minisearch index + chokidar folder watcher + Markdown file dual-write          |
-| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                                  |
-| Math              | KaTeX (LaTeX formula rendering)                                                                                 |
-| Diagrams          | Mermaid.js                                                                                                      |
-| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                                   |
-| HTML sanitization | DOMPurify + branded `SanitizedHtml` type gate + single DOM write entry `patchPreviewContent` (single XSS point) |
-| Testing           | Vitest + jsdom                                                                                                  |
-| Packaging         | electron-builder                                                                                                |
+| Layer             | Technology                                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Build             | Vite 8 + vite-plugin-electron                                                                                     |
+| Desktop           | Electron 44                                                                                                       |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                   |
+| UI Components     | Radix UI primitives (shadcn/ui style)                                                                             |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                            |
+| Storage           | In-memory document store (Map) + index-free literal/regex scanner + chokidar folder watcher + Markdown dual-write |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                                    |
+| Math              | KaTeX (LaTeX formula rendering)                                                                                   |
+| Diagrams          | Mermaid.js                                                                                                        |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                                     |
+| HTML sanitization | DOMPurify + branded `SanitizedHtml` type gate + single DOM write entry `patchPreviewContent` (single XSS point)   |
+| Testing           | Vitest + jsdom                                                                                                    |
+| Packaging         | electron-builder                                                                                                  |
 
 ## Coding Conventions
 
@@ -255,8 +261,10 @@ and `release/markflow-<version>-win.zip` for distribution.
 > Note: `scripts/prepare-win-codesign.ps1` builds this path from `%LOCALAPPDATA%` and skips its
 > work when the `.win-only-extracted` marker exists in the version folder. To force a
 > re-download, delete that folder (or just the marker); the next `npm run dist:win` will fetch it
-> again. electron-builder honours `ELECTRON_BUILDER_CACHE` for its own cache root, so keep the two
-> locations aligned if you override it.
+> again. The pre-build script does not read `ELECTRON_BUILDER_CACHE`: if you set it,
+> electron-builder looks for the tools elsewhere while the script still writes to
+> `%LOCALAPPDATA%`, so the prepared cache would be ignored. Leave it unset for `npm run dist:win`
+> (or update the script to use the same root).
 
 ## Submitting Changes
 

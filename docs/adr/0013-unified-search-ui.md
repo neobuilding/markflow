@@ -9,6 +9,8 @@ reference surfaces, and adds glob matching to filename search.
 - **Status:** Accepted
 - **Decided:** 2026-09
 - **Supersedes:** `docs/adr/0012-editor-replace-scope.md` (its "reuse CodeMirror's native search panel" decision)
+- **Superseded in part by:** `docs/adr/0023-search-scope-and-specialized-surfaces.md` (#9 / §3.8,
+  declared one-way at ADR-0023 §Status); this note makes the link bidirectional.
 - **Related:** `docs/adr/0012-editor-replace-scope.md`, `CONTEXT.md`
 
 ## Context

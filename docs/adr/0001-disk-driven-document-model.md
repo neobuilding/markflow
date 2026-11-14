@@ -1,6 +1,10 @@
 # ADR-0001: Disk-driven document model (remove the database layer)
 
 - **Status:** Accepted
+- **Superseded in part by:** `docs/adr/0023-search-scope-and-specialized-surfaces.md` (the
+  minisearch-based search decision in §Decision below); the current design is the
+  **Index-free search scanner** in `CONTEXT.md` §Storage & search. The disk-driven document model
+  itself remains in force.
 - **Decided:** 2026-08-24
 - **Implemented:** 2026-08-28 (verified: 84 files / 951 unit cases pass, all `electron/main/model/**` at 100%)
 
