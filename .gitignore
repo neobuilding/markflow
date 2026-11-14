@@ -118,6 +118,9 @@ test-results/
 playwright-report/
 .playwright/
 e2e/.dev-url
+# Run-scoped residue registry written by e2e/helpers/temp.ts and wiped by global-setup.ts.
+# A worker killed mid-run can leave it behind; it is harness bookkeeping, never source.
+e2e/.residue-registry/
 
 # Test result XML (JUnit) produced by Vitest (unit) / Playwright (e2e) for CI reporting.
 # Both suites emit into reports/<suite>/junit.xml so the type is self-describing.

@@ -18,9 +18,11 @@
 // commits itself from the injected git service (plugin-autonomy rule).
 //
 // Refresh: if `existingBody` is supplied, the freshly rendered body is merged
-// into it via buildBody (refreshing each AUTO block in place, preserving human
-// text outside the blocks). This is a pure, local operation no `gh` needed
-// so a refresh preview can be produced entirely offline.
+// into it via buildBody (refreshing each existing AUTO block in place, appending
+// blocks the template has gained since the PR was created — all of them for a
+// marker-free legacy body — and preserving human text outside the blocks). This
+// is a pure, local operation no `gh` needed so a refresh preview can be
+// produced entirely offline.
 //
 // Usage (local preview / test):
 //   import { renderTemplate } from './render-template.mjs'
@@ -31,7 +33,14 @@ import { deriveTitle, buildCtx, fillAutoBlocks, buildBody } from './render.mjs'
 import { createExecGitService } from './services/git-service.mjs'
 import { buildBlockRegistry } from './loader.mjs'
 
-const DEFAULT_BLOCKS_DIR = join(process.cwd(), '.github', 'create-pr', 'blocks')
+// Resolve the repo-side plugin directory from this module, not process.cwd():
+// the Action runs at the repo root, but `npm test` inside actions/create-pr and
+// `local-test-render` use a different cwd and still need the same plugins.
+// Kept lazy so the bundled Action entry (which always passes blocks-dir) never
+// evaluates this default.
+function defaultBlocksDir() {
+  return join(import.meta.dirname, '..', '..', '..', '.github', 'create-pr', 'blocks')
+}
 
 // The minimal fallback template used when `template` is empty/unavailable:
 // just a commits AUTO block so the `commits` plugin still renders.
@@ -82,7 +91,8 @@ function resolveBaseRef(git, base) {
 //   base          base branch to compare against (default 'main')
 //   template      the ALREADY-READ template string (required); empty → commits-only
 //   existingBody  optional existing body to refresh into (string); enables merge
-//   blocksDir    directory of user block plugins (default '.github/create-pr/blocks')
+//   blocksDir    directory of user block plugins (default: the repo-side
+//                `.github/create-pr/blocks`, resolved from this module)
 //   noGit        omit the git service so the `commits` block renders empty
 //
 // Returns the rendered body string: the fresh render when `existingBody` is
@@ -92,7 +102,7 @@ export async function renderTemplate({
   base = 'main',
   template = '',
   existingBody = null,
-  blocksDir = DEFAULT_BLOCKS_DIR,
+  blocksDir = defaultBlocksDir(),
   noGit = false,
   // Allow callers (notably tests) to inject a git service; fall back to the
   // real exec-backed one only when omitted. Keeping this injectable is what

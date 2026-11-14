@@ -403,7 +403,7 @@ describe('whole word (D34/D35)', () => {
   it('works for Chinese — ICU has a Han dictionary, so this is not a no-op', () => {
     expect(count('这是中文文本', '中文', { wholeWord: true })).toBe(1)
     expect(count('这是中文文本', '文本', { wholeWord: true })).toBe(1)
-    // Straddles the 中文 / 文本 boundary.
+    // Straddles the Chinese / text boundary.
     expect(count('这是中文文本', '文文', { wholeWord: true })).toBe(0)
   })
 

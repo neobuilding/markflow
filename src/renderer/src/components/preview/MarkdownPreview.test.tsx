@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, cleanup, act } from '@testing-library/react'
 import { MarkdownPreview } from './MarkdownPreview'
 import { useUIStore } from '../../store/ui'
 import { setExportHtml, setExportMermaidSlots } from '../../lib/exportStore'
@@ -80,6 +80,14 @@ describe('MarkdownPreview', () => {
   it('renders the parsed HTML after parsing', async () => {
     render(<MarkdownPreview content="# title" />)
     await waitFor(() => expect(screen.getByText('hello preview')).toBeInTheDocument())
+  })
+
+  it('marks the export cache as ready once the document has parsed (C20 补 ⑦)', async () => {
+    // The export cache is a non-reactive singleton, so its readiness is mirrored in the store:
+    // the export dialog may only be enabled once the CURRENT document has been rendered.
+    useUIStore.getState().setExportReady(false)
+    render(<MarkdownPreview content="# title" />)
+    await waitFor(() => expect(useUIStore.getState().exportReady).toBe(true))
   })
 
   it('injects parsed content directly into the <article> — no wrapper div (P8)', async () => {
@@ -638,10 +646,100 @@ describe('MarkdownPreview', () => {
     useUIStore.getState().setTheme('light')
   })
 
+  it('follows a later OS preference change after switching dark → system (D-B)', () => {
+    const original = window.matchMedia
+    let osDark = true
+    const listeners = new Set<() => void>()
+    window.matchMedia = ((q: string) => ({
+      get matches() {
+        return osDark
+      },
+      media: q,
+      onchange: null,
+      addEventListener: (_type: string, cb: () => void) => {
+        listeners.add(cb)
+      },
+      removeEventListener: (_type: string, cb: () => void) => {
+        listeners.delete(cb)
+      },
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia
+    try {
+      act(() => useUIStore.getState().setTheme('dark'))
+      const { container } = render(<MarkdownPreview content="# t" />)
+      const light = document.getElementById('md-body-light') as HTMLStyleElement
+      const dark = document.getElementById('md-body-dark') as HTMLStyleElement
+      expect(dark.disabled).toBe(false)
+
+      // Entering Follow System does not synchronously change what Electron's nativeTheme reports:
+      // the media query can still say "dark" for one frame after the choice is forwarded.
+      act(() => useUIStore.getState().setTheme('system'))
+      expect(dark.disabled).toBe(false)
+
+      // The OS (or nativeTheme catching up) then switches to LIGHT. The app chrome follows
+      // through its own media-query listener; the preview must follow through its own too.
+      osDark = false
+      act(() => {
+        listeners.forEach((cb) => cb())
+      })
+      expect(light.disabled).toBe(false)
+      expect(dark.disabled).toBe(true)
+      expect(container.querySelector('article')?.getAttribute('data-theme')).toBe('light')
+    } finally {
+      window.matchMedia = original
+      act(() => useUIStore.getState().setTheme('light'))
+    }
+  })
+
+  it('stops following the OS when an explicit theme is chosen again (listener cleanup)', () => {
+    const original = window.matchMedia
+    let osDark = false
+    const listeners = new Set<() => void>()
+    window.matchMedia = ((q: string) => ({
+      get matches() {
+        return osDark
+      },
+      media: q,
+      onchange: null,
+      addEventListener: (_type: string, cb: () => void) => {
+        listeners.add(cb)
+      },
+      removeEventListener: (_type: string, cb: () => void) => {
+        listeners.delete(cb)
+      },
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia
+    try {
+      act(() => useUIStore.getState().setTheme('system'))
+      const { container } = render(<MarkdownPreview content="# t" />)
+      expect(listeners.size).toBe(1)
+      expect(container.querySelector('article')?.getAttribute('data-theme')).toBe('light')
+
+      // An explicit choice must DETACH the media-query listener: a later OS change may not
+      // flip the preview, and repeated theme switches must not leak one listener each.
+      act(() => useUIStore.getState().setTheme('dark'))
+      expect(listeners.size).toBe(0)
+      osDark = true
+      act(() => {
+        listeners.forEach((cb) => cb())
+      })
+      const dark = document.getElementById('md-body-dark') as HTMLStyleElement
+      expect(dark.disabled).toBe(false)
+      expect(container.querySelector('article')?.getAttribute('data-theme')).toBe('dark')
+    } finally {
+      window.matchMedia = original
+      act(() => useUIStore.getState().setTheme('light'))
+    }
+  })
+
   it('falls back to light when the UI theme is system but matchMedia is unavailable (D-B)', () => {
     const original = window.matchMedia
-    // No matchMedia at all: the `typeof window !== 'undefined' && !!window.matchMedia` guard
-    // must degrade to light rather than throwing.
+    // No matchMedia at all: the `typeof window.matchMedia === 'function'` guard must degrade
+    // to light rather than throwing.
     delete (window as unknown as { matchMedia?: unknown }).matchMedia
     try {
       useUIStore.getState().setTheme('system')

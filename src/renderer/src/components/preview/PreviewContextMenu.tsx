@@ -1,8 +1,8 @@
 import React, { useState } from 'react'
-import { useUIStore } from '../../store/ui'
+import { useUIStore, selectFileLocked } from '../../store/ui'
 import { useT } from '../../i18n'
 import type { Document } from '../../types'
-import { getExportHtml } from '../../lib/exportStore'
+import { printDocument } from '../../lib/printDocument'
 import { requestRichCopy, svgToPngDataUrl } from '../../lib/previewCopy'
 import { formulaToPng } from '../../lib/formulaImage'
 import {
@@ -47,6 +47,9 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
   const { t } = useT()
   const viewMode = useUIStore((s) => s.viewMode)
   const setViewMode = useUIStore((s) => s.setViewMode)
+  // R5 plan A: printing is a document transaction. Both actions below are refused by the store
+  // while it is in flight, so the menu items must show that instead of silently doing nothing.
+  const fileLocked = useUIStore(selectFileLocked)
   const [kind, setKind] = useState<TargetKind>('generic')
   const [linkHref, setLinkHref] = useState('')
   // Bitmap image state (kind === 'image' && !isSvg)
@@ -110,7 +113,9 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
     window.getSelection()?.selectAllChildren(article)
   }
   const printPreview = () => {
-    void window.api.export.print(getExportHtml())
+    // Share the menu's print action: the preview cache holds LAZY diagrams, so printing it
+    // directly would omit every mermaid diagram that never scrolled into view (ADR 0019).
+    void printDocument()
   }
 
   // ── Link actions ──
@@ -294,11 +299,16 @@ export function PreviewContextMenu({ doc, children, previewRef }: PreviewContext
               {t('editor.view.preview')}
             </ContextMenuCheckboxItem>
             <ContextMenuSeparator />
-            <ContextMenuItem data-testid="preview-print" onClick={printPreview}>
+            <ContextMenuItem
+              data-testid="preview-print"
+              disabled={fileLocked}
+              onClick={printPreview}
+            >
               <Printer size={13} /> {t('menu.print')}
             </ContextMenuItem>
             <ContextMenuItem
               data-testid="preview-export-html"
+              disabled={fileLocked}
               onClick={() => useUIStore.getState().setExportOpen(true)}
             >
               <FileOutput size={13} /> {t('editor.export')}

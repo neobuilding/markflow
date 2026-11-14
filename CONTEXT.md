@@ -4,7 +4,7 @@ Domain glossary for MarkFlow. Agents and humans should use these terms consisten
 issue titles, refactor proposals, tests, or docs. If a term you need isn't here, that's a signal to
 either reconsider the invented wording or flag it for `/domain-modeling`.
 
-MarkFlow is a cross-platform Markdown editor with a Linear-style UI, built with Electron 43 +
+MarkFlow is a cross-platform Markdown editor with a Linear-style UI, built with Electron 44 +
 React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder.
 
 ## Documents & editing
@@ -21,6 +21,12 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **.mdx handling** — `.mdx` files open, list, and preview like regular Markdown (extension shown in the
   sidebar). JSX / embedded components are **not** parsed (true MDX compilation is a deferred RFC); `.mdx` is
   currently treated as plain Markdown.
+- **New Draft vs New File…** — two distinct create actions, deliberately not duplicates. **New Draft**
+  (`Ctrl/Cmd+N`, global toolbar, editor empty state) is filesystem-independent: it opens a memory-only draft
+  with no dialog and only **one** may exist at a time (every entry point disables itself while one is alive,
+  ADR-0006). **New File…** (File menu, sidebar `+`, sidebar context menus) is filesystem-bound: it names and
+  writes a real Markdown file into the **open folder**, so it is unavailable with no folder open, and it
+  resolves the typed name through `resolveNewFileTarget` (ADR-0011).
 - **Read-only by default** — files open read-only to prevent accidental edits; toggle to Edit mode anytime.
 - **Renaming is a file operation, not an edit** — renaming from the sidebar is an inline, immediate on-disk
   move (`documents:rename-file`): it does **not** require Edit mode, does not switch the document into edit
@@ -77,15 +83,83 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   in-memory only, never persisted. See `docs/adr/0010-sidebar-folder-filter-toggle.md`.
   _Avoid_: "show empty folders" (a valid checkbox synonym, but the canonical toggle name is 显示所有文件夹)
 
+## UI surfaces
+
+- **Quick Open (⌘⇧K)** — the global-bar command that opens a document by name/path (Goto File). Its
+  ⌘⇧K shortcut (Ctrl+Shift+K on Windows/Linux) is surfaced through the button's Tooltip / aria-label.
+  It is **not** a persistent chip on the toolbar: the design diagram (fig 02) shows the shortcut only
+  as a Tooltip example, so there is no always-visible shortcut chip element. Relocated from ⌘K to
+  ⌘⇧K so that ⌘K could become the mainstream Link shortcut — see
+  `docs/adr/0032-format-toolbar-shortcuts-and-precedence.md`.
+- **Tooltip** — the popover shown on hover/focus for icon-only controls. It carries the control's full
+  name and any keyboard shortcut. Its bubble is the theme's text colour with the theme's background as
+  text, and has no visible border (border colour equals the fill).
+- **Activity bar** — the always-present ~48px vertical icon column at the left of the sidebar (Files /
+  Search switch). It is **permanent**: collapsing the sidebar (⌘\) hides only the content panel, never
+  the activity bar.
+- **Content panel** — the sidebar region (file tree or search) that sits to the right of the activity
+  bar and unmounts when the sidebar is collapsed.
+- **Global bar** — the single toolbar mounted above the content area in every view mode (Quick Open,
+  save, file details, close, the source/split/preview switch, title + path). It carries **no sidebar
+  toggle**: the content panel is folded from the **活动栏 (Activity bar)** right-click menu, the native
+  **视图** menu, or ⌘\.
+- **Editor pane bar** — the per-pane toolbar attached to the editor pane, holding the editor-only
+  clusters (Markdown formatting, find/replace, undo/redo, read-only toggle). One per column in split
+  mode. As the column narrows, commands move into the **conditional overflow trigger** one at a
+  time by descending priority (the priority+ pattern in `components/ui/priority-overflow.ts`): the
+  leftmost formatting cluster survives the longest, and at/above `ALL_INLINE_AT` (472px) there is no
+  overflow at all. Every overflow entry carries a visible label — there is no separate unlabeled
+  "Format" dropdown. See `docs/adr/0031-ui-round-3-shortcuts-overflow-and-menu.md`.
+- **Preview pane bar** — the per-pane toolbar attached to the preview pane (find, export HTML, copy,
+  copy rendered HTML). Copy rendered HTML is the lowest-priority command. As the column narrows,
+  commands move into the **conditional overflow trigger** one at a time, rightmost first; when every
+  command fits there is no trigger and all commands are inline.
+- **Conditional overflow trigger** — the **"…"** button on a pane bar. It exists only while at least
+  one command cannot be shown inline; when all commands fit, all of them are inline and the trigger
+  is absent. It is **not** a resident menu, and no command may have it as its only access path.
+  Overflow entries keep the bar's priority order and carry a visible label. The trigger itself
+  occupies one command slot, so the final widening step restores the last command _and_ removes the
+  trigger together: no width exists for "all but one inline, plus the trigger".
+  Each bar budgets its **own** chrome: the editor bar pays the shared `px-3` padding plus its
+  format-group border and find/replace divider (40px, so its twelve commands are all inline from
+  472px), while the preview bar has no separators and pays padding only (24px, so its four commands
+  fit from 168px). Charging both bars the same budget made the preview overflow 16px too early.
+
+## Editor state
+
+- **Undo history (撤销历史)** — the CodeMirror `history` state field inside the single persistent
+  `EditorView`. It belongs to an **editing session**, not to a document record: switching or closing
+  a document, and reloading the same document from disk, each discard the old field and create a new
+  empty one. Therefore an edit made before a switch cannot be undone after switching back, even if
+  it was saved. This is a deliberate consequence of the single-active-document model, unlike VS
+  Code's per-resource edit stacks. _Avoid_: "per-document undo stack", "undo history is preserved
+  across switches". _See also_: **Unsaved-changes guard**, **Editing session**.
+- **Editing session (编辑会话)** — one session per open document, owning the editor's debounced
+  preview refresh and the **right to write**: it remembers the text it last wrote into the view, and
+  a keystroke is committed only while it was applied to exactly that text. A switch aborts the
+  previous session (cancelling its pending timer) and the new session owns nothing until the new
+  document's content has been written, so neither a late refresh nor a keystroke in that window can
+  write the previous document's text into the new one. Correctness state — the unsaved text, the
+  dirty flag and the **Dirty buffer snapshot** — is committed on the keystroke frame, never by the
+  debounce; the debounce only refreshes the preview. _See also_:
+  `docs/adr/0033-editor-draft-session-isolation.md`.
+- **Unsaved buffer registry (未保存缓冲区登记表)** — the renderer's `Record<docId, { content,
+revision }>` of unsaved text. The main process only knows on-disk bytes, so content search and
+  cross-file replace need the renderer to report these buffers. The key is a **document id** used
+  for addressing, never for deciding whether a callback is stale. _See also_:
+  **Dirty buffer snapshot**, **Unsaved-changes guard**.
+
 ## Storage & search (main process)
 
 - **Document Store** — the in-memory `Map` (`electron/main/model/documentStore.ts`) holding loaded documents;
   the single source of truth in the main process. Replaced the old SQLite `:memory:` layer (see
   `docs/adr/0001-disk-driven-document-model.md`).
-- **minisearch index** — pure-JS full-text search (`electron/main/ipc/search.ts`), rebuilt per query, used
-  to rank **Search view** candidates. Under ADR-0023 it may only rank files that already have a literal
-  body hit, never expand the candidate set; **Quick Open** (file names / paths) does not use it. No native
-  dependency.
+- **Index-free search scanner** — a search approach that scans document bodies on every query and
+  keeps no persistent index. Its candidate set is exactly the set of literal body hits; display
+  counts, hit offsets and every replacement come from one shared matcher, and results are ordered
+  deterministically by root-relative path with no relevance score. **Quick Open** (file names /
+  paths) does not use it. _Avoid_: "search engine" (a superseded design, not a current component).
+  _See also_: **Full-text search**, **Literal phrase query**.
 - **folderWatcher (chokidar)** — recursive watcher over the single `workspaceRoot` that syncs disk changes
   into the store; ignores non-Markdown and build output (`**/*.html`, `**/*.pdf`, `**/*.docx`, `**/*.tmp`).
 - **Markdown dual-write** — Markdown files are written to disk; there is no separate index file.
@@ -139,9 +213,10 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   specialized search split (ADR-0023); the sidebar Search view owns body content. Its only visible
   entry is the **Command centre** trigger in the **global toolbar**.
 - **Global toolbar (全局工具栏)** — the app's always-present tool row at the top of the **editor
-  pane** (`EditorPane.tsx` `CommonToolbar`), rendered both with and without an active document. It
-  hosts global actions — the sidebar toggle and the **Command centre** trigger — as opposed to the
-  document-scoped file operations to its right. **It is not a separate top bar**: adding one was
+  pane** (`GlobalToolbar.tsx`), rendered both with and without an active document. It
+  hosts the **Command centre** trigger and the document-lifecycle actions (save / save-as / reload /
+  file details / export / close) — as opposed to the editor-only clusters, which live in the
+  **editor pane bar**. **It is not a separate top bar**: adding one was
   rejected (ADR-0023 decision 7), so the dead `ui/titlebar.tsx` is deleted rather than revived.
   _Avoid_: "title bar" / "顶栏" for this — MarkFlow has no dedicated title bar component.
 - **Hit row (命中行)** — one in-document occurrence row inside a search group, carrying the line
@@ -197,7 +272,7 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **Command centre (命令中心)** — MarkFlow's equivalent of VS Code's Command Centre: a **compact
   trigger** (not a persistent title-bar input field) that opens the `Ctrl/Cmd+K` Quick
   Open palette (placeholder "Go to file…", `⌘K` hint). It lives in the **global toolbar** — the
-  editor pane's always-present tool row — right of the sidebar toggle, so it stays visible with the
+  editor pane's always-present tool row — so it stays visible with the
   sidebar closed and with no document open. It is the only visible entry for file-name
   search and deliberately sits in the global toolbar, not as a resident sidebar input. _See also_:
   **Quick Open**, **Search view**, **Global toolbar**.
@@ -277,19 +352,23 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 ## Theme & appearance
 
 - **Theme mode** — `useUIStore.theme` is `'light' | 'dark' | 'system'`
-  (`src/renderer/src/types/index.ts`). The Markdown **preview** follows it: `MarkdownPreview.tsx` resolves
-  `isDark` from `theme`, or from `matchMedia('(prefers-color-scheme: dark)')` when `theme === 'system'`, and
-  sets `data-theme` on the `<article>`; the **exporter** follows it too (`export.ts` resolves `current` → UI
-  theme, `system` → `matchMedia`). See `docs/adr/0018-preview-refactor-03-style-perf-media.md`.
-- **No UI theme toggle** — `setTheme` exists in the store and as `window.api.app.setTheme` (preload IPC), but
-  **no user-facing control invokes it**; the store default is `'light'`, so the app renders light unless
-  changed programmatically. The app **chrome** applies
-  `document.documentElement.classList.toggle('dark', …)` only when `theme === 'dark'` — it does **not** track
-  `system`. So: preview/export honor the theme, the chrome does not follow the OS `system` preference, and there
-  is no user switch. This is a pre-existing theme-sync gap, out of scope for
-  `docs/adr/0018-preview-refactor-03-style-perf-media.md` (it only unifies the preview's style source
-  to github-markdown-css; it does not add a toggle). _Avoid_: assuming the app ships a
-  clickable dark-mode switch.
+  (`src/renderer/src/types/index.ts`), defaulting to `'system'`. The Markdown **preview** follows it:
+  `MarkdownPreview.tsx` resolves `isDark` from `theme`, or from `matchMedia('(prefers-color-scheme: dark)')` when
+  `theme === 'system'`, and sets `data-theme` on the `<article>`; the **exporter** follows it too (`export.ts`
+  resolves `current` → UI theme, `system` → `matchMedia`). See
+  `docs/adr/0018-preview-refactor-03-style-perf-media.md`.
+- **主题 submenu (Theme submenu)** — the native **视图 (View)** menu carries a **主题** submenu with three
+  radio entries: 浅色 / 深色 / 跟随系统 (Light / Dark / System). Picking one forwards the value to the
+  renderer, which stores it and bridges it back to the main process (`app:set-theme` → `nativeTheme`), so the
+  OS chrome follows too; the main process mirrors the value into the menu's radio checkmark. The choice is
+  **not persisted** — every launch starts at 跟随系统. See `docs/adr/0028-theme-entry.md`.
+- **跟随系统 (System)** — the default theme choice: the app resolves the OS `prefers-color-scheme` and
+  **follows it live** (a light↔dark switch while the app is open updates immediately, no restart). The
+  renderer owns the resolution: `App.tsx` applies the `dark` class on `<html>` through the shared
+  `resolveTheme` helper, and **both** `App.tsx` and `MarkdownPreview.tsx` install a media-query
+  listener only while the choice is `system` — the preview needs its own because it owns the two
+  Markdown body stylesheets and the `<article data-theme>`.
+  _Avoid_: "dark mode toggle" for this entry — it is a follow-the-OS mode, not a switch.
 
 ## Platform & filesystem
 
@@ -322,6 +401,21 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   propagation to avoid firing ancestor handlers. See `docs/adr/0008-context-menu-architecture.md`.
 - **formatShortcut** — renders a keyboard shortcut string per platform (⌘ on macOS, Ctrl elsewhere); tooltip
   and menu shortcuts must use it rather than a hardcoded `⌘`.
+- **Format-key precedence (格式键优先)** — the policy that resolves a clash between a mainstream
+  formatting shortcut (Bold / Italic / Link / Code / List / Task / Heading) and an existing MarkFlow
+  app-command shortcut: **the format key wins and the app command relocates to a Shift chord**. Established
+  by `docs/adr/0032-format-toolbar-shortcuts-and-precedence.md`. Currently applied as `⌘I` = Italic (File
+  Details → `⌘⇧I`) and `⌘K` = Link (Quick Open → `⌘⇧K`). The freed `⌘I` / `⌘K` follow the Typora /
+  Obsidian / Bear / Zettlr convention rather than VS Code.
+- **renderer-only shortcut** — a keyboard shortcut handled entirely in the renderer (the `App.tsx` window
+  capture listener → `markdown:insert`), with **no** matching native menu accelerator, so there is exactly
+  one owner and no double-fire with CodeMirror. All format-toolbar shortcuts (`⌘B` / `⌘I` / `⌘K` / `⌘E` /
+  `⌘⇧L` / `⌘⇧T` / `⌘1..6`) are renderer-only (ADR-0031 / ADR-0032). Contrast with app commands that also
+  carry a native accelerator (e.g. Save `⌘S`).
+- **format-shortcut table** — the single module (`src/renderer/src/lib/format-shortcuts.ts`) that owns every
+  formatting binding: the key, the inserted markup and the advertised glyph. The window handler matches
+  against it, and the toolbar tooltips plus the editor's right-click menu read the same glyphs from it — so a
+  label can never drift from the key the handler implements (ADR-0032).
 - **AUTO-block PR body** — the Create-PR Action manages PR bodies via symmetric `<!-- AUTO:key --> … <!-- /AUTO:key -->`
   markers; on refresh each segment resets to the template while human-written content outside the markers is
   preserved. (A planned generalization replaces the hardcoded blocks with scanned `.mjs` **block plugins** —
@@ -329,6 +423,31 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 - **TypeScript 7 + ESLint TS6 shim** — the app builds on TS7 while `typescript-eslint` v8 still needs TS6 for
   the linter; `scripts/install-eslint-ts6.mjs` installs the TS6 checker side-by-side purely for lint. A
   documented transitional measure. See `docs/adr/0007-typescript7-eslint-ts6-shim.md`.
+
+## Printing & windows
+
+- **Main window** — the MarkFlow editor window: the only window the user normally sees, containing the
+  editor, the **Preview pane**, the sidebar and the toolbars. _Avoid_: "preview window" — the preview is a
+  pane inside this window, not a separate window.
+- **Print host window** — a hidden, never-visible window that holds the rendered document for a print
+  job and is the owner of the **System print dialog**. It must be set to `opacity 0` **before**
+  `show()`: showing it first paints one opaque frame even if `setOpacity(0)` runs immediately after
+  (the "a small preview window flashes by" report of 2026-11-13). _Avoid_: "print preview window",
+  "print window", "preview window", "hidden owner" — these names caused repeated misdiagnosis.
+- **System print dialog** — the OS-provided modal dialog for choosing a printer, copies and page setup.
+  It is owned by the **Print host window**; while it is open the **Main window** refuses document and
+  file mutations but keeps its **Preview pane** scrollable. Every toolbar button / context-menu item
+  for a refused action is **visibly disabled** during that time and returns to its normal state when
+  the dialog closes; read-only affordances (view mode, Find, Copy, preview scrolling) stay available.
+  _Avoid_: "print window" when referring to the host, "print dialog" when referring to the host.
+- **File lock (`fileLocked`)** — the capability that a document/file-set action is currently locked,
+  derived as `printing || exporting || exportOpen`. UI controls and store guards ask THIS, never the raw
+  trigger flags: a future trigger source is added in exactly one place (`selectFileLocked` in
+  `store/ui.ts`) and every lock-aware control follows. The native menu receives a single boolean over
+  `menu:set-file-locked`, mirrored from a store-level subscription, so adding a trigger source changes no
+  IPC or menu code. _Avoid_ naming the capability after any single trigger (`printing`), which would
+  force edits at every call site when a second trigger appears. See
+  `docs/adr/0024-ui-convergence-spec.md` ("fileLocked capability").
 
 ## App architecture
 
@@ -344,13 +463,50 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 
 - **Bundler output** — the intermediate artifacts produced by the bundler (Vite + `vite-plugin-electron`) before packaging; everything lands under one `dist/` root: `dist/renderer/` (web UI) and `dist/electron/` (main process `index.js` + `preload.cjs`). _Avoid_: treating anything under `dist/` as the product. See `docs/adr/0015-build-output-layout-and-bundle.md`.
 - **Packaged output** — the final, shippable application produced by electron-builder (`electron-builder.json5`); it lives in `release/` (e.g. `release/win-unpacked/MarkFlow.exe`). This is "the product", distinct from the `dist/` bundler output; the `afterAllArtifactBuild` hook prints its location when packaging finishes.
-- **`asar`** — Electron's archive format bundling the app payload into one read-only file (`resources/app.asar`). Enabled by default in electron-builder (`asar: true`); `compression: 'maximum'` is a separate root-level option that compresses the _packaged archive_ (zip/dmg/AppImage), not the asar.
+- **`asar`** — Electron's archive format bundling the app payload into one read-only file (`resources/app.asar`). Enabled by default in electron-builder.
 - **Lazy-load (dynamic import)** — loading a module on first use via `import()` instead of a top-level `import`. Used for `mermaid` (renderer first paint) and `franc` (export path).
 - **Vendor chunk** — a build chunk holding third-party `node_modules` code, named `vendor-<pkg>` by the policy in `scripts/vendor-chunks.ts`. Splitting per package (plus a few grouped families such as mermaid and the CodeMirror/lezer editor stack) keeps each chunk independently cacheable and under the build's `chunkSizeWarningLimit`.
-- **Synchronous render constraint** — markdown-it's `highlight` callback and the `texmath` engine call `highlight.js` / `katex` synchronously during `md.render()`, so lazy-loading those two requires rewriting the render pipeline. They stay eager — and are still `modulepreload`ed, because `parseClient.ts` statically imports the pipeline as its main-thread fallback for when the Worker fails. See `docs/adr/0015-build-output-layout-and-bundle.md`.
+- **Synchronous render constraint** — `highlight.js` and `katex` are called synchronously inside `md.render()`, so they cannot be lazy-loaded without rewriting the render pipeline. See `docs/adr/0015-build-output-layout-and-bundle.md`.
 - **Font formats** — `.woff2` is the modern, smallest web font format supported by Electron/Chromium. KaTeX also ships `.woff` / `.ttf` for legacy browsers; `scripts/prune-fonts.ts` prunes those because KaTeX's CSS lists `.woff2` first, so the legacy copies are never requested.
 - **Fully bundled** — both the main process (`dist/electron/index.js`, no bare `require()` except Node builtins) and the renderer are self-contained Vite outputs, so the packaged app ships **no `node_modules`** (`electron-builder.json5` excludes them). Consequence: a dependency that is _read at runtime_ instead of being bundled works in dev and fails only in the packaged build — sign off dependency changes by running `npm run dist` and launching `release/win-unpacked/MarkFlow.exe`. See `docs/adr/0015-build-output-layout-and-bundle.md`.
-- **Electron runtime floor** — the ~180 MB Chromium + Node payload every Electron app carries regardless of app-code size. The dominant component of `MarkFlow.exe`; it cannot be reduced without changing frameworks (e.g. Tauri). Measured: 367 MB for Electron 44 (`electron.exe` alone is 235 MB).
+- **Electron runtime floor** — the Chromium + Node payload every Electron app carries regardless of app-code size.
+- **electron-builder cache root** — the directory where electron-builder stores downloaded toolset
+  archives and their extracted contents. An absolute `ELECTRON_BUILDER_CACHE` value relocates it;
+  it does not skip downloading anything. _Avoid_: calling a pre-build script's own directory "the
+  electron-builder cache".
+- **extractDir** — the per-toolset directory into which electron-builder extracts a downloaded
+  archive, accompanied by a sibling status file that records a completed extraction. Its layout is
+  an internal contract, not a stable public API.
+- **prepared cache** — the Windows-only toolset a pre-build script _used to_ extract and mark with
+  its own marker file (that script was removed in ADR-0037; the term is retained for history). It is
+  a separate artifact from an **extractDir**: a "cache already prepared" message from that script
+  described only the script's own work, not a cache hit by electron-builder.
+
+## Testing infrastructure (e2e)
+
+- **Playwright project** — one run configuration (its own `use`, `workers`, `retries`), **not** an
+  owner of test files. Commands select projects by name (`--project=`); CI knows names, never spec
+  paths.
+- **Spec collection** — the files a project runs, determined by `testDir` (recursive scan root) plus
+  `testMatch` (a filter relative to that root). In this repo every project owns **its own
+  directory** and no project may set a `testMatch`, so the directory _is_ the ownership boundary:
+  the rule is **one spec file, one project** (ADR-0034), locked by the
+  `e2e/guards/project-ownership.test.ts` unit test rather than by a manual `--list` check.
+- **Perf gate** — a fast, deterministic pass/fail performance check on every CI build. The
+  large-document gate also emits its full diagnostic report _before_ asserting, so "gate" and
+  "report" are two capabilities of one run, not two tests.
+- **Perf diagnostic** — an on-demand, deliberately slow run that produces numbers instead of a
+  verdict. It is kept out of CI so it cannot slow the pipeline; `retries` is 0 because repeating a
+  measurement would corrupt the numbers.
+- **Anti-drift** — a gate and the diagnostic it was calibrated from must drive the same code path.
+  This is achieved by **sharing a helper**, never by sharing a spec file; two copies of a threshold
+  are two sources of truth (ADR-0034).
+- **Test axis** — the mechanism a test actually proves. A unit test can lock a binding table while
+  an e2e test proves the keystroke reaches the editor past the native menu: different axes, so a
+  unit test existing does **not** make the e2e test redundant. The authoritative rule for choosing a
+  layer — the **mutation check**, the two removal situations, and "a flaky e2e is evidence" — is
+  **Choosing the test layer** in `docs/agents/testing.md`, whose glossary also owns the term
+  _mutation check_. Do not redefine those terms here.
 
 ## Repo conventions
 

@@ -8,19 +8,25 @@ development environment, the conventions we follow, and how changes get released
 
 ## Code of Conduct
 
-By participating, you agree to uphold a respectful, harassment-free environment.
-(Add a `CODE_OF_CONDUCT.md` if your organization requires one.)
+By participating, you agree to uphold a respectful, harassment-free environment. See the
+[Code of Conduct](.github/CODE_OF_CONDUCT.md) for details.
 
 ## Development Setup
 
 ### Prerequisites
 
-- Node.js >= 22
-- npm >= 9
+- Node.js >= 22.22.2 — the floor is set by `jsdom` (`^22.22.2 || ^24.15.0 || >=26.0.0`) and
+  `lint-staged` (`>=22.22.1`), not by an arbitrary choice.
+- npm >= 9 — conservative floor: npm 9 writes `lockfileVersion: 3` by default (npm 7/8 can read it
+  but rewrite it as v2), and `overrides` needs >= 8.3. No dependency declares an npm 9 requirement.
+
+`package.json#engines` is the machine-readable declaration; `.nvmrc` is the single version
+selector for local development and CI (all `actions/setup-node` steps use `node-version-file`).
+`engine-strict` is intentionally **not** enabled: alongside the TS7 / `legacy-peer-deps`
+transition it would fail every `npm ci` on an old 22.x runner instead of warning.
 
 > 💡 No native toolchain is required: MarkFlow uses an in-memory document store and a
-> pure-JS search index (minisearch), so `npm install`
-> works without a C++ compiler.
+> pure-JS, index-free search scanner, so `npm install` works without a C++ compiler.
 
 ### Run the dev build
 
@@ -67,21 +73,21 @@ markflow/
 
 ## Tech Stack
 
-| Layer             | Technology                                                                                                      |
-| ----------------- | --------------------------------------------------------------------------------------------------------------- |
-| Build             | Vite 8 + vite-plugin-electron                                                                                   |
-| Desktop           | Electron 43                                                                                                     |
-| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                 |
-| UI Components     | Radix UI primitives (shadcn/ui style)                                                                           |
-| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                          |
-| Storage           | In-memory document store (Map) + minisearch index + chokidar folder watcher + Markdown file dual-write          |
-| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                                  |
-| Math              | KaTeX (LaTeX formula rendering)                                                                                 |
-| Diagrams          | Mermaid.js                                                                                                      |
-| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                                   |
-| HTML sanitization | DOMPurify + branded `SanitizedHtml` type gate + single DOM write entry `patchPreviewContent` (single XSS point) |
-| Testing           | Vitest + jsdom                                                                                                  |
-| Packaging         | electron-builder                                                                                                |
+| Layer             | Technology                                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Build             | Vite 8 + vite-plugin-electron                                                                                     |
+| Desktop           | Electron 44                                                                                                       |
+| Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                   |
+| UI Components     | Radix UI primitives (shadcn/ui style)                                                                             |
+| State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                            |
+| Storage           | In-memory document store (Map) + index-free literal/regex scanner + chokidar folder watcher + Markdown dual-write |
+| Editor            | CodeMirror 6 with Markdown syntax highlighting                                                                    |
+| Math              | KaTeX (LaTeX formula rendering)                                                                                   |
+| Diagrams          | Mermaid.js                                                                                                        |
+| Markdown parser   | markdown-it + plugins (GFM, KaTeX, GitHub Alerts, containers)                                                     |
+| HTML sanitization | DOMPurify + branded `SanitizedHtml` type gate + single DOM write entry `patchPreviewContent` (single XSS point)   |
+| Testing           | Vitest + jsdom                                                                                                    |
+| Packaging         | electron-builder                                                                                                  |
 
 ## Coding Conventions
 
@@ -142,7 +148,7 @@ What's covered (see `src/renderer/src/lib/*.test.ts`):
 
 ### Coverage policy
 
-The coverage gate (`npm run test:coverage`, run in the CI `ut` job, which starts only after the separate `quality` job passes) enforces **100%** on the
+The coverage gate (`npm run test:coverage`, run in the CI `ut` job, which starts in parallel with — not after — the separate `quality` job) enforces **100%** on the
 repository's **unit-testable logic surface** (statements / branches / functions / lines all at
 100%, with `perFile: true` so every file must hit 100% individually rather than only the project
 aggregate). The conventions are:
@@ -215,47 +221,21 @@ npm run dist
 
 # Build for specific platforms
 npm run dist:mac      # macOS (.dmg)
-npm run dist:win      # Windows (unpacked dir, no installer needed)
-npm run dist:linux    # Linux (.AppImage, .deb, .rpm)
+npm run dist:win      # Windows (.zip, portable — extract and run, no installer)
+npm run dist:linux    # Linux (.AppImage)
 ```
 
-The packaged application will be in the `release/win-unpacked/` directory. Zip this
-folder for distribution — users just extract and run `MarkFlow.exe`, no installation required.
+The packaged application is written to `release/`: `release/win-unpacked/` for local runs
+and `release/markflow-<version>-win.zip` for distribution.
 
-> **Windows build note**: `npm run dist:win` automatically runs a pre-build script
-> (`scripts/prepare-win-codesign.ps1`) that downloads and extracts only the Windows
-> code-signing tools, skipping macOS symbolic links that fail on non-administrator
-> Windows accounts. No manual setup needed — just run `npm run dist:win` and it works.
->
-> If you encounter the error `Cannot create symbolic link`, either:
->
-> - Run the build again (the script should have pre-cached correctly), or
-> - Enable Windows **Developer Mode** (Settings → System → Developer options), or
-> - Run your terminal as Administrator.
->
-> **winCodeSign cache location**: if you see `[winCodeSign] Cache already prepared. Skipping.`
-> during a build, the code-signing tools are already cached. The default cache directory is:
->
-> ```
-> %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
-> ```
->
-> i.e. `C:\Users\<username>\AppData\Local\electron-builder\Cache\winCodeSign`, which
-> contains version folders named like `winCodeSign-2.x.x`.
->
-> To inspect or confirm the cache directory (cmd):
->
-> ```cmd
-> rem print the cache path
-> echo %LOCALAPPDATA%\electron-builder\Cache\winCodeSign
-> rem list cached versions
-> dir "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
-> ```
->
-> Note: if you have set the `CSC_CACHE` environment variable, or specified a custom
-> `cache`/`winCodeSign` path in the `electron-builder` config, the cache location is
-> overridden. To force a re-download, delete the corresponding version folder under
-> that directory; the next `npm run dist:win` will fetch it again.
+> **Windows build note**: `npm run dist:win` builds a portable `.zip` with no extra setup — it does
+> **not** download or use any code-signing toolset (the old `scripts/prepare-win-codesign.ps1`
+> pre-cache script was removed; electron-builder 26 never consumed it). The shipped `MarkFlow.exe`
+> is **unsigned** (`win.signExecutable: false`, see ADR-0037), so Windows SmartScreen / "unknown
+> publisher" may warn the first time you run it — click **More info → Run anyway**. Icons and version
+> info are applied via pure-JS `resedit`, independent of signing. To ship a trusted/signed exe,
+> remove `signExecutable: false` and supply a certificate (`win.certificateFile` + `CSC_KEY_PASSWORD`,
+> or `win.azureSignOptions` for Azure Trusted Signing).
 
 ## Submitting Changes
 

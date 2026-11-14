@@ -1,40 +1,18 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react'
+import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react'
 import {
   Edit3,
   Eye,
   Columns,
-  Hash,
-  Bold,
-  Italic,
-  Code,
-  Link,
-  List,
-  CheckSquare,
   GripVertical,
-  PenLine,
-  Lock,
-  PanelLeft,
   X,
   FolderOpen,
-  Replace,
-  Search,
   Plus,
-  Save,
-  SaveAll,
-  RotateCcw,
-  Info,
-  FileOutput,
   Copy,
+  Search,
+  PenLine,
 } from 'lucide-react'
-import {
-  cn,
-  baseName,
-  dirName,
-  displayTitle,
-  stripMarkdownExt,
-  formatShortcut,
-} from '../../lib/utils'
-import { useUIStore } from '../../store/ui'
+import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
+import { useUIStore, selectFileLocked } from '../../store/ui'
 import {
   useDocument,
   useUpdateDocument,
@@ -42,16 +20,20 @@ import {
   useOpenFolder,
   useSaveDocumentAs,
   useReloadDocument,
+  createDraft,
+  useHasMemoryOnlyDraft,
 } from '../../hooks/useDocuments'
 import { MarkdownEditor } from './MarkdownEditor'
 import { MarkdownPreview } from '../preview/MarkdownPreview'
-import { PreviewFindBar } from '../preview/PreviewFindBar'
+import { PreviewToolbar } from '../preview/PreviewToolbar'
+import { EditorPaneBar } from './EditorPaneBar'
+import { GlobalToolbar } from './GlobalToolbar'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useLocalDocument } from '../../hooks/useLocalDocument'
 import { isDirInFolder } from '../../../../../shared/fileUtils'
-import type { ViewMode } from '../../types'
+import { VIEW_MODE_ORDER, type ViewMode } from '../../types'
 import { useT } from '../../i18n'
 import {
   DropdownMenu,
@@ -68,7 +50,7 @@ import {
 } from '../ui/context-menu'
 import { FileMenuItems, type DocMenuActions } from './FileMenuItems'
 import { InputContextMenu } from '../ui/input-context-menu'
-import { hasModalSurface } from '../../lib/shortcut-scope'
+import { hasModalSurface, isEditableTarget, isFindWidgetField } from '../../lib/shortcut-scope'
 
 // Reveal a path in the system file manager. Failures (a file deleted outside the app) are
 // swallowed so they never surface as an unhandled rejection
@@ -95,51 +77,68 @@ function findTargetPane(
   return lastPane === 'preview' ? 'preview' : 'editor'
 }
 
-// True when keyboard focus sits in a text-entry surface that is NOT the editor's own content, so a
-// window-level find/replace shortcut must stand down and let that surface keep the key (ADR-0023 /
-// G5). `null` / non-HTMLElement active elements (e.g. just the body) are treated as "not editing".
-//
-// The editor's own editing surface (`.cm-content`) is deliberately EXEMPT: its Ctrl/Cmd+F / Ctrl/Cmd+H
-// belong to the editor's find & replace widget, so the key must route there and NOT be swallowed. Only
-// genuine "other" fields — the resident sidebar search `<input>`, a rename `<input>`, or any
-// contentEditable that isn't the editor itself — keep the key.
-function isEditableTarget(el: Element | null): boolean {
-  if (!(el instanceof HTMLElement)) return false
-  if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-    // The editor find widget's own fields live inside a CodeMirror panel: their Ctrl/Cmd+F/H
-    // belong to that widget (same rule as the .cm-content exemption below), so the shortcuts keep
-    // working while the user is typing in the find/replace inputs. Without this arm the
-    // re-open path (Ctrl+H expanding an already-open panel) was unreachable — focus sits in the
-    // find input the moment the panel opens, and the guard swallowed every follow-up shortcut.
-    if (el.closest('.cm-panel')) return false
-    return true
-  }
-  if (el.isContentEditable) {
-    if (el.classList.contains('cm-content')) return false
-    return true
-  }
-  return false
-}
+// `isEditableTarget` / `isFindWidgetField` are provided by '../../lib/shortcut-scope' (shared with
+// App.tsx's Ctrl/Cmd+B guard), so the editor-pane-local copy was removed.
+
+/**
+ * The three exclusive view modes, in the order the toolbar renders them.
+ *
+ * They are an ARIA **radio group**, not three independent toggles: exactly one is active at a
+ * time, so the group is a single Tab stop (roving tabindex) and the arrow keys move AND select
+ * (ARIA APG, radio group pattern). The shared order lives in `VIEW_MODE_ORDER` (imported from
+ * `../../types`), also used by the store's `cycleViewMode` so the radio order and the menu cycle
+ * never drift apart.
+ */
 
 export function EditorPane(): React.ReactElement {
-  const {
-    activeDocumentId,
-    viewMode,
-    setViewMode,
-    editable,
-    toggleEditable,
-    toggleSidebar,
-    closeDocument,
-    externalChange,
-    clearExternalChange,
-  } = useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const activeDocumentId = useUIStore((s) => s.activeDocumentId)
+  const viewMode = useUIStore((s) => s.viewMode)
+  const editable = useUIStore((s) => s.editable)
+  // R5 plan A: while the system print dialog is up the document is locked (read-only), but the
+  // main window stays enabled so the PREVIEW pane can be scrolled. The lock is UI-level, not a
+  // whole-window disable — see store/ui.ts for the switch/close guards.
+  const fileLocked = useUIStore(selectFileLocked)
+  const externalChange = useUIStore((s) => s.externalChange)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setViewMode, closeDocument, clearExternalChange } = useUIStore.getState()
   const { t } = useT()
+  // Radio-group plumbing for the view-mode control: the refs let the arrow handler move DOM focus
+  // to the radio it just selected (the roving tabindex alone moves the *tab stop*, not the focus).
+  const viewModeRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const onViewModeKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const cur = VIEW_MODE_ORDER.indexOf(viewMode)
+      let next = -1
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        next = (cur + 1) % VIEW_MODE_ORDER.length
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        next = (cur - 1 + VIEW_MODE_ORDER.length) % VIEW_MODE_ORDER.length
+      } else if (e.key === 'Home') {
+        next = 0
+      } else if (e.key === 'End') {
+        next = VIEW_MODE_ORDER.length - 1
+      }
+      if (next < 0) return
+      e.preventDefault()
+      setViewMode(VIEW_MODE_ORDER[next])
+      viewModeRefs.current[next]?.focus()
+    },
+    [viewMode, setViewMode],
+  )
   // Resident search jump (Phase 4): when a search hit is clicked, openDocumentWithMatch stores
   // the target offset here; we hand it to the editor, which selects + scrolls once the document
   // content has loaded, then calls back to clear it.
   const pendingMatch = useUIStore((s) => s.pendingMatch)
   const consumeMatch = useCallback(() => useUIStore.getState().setPendingMatch(null), [])
-  const selectionOffset = pendingMatch ? { from: pendingMatch.start, to: pendingMatch.end } : null
+  // Stable across unrelated renders: this object feeds MarkdownEditor's sync effect, whose
+  // full-document re-dispatch would otherwise run on every render while a jump is pending
+  // (Vercel rerender-dependencies / rerender-memo-with-default-value).
+  const selectionOffset = useMemo(
+    () => (pendingMatch ? { from: pendingMatch.start, to: pendingMatch.end } : null),
+    [pendingMatch],
+  )
   const previewContentRef = useRef<HTMLDivElement>(null)
   // Which pane the user last interacted with. The preview is a non-focusable <div>, so focus
   // cannot identify the active pane; this ref (fed by each pane's onPointerDown) is what routes
@@ -152,6 +151,9 @@ export function EditorPane(): React.ReactElement {
   const reloadMut = useReloadDocument()
   const openPathsMut = useOpenPaths()
   const openFolderMut = useOpenFolder()
+  // At most one unsaved draft: once a memory-only document exists, New Draft is disabled here too
+  // (the editor empty-state menu is its own visible control for the same rule).
+  const draftExists = useHasMemoryOnlyDraft()
 
   const {
     localContent,
@@ -161,12 +163,24 @@ export function EditorPane(): React.ReactElement {
     startTitleEdit,
     cancelTitleEdit,
     handleContentChange,
+    commitDraft,
+    getAuthoritativeContent,
     handleTitleSave,
     dirty,
     markSaved,
     toDiskFormat,
     getEol,
-  } = useLocalDocument(doc, activeDocumentId)
+  } = useLocalDocument(doc)
+
+  // The editor owns a per-document session that aborts its pending debounce on switch, so a
+  // late preview echo can never reach here. Both callbacks are plain text sinks: no document id,
+  // no identity comparison. That is the acceptance criterion for the isolation design (ADR-0033).
+  // NOTE: these hooks MUST stay up here with the other hooks — EditorPane has early returns below.
+  const onImmediateChange = useCallback((text: string) => commitDraft(text), [commitDraft])
+  const onEditorChange = useCallback(
+    (text: string) => handleContentChange(text),
+    [handleContentChange],
+  )
 
   // Mirror the active document's title into the store: the unsaved-switch guard runs in the store,
   // which has no access to the document object, and a prompt that cannot name the file it is about
@@ -187,13 +201,15 @@ export function EditorPane(): React.ReactElement {
     return () => document.removeEventListener('editor:focus-request', onFocusRequest)
   }, [])
 
-  // Save / Save As / Reload: hold the latest draft in a ref so callbacks don't capture a stale closure.
-  // Initialized once; the effect keeps the fields in sync (mutating fields avoids reassigning the ref).
-  const draftRef = useRef({ localContent, localTitle })
+  // Save / Save As: hold the title draft in a ref so callbacks don't capture a stale closure.
+  // CONTENT deliberately does NOT come from `localContent` (the 400ms-throttled preview mirror):
+  // getAuthoritativeContent() is the keystroke-frame text. Syncing content here on every render
+  // would overwrite a fresh keystroke with the lagging preview value — the "Ctrl+S within 400ms
+  // saves stale text" bug. See docs/adr/0033-editor-draft-session-isolation.md.
+  const draftRef = useRef({ localTitle })
   useEffect(() => {
-    draftRef.current.localContent = localContent
     draftRef.current.localTitle = localTitle
-  })
+  }, [localTitle])
 
   const handleSaveAs = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -205,7 +221,8 @@ export function EditorPane(): React.ReactElement {
     // (the menu item is disabled in read-only mode, so this is never hit) defensive
     /* v8 ignore next -- defensive: the save-as menu item is disabled in read-only mode, so this is never hit */
     if (!useUIStore.getState().editable) return
-    const { localContent, localTitle } = draftRef.current
+    const localContent = getAuthoritativeContent()
+    const { localTitle } = draftRef.current
     // Save As offers the name the title bar shows, so accepting the default cannot
     // silently discard a rename the user typed but has not saved yet. The draft name
     // is the DISPLAY name, so it already carries the file's own extension (`.md` for
@@ -272,7 +289,7 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat, t, openPathsMut])
+  }, [doc, saveAsMut, markSaved, getEol, toDiskFormat, getAuthoritativeContent, t, openPathsMut])
 
   const handleSave = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -290,7 +307,8 @@ export function EditorPane(): React.ReactElement {
       await handleSaveAs()
       return
     }
-    const { localContent, localTitle } = draftRef.current
+    const localContent = getAuthoritativeContent()
+    const { localTitle } = draftRef.current
     // Re-read the on-disk line ending at save time as the final source of truth (don't depend on
     // whether the async effect finished or the store is clean)
     const eol = doc?.filePath
@@ -316,7 +334,7 @@ export function EditorPane(): React.ReactElement {
     } finally {
       useUIStore.getState().setSaving(false)
     }
-  }, [updateMut, handleSaveAs, markSaved, doc, getEol, toDiskFormat, t])
+  }, [updateMut, handleSaveAs, markSaved, doc, getEol, toDiskFormat, getAuthoritativeContent, t])
 
   const handleReload = useCallback(async () => {
     const id = useUIStore.getState().activeDocumentId
@@ -393,9 +411,13 @@ export function EditorPane(): React.ReactElement {
       // Don't hijack plain find/replace while the caret is in a text field that is NOT the editor's own
       // content (ADR-0023 / G5): e.g. Ctrl/Cmd+F inside the resident sidebar search box must NOT yank
       // focus to the editor find widget. The field keeps the key — return WITHOUT preventDefault so its
-      // own behaviour is untouched. The editor's own `.cm-content` is exempt (see isEditableTarget), so
-      // Ctrl/Cmd+F/H still opens the editor find widget from within the editor.
-      if (isEditableTarget(document.activeElement)) return
+      // own behaviour is untouched. Two exemptions keep the editor's own shortcuts working:
+      //   - `.cm-content` (the editor's own surface) is exempt via `isEditableTarget`.
+      //   - the find & replace widget's own inputs are exempt via `isFindWidgetField`: focus sits in
+      //     the find input the moment the panel opens, so without this arm the re-open path
+      //     (Ctrl/Cmd+H expanding an already-open panel) would be unreachable.
+      if (isEditableTarget(document.activeElement) && !isFindWidgetField(document.activeElement))
+        return
       if (key === 'h') {
         // Replace is editor-only (Q2): the preview has no replace field, so when the ACTIVE pane is
         // the preview this key has no target — stand down WITHOUT preventDefault (don't swallow it,
@@ -603,243 +625,23 @@ export function EditorPane(): React.ReactElement {
     document.body.style.userSelect = 'none'
   }, [])
 
-  const insertMarkdown = useCallback((before: string, after: string = '') => {
-    document.dispatchEvent(new CustomEvent('markdown:insert', { detail: { before, after } }))
-  }, [])
-
-  // Shared toolbar: open/close/sidebar/edit-mode toggle (used by both empty and document states)
-  const CommonToolbar = (
-    <div className="titlebar-no-drag flex items-center gap-0.5">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t('menu.toggleSidebar')}
-            data-testid="sidebar-toggle-btn"
-            onClick={toggleSidebar}
-          >
-            <PanelLeft size={14} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {t('editor.toggleSidebarShortcut', { shortcut: formatShortcut('⌘\\') })}
-        </TooltipContent>
-      </Tooltip>
-      {/* "Go to file…" — the Quick Open trigger (ADR-0023). It lives in the editor toolbar next to
-          the sidebar toggle, and its tooltip NAMES the surface's scope ("Go to file…"), so the
-          entry point says what it searches instead of showing a bare magnifier. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t('sidebar.goToFile')}
-            data-testid="editor-goto-file-btn"
-            onClick={() => useUIStore.getState().setSearchOpen(true)}
-          >
-            <Search size={14} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {t('editor.goToFileShortcut', { shortcut: formatShortcut('⌘K') })}
-        </TooltipContent>
-      </Tooltip>
-      {/* The shortcut chip is always visible, not just inside the tooltip: in a keyboard-first
-          app the ⌘K entry point must be discoverable without hovering (§6 step 9 / §10.2). */}
-      <kbd
-        data-testid="editor-goto-file-chip"
-        className="px-1 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-overlay)] text-2xs text-[var(--color-text-tertiary)]"
-      >
-        {formatShortcut('⌘K')}
-      </kbd>
-      {/* Save / Save As / Reload grouped with Open/Close as file operations, kept on the left */}
-      {activeDocumentId && (
-        <>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleSave}
-                disabled={!editable || !dirty || updateMut.isPending || saveAsMut.isPending}
-                className={editable && dirty ? 'text-accent' : ''}
-                data-testid="save-btn"
-              >
-                <Save size={13} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {editable
-                ? dirty
-                  ? t('editor.saveShortcut', { shortcut: formatShortcut('⌘S') })
-                  : t('editor.noChanges')
-                : t('editor.saveSwitchEdit')}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleSaveAs}
-                disabled={!editable || saveAsMut.isPending}
-                data-testid="save-as-btn"
-              >
-                <SaveAll size={13} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {editable
-                ? t('editor.saveAsShortcut', { shortcut: formatShortcut('⌘⇧S') })
-                : t('editor.saveAsSwitchEdit')}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleReload}
-                disabled={reloadMut.isPending}
-                data-testid="reload-btn"
-              >
-                <RotateCcw size={13} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t('editor.reloadShortcut', { shortcut: formatShortcut('⌘⇧R') })}
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => doc && useUIStore.getState().setFileDetailsId(doc.id)}
-                data-testid="file-details-btn"
-              >
-                <Info size={13} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t('editor.fileDetailsShortcut', { shortcut: formatShortcut('⌘I') })}
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => useUIStore.getState().setExportOpen(true)}
-                data-testid="export-btn"
-              >
-                <FileOutput size={13} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t('editor.exportShortcut', { shortcut: formatShortcut('⌘⇧E') })}
-            </TooltipContent>
-          </Tooltip>
-
-          {viewMode !== 'preview' && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => document.dispatchEvent(new CustomEvent('markdown:find'))}
-                  data-testid="editor-find-btn"
-                  aria-label={t('editor.findShortcut', { shortcut: formatShortcut('⌘F') })}
-                >
-                  <Search size={13} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('editor.findShortcut', { shortcut: formatShortcut('⌘F') })}
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          {viewMode !== 'preview' && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => document.dispatchEvent(new CustomEvent('markdown:replace'))}
-                  data-testid="editor-replace-btn"
-                  aria-label={t('editor.replaceShortcut', { shortcut: formatShortcut('⌘H') })}
-                >
-                  <Replace size={13} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {t('editor.replaceShortcut', { shortcut: formatShortcut('⌘H') })}
-              </TooltipContent>
-            </Tooltip>
-          )}
-
-          <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
-        </>
-      )}
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" onClick={handleClose} data-testid="close-btn">
-            <X size={13} />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('editor.closeFile')}</TooltipContent>
-      </Tooltip>
-
-      <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
-
-      {/* Read-only / edit mode toggle */}
-      {editable ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleEditable}
-              className="gap-1"
-              data-testid="toggle-editable-btn"
-            >
-              <Lock size={12} /> {t('editor.readOnly')}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('editor.switchReadOnly')}</TooltipContent>
-        </Tooltip>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="accent"
-              size="sm"
-              onClick={toggleEditable}
-              className="gap-1"
-              data-testid="toggle-editable-btn"
-            >
-              <PenLine size={12} /> {t('editor.edit')}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('editor.switchEdit')}</TooltipContent>
-        </Tooltip>
-      )}
-    </div>
-  )
-
   if (!activeDocumentId) {
     return (
       <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface)]">
         <div
-          className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] shrink-0"
+          data-testid="global-bar"
+          className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] bg-[var(--color-surface-overlay)] shrink-0"
           style={{ height: 'var(--titlebar-height)' }}
         >
-          {CommonToolbar}
+          <GlobalToolbar
+            onSave={handleSave}
+            onSaveAs={handleSaveAs}
+            onReload={handleReload}
+            onClose={handleClose}
+            savePending={updateMut.isPending}
+            saveAsPending={saveAsMut.isPending}
+            reloadPending={reloadMut.isPending}
+          />
           <div className="flex-1" />
         </div>
         {/* Empty state right-click menu . The pane has no document yet, so the only useful actions are the ones that create or find one */}
@@ -878,7 +680,8 @@ export function EditorPane(): React.ReactElement {
           <ContextMenuContent>
             <ContextMenuItem
               data-testid="ed-new-document"
-              onClick={() => useUIStore.getState().setNewDocOpen(true)}
+              disabled={draftExists || fileLocked}
+              onClick={() => void createDraft()}
             >
               <Plus size={13} /> {t('sidebar.newDraft')}
             </ContextMenuItem>
@@ -943,7 +746,14 @@ export function EditorPane(): React.ReactElement {
   // it only happened for entries evicted from the React Query cache (gcTime 5m),
   // which is why the lag felt intermittent. The overlay gives the same
   // "cleared immediately" feedback at a fraction of the cost.
-  const showLoading = isLoading
+  // activeDocumentId flips synchronously on a sidebar switch, but useDocument() can still hand
+  // back the PREVIOUS record (stale react-query cache / in-flight refetch), and useLocalDocument
+  // only resets its draft when doc.id changes. In that window localContent is the PREVIOUS
+  // document's text: feeding it to MarkdownEditor writes A's text into B's EditorView because
+  // isDocSwitch force-applies `content` — which is what later surfaced as "Ctrl+Z replays the
+  // previous file". Gate on the ids MATCHING, not just on isLoading.
+  const docMatchesActive = doc?.id === activeDocumentId
+  const showLoading = isLoading || !docMatchesActive
   // Feed '' while loading so both panes are genuinely empty the moment the
   // overlay lifts, instead of flashing the previous document's text for a frame.
   const editorContent = showLoading ? '' : localContent
@@ -967,11 +777,20 @@ export function EditorPane(): React.ReactElement {
     <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface)]">
       {/* Toolbar */}
       <div
-        className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] shrink-0"
+        data-testid="global-bar"
+        className="titlebar-drag flex items-center justify-between px-3 border-b border-[var(--color-border)] bg-[var(--color-surface-overlay)] shrink-0"
         style={{ height: 'var(--titlebar-height)' }}
       >
         <div className="titlebar-no-drag flex items-center gap-1 flex-1 min-w-0">
-          {CommonToolbar}
+          <GlobalToolbar
+            onSave={handleSave}
+            onSaveAs={handleSaveAs}
+            onReload={handleReload}
+            onClose={handleClose}
+            savePending={updateMut.isPending}
+            saveAsPending={saveAsMut.isPending}
+            reloadPending={reloadMut.isPending}
+          />
 
           <div className="w-px h-4 bg-[var(--color-border)] mx-1" />
 
@@ -990,7 +809,7 @@ export function EditorPane(): React.ReactElement {
                     if (e.key === 'Enter') handleTitleSave()
                     if (e.key === 'Escape') cancelTitleEdit()
                   }}
-                  className="w-full text-sm font-semibold bg-transparent border-none outline-none text-[var(--color-text-primary)] focus:ring-0"
+                  className="w-full text-sm font-semibold bg-transparent border-none focus-ring text-[var(--color-text-primary)]"
                   autoFocus
                 />
               </InputContextMenu>
@@ -1028,14 +847,14 @@ export function EditorPane(): React.ReactElement {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
-                        variant="ghost"
+                        variant="toolbar"
                         size="icon"
-                        className="h-6 w-6 shrink-0"
+                        className="shrink-0"
                         onClick={startTitleEdit}
                         aria-label={t('editor.renameTitle')}
                         data-testid="rename-title-btn"
                       >
-                        <PenLine size={12} />
+                        <PenLine size={16} />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>{t('editor.renameTitle')}</TooltipContent>
@@ -1046,86 +865,53 @@ export function EditorPane(): React.ReactElement {
           </div>
 
           <div className="flex items-center gap-0.5">
-            {/* Formatting toolbar (only available in edit mode) */}
-            {viewMode !== 'preview' && editable && (
-              <div className="hidden md:flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-[var(--color-border)]">
-                {[
-                  { icon: <Hash size={12} />, before: '# ', after: '', tip: t('editor.fmt.h1') },
-                  {
-                    icon: <Bold size={12} />,
-                    before: '**',
-                    after: '**',
-                    tip: t('editor.fmt.bold'),
-                  },
-                  {
-                    icon: <Italic size={12} />,
-                    before: '_',
-                    after: '_',
-                    tip: t('editor.fmt.italic'),
-                  },
-                  { icon: <Code size={12} />, before: '`', after: '`', tip: t('editor.fmt.code') },
-                  {
-                    icon: <Link size={12} />,
-                    before: '[',
-                    after: '](url)',
-                    tip: t('editor.fmt.link'),
-                  },
-                  { icon: <List size={12} />, before: '- ', after: '', tip: t('editor.fmt.list') },
-                  {
-                    icon: <CheckSquare size={12} />,
-                    before: '- [ ] ',
-                    after: '',
-                    tip: t('editor.fmt.task'),
-                  },
-                ].map(({ icon, before, after, tip }) => (
-                  <Tooltip key={tip}>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => insertMarkdown(before, after)}
-                        data-testid={`fmt-${before}-${after}`}
-                      >
-                        {icon}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{tip}</TooltipContent>
-                  </Tooltip>
-                ))}
-              </div>
-            )}
-
-            {/* View mode */}
-            <div className="flex items-center rounded border border-[var(--color-border)] overflow-hidden ml-1">
+            {/* View mode — an EXCLUSIVE choice (editor / split / preview), so it is an ARIA radio
+                group: exactly one checked radio, ONE Tab stop for the whole group (roving
+                tabindex) and arrow keys that move AND select (ARIA APG radio group). The design
+                image (fig 02) draws the three as SEPARATE 40x32 tiles with a 6px gap — the active
+                one filled with the accent tint and an accent edge — not as a joined segmented
+                control, so the group itself carries no border or clipping. */}
+            <div
+              role="radiogroup"
+              aria-label={t('editor.view.label')}
+              className="flex items-center gap-1.5 ml-1"
+              onKeyDown={onViewModeKeyDown}
+            >
               {(
                 [
                   {
                     mode: 'edit' as ViewMode,
-                    icon: <Edit3 size={12} />,
+                    icon: <Edit3 size={16} />,
                     tip: t('editor.view.editor'),
                   },
                   {
                     mode: 'split' as ViewMode,
-                    icon: <Columns size={12} />,
+                    icon: <Columns size={16} />,
                     tip: t('editor.view.split'),
                   },
                   {
                     mode: 'preview' as ViewMode,
-                    icon: <Eye size={12} />,
+                    icon: <Eye size={16} />,
                     tip: t('editor.view.preview'),
                   },
                 ] as const
-              ).map(({ mode, icon, tip }) => (
+              ).map(({ mode, icon, tip }, i) => (
                 <Tooltip key={mode}>
                   <TooltipTrigger asChild>
                     <button
+                      role="radio"
+                      aria-checked={viewMode === mode}
+                      tabIndex={viewMode === mode ? 0 : -1}
+                      ref={(el) => {
+                        viewModeRefs.current[i] = el
+                      }}
                       onClick={() => setViewMode(mode)}
                       data-testid={`view-${mode}`}
                       className={cn(
-                        'px-2 py-1 text-xs transition-colors',
+                        'toolbar-btn flex h-8 w-10 shrink-0 items-center justify-center transition-colors border rounded',
                         viewMode === mode
-                          ? 'bg-[var(--color-accent-muted)] text-accent'
-                          : 'text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]',
+                          ? 'bg-[var(--color-accent-muted)] text-accent border-[var(--color-accent)]'
+                          : 'bg-[var(--color-surface)] text-[var(--color-text-tertiary)] border-[var(--color-border)] hover:bg-[var(--color-surface-overlay)] hover:text-[var(--color-text-secondary)]',
                       )}
                     >
                       {icon}
@@ -1262,19 +1048,25 @@ export function EditorPane(): React.ReactElement {
               lastPaneRef.current = 'editor'
             }}
             className={
-              viewMode === 'split' ? 'min-w-0 overflow-hidden' : 'flex-1 min-w-0 overflow-hidden'
+              viewMode === 'split'
+                ? 'min-w-0 overflow-hidden flex flex-col'
+                : 'flex-1 min-w-0 overflow-hidden flex flex-col'
             }
             style={viewMode === 'split' ? { width: `${splitRatio * 100}%` } : undefined}
           >
-            <MarkdownEditor
-              content={editorContent}
-              onChange={handleContentChange}
-              editable={editable}
-              docId={activeDocumentId}
-              filePath={doc?.filePath ?? null}
-              selectionOffset={selectionOffset}
-              onConsumeSelection={consumeMatch}
-            />
+            <EditorPaneBar editable={editable} />
+            <div className="flex-1 min-h-0">
+              <MarkdownEditor
+                content={editorContent}
+                onImmediateChange={onImmediateChange}
+                onChange={onEditorChange}
+                editable={editable && !fileLocked}
+                docId={activeDocumentId}
+                filePath={doc?.filePath ?? null}
+                selectionOffset={selectionOffset}
+                onConsumeSelection={consumeMatch}
+              />
+            </div>
           </div>
         )}
 
@@ -1316,14 +1108,20 @@ export function EditorPane(): React.ReactElement {
           onPointerDown={() => {
             lastPaneRef.current = 'preview'
           }}
-          className={viewMode === 'edit' ? 'hidden' : 'relative flex-1 min-w-0 overflow-hidden'}
+          className={
+            viewMode === 'edit' ? 'hidden' : 'relative flex-1 min-w-0 overflow-hidden flex flex-col'
+          }
         >
-          {/* The content container is separate from the find bar so the bar's own labels are
+          <PreviewToolbar
+            containerRef={previewContentRef}
+            previewVisible={viewMode !== 'edit'}
+            onExport={() => useUIStore.getState().setExportOpen(true)}
+          />
+          {/* The content container is separate from the toolbar so the toolbar's own labels are
               never matched by the in-preview search. */}
-          <div ref={previewContentRef} className="h-full w-full">
+          <div ref={previewContentRef} className="w-full flex-1 min-h-0">
             <MarkdownPreview content={editorContent} doc={doc} />
           </div>
-          <PreviewFindBar containerRef={previewContentRef} />
         </div>
 
         {/* Switch overlay: an OPAQUE cover over both panes while the document is in flight. This replaces the old `if (isLoading)` early return, which unmounted this whole subtree and destroyed the CodeMirror view. The panes stay mounted (their content is '' see editorContent), so when the document lands only a content swap happens, not a rebuild */}
@@ -1347,7 +1145,7 @@ export function EditorPane(): React.ReactElement {
             <p className="text-sm text-[var(--color-text-secondary)] mb-5">
               {dirty ? t('editor.diskChangedDirty') : t('editor.diskChangedClean')}
             </p>
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex items-center justify-end gap-3">
               <Button
                 variant="ghost"
                 size="sm"

@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
 import { useUIStore } from './ui'
 // Initialises the i18next singleton so the store's guard prompts are translated rather than
 // returning raw keys.
@@ -61,6 +62,15 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().setViewMode('preview')
     expect(useUIStore.getState().viewMode).toBe('preview')
 
+    // View-mode cycle (Cmd/Ctrl+Shift+P): advances through the shared order and wraps.
+    useUIStore.getState().setViewMode('split')
+    useUIStore.getState().cycleViewMode()
+    expect(useUIStore.getState().viewMode).toBe('preview')
+    useUIStore.getState().cycleViewMode()
+    expect(useUIStore.getState().viewMode).toBe('edit')
+    useUIStore.getState().cycleViewMode()
+    expect(useUIStore.getState().viewMode).toBe('split')
+
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('q')
     expect(useUIStore.getState().searchOpen).toBe(true)
@@ -122,6 +132,9 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().setFileDetailsId('fd')
     expect(useUIStore.getState().fileDetailsId).toBe('fd')
 
+    // R5 plan A: opening the export dialog is refused while printing, so clear the flag that the
+    // earlier "printing" assertion left set before exercising this setter.
+    useUIStore.getState().setPrinting(false)
     useUIStore.getState().setExportOpen(true)
     useUIStore.getState().setExporting(true)
     expect(useUIStore.getState().exportOpen).toBe(true)
@@ -196,6 +209,47 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().closeWorkspace()
     expect(useUIStore.getState().activeDocumentId).toBe('x')
     s.setExportOpen(false)
+  })
+
+  // R5 plan A: with the standalone print PREVIEW window gone, the main window stays interactive
+  // so its preview pane can be scrolled. The old mainWindow.setEnabled(false) whole-window lock is
+  // therefore replaced by a store-level transaction lock: no editing, no switching/closing files,
+  // no opening the export dialog — or the print job could be built from a different document.
+  it('printing locks document switches/closes and the export dialog, and releases them afterwards', async () => {
+    const s = useUIStore.getState()
+    s.setActiveDocumentId('doc-a')
+    s.setActiveFolder('/workspace')
+    s.setDirty(false)
+    s.setPrinting(true)
+
+    expect(await s.selectDocument('doc-b'), 'switching files must be refused').toBe(false)
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-a')
+    expect(await s.openDocumentAt('doc-b', 0, 10), 'opening another file must be refused').toBe(
+      false,
+    )
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-a')
+
+    useUIStore.getState().closeDocument()
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-a')
+    useUIStore.getState().closeWorkspace()
+    expect(useUIStore.getState().activeFolder).toBe('/workspace')
+    useUIStore.getState().setExportOpen(true)
+    expect(useUIStore.getState().exportOpen, 'the export dialog must not open').toBe(false)
+
+    // The edit/read-only toggle is a document mutation too: flipping it while printing would let
+    // the document silently become editable the moment the system dialog closes.
+    const editableBefore = useUIStore.getState().editable
+    useUIStore.getState().toggleEditable()
+    expect(useUIStore.getState().editable, 'the edit-mode toggle must be refused').toBe(
+      editableBefore,
+    )
+
+    // No permanent state corruption: the lock is gone as soon as printing ends.
+    s.setPrinting(false)
+    useUIStore.getState().toggleEditable()
+    expect(useUIStore.getState().editable, 'the toggle works again').toBe(!editableBefore)
+    expect(await useUIStore.getState().selectDocument('doc-b')).toBe(true)
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-b')
   })
 
   it('closeWorkspace removes an unsaved memory-only draft via the api', async () => {
@@ -421,5 +475,71 @@ describe('useUIStore — unsaved buffer registry (ADR-0023)', () => {
     useUIStore.getState().setIsNewUnsaved(false)
     useUIStore.getState().closeDocument()
     expect(useUIStore.getState().unsavedBuffers).toEqual({})
+  })
+})
+
+// Field-scoped subscriptions are a performance contract, not a style choice: ADR-0033 writes the
+// registry on every keystroke, so an identity-selector subscriber re-renders the whole app once
+// per character. This is the behavioural counterpart to e2e/guards/ui-store-selectors.test.ts.
+describe('useUIStore — selector-scoped subscriptions', () => {
+  it('does not re-render a subscriber that reads only theme on a registry write', () => {
+    let renders = 0
+    const { unmount } = renderHook(() => {
+      renders += 1
+      return useUIStore((s) => s.theme)
+    })
+    const before = renders
+    act(() => {
+      for (let i = 0; i < 24; i += 1) {
+        useUIStore.getState().reportUnsavedBuffer('selector-probe', `keystroke ${i}`)
+      }
+    })
+    // 24 writes produce 24 new state objects, but the selected slice never changed.
+    expect(renders).toBe(before)
+    expect(useUIStore.getState().unsavedBuffers['selector-probe'].content).toBe('keystroke 23')
+    act(() => useUIStore.getState().clearUnsavedBuffer('selector-probe'))
+    unmount()
+  })
+
+  it('keeps action references stable across registry writes', () => {
+    // Components read actions through getState() instead of subscribing (Vercel
+    // rerender-defer-reads). That is only safe while the initializer never reassigns them.
+    const before = useUIStore.getState().setNewDocOpen
+    act(() => {
+      for (let i = 0; i < 24; i += 1) {
+        useUIStore.getState().reportUnsavedBuffer('action-probe', `keystroke ${i}`)
+      }
+    })
+    expect(useUIStore.getState().setNewDocOpen).toBe(before)
+    act(() => useUIStore.getState().clearUnsavedBuffer('action-probe'))
+  })
+})
+
+// The theme entry (ADR-0028): a three-way choice — light / dark / follow the system — defaulting
+// to the system preference, resolved live against the OS.
+describe('useUIStore theme', () => {
+  afterEach(() => {
+    useUIStore.getState().setTheme('system')
+  })
+
+  it('starts on the system preference', () => {
+    // `getInitialState` is the pristine store state, so an earlier test that changed the theme
+    // cannot mask the default this assertion is about.
+    expect(useUIStore.getInitialState().theme).toBe('system')
+  })
+
+  it('stores an explicit light or dark choice', () => {
+    useUIStore.getState().setTheme('dark')
+    expect(useUIStore.getState().theme).toBe('dark')
+    useUIStore.getState().setTheme('light')
+    expect(useUIStore.getState().theme).toBe('light')
+    useUIStore.getState().setTheme('system')
+    expect(useUIStore.getState().theme).toBe('system')
+  })
+
+  // The choice is deliberately NOT persisted: each launch starts from the default. The store has no
+  // persist middleware, so there is nothing that could restore a previous choice.
+  it('does not persist the theme choice', () => {
+    expect((useUIStore as unknown as { persist?: unknown }).persist).toBeUndefined()
   })
 })

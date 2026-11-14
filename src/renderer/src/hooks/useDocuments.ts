@@ -5,7 +5,8 @@ import { resolveWorkspaceRoot } from '../lib/workspace-root'
 import { isDirInFolder } from '../../../../shared/fileUtils'
 import { t } from '../i18n/translate'
 import { useUIStore } from '../store/ui'
-import { DOCS_KEY } from '../lib/queryClient'
+import { DOCS_KEY, queryClient } from '../lib/queryClient'
+import { isMemoryOnly } from '../lib/sidebarDrafts'
 
 export function useDocuments(folderPath?: string) {
   return useQuery({
@@ -18,6 +19,25 @@ export function useDocuments(folderPath?: string) {
 // Directories below `folderPath` (recursive, empty ones included). The sidebar tree is
 // otherwise derived from documents alone, which has no node to represent a folder that
 // holds no Markdown file and a folder the user just created is always empty
+/**
+ * Whether an unsaved (memory-only) draft already exists — the single read of the "at most one
+ * draft" rule for the UI.
+ *
+ * Every New Draft entry point disables itself in this state: the global toolbar button, the
+ * editor's empty-state menu item, and (through the `menu:set-has-draft` sync in `App`) the native
+ * File > New Draft item. `createDraft` re-checks the same question as the backstop for the paths a
+ * disabled control cannot block (the window keydown handler, the menu accelerator).
+ *
+ * It reads the very list query the sidebar uses, so it costs no extra fetch. That query is
+ * folder-scoped, but `documents:list` always includes memory-only drafts whatever folder is open,
+ * so the answer stays correct with a folder open.
+ */
+export function useHasMemoryOnlyDraft(): boolean {
+  const activeFolder = useUIStore((s) => s.activeFolder)
+  const { data } = useDocuments(activeFolder ?? undefined)
+  return (data ?? []).some(isMemoryOnly)
+}
+
 export function useFolderDirs(folderPath?: string | null) {
   return useQuery({
     queryKey: [...DOCS_KEY, 'dirs', folderPath ?? ''],
@@ -70,6 +90,76 @@ export function useCreateDocument() {
       useUIStore.getState().bumpDocumentState()
     },
   })
+}
+
+/**
+ * The single "New Draft" action. Every entry point (global toolbar button, Ctrl/Cmd+N, the native
+ * File menu, the editor empty-state context menu and the sidebar's draft entries) goes through
+ * here, so they cannot disagree about the unsaved-changes guard or the resulting document state.
+ *
+ * A draft is memory-only: nothing touches the filesystem until the first Save (Save As). This is
+ * deliberately NOT a hook — the keyboard and menu handlers live outside React render, so they can
+ * call it directly. It repeats the two cache side effects of `useCreateDocument.onSuccess` for the
+ * same reason (a direct IPC call does not go through the mutation).
+ *
+ * Two invariants keep drafts well-behaved:
+ *  - `inFlight` collapses the two Ctrl/Cmd+N paths (the window keydown handler and the native menu
+ *    accelerator) when both fire for one physical key press, so a single press can't create two
+ *    drafts at once.
+ *  - `hasMemoryOnlyDraft()` enforces "at most one unsaved draft": once a memory-only document
+ *    exists, a second New Draft is refused. The visible New Draft controls disable themselves in
+ *    that state — the global toolbar button and the editor empty-state item read
+ *    `useHasMemoryOnlyDraft()`, the native File menu mirrors it over `menu:set-has-draft`, and the
+ *    sidebar's own entries only render while no draft exists. This guard is the backstop for the
+ *    keyboard path, which bypasses every disabled control.
+ */
+let inFlight: Promise<void> | null = null
+
+// True when an unsaved (memory-only) draft already exists.
+//
+// The question is asked of the main-process store, not of the React Query cache: the cache is
+// keyed per folder (`['documents', 'list', folderPath]`), so with a folder open the entry holding
+// the draft lives under the folder's key — a folder-less cache read would miss it and let a second
+// draft through. `documents:list` always includes memory-only drafts regardless of the folder
+// filter, so one folder-scoped call answers it authoritatively.
+async function hasMemoryOnlyDraft(): Promise<boolean> {
+  const activeFolder = useUIStore.getState().activeFolder
+  const docs = await window.api.documents.list(activeFolder ?? undefined)
+  return docs.some(isMemoryOnly)
+}
+
+export function createDraft(): Promise<void> {
+  // R5 plan A print-mode lock: creating a draft would switch the active document while a print
+  // job is in flight. Guard at the shared entry point so every caller (Ctrl+N, native menu,
+  // sidebar, global toolbar) is covered without duplicating the rule.
+  if (useUIStore.getState().printing) return Promise.resolve()
+  if (inFlight) return inFlight
+  inFlight = (async () => {
+    try {
+      if (await hasMemoryOnlyDraft()) return
+      if (!(await useUIStore.getState().guardUnsavedSwitch())) return
+      const doc = await window.api.documents.create({ title: 'Untitled', memoryOnly: true })
+      const ui = useUIStore.getState()
+      // Same transaction as `selectDocument`: once the guard has thrown the outgoing document's
+      // edits away, its unsaved buffer has to go too — otherwise search & replace keeps matching
+      // text the user explicitly discarded.
+      if (ui.dirty) ui.clearUnsavedBuffer(ui.activeDocumentId ?? '')
+      ui.setActiveDocumentId(doc.id)
+      ui.setEditable(true)
+      ui.setIsNewUnsaved(true)
+      await queryClient.invalidateQueries({ queryKey: DOCS_KEY })
+      ui.bumpDocumentState()
+    } catch (e) {
+      // A rejected IPC (e.g. the renderer/main bridge is down) must not become an unhandled
+      // rejection on the `void createDraft()` call sites — log it instead of surprising the user
+      // with a frozen New Draft click. (No app-wide error channel exists yet; surfacing this to
+      // the user is a follow-up.)
+      console.error('New Draft failed', e)
+    } finally {
+      inFlight = null
+    }
+  })()
+  return inFlight
 }
 
 export function useUpdateDocument() {

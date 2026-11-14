@@ -14,7 +14,7 @@
 
 **修复**：chokidar 配置改为**只监视 Markdown 文件**（`ignored` 用 `shouldIgnore` 函数：跳过 dot 目录/`node_modules` + 非 `.md`/`.markdown`/… 文件），`dispatch` 仍保留 `isMarkdownFile` 纵深防御。
 
-**CI 门禁**：在 `e2e/perf/switch-perf-gate.e2e.spec.ts` 固化一个性能回归门禁，守护"监视器只监视 markdown"不被悄悄回退。阈值**统一，不区分本地与 CI**。
+**CI 门禁**：在 `e2e/perf-gate/switch-perf-gate.e2e.spec.ts` 固化一个性能回归门禁，守护"监视器只监视 markdown"不被悄悄回退。阈值**统一，不区分本地与 CI**。
 
 ---
 
@@ -167,6 +167,8 @@ if (sample.length > 0 && isPlainAsciiText(sample)) return { enc: 'utf-8', confid
 - `playwright.config.ts` 拆出两个 project：`electron-perf-gate`（testMatch `switch-perf-gate`）+ `electron-perf`（testMatch `switch-perf`）。
 - `package.json`：`e2e = playwright test --project=electron-app --project=electron-perf-gate`（门禁随 `npm run e2e` 进 CI）。
 
+> **历史注记（2026-11-07）**：以上是 2026-08-31 引入时的**旧名称**，现已全部改名：`electron-app` → `e2e-app`、`electron-perf-gate` → `e2e-perf-gate`、`electron-perf` → `e2e-perf-diag`，并新增 `e2e-clipboard`；spec 文件本身也换了目录（`e2e/specs/` → `e2e/app/`、`e2e/perf/` → `e2e/perf-gate/` 与 `e2e/perf-diag/`）；`npm run e2e:perf` 脚本**已不存在**，按需诊断请用 `npm run e2e:perf-diag`，CI 组合请用 `npm run e2e:full`（两次 Playwright 调用，性能门禁独占第二次）。此外 2026-09-21 曾让 `e2e-perf-diag` 也收集 `large-doc-perf`（一度并非完全"无阈值"），ADR-0034 实施后该重叠已移除、诊断 project 重新变为无阈值；详见 `docs/adr/0034-e2e-spec-files-belong-to-one-project.md`。截至 2026-11-11，CI 实际为 4 个 `e2e-app-shard` 分片 job 加 1 个 `e2e-serial`（clipboard 与 perf-gate 各一次独立调用）；`e2e:full` 只是覆盖相同 project 的本地组合，并非 CI 执行的命令。
+
 ### 5.2 统一阈值（不区分本地/CI）
 
 ```ts
@@ -197,21 +199,21 @@ const MAX_LAG_MS = Number(process.env.PERF_MAX_LAG ?? 250)
 
 ## 6. 关键代码位置速查
 
-| 关注点                        | 文件                                            | 关键符号                                       |
-| ----------------------------- | ----------------------------------------------- | ---------------------------------------------- |
-| chokidar 只监视 markdown      | `electron/main/model/folderWatcher.ts`          | `IGNORED`、`shouldIgnore`、`dispatch`          |
-| 编码检测快速路径（排除 NUL）  | `electron/main/ipc/documents.ts`                | `isPlainAsciiText`、`detectEncoding`           |
-| 编码 CJK 二次采样（完整样本） | `electron/main/ipc/documents.ts`                | `cjkSecondPass`、`countReplacements`           |
-| 退出流程安全网复位            | `electron/main/window.ts`                       | `win.on('close')` 开头 `setQuitPending(false)` |
-| 退出流程 before-quit 复位     | `electron/main/lifecycle.ts`                    | `before-quit` handler                          |
-| 退出标志状态                  | `electron/main/state.ts`                        | `quitPending` / `setQuitPending`               |
-| 重建窗口复位                  | `electron/main/index.ts`                        | `activate` 内 `setQuitPending(false)`          |
-| 性能门禁                      | `e2e/perf/switch-perf-gate.e2e.spec.ts`         | `MAX_P95_MS` 等                                |
-| 性能诊断                      | `e2e/perf/switch-perf.e2e.spec.ts`              | 无阈值                                         |
-| 退出回归 e2e                  | `e2e/specs/quit-unsaved-regression.e2e.spec.ts` | `requestCloseWindow` 走真实 close              |
-| 确定性"只监视 markdown"断言   | `e2e/specs/folder-watch.e2e.spec.ts`            | "only watches markdown" 用例（无时序依赖）     |
-| e2e 启动/清理                 | `e2e/helpers/launch.ts`                         | `launchApp` / `closeApp`（防僵尸进程树）       |
-| CI 配置                       | `.github/workflows/ci.yml`                      | `npm run e2e`（含 perf-gate）                  |
+| 关注点                        | 文件                                          | 关键符号                                       |
+| ----------------------------- | --------------------------------------------- | ---------------------------------------------- |
+| chokidar 只监视 markdown      | `electron/main/model/folderWatcher.ts`        | `IGNORED`、`shouldIgnore`、`dispatch`          |
+| 编码检测快速路径（排除 NUL）  | `electron/main/ipc/documents.ts`              | `isPlainAsciiText`、`detectEncoding`           |
+| 编码 CJK 二次采样（完整样本） | `electron/main/ipc/documents.ts`              | `cjkSecondPass`、`countReplacements`           |
+| 退出流程安全网复位            | `electron/main/window.ts`                     | `win.on('close')` 开头 `setQuitPending(false)` |
+| 退出流程 before-quit 复位     | `electron/main/lifecycle.ts`                  | `before-quit` handler                          |
+| 退出标志状态                  | `electron/main/state.ts`                      | `quitPending` / `setQuitPending`               |
+| 重建窗口复位                  | `electron/main/index.ts`                      | `activate` 内 `setQuitPending(false)`          |
+| 性能门禁                      | `e2e/perf-gate/switch-perf-gate.e2e.spec.ts`  | `MAX_P95_MS` 等                                |
+| 性能诊断                      | `e2e/perf-diag/switch-perf.e2e.spec.ts`       | 无阈值                                         |
+| 退出回归 e2e                  | `e2e/app/quit-unsaved-regression.e2e.spec.ts` | `requestCloseWindow` 走真实 close              |
+| 确定性"只监视 markdown"断言   | `e2e/app/folder-watch.e2e.spec.ts`            | "only watches markdown" 用例（无时序依赖）     |
+| e2e 启动/清理                 | `e2e/helpers/launch.ts`                       | `launchApp` / `closeApp`（防僵尸进程树）       |
+| CI 配置                       | `.github/workflows/ci.yml`                    | `e2e-app-shard`（4 分片）、`e2e-serial`        |
 
 ---
 
@@ -220,10 +222,10 @@ const MAX_LAG_MS = Number(process.env.PERF_MAX_LAG ?? 250)
 若需继续排查，建议的新会话上下文：
 
 1. **读本文档**了解全貌（根因、修复、门禁、已知弱点）。
-2. **复现门禁 flake**：`PERF_MAX_P95=300 npm run e2e:perf`（诊断，无阈值）看真实 p95/stallMs/maxLag 分布；或 `npm run e2e` 跑门禁看是否偶发红。
+2. **复现门禁 flake**：`PERF_MAX_P95=300 npm run e2e:perf-diag`（诊断，无阈值）看真实 p95/stallMs/maxLag 分布；或 `npm run e2e:perf-gate` 跑门禁看是否偶发红。
 3. **若怀疑监视器回退**：查 `folderWatcher.ts` 的 `IGNORED` 是否仍为 `[shouldIgnore]`；功能性 e2e 应有 "only watches markdown" 断言。
 4. **若怀疑编码误判**：跑 `electron/main/ipc/encoding.test.ts`（UTF-16 / GBK 用例）；检查 `isPlainAsciiText` 是否仍排除 NUL、`cjkSecondPass` 是否用完整样本。
-5. **若怀疑退出卡死**：跑 `e2e/specs/quit-unsaved-regression.e2e.spec.ts`；检查 `quitPending` 的每轮复位是否仍在三处（window/lifecycle/index）。
+5. **若怀疑退出卡死**：跑 `e2e/app/quit-unsaved-regression.e2e.spec.ts`；检查 `quitPending` 的每轮复位是否仍在三处（window/lifecycle/index）。
 6. **确定性替代方案（用户曾未采纳）**：如需彻底消除门禁 flake，可考虑新增 `getWatchedFileCount()` + e2e handler，用 `chokidar.getWatched()` 断言被监视文件数为 markdown 数量级，零时序依赖。
 
-**所有改动截至本文档撰写时仍未 git 提交**（等待用户授权）。涉及命令：`npm run quality`、`npm run ci`、`npm run e2e`（CI 上需 `xvfb-run --auto-servernum --`）。
+**所有改动截至本文档撰写时仍未 git 提交**（等待用户授权）。涉及命令：`npm run quality`、`npm run ci`、`npm run e2e:full`（CI 上需 `xvfb-run --auto-servernum --`）。

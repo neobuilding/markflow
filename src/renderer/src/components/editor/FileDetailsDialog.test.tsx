@@ -136,7 +136,7 @@ describe('FileDetailsDialog', () => {
     expect(screen.queryByText('Copied')).toBeNull()
   })
 
-  it('copies the path from the right-click menu (能力 4)', async () => {
+  it('copies the path from the right-click menu', async () => {
     const writeText = vi.fn(async () => {})
     ;(window as unknown as { api: { clipboard: { writeText: typeof writeText } } }).api = {
       clipboard: { writeText },
@@ -149,7 +149,7 @@ describe('FileDetailsDialog', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('/tmp/hello.md'))
   })
 
-  it('opens the containing folder from the right-click menu (能力 4)', async () => {
+  it('opens the containing folder from the right-click menu', async () => {
     const showInFolder = vi.fn()
     ;(window as unknown as { api: { app: { showInFolder: typeof showInFolder } } }).api = {
       app: { showInFolder },

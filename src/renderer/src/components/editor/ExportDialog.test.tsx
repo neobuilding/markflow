@@ -22,15 +22,33 @@ const doc: Document = {
 
 const exportDocument = vi.fn(async () => {})
 const getExportHtml = vi.fn<() => string | null>(() => '<h1>hi</h1>')
+// C20 ⑨: the preview renders the export's parts; the fake carries one recognisable marker per
+// part so the test can tell "the export's own stylesheet" from "the app's styling".
+const buildExportParts = vi.fn(async (opts: { theme: 'light' | 'dark' }) => ({
+  theme: opts.theme,
+  lang: 'en',
+  body: '<h1>hi</h1>',
+  css: '.markdown-body{color:#111111}',
+  fontCss: '@font-face{font-family:Probe;src:url(data:font/woff;base64,AA)}',
+  rootVars: '  --md-pre-bg: #edf2f9;',
+  containerCss: 'padding:24px;',
+  printCss: '@media print{.markdown-body hr{display:block}}',
+}))
 
 vi.mock('../../hooks/useDocuments', () => ({
   // Mirror the real hook: no active document means no data. This keeps the
   // "no document open" branch of the default-path effect reachable in tests.
-  useDocument: (id: string | null) => ({ data: id ? doc : undefined }),
+  // `__mockDocument` lets a case supply a DIFFERENT document object without changing the
+  // active id, so the geometry-reset scope can be exercised with a fresh reference.
+  useDocument: (id: string | null) => ({
+    data: id ? ((globalThis as any).__mockDocument ?? doc) : undefined,
+  }),
 }))
 vi.mock('../../lib/export', () => ({
   exportDocument: (...a: unknown[]) => (globalThis as any).__exportDocument(...a),
   resolveTheme: (choice: string, ui: string) => (choice === 'current' ? ui : choice),
+  // C20 ⑨: the export preview renders the export's own parts in a shadow root.
+  buildExportParts: (...a: unknown[]) => (globalThis as any).__buildExportParts(...a),
 }))
 vi.mock('../../lib/exportStore', () => ({
   getExportHtml: () => (globalThis as any).__getExportHtml(),
@@ -45,10 +63,15 @@ vi.mock('../../lib/exportStore', () => ({
 beforeEach(() => {
   ;(globalThis as any).__exportDocument = exportDocument
   ;(globalThis as any).__getExportHtml = getExportHtml
+  ;(globalThis as any).__buildExportParts = buildExportParts
   useUIStore.getState().setExportOpen(false)
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setTheme('light')
   useUIStore.getState().setExporting(false)
+  // C20 add ⑦: the export cache's readiness is mirrored in the store; the "ready" case is the
+  // default for the existing assertions (the not-ready path has its own test below).
+  useUIStore.getState().setExportReady(true)
+  ;(globalThis as any).__mockDocument = doc
   ;(window as unknown as { api: unknown }).api = {
     dialog: { saveHtmlFile: vi.fn(async () => '/out.html') },
     documents: {
@@ -61,7 +84,10 @@ beforeEach(() => {
   getExportHtml.mockReturnValue('<h1>hi</h1>')
 })
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  delete (globalThis as any).__mockDocument
+})
 
 describe('ExportDialog', () => {
   it('renders nothing when closed', () => {
@@ -77,6 +103,51 @@ describe('ExportDialog', () => {
     expect(screen.getByText(/Inline images/i)).toBeInTheDocument()
   })
 
+  it("renders the export preview in a shadow root with the export's styles (C20 ⑨)", async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    const host = await screen.findByTestId('export-preview')
+    await waitFor(() => expect(host.shadowRoot?.querySelector('.markdown-body')).not.toBeNull())
+    const root = host.shadowRoot!
+    // The preview must show the export's styling, not the app's: the export's sheet is inlined
+    // into the shadow root.
+    expect(root.querySelector('style')?.textContent).toContain('.markdown-body{color:#111111}')
+    // S1: a shadow root does not register fonts, so the @font-face rules must live in the HOST
+    // document instead.
+    expect(document.getElementById('markflow-export-preview-fonts')?.textContent).toContain(
+      '@font-face',
+    )
+    // S2: `body` does not match inside a shadow root, so the container declarations are applied
+    // to the preview container.
+    expect(root.querySelector('.export-preview-container')).not.toBeNull()
+  })
+
+  it('the theme select comes from the shared Select primitive (one focus ring, 36px)', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    const select = await screen.findByRole('combobox')
+    expect(select.className).toContain('focus-ring')
+    expect(select.className).toContain('h-9')
+    // The hand-rolled 1px ring this used to carry.
+    expect(select.className).not.toContain('focus:ring-1')
+  })
+
+  it('re-renders the preview when the theme choice changes (C20 ⑨)', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    const host = await screen.findByTestId('export-preview')
+    await waitFor(() => expect(host.shadowRoot?.querySelector('.markdown-body')).not.toBeNull())
+    expect(host.shadowRoot!.querySelector('.markdown-body')!.getAttribute('data-theme')).toBe(
+      'light',
+    )
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'dark' } })
+    await waitFor(() =>
+      expect(host.shadowRoot!.querySelector('.markdown-body')!.getAttribute('data-theme')).toBe(
+        'dark',
+      ),
+    )
+  })
+
   it('runs the export when confirm is clicked', async () => {
     useUIStore.getState().setExportOpen(true)
     render(<ExportDialog />)
@@ -88,15 +159,24 @@ describe('ExportDialog', () => {
     expect(useUIStore.getState().exportOpen).toBe(false)
   })
 
-  it('shows an error when the preview is not ready', async () => {
+  it('disables the export button while the document is still rendering (C20 补 ⑦ / E12)', async () => {
+    // The export cache still holds the PREVIOUS document's HTML during a switch or a pending
+    // parse, so the button must be disabled (and say so) instead of writing the wrong file.
+    useUIStore.getState().setExportReady(false)
     useUIStore.getState().setExportOpen(true)
     render(<ExportDialog />)
     await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
-    getExportHtml.mockReturnValue(null)
-    const exportBtn = screen.getByRole('button', { name: 'Export' })
-    fireEvent.click(exportBtn)
-    await waitFor(() => expect(screen.getByText(/preview/i)).toBeInTheDocument())
+    const exportBtn = screen.getByRole('button', { name: 'Preparing…' })
+    expect(exportBtn).toBeDisabled()
     expect(exportDocument).not.toHaveBeenCalled()
+  })
+
+  it('enables the export button once the document has rendered', async () => {
+    useUIStore.getState().setExportReady(true)
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled()
   })
 
   it('prompts for overwrite when the target already exists', async () => {
@@ -423,5 +503,142 @@ describe('ExportDialog', () => {
     fireEvent.contextMenu(input)
     fireEvent.click(await screen.findByTestId('exp-copy-full-path'))
     expect(writeText).toHaveBeenCalledWith('')
+  })
+})
+
+// R4: the dialog is a standard window — draggable and resizable. The POINTER path is driven by the
+// e2e suite (real mouse, real layout); the KEYBOARD parity (arrow keys, Shift = 40px, clamping) is
+// pure arithmetic over the frozen geometry, so it belongs here. jsdom has no layout: every element
+// reports a zero rect, so the dialog's own box is stubbed to a real one.
+function stubDialogBox(dialog: HTMLElement): void {
+  dialog.getBoundingClientRect = () =>
+    ({
+      left: 100,
+      top: 80,
+      right: 772,
+      bottom: 560,
+      width: 672,
+      height: 480,
+      x: 100,
+      y: 80,
+      toJSON: () => ({}),
+    }) as DOMRect
+}
+
+async function openDialogWithBox(): Promise<{ dialog: HTMLElement; header: HTMLElement }> {
+  useUIStore.getState().setExportOpen(true)
+  render(<ExportDialog />)
+  await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+  const dialog = screen.getByRole('dialog')
+  stubDialogBox(dialog)
+  return { dialog, header: screen.getByTestId('export-dialog-header') }
+}
+
+describe('ExportDialog — keyboard window operations (R4)', () => {
+  it('moves itself with the arrow keys on the title bar and clamps at the viewport edge', async () => {
+    const { dialog, header } = await openDialogWithBox()
+
+    fireEvent.keyDown(header, { key: 'ArrowLeft' })
+    expect(dialog.style.left).toBe('84px')
+    expect(dialog.style.top).toBe('80px')
+
+    // Shift = the coarse step.
+    fireEvent.keyDown(header, { key: 'ArrowDown', shiftKey: true })
+    expect(dialog.style.top).toBe('120px')
+
+    // Repeated left/up presses stop at the window's top-left corner instead of going negative.
+    for (let i = 0; i < 10; i++) fireEvent.keyDown(header, { key: 'ArrowUp' })
+    expect(dialog.style.top).toBe('0px')
+
+    // A key the dialog does not own is not claimed.
+    fireEvent.keyDown(header, { key: 'a' })
+    expect(dialog.style.top).toBe('0px')
+  })
+
+  it('resizes with the arrow keys and keeps the opposite edge fixed', async () => {
+    const { dialog } = await openDialogWithBox()
+    const se = screen.getByTestId('export-dialog-resize-se')
+
+    // One axis per key: ArrowRight widens and leaves the height alone, ArrowDown grows downward.
+    fireEvent.keyDown(se, { key: 'ArrowRight' })
+    expect(dialog.style.width).toBe('688px')
+    expect(dialog.style.height).toBe('480px')
+    fireEvent.keyDown(se, { key: 'ArrowDown', shiftKey: true })
+    expect(dialog.style.height).toBe('520px')
+    // The OPPOSITE key pulls the same edge back in (a south handle's ArrowUp is not a no-op).
+    fireEvent.keyDown(se, { key: 'ArrowUp' })
+    expect(dialog.style.height).toBe('504px')
+
+    // Growing from the WEST edge moves the left edge leftward and pins the right one.
+    const rightBefore = parseFloat(dialog.style.left) + parseFloat(dialog.style.width)
+    const w = screen.getByTestId('export-dialog-resize-w')
+    fireEvent.keyDown(w, { key: 'ArrowLeft' })
+    expect(dialog.style.width).toBe('704px')
+    expect(dialog.style.left).toBe('84px')
+    expect(parseFloat(dialog.style.left) + parseFloat(dialog.style.width)).toBe(rightBefore)
+    // …and ArrowRight shrinks it from the same edge, right edge still pinned.
+    fireEvent.keyDown(w, { key: 'ArrowRight' })
+    expect(dialog.style.width).toBe('688px')
+    expect(dialog.style.left).toBe('100px')
+
+    // Shrinking stops at the dialog's minimum size.
+    for (let i = 0; i < 40; i++) fireEvent.keyDown(se, { key: 'ArrowLeft' })
+    expect(dialog.style.width).toBe('480px')
+
+    // A vertical key on a side handle that owns no vertical edge is not claimed: the event stays
+    // unhandled instead of resizing nothing and pretending to own the key.
+    const e = screen.getByTestId('export-dialog-resize-e')
+    const heightBefore = dialog.style.height
+    expect(fireEvent.keyDown(e, { key: 'ArrowUp' }), 'the key must not be preventDefault-ed').toBe(
+      true,
+    )
+    expect(dialog.style.height).toBe(heightBefore)
+  })
+})
+
+// The geometry reset belongs to OPENING the dialog, not to every document-detail refresh: a
+// fresh `doc` object with the same id must not re-center a window the user positioned.
+describe('ExportDialog — geometry reset scope (R4)', () => {
+  it('keeps a positioned dialog in place when the document details change', async () => {
+    useUIStore.getState().setExportOpen(true)
+    const { rerender } = render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    const dialog = screen.getByRole('dialog')
+    stubDialogBox(dialog)
+
+    // Positive assertion: the geometry is really frozen, not merely "not reset".
+    fireEvent.keyDown(screen.getByTestId('export-dialog-header'), { key: 'ArrowLeft' })
+    expect(dialog.style.left).toBe('84px')
+    expect(dialog.style.width).toBe('672px')
+
+    // Same active id, NEW object: exactly what a background detail refresh produces.
+    ;(globalThis as any).__mockDocument = { ...doc, title: 'Renamed' }
+    rerender(<ExportDialog />)
+
+    expect(screen.getByRole('dialog').style.left).toBe('84px')
+    expect(screen.getByRole('dialog').style.width).toBe('672px')
+  })
+})
+
+// User report 2026-11-13 ("opened edge-to-edge…centered with margins"): the dialog owns a capped,
+// viewport-relative height and the base slide-up animation is cancelled in BOTH states. Cancelling
+// it only before the first drag let `animate-slide-up` restart once `rect` was frozen, teleporting
+// the dialog 3.4px down on a bare resize-edge click (caught by the e2e teleport regression).
+describe('ExportDialog — centred geometry (R4 follow-up)', () => {
+  it('cancels the slide-up animation before and after the geometry is frozen', async () => {
+    useUIStore.getState().setExportOpen(true)
+    render(<ExportDialog />)
+    await waitFor(() => expect(screen.getByDisplayValue('/docs/a.html')).toBeInTheDocument())
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.className, 'the default height is viewport-relative and capped').toContain(
+      'h-[88vh]',
+    )
+    expect(dialog.className, 'the height ceiling for large windows').toContain('max-h-[960px]')
+    expect(dialog.style.animation).toBe('none')
+
+    stubDialogBox(dialog)
+    fireEvent.keyDown(screen.getByTestId('export-dialog-header'), { key: 'ArrowRight' })
+    expect(dialog.style.left).toBe('116px')
+    expect(dialog.style.animation, 'the animation must not restart after a drag').toBe('none')
   })
 })

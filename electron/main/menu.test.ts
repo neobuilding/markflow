@@ -152,7 +152,9 @@ describe('native menu', () => {
     menu.registerMenuHandlers()
     expect(typeof ipcHandlers['menu:set-editable']).toBe('function')
     expect(typeof ipcHandlers['menu:set-has-document']).toBe('function')
-    expect(typeof ipcHandlers['menu:set-printing']).toBe('function')
+    expect(typeof ipcHandlers['menu:set-has-folder']).toBe('function')
+    expect(typeof ipcHandlers['menu:set-has-draft']).toBe('function')
+    expect(typeof ipcHandlers['menu:set-file-locked']).toBe('function')
     expect(typeof ipcHandlers['app:set-language']).toBe('function')
   })
 
@@ -173,20 +175,50 @@ describe('native menu', () => {
     expect(menuItems['print']?.enabled).toBe(true)
   })
 
-  it('disables print while printing', () => {
+  // File > New File… writes a real file into the OPEN FOLDER; on the welcome screen there is
+  // nowhere to write, so the native item must be greyed out (not merely hidden).
+  it('keeps New File… disabled until the renderer reports an active folder', () => {
     menu.setupMenu()
     menu.registerMenuHandlers()
-    ipcHandlers['menu:set-has-document'](null, true)
-    ipcHandlers['menu:set-printing'](null, true)
-    expect(menuItems['print']?.enabled).toBe(false)
+    expect(menuItems['new-file']?.enabled).toBe(false)
+    ipcHandlers['menu:set-has-folder'](null, true)
+    expect(menuItems['new-file']?.enabled).toBe(true)
+    ipcHandlers['menu:set-has-folder'](null, false)
+    expect(menuItems['new-file']?.enabled).toBe(false)
   })
 
-  it('keeps print enabled when not printing and a doc is open', () => {
+  // At most one unsaved draft: the renderer reports draft presence so the native File > New Draft
+  // item greys out with the toolbar button. A disabled item also stops its ⌘N accelerator, so the
+  // menu can no longer invite a second draft.
+  it('disables New Draft while the renderer reports an existing draft', () => {
+    menu.setupMenu()
+    menu.registerMenuHandlers()
+    expect(menuItems['new-draft']?.enabled).toBe(true)
+    ipcHandlers['menu:set-has-draft'](null, true)
+    expect(menuItems['new-draft']?.enabled).toBe(false)
+    ipcHandlers['menu:set-has-draft'](null, false)
+    expect(menuItems['new-draft']?.enabled).toBe(true)
+  })
+
+  // The renderer sends ONE capability boolean (`fileLocked`) that covers printing, exporting and the
+  // export dialog being open; the native menu no longer needs to know which trigger is active.
+  it('disables document actions while fileLocked', () => {
     menu.setupMenu()
     menu.registerMenuHandlers()
     ipcHandlers['menu:set-has-document'](null, true)
-    ipcHandlers['menu:set-printing'](null, false)
+    ipcHandlers['menu:set-file-locked'](null, true)
+    expect(menuItems['print']?.enabled).toBe(false)
+    expect(menuItems['save']?.enabled).toBe(false)
+    expect(menuItems['export-html']?.enabled).toBe(false)
+  })
+
+  it('keeps document actions enabled when not fileLocked and a doc is open', () => {
+    menu.setupMenu()
+    menu.registerMenuHandlers()
+    ipcHandlers['menu:set-has-document'](null, true)
+    ipcHandlers['menu:set-file-locked'](null, false)
     expect(menuItems['print']?.enabled).toBe(true)
+    expect(menuItems['save']?.enabled).toBe(true)
   })
 
   it('invokes every menu command click without throwing', () => {
@@ -471,5 +503,94 @@ describe('native menu', () => {
     // The folder path itself is sent (not the expanded file list) so the renderer can
     // pin activeFolder and the watched root to the directory the user picked
     expect(h.openFilesSent).toContainEqual(['menu:open-files', ['/some/folder']])
+  })
+
+  // The theme submenu (ADR-0028): three radio entries whose `checked` flag mirrors the theme the
+  // renderer last reported, and whose click forwards the pick back to the renderer instead of
+  // mutating nativeTheme from the main thread.
+  function themeItems(): Array<Record<string, unknown>> {
+    const view = lastTemplate.find((i) => i.label === 'menu.view') as
+      { submenu?: Array<Record<string, unknown>> } | undefined
+    const theme = view?.submenu?.find((i) => i.label === 'menu.theme') as
+      { submenu?: Array<Record<string, unknown>> } | undefined
+    return theme?.submenu ?? []
+  }
+
+  it('lists the three theme choices with the system entry checked by default', () => {
+    setWindow()
+    menu.setupMenu()
+    const items = themeItems()
+    expect(items.map((i) => i.label)).toEqual([
+      'menu.themeLight',
+      'menu.themeDark',
+      'menu.themeSystem',
+    ])
+    expect(items.map((i) => i.checked)).toEqual([false, false, true])
+  })
+
+  it('re-checks the theme radio group when the renderer reports a new theme', () => {
+    setWindow()
+    menu.setupMenu()
+    menu.applyThemeToMenu('dark')
+    expect(themeItems().map((i) => i.checked)).toEqual([false, true, false])
+    menu.applyThemeToMenu('light')
+    expect(themeItems().map((i) => i.checked)).toEqual([true, false, false])
+  })
+
+  it('forwards a theme pick to the renderer instead of resolving it in main', () => {
+    setWindow()
+    menu.setupMenu()
+    h.openFilesSent.length = 0
+    const items = themeItems()
+    const expected = ['light', 'dark', 'system']
+    items.forEach((item, index) => {
+      const click = item.click as () => void
+      click()
+      expect(h.openFilesSent).toContainEqual(['menu:set-theme', expected[index]])
+    })
+  })
+
+  // The help menu is the right-most entry (ADR-0024's menu order, with the language menu placed
+  // before it so the locale switch sits next to the other view-level toggles).
+  it('keeps the language menu before the right-most help menu', () => {
+    setWindow()
+    menu.setupMenu()
+    expect(lastTemplate.map((i) => i.label)).toEqual([
+      'menu.file',
+      'menu.edit',
+      'menu.view',
+      'menu.window',
+      'menu.language',
+      'menu.help',
+    ])
+  })
+
+  // ADR-0032: ⌘I is the editor's ITALIC action now (the mainstream Markdown-editor binding), so
+  // the File Details item moved to the ⌘⇧I chord. A native accelerator is consumed by the OS
+  // before the renderer sees the key, so no native item may claim ⌘I or ⌘K — those two are
+  // renderer-only format shortcuts (Italic / Link), and a second owner would swallow them.
+  it('gives File Details the ⌘⇧I chord and leaves ⌘I / ⌘K to the editor', () => {
+    setWindow()
+    menu.setupMenu()
+
+    const accelerators: Array<{ label: unknown; accelerator: unknown }> = []
+    const collect = (items: Array<Record<string, unknown>>) => {
+      for (const item of items) {
+        if (item.accelerator !== undefined) {
+          accelerators.push({ label: item.label, accelerator: item.accelerator })
+        }
+        if (Array.isArray(item.submenu)) {
+          collect(item.submenu as Array<Record<string, unknown>>)
+        }
+      }
+    }
+    collect(lastTemplate)
+
+    const details = accelerators.find((a) => a.accelerator === 'CmdOrCtrl+Shift+I')
+    expect(details, 'the file-details item owns ⌘⇧I').toBeTruthy()
+    expect(details?.label).toBe('menu.fileDetails')
+
+    expect(accelerators.filter((a) => a.accelerator === 'CmdOrCtrl+I')).toHaveLength(0)
+    expect(accelerators.filter((a) => a.accelerator === 'CmdOrCtrl+K')).toHaveLength(0)
   })
 })

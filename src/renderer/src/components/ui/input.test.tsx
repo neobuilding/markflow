@@ -31,4 +31,16 @@ describe('Input', () => {
     fireEvent.change(screen.getByTestId('i'), { target: { value: 'x' } })
     expect(onChange).toHaveBeenCalled()
   })
+
+  // PLAN C32 U8 / ADR-0024 §7.2: every focusable control shows EXACTLY ONE focus indicator.
+  // `Input` used to paint two at once (a focus ring + a focus border), which reads as a broken
+  // control and doubles the visual weight of the focus state.
+  it('exposes exactly one focus indicator', () => {
+    render(<Input data-testid="i" />)
+    const el = screen.getByTestId('i')
+    expect(el.className).toContain('focus-ring')
+    expect(el.className).not.toContain('focus:ring-1')
+    expect(el.className).not.toContain('focus:ring-2')
+    expect(el.className).not.toContain('focus:border-accent')
+  })
 })

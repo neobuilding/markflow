@@ -17,6 +17,8 @@ import {
   useImportDocuments,
   useOpenPaths,
   useOpenFolder,
+  useHasMemoryOnlyDraft,
+  createDraft,
 } from './useDocuments'
 import { useUIStore } from '../store/ui'
 
@@ -537,5 +539,178 @@ describe('useDocuments — documentStateRevision bumps', () => {
       await del.result.current.mutateAsync('1')
     })
     expect(useUIStore.getState().documentStateRevision).toBeGreaterThan(afterCreate)
+  })
+})
+
+describe('createDraft — the single New Draft action', () => {
+  beforeEach(() => {
+    useUIStore.getState().setDirty(false)
+    useUIStore.getState().setActiveFolder('/some/folder')
+  })
+
+  it('creates a memory-only Untitled draft and opens it editable', async () => {
+    await act(async () => {
+      await createDraft()
+    })
+    expect(api.documents.create).toHaveBeenCalledWith({ title: 'Untitled', memoryOnly: true })
+    expect(useUIStore.getState().activeDocumentId).toBe('new')
+    expect(useUIStore.getState().editable).toBe(true)
+    expect(useUIStore.getState().isNewUnsaved).toBe(true)
+  })
+
+  it('never needs an active folder (welcome screen)', async () => {
+    useUIStore.getState().setActiveFolder(null)
+    await act(async () => {
+      await createDraft()
+    })
+    expect(api.documents.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('stands down when the unsaved-switch guard is declined', async () => {
+    useUIStore.getState().setActiveDocumentId('current')
+    useUIStore.getState().setDirty(true)
+    api.dialog.confirm.mockResolvedValueOnce(false as never)
+    await act(async () => {
+      await createDraft()
+    })
+    expect(api.documents.create).not.toHaveBeenCalled()
+    expect(useUIStore.getState().activeDocumentId).toBe('current')
+  })
+
+  // Same transaction as `selectDocument`: the guard has just thrown the outgoing document's edits
+  // away, so the buffer holding them has to go too — otherwise search & replace keeps matching
+  // text the user explicitly discarded.
+  it('drops the discarded buffer of the outgoing document', async () => {
+    useUIStore.getState().setActiveDocumentId('current')
+    useUIStore.getState().reportUnsavedBuffer('current', '# discarded')
+    useUIStore.getState().setDirty(true)
+    api.dialog.confirm.mockResolvedValueOnce(true as never)
+    await act(async () => {
+      await createDraft()
+    })
+    expect(api.dialog.confirm).toHaveBeenCalled()
+    expect(useUIStore.getState().activeDocumentId).toBe('new')
+    expect(useUIStore.getState().unsavedBuffers.current).toBeUndefined()
+  })
+
+  // A document list refresh can clear the active id while the editor still reports dirty. The
+  // buffer cleanup must not turn that transient state into a thrown error.
+  it('tolerates a dirty flag with no active document', async () => {
+    useUIStore.getState().setActiveDocumentId(null)
+    useUIStore.getState().setDirty(true)
+    api.dialog.confirm.mockResolvedValueOnce(true as never)
+    await act(async () => {
+      await createDraft()
+    })
+    expect(useUIStore.getState().activeDocumentId).toBe('new')
+  })
+
+  // The native menu accelerator AND the window keydown handler can fire for one key press.
+  // Both call createDraft(); collapsing the in-flight promise prevents a second draft.
+  it('collapses concurrent calls into a single draft', async () => {
+    let first!: Promise<void>
+    let second!: Promise<void>
+    await act(async () => {
+      first = createDraft()
+      second = createDraft()
+      await first
+    })
+    expect(second).toBe(first)
+    expect(api.documents.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('bumps documentStateRevision so in-flight replace plans are invalidated', async () => {
+    const before = useUIStore.getState().documentStateRevision
+    await act(async () => {
+      await createDraft()
+    })
+    expect(useUIStore.getState().documentStateRevision).toBeGreaterThan(before)
+  })
+
+  // The IPC can reject (renderer/main bridge down). The `void createDraft()` call sites must NOT
+  // turn that into an unhandled promise rejection — the action resolves and logs instead.
+  it('resolves (never rejects) when the IPC call fails, and logs it', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    api.documents.create.mockRejectedValueOnce(new Error('ipc down'))
+    await act(async () => {
+      await createDraft()
+    })
+    expect(errorSpy).toHaveBeenCalled()
+    expect(errorSpy.mock.calls[0][0]).toBe('New Draft failed')
+    // No document was opened.
+    expect(useUIStore.getState().activeDocumentId).not.toBe('new')
+    errorSpy.mockRestore()
+  })
+
+  // "At most one unsaved draft": once a memory-only draft is present, a second New Draft is refused
+  // outright (the visible controls are disabled in that state; this is the backstop for the keyboard
+  // and native-menu entry points that bypass the disabled button). The check is asked of the
+  // main-process document list, which always reports the drafts whatever folder is open.
+  it('refuses to create a second draft when a memory-only draft already exists', async () => {
+    api.documents.list.mockResolvedValueOnce([
+      {
+        id: 'draft-1',
+        title: 'Untitled',
+        folderPath: '',
+        filePath: '',
+        content: '',
+        wordCount: 0,
+        encoding: 'utf-8',
+        encodingConfidence: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ])
+    vi.mocked(api.documents.create).mockClear()
+    await act(async () => {
+      await createDraft()
+    })
+    expect(api.documents.create).not.toHaveBeenCalled()
+  })
+
+  // R5 plan A: a draft becomes the active document, so creating one while the system print dialog
+  // is up would make the queued print job describe a different document than the one on screen.
+  // Guarded at the shared entry point, which covers Ctrl/Cmd+N, the native menu and both buttons.
+  it('stands down while a print job is in flight', async () => {
+    useUIStore.getState().setPrinting(true)
+    vi.mocked(api.documents.create).mockClear()
+    try {
+      await act(async () => {
+        await createDraft()
+      })
+      expect(api.documents.create).not.toHaveBeenCalled()
+      expect(useUIStore.getState().activeDocumentId).not.toBe('new')
+    } finally {
+      useUIStore.getState().setPrinting(false)
+    }
+  })
+})
+
+// The UI-facing predicate behind every disabled New Draft entry point (toolbar, editor empty state
+// and — through App's `menu:set-has-draft` sync — the native File menu item).
+describe('useHasMemoryOnlyDraft — the at-most-one-draft predicate', () => {
+  const draftDoc: Document = { ...doc('draft'), folderPath: '', filePath: '', title: 'Untitled' }
+
+  it('is false when every listed document is backed by a file', async () => {
+    api.documents.list.mockResolvedValueOnce([doc('1')])
+    const { result } = renderHook(() => useHasMemoryOnlyDraft(), { wrapper: wrapper() })
+    await waitFor(() => expect(api.documents.list).toHaveBeenCalledTimes(1))
+    expect(result.current).toBe(false)
+  })
+
+  it('is true as soon as a memory-only draft is listed', async () => {
+    api.documents.list.mockResolvedValueOnce([doc('1'), draftDoc])
+    const { result } = renderHook(() => useHasMemoryOnlyDraft(), { wrapper: wrapper() })
+    await waitFor(() => expect(result.current).toBe(true))
+  })
+
+  // The list query is folder-scoped: the hook must ask for the ACTIVE folder, and the main process
+  // always includes drafts in that answer, so an open folder cannot hide a draft.
+  it('asks the active folder for its documents', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    api.documents.list.mockResolvedValueOnce([draftDoc])
+    const { result } = renderHook(() => useHasMemoryOnlyDraft(), { wrapper: wrapper() })
+    await waitFor(() => expect(result.current).toBe(true))
+    expect(api.documents.list).toHaveBeenCalledWith('/docs')
   })
 })

@@ -61,16 +61,45 @@ export function lightTokenDeclarations(): string {
   const decls: string[] = []
   for (const sheet of Array.from(document.styleSheets)) {
     for (const rule of readableRules(sheet)) {
-      if (!(rule instanceof CSSStyleRule)) continue
-      // `:root` may be written as a selector list (Tailwind emits `:root, :host`).
-      if (!rule.selectorText.split(',').some((s) => s.trim() === ':root')) continue
-      for (let i = 0; i < rule.style.length; i++) {
-        const name = rule.style.item(i)
-        if (name.startsWith('--')) decls.push(`${name}: ${rule.style.getPropertyValue(name)}`)
-      }
+      collectRootRuleTokens(rule, decls)
     }
   }
   return decls.join('; ')
+}
+
+/**
+ * Collect the custom properties of one rule, when that rule targets `:root`.
+ *
+ * Exported for the unit test: jsdom's CSSOM does not implement CSS nesting, so the nested
+ * `CSSNestedDeclarations` shape can only be produced by a synthetic rule there.
+ */
+export function collectRootRuleTokens(rule: CSSRule, out: string[]): void {
+  const styleRule = rule as CSSStyleRule
+  if (typeof styleRule.selectorText !== 'string') return
+  // `:root` may be written as a selector list (Tailwind emits `:root, :host`).
+  if (!styleRule.selectorText.split(',').some((s) => s.trim() === ':root')) return
+  collectCustomProperties(styleRule.style, out)
+  // CSS Nesting: the declarations that FOLLOW a nested rule are exposed by the CSSOM as a
+  // separate `CSSNestedDeclarations` child rule — they are NOT in `rule.style` (which only
+  // holds the declarations before the first nested rule). Vite's CSS transform wraps every
+  // `color-mix()` in an `@supports` block, so each `:root` block ends with a nested rule and
+  // its trailing tokens (`--md-pre-bg`, `--md-pre-border`, `--color-warning`, …) would
+  // silently be missed. That is not cosmetic: the copy host then inherits the DARK values
+  // and the payload leaks the app theme (D16). Read the nested declarations too.
+  for (const child of Array.from(styleRule.cssRules ?? [])) {
+    // A nested SELECTOR rule is not a declaration block — skip it.
+    if (typeof (child as CSSStyleRule).selectorText === 'string') continue
+    const style = (child as { style?: CSSStyleDeclaration }).style
+    if (style) collectCustomProperties(style, out)
+  }
+}
+
+/** Collect the custom properties (and only those) of a declaration block. */
+function collectCustomProperties(style: CSSStyleDeclaration, out: string[]): void {
+  for (let i = 0; i < style.length; i++) {
+    const name = style.item(i)
+    if (name.startsWith('--')) out.push(`${name}: ${style.getPropertyValue(name)}`)
+  }
 }
 
 /** `cssRules` throws for a stylesheet we may not read — such a sheet contributes nothing. */

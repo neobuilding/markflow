@@ -5,6 +5,7 @@ import { spawn, spawnSync, ChildProcess } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeFileSync, existsSync, unlinkSync, accessSync } from 'node:fs'
+import { resetResidueRegistry } from './helpers/temp'
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const DEV_SERVER_URL = 'http://localhost:5174'
@@ -92,14 +93,19 @@ async function verifyElectronBinary(): Promise<void> {
         `This means every e2e spec would fail to launch Electron. Common causes:\n` +
         `  - chrome-sandbox permission error on a non-root CI runner: ensure ` +
         `--no-sandbox is passed (already done in e2e/helpers/launch.ts and this probe).\n` +
-        `  - binary not downloaded/extracted: check the "Cache Electron binaries" ` +
-        `step and clear ~/.cache/electron + node_modules/electron/dist if stale.\n` +
+        `  - binary not downloaded/extracted: re-run npm ci (Electron's postinstall ` +
+        `restores the binary) and clear ~/.cache/electron + node_modules/electron/dist if stale.\n` +
         `Raw probe stderr is shown above — use it to diagnose, not a generic message.`,
     )
   }
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
+  // Drop any residue registry left by a crashed previous run so the gate only ever
+  // audits directories allocated by THIS run (not stale entries from a killed worker).
+  // Best-effort (the directory may not exist yet); unit-tested in temp.test.ts.
+  resetResidueRegistry()
+
   const vite = getViteBin()
   devServer = spawn(vite.command, [...vite.args, '--port', '5174', '--strictPort'], {
     cwd: PROJECT_ROOT,

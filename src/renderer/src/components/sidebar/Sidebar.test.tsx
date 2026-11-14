@@ -37,6 +37,7 @@ let allDocs: Document[] = [
 ]
 
 const createMock = vi.fn(async () => ({ id: 'new', title: 'Untitled', filePath: '' }))
+const createDraftMock = vi.fn(async () => {})
 const deleteMock = vi.fn()
 const openPathsMock = vi.fn()
 const openFolderMock = vi.fn()
@@ -80,6 +81,7 @@ vi.mock('../../hooks/useDocuments', () => ({
   useDeleteFolder: () => ({ mutateAsync: deleteFolderMock, isPending: false }),
   useUndoRename: () => ({ mutateAsync: undoRenameMock, isPending: false }),
   useFolderDirs: () => ({ data: folderDirs }),
+  createDraft: () => createDraftMock(),
 }))
 
 function mount() {
@@ -104,6 +106,11 @@ beforeEach(() => {
   // store, so they have to be cleared per test like the rest of the workspace.
   useUIStore.getState().setShowAllFolders(false)
   useUIStore.setState({ recentlyCreatedFolders: new Set<string>() })
+  // `panelFocusNonce` is a GLOBAL counter on the store, and the Sidebar's focus hand-off effect
+  // fires whenever it changes. Left above 0, the next mount() would yank focus into the content
+  // panel and break any assertion about `document.activeElement`. Reset it so every test starts
+  // from "no focus request".
+  useUIStore.setState({ panelFocusNonce: 0 })
   ;(window as unknown as { api: unknown }).api = {
     dialog: {
       openFiles: vi.fn(async () => ['/x.md']),
@@ -112,6 +119,7 @@ beforeEach(() => {
     },
   }
   createMock.mockReset()
+  createDraftMock.mockReset()
   deleteMock.mockReset()
   openPathsMock.mockReset()
   openFolderMock.mockReset()
@@ -127,10 +135,12 @@ beforeEach(() => {
 afterEach(() => cleanup())
 
 describe('Sidebar', () => {
-  it('renders nothing when the sidebar is closed', () => {
+  it('renders no panel when the sidebar is collapsed, but keeps the activity bar', () => {
     useUIStore.getState().setSidebarOpen(false)
     const { container } = mount()
     expect(container.querySelector('aside')).toBeNull()
+    expect(screen.getByTestId('activity-bar-files')).toBeTruthy()
+    expect(screen.getByTestId('activity-bar-search')).toBeTruthy()
   })
 
   it('applies the platform-specific header padding (mac vs non-mac)', () => {
@@ -196,7 +206,7 @@ describe('Sidebar', () => {
     expect(await screen.findAllByTestId('doc-item')).toHaveLength(2)
   })
 
-  it('hides a folder that holds no Markdown document by default (能力 7)', async () => {
+  it('hides a folder that holds no Markdown document by default', async () => {
     useUIStore.getState().setActiveFolder('/docs')
     folderDirs = ['/docs/empty']
     mount()
@@ -206,7 +216,7 @@ describe('Sidebar', () => {
     expect(screen.queryByText('empty')).toBeNull()
   })
 
-  it('shows every folder once "Show All Folders" is turned on (能力 7)', async () => {
+  it('shows every folder once "Show All Folders" is turned on', async () => {
     useUIStore.getState().setActiveFolder('/docs')
     useUIStore.getState().setShowAllFolders(true)
     folderDirs = ['/docs/empty']
@@ -224,7 +234,7 @@ describe('Sidebar', () => {
     expect(await screen.findByText('empty')).toBeInTheDocument()
   })
 
-  it('creates a folder directly under the current folder (能力 7)', async () => {
+  it('creates a folder directly under the current folder', async () => {
     useUIStore.getState().setActiveFolder('/docs')
     mount()
     // The current folder has no tree row of its own, so the entry lives in its own bar.
@@ -265,10 +275,37 @@ describe('Sidebar', () => {
     expect(screen.queryByTestId('folder-name-input')).not.toBeNull()
   })
 
-  it('creates a new document via the new button', async () => {
+  // The sidebar's + button is filesystem-bound: it opens the inline naming row that writes a
+  // real .md file. The always-available in-memory "New Draft" moved to the global toolbar.
+  it('hides the New File button entirely when no folder is open', () => {
+    useUIStore.getState().setActiveFolder(null)
     mount()
-    fireEvent.click(screen.getByTestId('new-document-btn'))
-    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    expect(screen.queryByTestId('side-new-file-btn')).toBeNull()
+    expect(screen.queryByTestId('new-document-btn')).toBeNull()
+  })
+
+  it('opens the inline New File naming row from the sidebar button', async () => {
+    useUIStore.getState().setActiveFolder('/docs')
+    mount()
+    fireEvent.click(await screen.findByTestId('side-new-file-btn'))
+    expect(await screen.findByTestId('file-create-row')).toBeTruthy()
+    // No document is created until the user commits a name — a click must not write a file.
+    expect(createMock).not.toHaveBeenCalled()
+    expect(createDraftMock).not.toHaveBeenCalled()
+  })
+
+  it('routes the sidebar New Draft entries through the shared createDraft action', async () => {
+    const saved = [...allDocs]
+    allDocs.length = 0 // welcome state appears only when there are no drafts
+    try {
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('sidebar-welcome-state'))
+      fireEvent.click(await screen.findByTestId('side-new-document'))
+      await waitFor(() => expect(createDraftMock).toHaveBeenCalledTimes(1))
+    } finally {
+      allDocs.length = 0
+      allDocs.push(...saved)
+    }
   })
 
   it('deletes a document via the context menu', async () => {
@@ -390,20 +427,30 @@ describe('Sidebar — interactions', () => {
   })
 
   // D23 / §5.9: the two create paths must ask BEFORE creating — creating first and switching
-  // second would leave an orphan draft on disk if the switch was then refused.
-  it('guards the new-document button when there are unsaved edits', async () => {
-    useUIStore.getState().setActiveDocumentId('b')
-    useUIStore.getState().setActiveDocumentTitle('Note B')
-    useUIStore.getState().setDirty(true)
-    const api = {
-      dialog: { openFiles: vi.fn(), openFolderPath: vi.fn(), confirm: vi.fn(async () => false) },
+  // second would leave an orphan draft on disk if the switch was then refused. The draft guard
+  // now lives in the shared createDraft() action (pinned in useDocuments.test.tsx); here we pin
+  // that the sidebar merely DELEGATES to it and never writes a file itself.
+  it('delegates New Draft to the shared action even with unsaved edits', async () => {
+    const saved = [...allDocs]
+    allDocs.length = 0
+    try {
+      // This describe's beforeEach pins an active folder, so the welcome state would never
+      // show. Clear it (the welcome state requires !activeFolder && no drafts) to exercise the
+      // sidebar's New Draft delegation from the empty state.
+      useUIStore.getState().setActiveFolder(null)
+      useUIStore.getState().setActiveDocumentId('b')
+      useUIStore.getState().setActiveDocumentTitle('Note B')
+      useUIStore.getState().setDirty(true)
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('sidebar-welcome-state'))
+      fireEvent.click(await screen.findByTestId('side-new-document'))
+      await waitFor(() => expect(createDraftMock).toHaveBeenCalledTimes(1))
+      expect(createMock).not.toHaveBeenCalled()
+      expect(useUIStore.getState().activeDocumentId).toBe('b')
+    } finally {
+      allDocs.length = 0
+      allDocs.push(...saved)
     }
-    ;(window as unknown as { api: unknown }).api = api
-    mount()
-    fireEvent.click(screen.getByTestId('new-document-btn'))
-    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
-    expect(createMock).not.toHaveBeenCalled()
-    expect(useUIStore.getState().activeDocumentId).toBe('b')
   })
 
   it('guards the inline new-file row when there are unsaved edits', async () => {
@@ -538,11 +585,50 @@ describe('Sidebar — interactions', () => {
   // sidebar tab switches to the Search view.
   it('switches the sidebar to the Search view instead of opening a modal palette', async () => {
     mount()
-    await userEvent.click(screen.getByTestId('sidebar-view-search'))
+    await userEvent.click(screen.getByTestId('activity-bar-search'))
     await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('search'))
     await waitFor(() => expect(screen.getByTestId('resident-search-input')).toBeTruthy())
-    await userEvent.click(screen.getByTestId('sidebar-view-files'))
+    await userEvent.click(screen.getByTestId('activity-bar-files'))
     await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('files'))
+  })
+
+  // The activity bar is a vertical tablist, and the content panel next to it is its tabpanel.
+  // `aria-selected` / `aria-expanded` follow "selected AND the panel is open", so collapsing must
+  // leave BOTH tabs false rather than claiming a panel is showing.
+  it('reports the activity bar as a tablist whose selected tab owns the visible panel', async () => {
+    mount()
+    const tablist = screen.getByRole('tablist')
+    expect(tablist.getAttribute('aria-orientation')).toBe('vertical')
+    const files = screen.getByTestId('activity-bar-files')
+    const search = screen.getByTestId('activity-bar-search')
+    expect(files.getAttribute('aria-selected')).toBe('true')
+    expect(files.getAttribute('aria-expanded')).toBe('true')
+    // Only the selected tab points at a panel: exactly one is mounted, so `aria-controls` on the
+    // other one would be a dangling IDREF.
+    expect(files.getAttribute('aria-controls')).toBe('sidebar-panel-files')
+    expect(search.hasAttribute('aria-controls')).toBe(false)
+    const panel = screen.getByRole('tabpanel')
+    expect(panel.id).toBe('sidebar-panel-files')
+    expect(panel.getAttribute('aria-labelledby')).toBe('activity-bar-tab-files')
+
+    act(() => {
+      useUIStore.getState().toggleSidebar()
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('activity-bar-files').getAttribute('aria-selected')).toBe('false')
+    })
+    expect(screen.getByTestId('activity-bar-search').getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByTestId('activity-bar-files').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('tabpanel')).toBeNull()
+  })
+
+  // Clicking the ALREADY ACTIVE view collapses the panel — VS Code's default
+  // `workbench.activityBar.iconClickBehavior: 'toggle'`.
+  it('collapses the sidebar when the active view icon is clicked again', async () => {
+    mount()
+    expect(useUIStore.getState().sidebarOpen).toBe(true)
+    await userEvent.click(screen.getByTestId('activity-bar-files'))
+    await waitFor(() => expect(useUIStore.getState().sidebarOpen).toBe(false))
   })
 
   it('does nothing when the import-folder dialog returns no path', async () => {
@@ -792,7 +878,7 @@ describe('Sidebar document item context menu', () => {
     // Covers the `if (!row) return` branch of the F2 handler: the key landed on the sidebar root,
     // not on a document/folder row, so there is nothing to rename.
     mount()
-    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'F2' })
+    fireEvent.keyDown(screen.getByRole('tabpanel'), { key: 'F2' })
     expect(screen.queryByTestId('folder-name-input')).toBeNull()
   })
 
@@ -1117,6 +1203,23 @@ describe('Sidebar — current folder bar context menu', () => {
     )
   })
 
+  // R5 plan A: printing is a document transaction too. The sidebar's file/workspace controls
+  // must grey out with the same `workspaceLocked` flag that exporting uses.
+  it('disables file and workspace controls while printing', async () => {
+    useUIStore.getState().setPrinting(true)
+    try {
+      mount()
+      expect(screen.getByTestId('side-new-file-btn')).toBeDisabled()
+      fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
+      expect(await screen.findByTestId('side-close-workspace')).toHaveAttribute(
+        'aria-disabled',
+        'true',
+      )
+    } finally {
+      useUIStore.getState().setPrinting(false)
+    }
+  })
+
   it('closes the workspace from the context menu (confirming discard)', async () => {
     useUIStore.getState().setDirty(true)
     mount()
@@ -1283,7 +1386,7 @@ describe('Sidebar — folder row context menu', () => {
     await waitFor(() => expect(screen.getByText('c.md')).toBeInTheDocument())
   })
 
-  it('creates a subfolder via the inline-edit menu item (能力 7)', async () => {
+  it('creates a subfolder via the inline-edit menu item', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-expand')) // expand /docs so its children render
@@ -1305,7 +1408,7 @@ describe('Sidebar — folder row context menu', () => {
     expect(sub.compareDocumentPosition(file) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('renames a folder via the inline-edit menu item (能力 7)', async () => {
+  it('renames a folder via the inline-edit menu item', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     await userEvent.click(await screen.findByTestId('side-rename-folder'))
@@ -1325,7 +1428,7 @@ describe('Sidebar — folder row context menu', () => {
     expect(input.className).toContain('text-base')
   })
 
-  it('deletes a folder to trash behind a confirmation (能力 7)', async () => {
+  it('deletes a folder to trash behind a confirmation', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-delete-folder'))
@@ -1382,7 +1485,7 @@ describe('Sidebar — folder row context menu', () => {
     expect(createMock).not.toHaveBeenCalled()
   })
 
-  it('surfaces a failed folder create without crashing (能力 7)', async () => {
+  it('surfaces a failed folder create without crashing', async () => {
     createFolderMock.mockRejectedValueOnce(new Error('boom'))
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
@@ -1396,7 +1499,7 @@ describe('Sidebar — folder row context menu', () => {
     await waitFor(() => expect(createFolderMock).toHaveBeenCalled())
   })
 
-  it('resets the sidebar width from the resize-handle menu (能力 7)', async () => {
+  it('resets the sidebar width from the resize-handle menu', async () => {
     mount()
     const handle = screen.getByTitle(/Drag to resize sidebar/i)
     await userEvent.pointer({ keys: '[MouseLeft>]', target: handle })
@@ -1407,7 +1510,7 @@ describe('Sidebar — folder row context menu', () => {
     )
     fireEvent.contextMenu(screen.getByTestId('sidebar-resize-handle'))
     fireEvent.click(await screen.findByTestId('side-reset-sidebar-width'))
-    expect(document.documentElement.style.getPropertyValue('--sidebar-width')).toBe('240px')
+    expect(document.documentElement.style.getPropertyValue('--sidebar-width')).toBe('288px')
   })
 })
 
@@ -1480,7 +1583,7 @@ describe('Sidebar — folder high-order items', () => {
     mount()
     // No row focused: unlike F2, the undo only needs the focus to be somewhere in the
     // sidebar (the handler is bound on the sidebar root, which is itself focusable).
-    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'z', ctrlKey: true })
+    fireEvent.keyDown(screen.getByRole('tabpanel'), { key: 'z', ctrlKey: true })
     await waitFor(() => expect(undoRenameMock).toHaveBeenCalled())
   })
 
@@ -1490,12 +1593,12 @@ describe('Sidebar — folder high-order items', () => {
     undoRenameMock.mockImplementationOnce(async () => ({ ok: false, reason: 'occupied' as const }))
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
     mount()
-    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'z', ctrlKey: true })
+    fireEvent.keyDown(screen.getByRole('tabpanel'), { key: 'z', ctrlKey: true })
     await waitFor(() => expect(alert).toHaveBeenCalled())
     alert.mockRestore()
   })
 
-  it('surfaces a failed folder delete to the user instead of swallowing it (能力 7)', async () => {
+  it('surfaces a failed folder delete to the user instead of swallowing it', async () => {
     deleteFolderMock.mockRejectedValueOnce(new Error('boom'))
     // The failure used to be console-only, leaving the folder in the tree with no explanation.
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
@@ -1586,7 +1689,7 @@ describe('Sidebar — folder high-order items', () => {
     await waitFor(() => expect(renameFolderMock).toHaveBeenCalled())
   })
 
-  it('deletes the active folder from the current-folder-bar menu (能力 7)', async () => {
+  it('deletes the active folder from the current-folder-bar menu', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
     fireEvent.click(await screen.findByTestId('side-delete-folder'))
@@ -2021,7 +2124,14 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
   })
 
   it('shows a note when the main process refuses the new file (EEXIST)', async () => {
-    createMock.mockRejectedValueOnce(Object.assign(new Error('EEXIST'), { code: 'EEXIST' }))
+    // The EXACT shape the renderer receives: ipcRenderer.invoke re-throws a plain Error whose only
+    // own properties are stack/message, so the Node `code` never survives the bridge. Mocking a
+    // `code` here would test a shape production cannot produce.
+    createMock.mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'documents:create': Error: EEXIST: file already exists, open '/docs/brandnew.md'",
+      ),
+    )
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
     fireEvent.click(await screen.findByTestId('side-bg-new-file'))
@@ -2055,7 +2165,9 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     // "notes" resolves to "notes.md", which already exists here — flagged live, before any commit.
     const hint = await within(row).findByTestId('file-name-hint')
     expect(hint).toHaveTextContent('already exists')
-    expect(input.className).toContain('border-red-500')
+    // The clash is flagged with the semantic danger token, not a hard-coded palette class
+    // (ADR-0024 §1.1: semantic colours are indicators; `--color-danger` is the indicator role).
+    expect(input.className).toContain('border-[var(--color-danger)]')
     // Enter is refused until the name is unique.
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(createMock).not.toHaveBeenCalled()
@@ -2099,7 +2211,12 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     // instead of failing the commit with a generic "could not create".
     fireEvent.change(input, { target: { value: 'a/b' } })
     const hint = await within(row).findByTestId('file-name-hint')
-    expect(hint.textContent).toBe(t('sidebar.invalidName', { name: 'a/b' }))
+    // The message is prefixed with a danger-coloured ⚠ indicator (ADR-0024 §1.1: semantic
+    // colours act as indicators only — the message text itself stays in the text colour), so
+    // the hint is a superset of the raw i18n string.
+    expect(hint.textContent).toContain(t('sidebar.invalidName', { name: 'a/b' }))
+    expect(hint.textContent).toContain('\u26a0')
+    expect(hint.querySelector('.text-\\[var\\(--color-danger\\)\\]')).not.toBeNull()
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(createFolderMock).not.toHaveBeenCalled()
     // An ordinary name clears the flag again.
@@ -2376,5 +2493,84 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     await waitFor(() => expect(createMock).toHaveBeenCalled())
     // The input stays open, so what the user typed is not lost.
     expect(screen.getByTestId('file-create-row')).toBeInTheDocument()
+  })
+})
+
+// The activity bar is a vertical tablist. Two focus regimes meet here, and they must not fight:
+//
+//   · ↑/↓ (ARIA APG automatic activation, the model VS Code's ActionBar uses) move between the
+//     tabs, activate the target, and KEEP focus on the bar so the next arrow press lands.
+//   · A programmatic switch (⌘⇧E → Files) hands focus to the content panel — EXPLICITLY, via
+//     `requestPanelFocus()`, never as a side effect of a view change.
+//
+// The activity bar also carries the recovery entries (reset width / collapse) in ITS context menu,
+// because the panel's own resize-handle menu unmounts together with the panel.
+describe('Sidebar — activity bar', () => {
+  it('moves between the tabs with ↑/↓, auto-activates them and keeps focus on the bar', async () => {
+    mount()
+    const files = screen.getByTestId('activity-bar-files')
+    const search = screen.getByTestId('activity-bar-search')
+
+    files.focus()
+    expect(document.activeElement).toBe(files)
+
+    fireEvent.keyDown(files, { key: 'ArrowDown' })
+    await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('search'))
+    await waitFor(() => expect(search.getAttribute('aria-selected')).toBe('true'))
+    // Focus stays inside the tablist and moves onto the newly activated tab, so ↑/↓ can be
+    // pressed repeatedly.
+    await waitFor(() => expect(document.activeElement).toBe(search))
+
+    fireEvent.keyDown(search, { key: 'ArrowUp' })
+    await waitFor(() => expect(useUIStore.getState().sidebarView).toBe('files'))
+    await waitFor(() => expect(document.activeElement).toBe(files))
+  })
+
+  it('keeps a roving tabindex, falling back to the first tab while the bar is collapsed', async () => {
+    mount()
+    const files = screen.getByTestId('activity-bar-files')
+    const search = screen.getByTestId('activity-bar-search')
+
+    // Open, Files active: only the active tab is a Tab stop.
+    expect(files.getAttribute('tabindex')).toBe('0')
+    expect(search.getAttribute('tabindex')).toBe('-1')
+
+    await userEvent.click(search)
+    await waitFor(() => expect(search.getAttribute('tabindex')).toBe('0'))
+    expect(files.getAttribute('tabindex')).toBe('-1')
+
+    // Collapsed: neither tab owns a panel, so the FIRST tab takes the tab stop — otherwise the
+    // whole bar would become unreachable by keyboard (WCAG 2.1.1).
+    act(() => {
+      useUIStore.getState().toggleSidebar()
+    })
+    await waitFor(() => expect(screen.queryByRole('tabpanel')).toBeNull())
+    expect(files.getAttribute('tabindex')).toBe('0')
+    expect(search.getAttribute('tabindex')).toBe('-1')
+  })
+
+  it('hands focus to the content panel only when a caller asks for it', async () => {
+    mount()
+    const panel = screen.getByRole('tabpanel')
+    // Nobody asked, so the panel did not steal focus on mount.
+    expect(document.activeElement).not.toBe(panel)
+
+    act(() => {
+      useUIStore.getState().requestPanelFocus()
+    })
+    await waitFor(() => expect(document.activeElement).toBe(panel))
+  })
+
+  it('keeps the recovery entries in the activity bar context menu', async () => {
+    mount()
+    // The panel's own resize-handle menu unmounts with the panel, so the bar carries them.
+    fireEvent.contextMenu(screen.getByRole('tablist'))
+    fireEvent.click(await screen.findByTestId('activity-collapse-sidebar'))
+
+    await waitFor(() => expect(useUIStore.getState().sidebarOpen).toBe(false))
+    // The bar survives the collapse — and so does its menu.
+    expect(screen.getByRole('tablist')).toBeTruthy()
+    fireEvent.contextMenu(screen.getByRole('tablist'))
+    expect(await screen.findByTestId('activity-reset-sidebar-width')).toBeTruthy()
   })
 })

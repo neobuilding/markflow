@@ -16,20 +16,43 @@ import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { _electron as electron, ElectronApplication, Page } from 'playwright'
 import { mkTempDir, cleanupTempDirs } from './temp'
+import { VIEWPORTS } from './viewports'
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const DEV_URL_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '.dev-url')
+
+// Deterministic content-area viewport pinned for every e2e run. The app launches maximized to the
+// host's work area (see electron/main/window.ts), so the CONTENT AREA it renders into varies between
+// a developer's large monitor and the CI runner's smaller virtual display — the root cause of
+// width-coupled specs passing locally but failing on CI. We pin the content area (the web layout
+// viewport that page.setViewportSize sets), NOT the OS window's outer frame: the app's responsive
+// layout only measures the content width (its own DOM, via ResizeObserver / --sidebar-width), and the
+// OS frame (title bar + borders, platform DPI) differs per machine, so pinning it would not be
+// deterministic either. Our chosen width (1024) sits above the window.ts minWidth:800 floor, keeping
+// the content area valid.
+//
+// The size itself lives in helpers/viewports.ts, together with the other named environments and
+// the layout arithmetic behind them; individual specs enter one by name (e.g. the 800x600
+// fixtures) instead of typing their own numbers.
+const DEFAULT_E2E_VIEWPORT = VIEWPORTS.standard
 
 export interface AppHandle {
   electronApp: ElectronApplication
   page: Page
   userDataDir: string
+  /**
+   * Set `true` when closeApp had to force-kill the Electron tree (graceful close
+   * hung or threw). A spec may assert on it as an extra signal; the authoritative
+   * signal that a force-kill happened is that closeApp THREW on timeout — that alone
+   * fails the test.
+   */
+  forceKilled?: boolean
 }
 
 /**
  * A single native confirm-box invocation as seen at the `electron.dialog.showMessageBox`
  * boundary. This is exactly what the OS would render, so it is the faithful thing to
- * assert on for "文案/按钮" (copy / buttons).
+ * assert on for dialog copy and button labels.
  */
 export interface ConfirmCall {
   /** Dialog body copy (e.g. the unsaved-changes message). */
@@ -137,6 +160,12 @@ export async function launchApp(): Promise<AppHandle> {
 
   const page = await electronApp.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+  // Pin the deterministic content-area viewport (see DEFAULT_E2E_VIEWPORT) before the spec drives the
+  // app, so width-coupled layout is reproducible across machines rather than tracking the host's
+  // monitor size. The app measures its own DOM, so pinning the content area — not the OS window frame
+  // — is what makes the layout deterministic. Specs that need a different size call
+  // page.setViewportSize afterwards, entering a named VIEWPORTS.* environment.
+  await page.setViewportSize(DEFAULT_E2E_VIEWPORT)
   return { electronApp, page, userDataDir }
 }
 
@@ -175,8 +204,14 @@ export async function forceEnglish(page: Page): Promise<void> {
  * Tries a graceful close first; if it does not resolve within CLOSE_TIMEOUT_MS
  * (the renderer may be dead/unresponsive, the quit-guard's 5s safety net may
  * not have fired yet, etc.), force-kills the Electron process so no zombie
- * window ever remains after a run. Failures are surfaced as a warning rather
- * than silently swallowed, so a flaky close is visible without failing the test.
+ * window ever remains after a run.
+ *
+ * A TIMEOUT is a test FAILURE (closeApp throws): a hung app is a leaked,
+ * un-reclaimed process, and letting the run go green would hide it. Any other
+ * close failure (e.g. the app already exited) force-kills best-effort but does
+ * NOT fail the test. The force-kill is narrowed to a live PID only, so a recycled
+ * PID is never harmed. The residue gate (e2e/residue-gate) then independently
+ * asserts that no temp directory this run allocated survived.
  *
  * Before closing, the unsaved-changes confirm (a native electron.dialog.showMessageBox
  * handled in the MAIN process via the `dialog:confirm` IPC) is auto-answered as
@@ -194,6 +229,60 @@ export async function closeApp(handle: AppHandle): Promise<void> {
   } finally {
     cleanupTempDirs()
   }
+}
+
+/**
+ * What to do when `electronApp.close()` rejected. A pure decision so the whole
+ * matrix (timedOut × alreadyClosed × pidAlive) can be locked by a unit test
+ * instead of depending on a hung Electron process (docs/agents/testing.md,
+ * "Assert the logic you wrote").
+ *
+ * - `no-op`: the app already exited, or a non-timeout close error with a dead PID.
+ * - `force-kill`: a non-timeout close error with a live PID — clean up, do not fail.
+ * - `fail-timeout-gone`: timed out but process already gone — fail, nothing to kill.
+ * - `force-kill-and-fail`: timed out with a live PID — kill the tree AND fail.
+ *
+ * A timeout is ALWAYS a failure: a hung app is a leaked process, and letting the
+ * run go green hid it. Only a live PID may be killed, so a recycled PID is never
+ * sent `taskkill`.
+ */
+export type CloseFailureOutcome =
+  'no-op' | 'force-kill' | 'fail-timeout-gone' | 'force-kill-and-fail'
+
+export function classifyCloseFailure(input: {
+  timedOut: boolean
+  alreadyClosed: boolean
+  pidAlive: boolean
+}): CloseFailureOutcome {
+  if (input.alreadyClosed) return 'no-op'
+  if (input.timedOut) return input.pidAlive ? 'force-kill-and-fail' : 'fail-timeout-gone'
+  return input.pidAlive ? 'force-kill' : 'no-op'
+}
+
+/** Build the timeout failure, preserving the original error as `cause`. */
+export function closeFailureError(
+  outcome: 'fail-timeout-gone' | 'force-kill-and-fail',
+  timeoutMs: number,
+  underlyingMessage: string,
+  cause: unknown,
+): Error {
+  const detail =
+    outcome === 'force-kill-and-fail'
+      ? 'force-killed the Electron process tree. A hung app is a leaked, un-reclaimed process'
+      : 'but the process was already gone. Treat the hang as a test FAILURE'
+  // `Object.assign(new Error(...), { cause })` is the repo's documented idiom for
+  // preserving the original error (CONTRIBUTING.md "Coding Conventions"): the
+  // `new Error(msg, { cause })` constructor overload is not typed under the
+  // project's TS7 lib target, so ESLint's preserve-caught-error rule is satisfied
+  // this way instead. See electron/main/ipc/export.ts for the same pattern.
+  return Object.assign(
+    new Error(
+      `[e2e] closeApp: graceful close timed out after ${timeoutMs}ms; ` +
+        `${detail} — this is a test FAILURE, not a warning. ` +
+        `Underlying error: ${underlyingMessage}`,
+    ),
+    { cause },
+  )
 }
 
 async function closeAppInternal(handle: AppHandle): Promise<void> {
@@ -216,7 +305,7 @@ async function closeAppInternal(handle: AppHandle): Promise<void> {
   // (electron/main/handlers/dialog.ts) invoked from the renderer over the `dialog:confirm`
   // IPC; Playwright cannot click native OS dialog buttons, so we spy `showMessageBox`
   // (installConfirmSpy) to record + auto-answer. This is the same mechanism
-  // e2e/specs/quit-unsaved-regression.e2e.spec.ts uses (there answering `false` to keep
+  // e2e/app/quit-unsaved-regression.e2e.spec.ts uses (there answering `false` to keep
   // editing); here we answer `1` (Discard).
   //
   // Crucially this does NOT bypass the dirty scenario: tryCloseWorkspace() still takes
@@ -250,19 +339,28 @@ async function closeAppInternal(handle: AppHandle): Promise<void> {
     if (/Cannot read properties of undefined|_object|Target page.*closed/i.test(msg)) {
       alreadyClosed = true
     }
-    if (!alreadyClosed) {
-      // The close failed or timed out. Force-kill the process TREE so no zombie
-      // Electron child (GPU/renderer/utility) lingers killing only the main PID
-      // orphan-reparents the children to explorer/init on Windows and they keep
-      // running, which previously left 4+ residual electron.exe processes after a
-      // run and stalled the Playwright worker teardown.
-      killProcessTree(pid)
-      if (timedOut) {
-        console.warn(
-          `[e2e] closeApp: graceful close timed out after ${CLOSE_TIMEOUT_MS}ms; ` +
-            `force-killed the Electron process tree. Underlying error: ${msg}`,
-        )
-      }
+    const outcome = classifyCloseFailure({
+      timedOut,
+      alreadyClosed,
+      pidAlive: Boolean(pid) && isProcessAlive(pid as number),
+    })
+    if (outcome === 'force-kill' || outcome === 'force-kill-and-fail') {
+      // Force-kill the process TREE so no zombie Electron child (GPU/renderer/
+      // utility) lingers: killing only the main PID orphan-reparents the children
+      // to explorer/init on Windows and they keep running, which previously left
+      // 4+ residual electron.exe processes after a run and stalled the Playwright
+      // worker teardown. The liveness check above narrows the collateral kill: a
+      // close() that threw because the app already exited must never send taskkill
+      // to a PID the OS may have recycled onto an unrelated process.
+      killProcessTree(pid as number)
+      handle.forceKilled = true
+    }
+    if (outcome === 'fail-timeout-gone' || outcome === 'force-kill-and-fail') {
+      // A hung app is a leaked, un-reclaimed process. Turning this into a thrown
+      // error is what makes it a real test FAILURE — previously it was only a
+      // console.warn, so a hung app let the run go green. The residue gate then
+      // independently asserts that no temp directory it owned was left behind.
+      throw closeFailureError(outcome, CLOSE_TIMEOUT_MS, msg, err)
     }
   }
 }
@@ -276,6 +374,21 @@ async function closeAppInternal(handle: AppHandle): Promise<void> {
  * the main PID. Order matters: kill children BEFORE the main, else they reparent and
  * `-P` no longer matches them. `pkill` missing is a no-op; we still SIGKILL the main.
  */
+/**
+ * Cross-platform liveness probe used to narrow the force-kill (see closeAppInternal):
+ * we never send taskkill to a PID that is already gone, because the OS may have
+ * recycled it onto an unrelated process. `process.kill(pid, 0)` is Node's existence
+ * check — it throws `ESRCH` when the PID is missing and does nothing otherwise.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function killProcessTree(pid?: number): void {
   if (!pid) return
   try {
