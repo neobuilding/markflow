@@ -158,8 +158,8 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   keeps no persistent index. Its candidate set is exactly the set of literal body hits; display
   counts, hit offsets and every replacement come from one shared matcher, and results are ordered
   deterministically by root-relative path with no relevance score. **Quick Open** (file names /
-  paths) does not use it. _Avoid_: "search engine", "minisearch index" (a superseded design, not a
-  current component). _See also_: **Full-text search**, **Literal phrase query**.
+  paths) does not use it. _Avoid_: "search engine" (a superseded design, not a current component).
+  _See also_: **Full-text search**, **Literal phrase query**.
 - **folderWatcher (chokidar)** — recursive watcher over the single `workspaceRoot` that syncs disk changes
   into the store; ignores non-Markdown and build output (`**/*.html`, `**/*.pdf`, `**/*.docx`, `**/*.tmp`).
 - **Markdown dual-write** — Markdown files are written to disk; there is no separate index file.

@@ -159,6 +159,7 @@ markflow/
 | `Ctrl/Cmd + Shift + E` | Files view (sidebar)                          |
 | `Ctrl/Cmd + Shift + X` | Export standalone HTML                        |
 | `Ctrl/Cmd + P`         | Print                                         |
+| `Ctrl/Cmd + Shift + P` | Cycle view mode (edit → split → preview)      |
 | `Ctrl/Cmd + A`         | Select all (routes to the focused pane)       |
 
 ## 🛠️ Tech Stack

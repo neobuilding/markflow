@@ -33,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useLocalDocument } from '../../hooks/useLocalDocument'
 import { isDirInFolder } from '../../../../../shared/fileUtils'
-import type { ViewMode } from '../../types'
+import { VIEW_MODE_ORDER, type ViewMode } from '../../types'
 import { useT } from '../../i18n'
 import {
   DropdownMenu,
@@ -85,9 +85,10 @@ function findTargetPane(
  *
  * They are an ARIA **radio group**, not three independent toggles: exactly one is active at a
  * time, so the group is a single Tab stop (roving tabindex) and the arrow keys move AND select
- * (ARIA APG, radio group pattern). The order here is also the arrow-key order.
+ * (ARIA APG, radio group pattern). The shared order lives in `VIEW_MODE_ORDER` (imported from
+ * `../../types`), also used by the store's `cycleViewMode` so the radio order and the menu cycle
+ * never drift apart.
  */
-const VIEW_MODE_ORDER: ViewMode[] = ['edit', 'split', 'preview']
 
 export function EditorPane(): React.ReactElement {
   // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).

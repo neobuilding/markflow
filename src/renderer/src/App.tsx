@@ -275,6 +275,9 @@ export default function App(): React.ReactElement {
     })
     const removePrint = window.api.onMenuEvent('print', () => void printDocument())
     const removeSelectAll = window.api.onMenuEvent('select-all', () => routeSelectAll())
+    const removeTogglePreview = window.api.onMenuEvent('toggle-preview', () =>
+      useUIStore.getState().cycleViewMode(),
+    )
     const removeOpenPaths = window.api.onOpenPaths((paths) => {
       if (blocked()) return
       if (paths && paths.length > 0) openPathsMut.mutate(paths)
@@ -293,6 +296,7 @@ export default function App(): React.ReactElement {
       removeExport()
       removePrint()
       removeSelectAll()
+      removeTogglePreview()
     }
   }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, tryCloseWorkspace])
 

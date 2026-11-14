@@ -68,7 +68,6 @@
     "markdown-it-task-lists": "^2.1.1",
     "markdown-it-texmath": "^1.0.0",
     "mermaid": "^12.0.0",
-    "minisearch": "^7.2.0",
     "morphdom": "^2.7.8",
     "picomatch": "^4.0.7",
     "react-i18next": "^17.0.14"

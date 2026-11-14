@@ -332,7 +332,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.closeFile': '关闭文件',
   'menu.closeWorkspace': '关闭工作区',
   'menu.toggleSidebar': '切换侧边栏',
-  'menu.togglePreview': '切换预览',
+  'menu.togglePreview': '循环视图',
   'menu.toggleDevTools': '切换开发者工具',
   'menu.theme': '主题',
   'menu.themeLight': '浅色',

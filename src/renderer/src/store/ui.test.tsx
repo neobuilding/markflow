@@ -62,6 +62,15 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().setViewMode('preview')
     expect(useUIStore.getState().viewMode).toBe('preview')
 
+    // View-mode cycle (Cmd/Ctrl+Shift+P): advances through the shared order and wraps.
+    useUIStore.getState().setViewMode('split')
+    useUIStore.getState().cycleViewMode()
+    expect(useUIStore.getState().viewMode).toBe('preview')
+    useUIStore.getState().cycleViewMode()
+    expect(useUIStore.getState().viewMode).toBe('edit')
+    useUIStore.getState().cycleViewMode()
+    expect(useUIStore.getState().viewMode).toBe('split')
+
     useUIStore.getState().setSearchOpen(true)
     useUIStore.getState().setSearchQuery('q')
     expect(useUIStore.getState().searchOpen).toBe(true)

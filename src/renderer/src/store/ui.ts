@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ViewMode, ThemeMode } from '../types'
+import { VIEW_MODE_ORDER, type ViewMode, type ThemeMode } from '../types'
 import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/storage'
 import { t } from '../i18n/translate'
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
@@ -144,6 +144,8 @@ interface UIState {
   // View mode
   viewMode: ViewMode
   setViewMode: (mode: ViewMode) => void
+  /** Cycle edit → split → preview → edit (Cmd/Ctrl+Shift+P menu action). */
+  cycleViewMode: () => void
 
   // ─── Search view (Ctrl/Cmd+Shift+F): Markdown body search + scope + replace ──────────────
   searchOpen: boolean
@@ -438,6 +440,12 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   viewMode: 'split',
   setViewMode: (mode) => set({ viewMode: mode }),
+  cycleViewMode: () => {
+    const current = get().viewMode
+    const idx = VIEW_MODE_ORDER.indexOf(current)
+    const next = VIEW_MODE_ORDER[(idx + 1) % VIEW_MODE_ORDER.length]
+    set({ viewMode: next })
+  },
 
   searchOpen: false,
   setSearchOpen: (open) => set({ searchOpen: open }),

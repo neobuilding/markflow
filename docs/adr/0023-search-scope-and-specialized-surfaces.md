@@ -133,6 +133,8 @@ folderPath`, producing "title hit, no body hit" groups and inflating replace cou
    documents**: an open document with unsaved edits is searched from its **current buffer**, not
    from the stale on-disk bytes, so what the user sees as searchable is what replace can act on.
 
+> **Note (2026-11-14):** the `_rank_` contingency in Decision 4 above was closed by ruling 8 (the later `relPath`-sort decision): current search sorts hits by `relPath` and never ranks them, so MiniSearch has no role at all. This Decision text is preserved for history; see `CONTEXT.md` for the live, accurate description.
+
 5. **Safe cross-file replace as a plan/apply/undo service.** `search:replace:plan` builds the
    full candidate set (independent of UI caps `MAX_MATCHES_PER_DOC=50` / `MAX_RESULT_DOCS=200`;
    those caps must never bound the replace), reads disk bytes, flags unsaved content, and

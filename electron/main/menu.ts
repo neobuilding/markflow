@@ -280,6 +280,7 @@ export function setupMenu(): void {
           click: () => getMainWindow()?.webContents.send('menu:toggle-sidebar'),
         },
         {
+          id: 'toggle-preview',
           label: menuT('menu.togglePreview'),
           accelerator: 'CmdOrCtrl+Shift+P',
           click: () => getMainWindow()?.webContents.send('menu:toggle-preview'),

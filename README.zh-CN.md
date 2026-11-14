@@ -152,6 +152,7 @@ markflow/
 | `Ctrl/Cmd + Shift + E` | 文件视图（侧栏）                     |
 | `Ctrl/Cmd + Shift + X` | 导出独立 HTML                        |
 | `Ctrl/Cmd + P`         | 打印                                 |
+| `Ctrl/Cmd + Shift + P` | 循环视图（编辑 → 分屏 → 预览）       |
 | `Ctrl/Cmd + A`         | 全选（路由到当前聚焦面板）           |
 
 ## 🛠️ 技术栈

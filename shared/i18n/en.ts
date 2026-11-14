@@ -372,7 +372,7 @@ export const en = {
   'menu.closeFile': 'Close File',
   'menu.closeWorkspace': 'Close Workspace',
   'menu.toggleSidebar': 'Toggle Sidebar',
-  'menu.togglePreview': 'Toggle Preview',
+  'menu.togglePreview': 'Cycle View',
   'menu.toggleDevTools': 'Toggle Developer Tools',
   'menu.theme': 'Theme',
   'menu.themeLight': 'Light',
