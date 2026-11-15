@@ -1,9 +1,12 @@
 // Copy fidelity unit coverage (ADR-0004: every lib file 100%).
 //
-// jsdom does not apply stylesheets to getComputedStyle, so the style values we read in tests
-// come from INLINE styles on the fixtures. That is enough to exercise every branch of the
-// inlining / rasterization / post-processing logic; the "reads real CSS" behaviour is validated
-// end-to-end by the e2e suite (select-all-copy-fidelity.e2e.spec.ts) in a real browser.
+// jsdom does not apply the project stylesheet to getComputedStyle, so most style values we read
+// here come from INLINE styles on the fixtures. Since jsdom 31 it ALSO reports UA default styles
+// (e.g. `p { margin: 16px 0 }`), so assertions must target structure and behaviour rather than an
+// exact serialized tag: a bare `<p>` may legitimately gain a style attribute. That is enough to
+// exercise every branch of the inlining / rasterization / post-processing logic; the "reads real
+// CSS" behaviour is validated end-to-end in a real browser by
+// e2e/clipboard/select-all-copy-fidelity.e2e.spec.ts.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import '../i18n'
 import {
@@ -11,6 +14,7 @@ import {
   safeEnhanceForPaste,
   lightTokenDeclarations,
   collectRootRuleTokens,
+  collectInlineDeclarations,
   readableRules,
   rgbToHex,
 } from './copyFidelity'
@@ -52,6 +56,25 @@ describe('enhanceForPaste — style inlining (D12 = A)', () => {
     expect(out).not.toMatch(/<span style="[^"]*">inherited<\/span>/)
   })
 
+  it('skips a property the engine reports as empty (no declaration inlined for it)', () => {
+    // jsdom reports a value for EVERY property in SIMPLE_PROPS, so the "engine reports no
+    // value" branch is unreachable through a real element — drive it with a synthetic
+    // declaration instead (the same trick collectRootRuleTokens uses for CSS nesting).
+    const style = (value: string, empty?: string): CSSStyleDeclaration =>
+      ({
+        length: 0,
+        item: () => '',
+        getPropertyValue: (p: string) => (p === empty ? '' : value),
+      }) as unknown as CSSStyleDeclaration
+
+    const decls = collectInlineDeclarations(
+      style('rgb(1, 2, 3)', 'font-style'),
+      style('rgb(0, 0, 0)'),
+    )
+    expect(decls).not.toContain('font-style')
+    expect(decls).toContain('font-size: rgb(1, 2, 3)')
+  })
+
   it('inlines borders, handling uniform vs per-side forms', () => {
     const html =
       '<pre style="border:1px solid rgb(0,0,0)">code</pre>' +
@@ -83,12 +106,24 @@ describe('enhanceForPaste — style inlining (D12 = A)', () => {
     expect(out).toMatch(/<a style="[^"]*text-decoration:\s*underline/)
   })
 
-  it('leaves transparent colors untouched (does not inline/transform them)', () => {
-    expect(enhanceForPaste('<p style="color:transparent">x</p>')).toMatch(
-      /<p style="color:transparent">/,
-    )
+  it('leaves transparent colors untouched and preserves existing inline styles', () => {
+    // Regression guard: the inlining walk used to REPLACE `style` with the computed
+    // declarations, silently dropping author-supplied values such as transparent colours.
+    // Reverting walkInline to setAttribute('style', decl) must make the FIRST assertion red;
+    // dropping the computed declarations whenever an author style exists must make the THIRD.
+    //
+    // `margin: 1em` is the author's own declaration; the walk computes it to `16px`, so the
+    // merged attribute must carry BOTH spellings. This keeps the "computed declarations are
+    // merged, not dropped" proof independent of jsdom's UA-default stylesheet.
+    const out = enhanceForPaste('<p style="color:transparent;margin:1em">x</p>')
+    // The author's own declaration survives …
+    expect(out).toMatch(/<p style="[^"]*color:\s*transparent[^"]*">x<\/p>/)
+    // … and so does its original spelling …
+    expect(out).toMatch(/<p style="[^"]*margin:\s*1em[^"]*">x<\/p>/)
+    // … AND the computed declarations are merged beside them, not dropped.
+    expect(out).toMatch(/<p style="[^"]*margin:\s*16px[^"]*">x<\/p>/)
     expect(enhanceForPaste('<p style="color:rgba(0, 0, 0, 0)">x</p>')).toMatch(
-      /<p style="color:rgba\(0, 0, 0, 0\)">/,
+      /<p style="[^"]*color:\s*rgba\(0,\s*0,\s*0,\s*0\)[^"]*">x<\/p>/,
     )
   })
 
@@ -256,7 +291,9 @@ describe('enhanceForPaste — volume guard & theme (R13.8 / D16)', () => {
 
   it('supports the non-forceLight branch (follow-theme future option)', () => {
     const out = enhanceForPaste('<p>x</p>', false)
-    expect(out).toContain('<p>x</p>')
+    // jsdom 31 reports UA default margins on `<p>`, so the tag may carry a style attribute.
+    // Assert the resulting structure, not a byte-exact serialization.
+    expect(out).toMatch(/<p[^>]*>x<\/p>/)
   })
 
   it('always wraps the payload in a minimal light document envelope', () => {

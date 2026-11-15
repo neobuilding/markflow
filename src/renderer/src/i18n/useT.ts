@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { useUIStore } from '../store/ui'
 import type { TranslationKey } from '../../../../shared/i18n/en'
 import type { Locale } from './storage'
+// ./translate holds no store import, so reaching for it here cannot recreate the
+// i18n/index <-> useT cycle this module exists to break.
+import { translateWith } from './translate'
 
 // Reactive translator hook: re-renders the component whenever the language changes.
 // Kept in its own module so i18n/index.ts does NOT need to import the store (that
@@ -20,7 +23,11 @@ export function useT(): {
   const language = useUIStore((s) => s.language)
   const setLanguage = useUIStore((s) => s.setLanguage)
   const t = useCallback(
-    (key: TranslationKey, params?: Record<string, string | number>) => i18nT(key, params),
+    // This hook must stay reactive (react-i18next re-renders on a language change), so it keeps
+    // react-i18next's own `t` rather than the non-reactive wrapper in ./translate.ts. The
+    // "omit the options argument when empty" rule is shared through translateWith().
+    (key: TranslationKey, params?: Record<string, string | number>) =>
+      translateWith(i18nT, key, params),
     [i18nT],
   )
   return { t, language, setLanguage }

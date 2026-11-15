@@ -4,7 +4,7 @@ Domain glossary for MarkFlow. Agents and humans should use these terms consisten
 issue titles, refactor proposals, tests, or docs. If a term you need isn't here, that's a signal to
 either reconsider the invented wording or flag it for `/domain-modeling`.
 
-MarkFlow is a cross-platform Markdown editor with a Linear-style UI, built with Electron 44 +
+MarkFlow is a cross-platform Markdown editor with a Linear-style UI, built with Electron +
 React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder.
 
 ## Documents & editing

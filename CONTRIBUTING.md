@@ -76,7 +76,7 @@ markflow/
 | Layer             | Technology                                                                                                        |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Build             | Vite 8 + vite-plugin-electron                                                                                     |
-| Desktop           | Electron 44                                                                                                       |
+| Desktop           | Electron (see package.json)                                                                                       |
 | Frontend          | React 19 + TypeScript (strict) + Tailwind CSS 4                                                                   |
 | UI Components     | Radix UI primitives (shadcn/ui style)                                                                             |
 | State             | Zustand (UI) + TanStack Query v5 (IPC)                                                                            |
