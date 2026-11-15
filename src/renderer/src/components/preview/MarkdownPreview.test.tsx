@@ -510,13 +510,15 @@ describe('MarkdownPreview', () => {
     // the copy payload is now fidelity-enhanced (wrapped in a light document
     // envelope) and its internal markers are stripped as the final step.
     expect(setData).toHaveBeenCalledWith('text/plain', 'Titlebody')
-    // The copy payload is wrapped and inlines real github-markdown-css styles (jsdom applies them),
-    // so assert on structural substrings rather than the exact serialized tag.
+    // The copy payload is wrapped and inlines computed styles. jsdom 31 also reports UA default
+    // margins, so the serialized tags can carry a style attribute — assert the structure, not
+    // the exact tag. The real stylesheet values are verified end-to-end in a real browser
+    // (e2e/clipboard/select-all-copy-fidelity.e2e.spec.ts).
     expect(setData).toHaveBeenCalledWith('text/html', expect.stringContaining('<h1'))
     expect(setData).toHaveBeenCalledWith('text/html', expect.stringContaining('Title</h1>'))
     expect(setData).toHaveBeenCalledWith(
       'text/html',
-      expect.stringContaining('<code>body</code></pre>'),
+      expect.stringMatching(/<code[^>]*>body<\/code><\/pre>/),
     )
     expect(setData).toHaveBeenCalledWith('text/html', expect.not.stringContaining('data-line'))
     expect(setData).toHaveBeenCalledWith('text/html', expect.not.stringContaining('tabindex'))

@@ -215,7 +215,18 @@ function walkInline(node: HTMLElement, parent: HTMLElement): void {
   // must keep its MathML intact.
   if (node.hasAttribute('data-mermaid-slot') || node.classList.contains('katex')) return
   const decl = collectInlineStyles(node, parent)
-  if (decl) node.setAttribute('style', decl)
+  if (decl) {
+    // Merge, never overwrite: an element can already carry author-supplied inline styles
+    // (e.g. color:transparent) — and any property OUTSIDE SIMPLE_PROPS (background-image,
+    // text-shadow, …), which the walk never inlines itself. Replacing `style` wholesale
+    // dropped all of them. The computed declarations are APPENDED, so the author's values
+    // survive. For a property both spell, the computed value already reflects the author's
+    // declaration (an inline declaration outranks every stylesheet), so the two declarations
+    // resolve to the same value even when spelled differently (`margin:1em` vs `margin:16px`)
+    // — nothing is lost, and the author's declaration is not overridden.
+    const existing = node.getAttribute('style')
+    node.setAttribute('style', existing ? `${existing}; ${decl}` : decl)
+  }
   for (const child of Array.from(node.children) as HTMLElement[]) {
     walkInline(child, node)
   }
@@ -224,8 +235,19 @@ function walkInline(node: HTMLElement, parent: HTMLElement): void {
 // Every walked node has a parent (the wrapper `scoped` div for top-level children), so the
 // parent is required — no null branch to keep unreachable.
 function collectInlineStyles(el: HTMLElement, parent: HTMLElement): string {
-  const cs = getComputedStyle(el)
-  const pcs = getComputedStyle(parent)
+  return collectInlineDeclarations(getComputedStyle(el), getComputedStyle(parent))
+}
+
+/**
+ * Exported for unit coverage: jsdom reports a value for EVERY property in SIMPLE_PROPS, so the
+ * "engine reports no value" branch cannot be reached through a real element. Extracting the
+ * decision into a pure function over CSSStyleDeclaration lets the unit test drive it with a
+ * synthetic declaration — the same pattern as `collectRootRuleTokens` above.
+ */
+export function collectInlineDeclarations(
+  cs: CSSStyleDeclaration,
+  pcs: CSSStyleDeclaration,
+): string {
   const decls: string[] = []
   for (const prop of SIMPLE_PROPS) {
     const v = cs.getPropertyValue(prop)

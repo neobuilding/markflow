@@ -266,6 +266,8 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
       [
         '# Fidelity',
         '',
+        'a plain paragraph',
+        '',
         '> a quoted thought',
         '',
         '| A | B |',
@@ -324,6 +326,11 @@ test.describe('select-all scoping + rich-copy fidelity (bug repros)', () => {
     expect(html).toMatch(/<span class="hljs-[^"]*"[^>]*style="[^"]*color:/i)
     // Blockquotes must keep their left rule / background inline.
     expect(html).toMatch(/<blockquote[^>]*style="[^"]*(border|background)/i)
+    // A plain paragraph carries inlined computed styles too, so the walk is not limited to
+    // "interesting" elements. Only a real Chromium can prove this: jsdom applies no project
+    // stylesheet, so its computed values are an approximation (and changed between jsdom 30
+    // and 31). Kept HERE rather than as its own test so the suite pays for one Electron launch.
+    expect(html).toMatch(/<p[^>]*style="[^"]+"/i)
   })
 
   // Regression for the user-reported demo case: copying the demo document (e2e/fixtures/
