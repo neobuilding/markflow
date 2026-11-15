@@ -4,7 +4,7 @@
 
 - Node.js >= 22.22.2（下限来自 `jsdom` / `lint-staged` 的 `engines`；见 `package.json` 的 `engines` 与 `.nvmrc`）
 - npm >= 9（保守下限：避免 npm 7/8 把 v3 lockfile 回写降级；`overrides` 需要 >= 8.3，没有依赖硬性要求 npm 9）
-- Electron 44（随 `npm install` 一同安装）
+- Electron（版本以 `package.json` / `package-lock.json` 为准；二进制由 `postinstall` 显式安装，缺失时首次解析 `electron` 包才会触发懒下载兜底；排查见文末「Electron 二进制下载排错」）
 
 版本约束以 `package.json#engines` 为机器可读声明，`.nvmrc` 为本地与 CI 共用的版本选择来源（三个 workflow 的 `setup-node` 均使用 `node-version-file` 读取）。未启用 `engine-strict`，版本不满足时 npm 只会警告而不会中止安装。
 
@@ -110,3 +110,31 @@ npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 to
 | `src/renderer/src/components/editor/`    | 编辑器 + 命令面板                                      |
 | `src/renderer/src/components/sidebar/`   | 文档侧边栏                                             |
 | `src/renderer/src/components/preview/`   | Markdown 预览                                          |
+
+## 附：Electron 二进制下载排错（按需启用）
+
+Electron 的 npm 包不含可执行文件；二进制由 `@electron/get` 下载。本仓库的 `postinstall` 直接调用 `electron` 包自带的 `install-electron` bin（即 `electron/install.js`），**显式、幂等**地安装，正常情况不会触发懒下载。若该步骤被跳过（`--ignore-scripts`）、失败，或 `node_modules/electron/dist` / `path.txt` 丢失，首次解析 `electron` 包才会回退到同步懒下载：下载慢或卡住时，`npm install` / `npm ci`、单元测试长时间停在 `[queued]`、e2e 卡在 globalSetup，都可能是同一个原因。
+
+> npm 12 对 `.npmrc` 里的第三方键（如 `electron_mirror`）会发出 `Unknown user config` 警告——这只是 npm 不认可该键名，不等于值没传递：npm 仍把它导出为 `npm_config_electron_mirror`，`@electron/get` 以**最高优先级**读取它，高于 `ELECTRON_MIRROR` 环境变量。因此本机和 CI 只要在 userconfig（如 `D:\Dev\.npmrc`）或环境变量里配了镜像，`install-electron` 就会走镜像。
+
+`@electron/get` 自带进度条，但**只在下载超过 30 秒后创建**，且只在 TTY（本地终端）绘制：CI 与测试 worker 的 stderr 不是 TTY，那里看不到动态进度条。
+
+需要排查时，临时启用调试日志即可（默认不开启，不改动任何配置）：
+
+```bash
+DEBUG="@electron/get*" npm install --verbose
+```
+
+`DEBUG=@electron/get*` 从下载第 0 秒起输出，非 TTY 环境同样可见；`--verbose`（CI 里可再加 `--foreground-scripts`）让 npm 显示生命周期脚本的输出。
+
+其他官方提供的手段：
+
+- `ELECTRON_GET_NO_PROGRESS`：设为任意非空值可关闭默认进度条（默认开启，排查时不要误设）。
+- `ELECTRON_MIRROR` / `ELECTRON_CUSTOM_DIR`：覆盖下载的 base URL / 版本目录名。注意 `.npmrc` 里的 `electron_mirror` 优先级高于 `ELECTRON_MIRROR` 环境变量。
+- `force_no_cache=true` / `electron_config_cache=<路径>`：强制重新下载 / 改缓存目录。
+- `ELECTRON_GET_USE_PROXY`：启用代理支持。
+- `getProgressCallback({ transferred, total, percent })`：代码级逐块进度回调，需自行编写包装脚本。
+
+> **注意**：以上均为可观测手段，**不提供超时或自动终止**。进度长时间停在某一百分比时仍需人工判断并中止。
+
+参考：[Electron — Advanced Installation Instructions](https://www.electronjs.org/docs/latest/tutorial/installation)、[`@electron/get` README](https://github.com/electron/get#readme)。

@@ -93,8 +93,9 @@ async function verifyElectronBinary(): Promise<void> {
         `This means every e2e spec would fail to launch Electron. Common causes:\n` +
         `  - chrome-sandbox permission error on a non-root CI runner: ensure ` +
         `--no-sandbox is passed (already done in e2e/helpers/launch.ts and this probe).\n` +
-        `  - binary not downloaded/extracted: re-run npm ci (Electron's postinstall ` +
-        `restores the binary) and clear ~/.cache/electron + node_modules/electron/dist if stale.\n` +
+        `  - binary not downloaded/extracted: run "npm run postinstall" (the ` +
+        `install-electron step restores the binary) and clear ~/.cache/electron + ` +
+        `node_modules/electron/dist if stale.\n` +
         `Raw probe stderr is shown above — use it to diagnose, not a generic message.`,
     )
   }
