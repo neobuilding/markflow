@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef } from 'react'
 import { useUIStore } from './store/ui'
-import { useOpenPaths } from './hooks/useDocuments'
+import { useOpenPaths, createDraft, useHasMemoryOnlyDraft } from './hooks/useDocuments'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { EditorPane } from './components/editor/EditorPane'
 import { StatusBar } from './components/editor/StatusBar'
@@ -10,22 +10,27 @@ import { FileDetailsDialog } from './components/editor/FileDetailsDialog'
 import { AboutDialog } from './components/editor/AboutDialog'
 import { ExportDialog } from './components/editor/ExportDialog'
 import { TooltipProvider } from './components/ui/tooltip'
-import { buildStandaloneHtml, resolveTheme } from './lib/export'
-import { getExportHtml } from './lib/exportStore'
-import { prepareExportHtml } from './lib/exportBake'
+import { resolveTheme } from './lib/export'
+import { printDocument } from './lib/printDocument'
 import { routeSelectAll, createSelectAllKeydownHandler } from './lib/selectAllRouter'
 import { queryClient, DOCS_KEY } from './lib/queryClient'
 import { isDirInFolder } from './lib/utils'
-import { hasModalSurface } from './lib/shortcut-scope'
-import { t, useT, changeLanguage } from './i18n'
+import { hasModalSurface, isEditableTarget } from './lib/shortcut-scope'
+import { matchFormatShortcut } from './lib/format-shortcuts'
+import { t, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
 
 export default function App(): React.ReactElement {
-  const { setNewDocOpen, toggleSidebar, theme, closeWorkspace, setPrinting, printing } =
-    useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const theme = useUIStore((s) => s.theme)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setNewDocOpen, toggleSidebar, closeWorkspace } = useUIStore.getState()
+  // Read at the app root so the native menu mirrors the same "at most one draft" rule as the
+  // toolbar buttons; the list query is shared with the sidebar, so this adds no fetch.
+  const draftExists = useHasMemoryOnlyDraft()
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
-  const { t: rt } = useT()
 
   // Try to close the workspace, running the SAME unsaved-changes prompt used by the
   // "close workspace" menu item. Returns true if the workspace was actually closed
@@ -33,6 +38,9 @@ export default function App(): React.ReactElement {
   // quitting the app is identical to closing the workspace no separate logic / prompt
   const tryCloseWorkspace = useCallback((): boolean => {
     const st = useUIStore.getState()
+    // R5 plan A: refuse closing the workspace (and its "discard changes?" prompt) while the
+    // system print dialog is up — otherwise the print job loses its source document.
+    if (st.printing) return false
     if (st.exportOpen) {
       st.setExportOpen(false)
       return false
@@ -67,11 +75,40 @@ export default function App(): React.ReactElement {
   }, [closeWorkspace])
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
+    // `window.matchMedia` is not guaranteed to exist outside a browser engine (jsdom does not
+    // implement it), so the query is taken defensively — the same optional-call pattern the export
+    // / print path uses in `lib/export.ts`. Without the guard the effect throws on every mount in
+    // such a host; with it, `resolveTheme` degrades to 'light' and no OS listener is installed.
+    const mq =
+      typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)')
+        : null
+    const apply = () => {
+      // Resolve the choice with the SAME helper the export / print path uses, so "system" means one
+      // thing app-wide (ADR-0028). The media query is cached so a light<->dark switch while the app
+      // is open updates immediately (no restart).
+      document.documentElement.classList.toggle('dark', resolveTheme('current', theme) === 'dark')
+    }
+    apply()
+    if (theme === 'system' && mq) {
+      mq.addEventListener('change', apply)
+      return () => mq.removeEventListener('change', apply)
+    }
+  }, [theme])
+
+  // Bridge the active theme to the native shell (title bar / OS chrome) and to the native menu's
+  // theme radio checkmark (the `menu.theme*` items). Runs on mount — so the initial 'system' default
+  // syncs — and on every change. No persistence: the choice lives only for the session.
+  useEffect(() => {
+    if (window.api?.app?.setTheme) window.api.app.setTheme(theme)
   }, [theme])
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // R5 plan A: printing is a document transaction. The main window stays ENABLED so the
+      // preview pane can be scrolled, but global shortcuts (Ctrl+N new draft, Ctrl+\ etc.) must
+      // stand down. Preview scrolling never goes through this window-level handler.
+      if (useUIStore.getState().printing) return
       const isMac = /mac|iphone|ipad/i.test(navigator.userAgent)
       const mod = isMac ? e.metaKey : e.ctrlKey
       // Same modal guard as Ctrl/Cmd+F/H (lib/shortcut-scope): while a modal surface owns the
@@ -80,8 +117,11 @@ export default function App(): React.ReactElement {
       // one and Ctrl+\ would move the sidebar behind it.
       if (hasModalSurface(document)) return
       if (mod && e.key === 'n') {
+        // VS Code parity: Ctrl/Cmd+N creates an in-memory draft immediately, never a dialog.
+        // The native menu accelerator fires the same action through 'menu:new-document'; the
+        // shared createDraft() collapses both paths so one key press can never create two drafts.
         e.preventDefault()
-        setNewDocOpen(true)
+        void createDraft()
       }
       if (mod && e.key === '\\') {
         e.preventDefault()
@@ -109,6 +149,53 @@ export default function App(): React.ReactElement {
         st.requestSearchFocus()
         return
       }
+      // ⌘⇧E — the Files view, symmetric with ⌘⇧F above (VS Code `workbench.view.explorer`).
+      // `requestPanelFocus` hands focus to the tree afterwards (WCAG 2.4.3); the app shell cannot
+      // reach the panel element itself, so it bumps the nonce the Sidebar watches.
+      if (mod && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const st = useUIStore.getState()
+        st.setSidebarOpen(true)
+        st.setSidebarView('files')
+        st.requestPanelFocus()
+        return
+      }
+      // The formatting cluster: Ctrl/Cmd+B (Bold), +I (Italic), +K (Link), +E (Code),
+      // +Shift+L (List), +Shift+T (Task) and +1..6 (Heading 1..6). Every one of them dispatches
+      // the editor's existing `markdown:insert` event — the very same channel the toolbar's
+      // buttons use — so there is exactly one implementation of "bold" / "italic" / "link" / ….
+      //
+      // `⌘B` REPLACED the old sidebar-toggle binding (the panel is folded by Ctrl/Cmd+\ only),
+      // and the rest of the cluster was completed by ADR-0032.
+      //
+      //   - Deliberately renderer-only: the native menu carries NO accelerator for these keys, so
+      //     there is exactly one handler and no double-fire.
+      //   - Not VS Code bindings: there Ctrl+B toggles the BOTTOM panel, which MarkFlow does not
+      //     have, so the key is free for the editor's primary inline action. Bold-on-⌘B is the
+      //     convention of the Markdown-first editors (Typora / Obsidian / Bear / Zettlr), and the
+      //     rest of the cluster follows the same editors (⌘I = italic, ⌘K = link, ⌘1..6 = heading).
+      //   - Guarded by `isEditableTarget` so the key is NOT swallowed while the user types in ANY
+      //     text field (sidebar search, a rename input, or the editor's own find & replace widget)
+      //     — those surfaces keep the key for themselves.
+      //   - The editor's own `markdown:insert` dispatcher ignores the event when read-only, so the
+      //     shortcuts are no-ops in read-only mode — consistent with the disabled format buttons.
+      //
+      // The bindings and the glyphs the UI advertises live in ONE table
+      // (lib/format-shortcuts.ts), so a tooltip can never drift from the key it promises.
+      const format = matchFormatShortcut(e, isMac)
+      if (format) {
+        // The modal guard above already stood down for modal surfaces; only the focus check remains.
+        if (isEditableTarget(document.activeElement)) return
+        e.preventDefault()
+        e.stopPropagation()
+        document.dispatchEvent(
+          new CustomEvent('markdown:insert', {
+            detail: { before: format.before, after: format.after },
+          }),
+        )
+        return
+      }
     }
     // Capture phase: global shortcuts must fire even when the editor (CodeMirror) has focus and
     // would otherwise stopPropagation the keydown before it reaches a bubbling window listener.
@@ -129,9 +216,26 @@ export default function App(): React.ReactElement {
 
   useEffect(() => {
     if (!window.api) return
-    const removeNew = window.api.onMenuEvent('new-document', () => setNewDocOpen(true))
+    // R5 plan A: while the system print dialog is up, native menu events and drag-and-drop must
+    // not mutate documents. The store guards switch/close themselves; these guards stop the
+    // surfaces that bypass the store (and their "discard unsaved changes?" prompts).
+    const blocked = (): boolean => useUIStore.getState().printing
+    const removeNew = window.api.onMenuEvent('new-document', () => void createDraft())
+    const removeNewFile = window.api.onMenuEvent('new-file', () => {
+      if (blocked()) return
+      setNewDocOpen(true)
+    })
     const removeSidebar = window.api.onMenuEvent('toggle-sidebar', () => toggleSidebar())
+    const removeSetTheme = window.api.onMenuEvent('set-theme', (data) => {
+      // The native theme menu sends the raw choice as a plain string; narrow it to the store's
+      // ThemeMode before recording it. The theme effect above bridges the value to nativeTheme and
+      // to the menu's radio checkmark, so this handler only records the choice.
+      if (data === 'light' || data === 'dark' || data === 'system') {
+        useUIStore.getState().setTheme(data)
+      }
+    })
     const removeOpen = window.api.onMenuEvent('open-files', (data) => {
+      if (blocked()) return
       const paths = Array.isArray(data) ? data : data ? [data as string] : []
       if (paths.length === 0) return
       openPathsMut.mutate(paths)
@@ -140,6 +244,7 @@ export default function App(): React.ReactElement {
       tryCloseWorkspace()
     })
     const removeCloseFile = window.api.onMenuEvent('close-file', async () => {
+      if (blocked()) return
       const st = useUIStore.getState()
       // When the export dialog is open, Cmd/Ctrl+W should close the dialog rather than the file.
       if (st.exportOpen) {
@@ -168,36 +273,20 @@ export default function App(): React.ReactElement {
     const removeExport = window.api.onMenuEvent('export-html', () => {
       useUIStore.getState().setExportOpen(true)
     })
-    const removePrint = window.api.onMenuEvent('print', async () => {
-      if (!getExportHtml()) {
-        window.alert(t('app.printNotReady'))
-        return
-      }
-      if (useUIStore.getState().printing) return
-      setPrinting(true)
-      window.api.menu.setPrinting(true)
-      try {
-        // ADR 0019: bake EVERY diagram into the canonical HTML first — the preview only
-        // renders the ones that scrolled into view, and print must be complete.
-        await prepareExportHtml()
-        const theme = resolveTheme('current', useUIStore.getState().theme)
-        const html = await buildStandaloneHtml({ theme, embedImages: true })
-        await window.api.export.print(html)
-      } catch (e) {
-        console.error('Print failed', e)
-        window.alert(t('app.printFailed', { message: (e as Error)?.message || String(e) }))
-      } finally {
-        setPrinting(false)
-        window.api.menu.setPrinting(false)
-      }
-    })
+    const removePrint = window.api.onMenuEvent('print', () => void printDocument())
     const removeSelectAll = window.api.onMenuEvent('select-all', () => routeSelectAll())
+    const removeTogglePreview = window.api.onMenuEvent('toggle-preview', () =>
+      useUIStore.getState().cycleViewMode(),
+    )
     const removeOpenPaths = window.api.onOpenPaths((paths) => {
+      if (blocked()) return
       if (paths && paths.length > 0) openPathsMut.mutate(paths)
     })
     return () => {
       removeNew()
+      removeNewFile()
       removeSidebar()
+      removeSetTheme()
       removeOpen()
       removeClose()
       removeCloseFile()
@@ -207,8 +296,9 @@ export default function App(): React.ReactElement {
       removeExport()
       removePrint()
       removeSelectAll()
+      removeTogglePreview()
     }
-  }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, setPrinting, tryCloseWorkspace])
+  }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, tryCloseWorkspace])
 
   // ── i18n: keep the UI language in sync with the native menu ─────────────
   // When the user picks a language in the native menu, the main process sends
@@ -279,6 +369,27 @@ export default function App(): React.ReactElement {
     })
     return () => unsub()
   }, [])
+
+  // Sync "has an active folder" so the native File > New File… item is greyed out on the
+  // welcome screen. Same source of truth as the sidebar's own + button visibility.
+  useEffect(() => {
+    if (!window.api?.menu?.setHasFolder) return
+    const send = (has: boolean) => window.api.menu.setHasFolder(has)
+    send(!!useUIStore.getState().activeFolder)
+    const unsub = useUIStore.subscribe((state, prev) => {
+      if (state.activeFolder !== prev.activeFolder) send(!!state.activeFolder)
+    })
+    return () => unsub()
+  }, [])
+
+  // Sync "an unsaved draft already exists" so the native File > New Draft item greys out in
+  // lockstep with the toolbar button and the editor's empty-state entry. Unlike the store-synced
+  // flags above, this one is DERIVED from the document list, so it follows that query instead of a
+  // store subscription — a dead menu item that still invited a second draft was the gap.
+  useEffect(() => {
+    if (!window.api?.menu?.setHasDraft) return
+    window.api.menu.setHasDraft(draftExists)
+  }, [draftExists])
 
   // When the main process wants to quit, run the exact same "close workspace" flow
   // (with its unified unsaved-changes prompt). If the user confirms (or there's nothing
@@ -403,15 +514,11 @@ export default function App(): React.ReactElement {
         <FileDetailsDialog />
         <AboutDialog />
         <ExportDialog />
-        {printing && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3 shadow-lg">
-              <span className="text-sm text-[var(--color-text-secondary)]">
-                {rt('app.preparingPrint')}
-              </span>
-            </div>
-          </div>
-        )}
+        {/* R5 plan A: NO standalone print preview window and NO overlay. The main window's own
+            preview pane is what the user looks at while printing, so it must stay scrollable and
+            hit-testable. The "no editing / no switching or closing files" rule is a fine-grained
+            lock (editor read-only + store/menu guards), never a whole-window disable or a
+            covering layer. StatusBar shows the non-blocking "Printing…" state. */}
       </div>
     </TooltipProvider>
   )

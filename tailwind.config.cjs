@@ -1,51 +1,42 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ['./src/renderer/src/**/*.{js,ts,jsx,tsx}', './index.html'],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        // Linear-inspired color palette
-        surface: {
-          DEFAULT: '#f7f7f7',
-          elevated: '#ffffff',
-          overlay: '#f0f0f0',
-        },
-        border: {
-          DEFAULT: '#e5e5e5',
-          strong: '#d0d0d0',
-        },
+        // Single source of truth is globals.css `:root`/`.dark` --color-* custom properties.
+        // v4 compiles `bg-accent` → `var(--color-accent)` and preserves `/alpha` via color-mix,
+        // so keeping `accent.DEFAULT` as a bare var is the only colour entry we need here.
+        // `accent-hover`/`accent-muted` and the whole `surface`/`border`/`text` blocks were
+        // dead config (0 bare-tool-class hits — components use `bg-[var(--color-*)]` arbitrary values).
         accent: {
-          DEFAULT: '#5e6ad2',
-          hover: '#4f5abf',
-          muted: '#eef0fb',
-        },
-        text: {
-          primary: '#1a1a1a',
-          secondary: '#6b6b6b',
-          tertiary: '#9b9b9b',
-          inverse: '#ffffff',
+          DEFAULT: 'var(--color-accent)',
         },
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'Cascadia Code', 'monospace'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'system-ui', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
       fontSize: {
-        '2xs': ['0.625rem', '0.875rem'],
+        // 11px, not 10px: the smallest step anywhere in the UI must stay legible. This is a
+        // GLOBAL token — every `text-2xs` in the app (sidebar, status bar, chips, dialogs)
+        // moves up 1px with it. Compact spots that then truncate get fixed locally.
+        '2xs': ['0.6875rem', '0.875rem'],
       },
       borderRadius: {
-        sm: '4px',
-        DEFAULT: '6px',
-        md: '8px',
-        lg: '10px',
-        xl: '12px',
+        // ADR-0024 §1.3: radius up one step. `DEFAULT` is the global `rounded` class, so it reaches
+        // almost every container -- including the sidebar. The sidebar is exempted from DENSITY
+        // only (its rows keep the 4/8px rhythm), NOT from the radius step.
+        sm: '6px',
+        DEFAULT: '8px',
+        md: '10px',
+        lg: '12px',
+        xl: '14px',
       },
       boxShadow: {
-        'linear-sm': '0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.06)',
-        'linear-md': '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.04)',
-        'linear-lg': '0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04)',
-        'linear-focus': '0 0 0 2px rgba(94, 106, 210, 0.3)',
+        // Only `linear-lg` is actually referenced (dropdown-menu / dialog / context-menu / CommandPalette).
+        // ADR-0024 §1.3: shadows softer and wider -- a `0 2px 8px` family instead of the old
+        // `0 10px 15px -3px` / `0 4px 6px -2px` pair (which read as a hard drop shadow).
+        'linear-lg': '0 2px 8px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.06)',
       },
       animation: {
         'fade-in': 'fadeIn 0.15s ease-out',

@@ -84,34 +84,12 @@ export function setupLifecycle(): void {
     }
   })
 
-  app.on('will-quit', async (event) => {
-    // The recursive chokidar watcher holds native filesystem handles; leaving them
-    // open can delay (or on Windows even block) exit. `will-quit` fires after all
-    // windows are closed and before the process tears down, and Electron defers the
-    // exit until async handlers settle. This replaces the previous fire-and-forget
-    // `void stopFolderWatching()` in before-quit, which could leave handles mid-close
-    // on Windows. No preventDefault is needed: Electron waits for the promise.
-    void event // keep the event param so the handler signature stays explicit
-    try {
-      await stopFolderWatching()
-    } catch {
-      // Best-effort: a failed watcher close must not block exit.
-    }
-    // The app's userData lives in %TEMP% and Windows never cleans %TEMP%, so the app
-    // removes the runtime data IT produced there, in EVERY mode:
-    //   production -> %TEMP%/markflow-<pid> (app-created redirect, private per instance)
-    //   e2e        -> %TEMP%/markflow-e2e-<random> (the CONTAINER is allocated by the
-    //                 test harness, but the caches / Local Storage / preferences inside
-    //                 it were written by this app — cleaning those is its own job)
-    // Each owner handles what it created: the harness reclaims the directory it
-    // allocated (e2e/helpers/temp.ts) and asserts this app-level cleanup happened.
-    //
-    // Step 1 is a synchronous remove; Chromium may still be holding files in its own
-    // profile at this point, which makes rmSync abort. When that happens (normal run
-    // only), step 2 moves the leftover aside and a detached deleter finishes the job
-    // just after we exit.
-    // Best-effort, like the watcher close above: cleanup must never block exit. If the
-    // user-data-dir can't be resolved we simply skip the removal rather than hang quit.
+  app.on('will-quit', async (_event) => {
+    // No preventDefault is needed: Electron waits for this handler's promise to settle.
+    // Temp-dir cleanup runs FIRST and SYNCHRONOUSLY. It is the app's own contract to
+    // keep %TEMP% clean (ADR-0017 / the e2e residue gate) and must NOT be gated behind
+    // the async folder-watcher close below: if that `await` were ever cut short by the
+    // process exiting, the cleanup would silently never run and %TEMP% would rot.
     try {
       const ownTemp = app.getPath('userData')
       removeOwnTempDir(ownTemp)
@@ -121,15 +99,23 @@ export function setupLifecycle(): void {
       // In e2e the *container* directory is allocated by the harness, but the runtime data
       // inside it (caches / Local Storage / preferences) is OURS — and on Windows the
       // synchronous attempt above fails with EPERM because Chromium is still holding files
-      // at will-quit. The deferred deleter runs after we (and our Chromium children) have
-      // fully exited, so it is the only path that reliably cleans that data. The harness's
-      // own reclaim (cleanupTempDirs) is belt-and-suspenders; if it already removed the dir
-      // the deleter is a harmless no-op. Excluding e2e here broke the "app auto-removes its
-      // own user-data-dir" contract (it must hold in ANY mode), which
-      // temp-cleanup.e2e.spec.ts pins by untracking the dir from the harness.
+      // at will-quit. The deferred deleter (electron/main/lib/temp-cleanup.ts) now RETRIES
+      // until it succeeds, so a transient EPERM during Chromium's teardown flush no longer
+      // leaves a directory behind. The harness's own reclaim (cleanupTempDirs) is
+      // belt-and-suspenders; if it already removed the dir the deleter is a harmless no-op.
       scheduleRemoveAfterExit(ownTemp)
     } catch {
       // Best-effort: temp cleanup must not block exit.
+    }
+    // The recursive chokidar watcher holds native filesystem handles; leaving them
+    // open can delay (or on Windows even block) exit. Release them AFTER the temp
+    // cleanup above has already run, so the cleanup is never blocked on the close.
+    // Electron defers exit until this async handler settles; if the process exits
+    // first, the cleanup above is already done.
+    try {
+      await stopFolderWatching()
+    } catch {
+      // Best-effort: a failed watcher close must not block exit.
     }
   })
 

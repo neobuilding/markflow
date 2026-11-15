@@ -42,7 +42,7 @@ function doc(p: Partial<Document> & { id: string; title: string; content: string
   }
 }
 
-// Seed a document AND its bytes on the fake disk 锟?the replace pipeline reads the file, not the
+// Seed a document AND its bytes on the fake disk —the replace pipeline reads the file, not the
 // store, so a store-only document would be reported as `missing-file`.
 function seed(id: string, rel: string, content: string, encoding = 'utf-8'): Document {
   const filePath = join(root, rel)
@@ -84,7 +84,7 @@ function setDocs(...docs: Document[]) {
 
 const base = { unsavedDocumentIds: [] as string[], documentStateRevision: 7 }
 
-describe('replace 锟?planning', () => {
+describe('replace —planning', () => {
   it('counts every occurrence across files', async () => {
     setDocs(seed('a', 'a.md', 'cat and cat'), seed('b', 'sub/b.md', 'cat'))
     const outcome = await planReplace(
@@ -97,7 +97,7 @@ describe('replace 锟?planning', () => {
     expect(outcome.plan.matchCount).toBe(3)
   })
 
-  it('skips memory-only drafts, unsaved files and files with no hit 锟?and says why', async () => {
+  it('skips memory-only drafts, unsaved files and files with no hit —and says why', async () => {
     setDocs(
       seed('a', 'a.md', 'cat'),
       seed('b', 'b.md', 'nothing here'),
@@ -175,7 +175,7 @@ describe('replace 锟?planning', () => {
   })
 })
 
-describe('replace 锟?safety budget (ADR-0023)', () => {
+describe('replace —safety budget (ADR-0023)', () => {
   it('writes NOTHING and names the offenders when the file budget trips', async () => {
     const docs: Document[] = []
     // One more file than the budget allows: the check must fire BEFORE any I/O.
@@ -198,7 +198,7 @@ describe('replace 锟?safety budget (ADR-0023)', () => {
   })
 })
 
-describe('replace 锟?cancellation (ADR-0023)', () => {
+describe('replace —cancellation (ADR-0023)', () => {
   it('stops a running plan and writes nothing', async () => {
     const docs: Document[] = []
     for (let i = 0; i < 200; i++) docs.push(seed(`c${i}`, `c${i}.md`, 'cat'))
@@ -224,7 +224,7 @@ describe('replace 锟?cancellation (ADR-0023)', () => {
   })
 })
 
-describe('replace 锟?applying', () => {
+describe('replace —applying', () => {
   async function planned(extra: Record<string, unknown> = {}) {
     return planReplace(
       { query: 'cat', replaceText: 'dog', ...base, cancelToken: 't1', ...extra },
@@ -314,7 +314,7 @@ describe('replace 锟?applying', () => {
   })
 })
 
-describe('replace 锟?undo', () => {
+describe('replace —undo', () => {
   it('restores what the last apply wrote', async () => {
     setDocs(seed('a', 'a.md', 'cat'))
     const p = await planReplace(
@@ -348,9 +348,9 @@ describe('replace 锟?undo', () => {
   })
 })
 
-// 鈹€鈹€鈹€ Planning: rejection and skip reasons 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// --- Planning: rejection and skip reasons ------------------------------------------------------
 
-describe('replace 鈥?defensive payload guards', () => {
+describe('replace —defensive payload guards', () => {
   // The IPC layer already validates its input, so these guards are reached only by a caller that
   // bypasses it. They exist because "no query" must never be read as "match everything".
   it('treats a missing options object as an empty query', async () => {
@@ -387,7 +387,7 @@ describe('replace 鈥?defensive payload guards', () => {
 
   it('falls back to utf-8 when a document carries no encoding', async () => {
     // `doc.encoding` is typed as required, so the `||` fallback is reachable only through a store
-    // row that predates the field 鈥?exactly what a hand-edited store or a migration produces.
+    // row that predates the field —exactly what a hand-edited store or a migration produces.
     const filePath = join(root, 'legacy.md')
     io.writeFile(filePath, Buffer.from('cat', 'utf-8'))
     const legacy = doc({ id: 'legacy', title: 'legacy.md', content: 'cat', filePath })
@@ -402,7 +402,7 @@ describe('replace 鈥?defensive payload guards', () => {
   })
 })
 
-describe('replace 锟?planning rejections and skip reasons', () => {
+describe('replace —planning rejections and skip reasons', () => {
   it('rejects an empty query before touching the store', async () => {
     setDocs(seed('a', 'a.md', 'cat'))
     expect(
@@ -452,7 +452,7 @@ describe('replace 锟?planning rejections and skip reasons', () => {
     ).toMatchObject({ ok: false, reason: 'missing-dirty-state' })
   })
 
-  it('requires a cancel token 锟?without one the plan cannot be cancelled at all', async () => {
+  it('requires a cancel token —without one the plan cannot be cancelled at all', async () => {
     setDocs(seed('a', 'a.md', 'cat'))
     expect(
       await planReplace(
@@ -526,7 +526,7 @@ describe('replace 锟?planning rejections and skip reasons', () => {
   })
 
   it('reports an unreadable file when the path is a directory', async () => {
-    // `exists()` is true for a directory but `readFile()` throws 锟?the exact shape the
+    // `exists()` is true for a directory but `readFile()` throws —the exact shape the
     // 'unreadable' skip reason exists for.
     io.mkdir(join(root, 'adir'), { recursive: true })
     setDocs(doc({ id: 'dir', title: 'adir', content: 'cat', filePath: join(root, 'adir') }))
@@ -572,7 +572,7 @@ describe('replace 锟?planning rejections and skip reasons', () => {
   })
 
   it('skips a file whose replacement cannot be encoded in its own encoding', async () => {
-    // 'ascii' cannot round-trip '锟?, so the file is reported rather than silently degraded.
+    // 'ascii' cannot round-trip '—, so the file is reported rather than silently degraded.
     setDocs(seed('a', 'a.md', 'cat', 'ascii'))
     const outcome = await planReplace(
       { query: 'cat', replaceText: 'x鈧瑈', ...base, cancelToken: 't1' },
@@ -603,9 +603,9 @@ describe('replace 锟?planning rejections and skip reasons', () => {
   })
 })
 
-// 鈹€鈹€鈹€ Every safety-budget limit aborts with zero writes (ADR-0023 D18) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// --- Every safety-budget limit aborts with zero writes (ADR-0023 D18) --------------------------
 
-describe('replace 锟?one case per safety budget', () => {
+describe('replace —one case per safety budget', () => {
   it('aborts on the per-file byte budget', async () => {
     io.writeFile(join(root, 'big.md'), Buffer.alloc(MAX_REPLACE_FILE_BYTES + 1, 0x61))
     setDocs(doc({ id: 'big', title: 'big.md', content: 'cat', filePath: join(root, 'big.md') }))
@@ -656,7 +656,7 @@ describe('replace 锟?one case per safety budget', () => {
     // Output is measured on the ACTUAL buffer that would be written, so the cheapest way to blow
     // it is to inflate bytes-per-character: a UTF-16LE file with 100k hits and a 700-character
     // replacement produces 140 MB of encoded output from a 600 KB input, and it aborts on the
-    // FIRST file 锟?which also keeps peak memory to a single candidate.
+    // FIRST file —which also keeps peak memory to a single candidate.
     const content = 'cat'.repeat(MAX_REPLACE_COUNT)
     io.writeFile(join(root, 'wide.md'), Buffer.from(content, 'utf-16le'))
     setDocs(
@@ -678,9 +678,9 @@ describe('replace 锟?one case per safety budget', () => {
   })
 })
 
-// 鈹€鈹€鈹€ Apply: refusal gates and per-file failures 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// --- Apply: refusal gates and per-file failures ------------------------------------------------
 
-describe('replace 锟?apply refusal gates and per-file failures', () => {
+describe('replace —apply refusal gates and per-file failures', () => {
   async function planned(extra: Record<string, unknown> = {}) {
     setDocs(seed('a', 'a.md', 'cat'))
     const p = await planReplace(
@@ -747,7 +747,7 @@ describe('replace 锟?apply refusal gates and per-file failures', () => {
   })
 
   it('accepts an apply whose unsaved set matches the plan regardless of order', async () => {
-    // `sameStringSet` sorts before comparing, so a reordered list is the SAME set 鈥?a renderer that
+    // `sameStringSet` sorts before comparing, so a reordered list is the SAME set —a renderer that
     // reordered its registry must not be told the workspace changed. This is the only path that
     // reaches the sorted comparison with a non-empty list.
     setDocs(seed('a', 'a.md', 'cat'), seed('b', 'b.md', 'cat'))
@@ -822,9 +822,9 @@ describe('replace 锟?apply refusal gates and per-file failures', () => {
   })
 })
 
-// 鈹€鈹€鈹€ Undo: skip reasons and partial restore 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// --- Undo: skip reasons and partial restore ----------------------------------------------------
 
-describe('replace 锟?undo skip reasons and partial restore', () => {
+describe('replace —undo skip reasons and partial restore', () => {
   async function applied(content = 'cat') {
     setDocs(seed('a', 'a.md', content))
     const p = await planReplace(

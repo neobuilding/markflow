@@ -268,6 +268,44 @@ describe('app handlers', () => {
     })
   })
 
+  // The historical bug, pinned at the OS boundary: `ClipboardItem` is a named EXPORT of `electron`
+  // (see the comment in app.ts). A `declare const ClipboardItem` type-checked fine and then threw
+  // `ReferenceError: ClipboardItem is not defined` at runtime — and because both handlers swallow
+  // errors, every image / SVG copy silently copied NOTHING while the old e2e ("the call does not
+  // throw") stayed green. A global that DOES exist is the same bug wearing a hat, so this test
+  // plants one: if the handlers ever reach for a global instead of the import, the item they write
+  // is the impostor, not the exported constructor.
+  describe('ClipboardItem must be the electron export, not a global', () => {
+    class GlobalImpostor {
+      constructor(public readonly items: Record<string, unknown>) {}
+    }
+
+    it('writes both payloads through the exported constructor while a global of that name exists', async () => {
+      const glob = globalThis as { ClipboardItem?: unknown }
+      const original = glob.ClipboardItem
+      glob.ClipboardItem = GlobalImpostor
+      try {
+        clipboardMock.write.mockClear()
+        await (handlers['clipboard:write-svg'](null, '<svg>x</svg>') as Promise<void>)
+        // 4 bytes of PNG-ish payload: the nativeImage stand-in only has to be non-empty.
+        await (handlers['clipboard:write-image'](
+          null,
+          'data:image/png;base64,CAkGBw==',
+        ) as Promise<void>)
+        expect(clipboardMock.write).toHaveBeenCalledTimes(2)
+        for (const call of clipboardMock.write.mock.calls) {
+          const [items] = call as [Array<{ items: Record<string, unknown> }>]
+          expect(items).toHaveLength(1)
+          expect(items[0]).toBeInstanceOf(clipboardItemMock)
+          expect(items[0]).not.toBeInstanceOf(GlobalImpostor)
+        }
+      } finally {
+        if (original === undefined) delete glob.ClipboardItem
+        else glob.ClipboardItem = original
+      }
+    })
+  })
+
   describe('app:copy-file (capability 2: save as)', () => {
     it('copies a source file to a destination', () => {
       const src = '/tmp/src.md'

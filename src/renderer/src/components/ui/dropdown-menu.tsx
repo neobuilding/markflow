@@ -30,9 +30,13 @@ const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      'flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer select-none outline-none transition-colors',
+      // `focus-ring` is the WCAG 1.4.11 focus indicator: the background swap on its own is only
+      // ~1.1:1 against the menu surface, far below the 3:1 the criterion asks of a focus cue.
+      // It is `:focus-visible`-gated, so pointer users see the menu exactly as before and only
+      // arrow-key navigation — the case that needs it — gets the ring.
+      'flex items-center gap-2 px-2 py-1.5 text-sm rounded cursor-pointer select-none outline-none focus-ring transition-colors',
       destructive
-        ? 'text-[var(--color-danger)] hover:bg-red-50 focus:bg-red-50'
+        ? 'text-[var(--color-danger-text)] hover:bg-[var(--color-danger-tint)] focus:bg-[var(--color-danger-tint)]'
         : 'text-[var(--color-text-primary)] hover:bg-[var(--color-surface-overlay)] focus:bg-[var(--color-surface-overlay)]',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[disabled]:cursor-default',
       className,

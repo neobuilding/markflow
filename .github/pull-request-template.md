@@ -23,6 +23,7 @@ Please include a summary of the change and which issue is fixed. Please also inc
 - [ ] I ran `npm run quality` locally and it passes (Prettier + Stylelint + Markdownlint + Secretlint)
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests pass locally with my changes
+- [ ] Any renderer UI I added reuses the primitives in `src/renderer/src/components/ui/` (or I stated why none fits) — see `docs/agents/ui-control-reuse.md`
 <!-- /AUTO:checklist -->
 
 <!-- AUTO:issue -->
@@ -36,3 +37,13 @@ Please include a summary of the change and which issue is fixed. Please also inc
 
 {{commits}}
 <!-- /AUTO:commits -->
+
+<!-- AUTO:screenshots-before -->
+## Screenshots
+
+### Before
+<!-- /AUTO:screenshots-before -->
+
+<!-- AUTO:screenshots-after -->
+### After
+<!-- /AUTO:screenshots-after -->

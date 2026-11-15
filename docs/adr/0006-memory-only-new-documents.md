@@ -25,6 +25,22 @@ violated the product rule "never create a file on disk before an explicit save."
   purged (`purgeUnsavedDrafts`) **only after** the user confirms — never silently.
 - Memory-only drafts are **not** persisted across app restarts.
 
+### At most one unsaved draft (amended 2026-11-12)
+
+The app keeps **at most one** memory-only draft alive. A second one is refused in the logic layer:
+`createDraft` (`src/renderer/src/hooks/useDocuments.ts`) asks the main-process document list, never
+the folder-scoped React Query cache, because `documents:list` always includes memory-only drafts
+whatever folder is open. Every entry point then disables itself in that state:
+
+- the global toolbar's **New Draft** button and the editor empty-state menu item (both read the same
+  `useHasMemoryOnlyDraft()` predicate);
+- the native **File ▸ New Draft** item, which mirrors the predicate through the `menu:set-has-draft`
+  IPC sync. A disabled native item also stops its `CmdOrCtrl+N` accelerator, so the keyboard path
+  cannot slip past a disabled control either.
+
+The rule is a state, not a one-way latch: closing the draft (`closeDocument`) deletes its store row
+and re-enables all of the above.
+
 The sidebar shows memory-only drafts in a dedicated **"Unsaved drafts"** group (empty `file_path` is
 excluded from the folder tree via `isInFolder`, which is always false for `''`).
 

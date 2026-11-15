@@ -14,8 +14,19 @@ export default tseslint.config(
       'release',
       'node_modules',
       'coverage',
-      '**/*.config.ts',
-      '**/*.config.js',
+      // Generated test/CI artifacts (see `.gitignore`). ESLint's flat config does NOT read
+      // `.gitignore` automatically, so these must be listed here too or `eslint .` will lint
+      // minified third-party bundles (e.g. the CodeMirror trace asset under
+      // `playwright-report/trace/assets/`) and emit hundreds of false `no-undef`/
+      // `no-unused-expressions` errors from code we don't own.
+      'playwright-report',
+      'test-results',
+      'reports',
+      '.playwright',
+      // Declaration files are generated or ambient (shims for untyped packages); there is no
+      // code to judge. Everything else — including `*.config.ts` (vite / vitest / playwright /
+      // postcss) and `*.config.cjs` — is linted: those files used to be ignored here and were
+      // then covered by NO gate at all.
       '**/*.d.ts',
       'electron/main/jschardet-ultra.d.ts',
     ],

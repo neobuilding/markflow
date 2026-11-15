@@ -7,6 +7,7 @@ import {
   type FolderMenuActions,
 } from './FileMenuItems'
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '../ui/context-menu'
+import { useUIStore } from '../../store/ui'
 import '../../i18n'
 
 function docActions(): DocMenuActions {
@@ -113,6 +114,29 @@ describe('FileMenuItems — title variant', () => {
     mount('title', docActions(), { editable: true, dirty: false })
     expect(await screen.findByTestId('doc-save')).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByTestId('doc-save-as')).not.toHaveAttribute('aria-disabled', 'true')
+  })
+
+  // R5 plan A: the right-click file menu must agree with the native File menu, which disables
+  // every document transaction while a print job is in flight.
+  it('greys out document transactions while printing', async () => {
+    useUIStore.getState().setPrinting(true)
+    try {
+      mount('title', docActions())
+      expect(await screen.findByTestId('doc-save')).toHaveAttribute('aria-disabled', 'true')
+      for (const id of [
+        'doc-rename',
+        'doc-save-as',
+        'doc-reload',
+        'doc-details',
+        'doc-export-html',
+      ]) {
+        expect(screen.getByTestId(id), id).toHaveAttribute('aria-disabled', 'true')
+      }
+      // Pure read-only entries stay available.
+      expect(screen.getByTestId('doc-copy-path')).not.toHaveAttribute('aria-disabled', 'true')
+    } finally {
+      useUIStore.getState().setPrinting(false)
+    }
   })
 
   it('greys out path items and reload for a memory-only draft', async () => {

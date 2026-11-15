@@ -240,7 +240,7 @@ describe('StatusBar', () => {
     expect(screen.getByText('UTF-8')).toBeInTheDocument()
   })
 
-  it('switches the line ending to CRLF on disk and reloads (能力 6)', async () => {
+  it('switches the line ending to CRLF on disk and reloads', async () => {
     render(<StatusBar />)
     fireEvent.click(await screen.findByText('LF'))
     fireEvent.click(await screen.findByText(/Switch to CRLF|切换为 CRLF/i))
@@ -270,7 +270,7 @@ describe('StatusBar', () => {
     expect(mockSetEol).not.toHaveBeenCalled()
   })
 
-  it('re-detects encoding from disk and applies it (能力 11)', async () => {
+  it('re-detects encoding from disk and applies it', async () => {
     mockDetect.mockResolvedValue({ enc: 'GB2312', confidence: 0.8 })
     render(<StatusBar />)
     fireEvent.click(await screen.findByTitle(/encoding/i))
@@ -281,7 +281,7 @@ describe('StatusBar', () => {
     )
   })
 
-  it('shows the detecting label while re-detection is in flight (能力 11)', async () => {
+  it('shows the detecting label while re-detection is in flight', async () => {
     let resolveDetect!: (v: { enc: string; confidence: number }) => void
     mockDetect.mockImplementationOnce(
       () =>
@@ -310,7 +310,7 @@ describe('StatusBar', () => {
     expect(await screen.findByText(/Re-detect encoding|重新检测编码/)).toBeDisabled()
   })
 
-  it('logs a failure when the line-ending switch rejects (能力 6)', async () => {
+  it('logs a failure when the line-ending switch rejects', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     mockSetEol.mockRejectedValueOnce(new Error('boom'))
     render(<StatusBar />)
@@ -320,7 +320,7 @@ describe('StatusBar', () => {
     errorSpy.mockRestore()
   })
 
-  it('logs a failure when re-detect encoding rejects (能力 11)', async () => {
+  it('logs a failure when re-detect encoding rejects', async () => {
     mockDetect.mockRejectedValueOnce(new Error('boom'))
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<StatusBar />)
@@ -330,7 +330,7 @@ describe('StatusBar', () => {
     errorSpy.mockRestore()
   })
 
-  it('switches the line ending to LF on disk and reloads (能力 6)', async () => {
+  it('switches the line ending to LF on disk and reloads', async () => {
     installApi(async () => '\r\n')
     render(<StatusBar />)
     fireEvent.click(await screen.findByText('CRLF'))
@@ -513,7 +513,7 @@ describe('StatusBar — context menus', () => {
     expect(await screen.findByTestId('sb-save')).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('switches the line ending to LF from the context menu after confirming (能力 6)', async () => {
+  it('switches the line ending to LF from the context menu after confirming', async () => {
     installApi(async () => '\r\n')
     render(<StatusBar />)
     fireEvent.contextMenu(await screen.findByText('CRLF'))
@@ -530,5 +530,61 @@ describe('StatusBar — context menus', () => {
     fireEvent.contextMenu(await screen.findByText('CRLF'))
     fireEvent.click(await screen.findByTestId('sb-copy-line-ending'))
     expect(mockWriteText).toHaveBeenLastCalledWith('CRLF')
+  })
+})
+
+// PLAN C32 U6/U7 — the semantic-colour contract of ADR-0024 §1.1: a semantic colour is an
+// INDICATOR (the ● / ✓ / ⚠ glyph), never the text colour. The text itself stays neutral
+// (`--color-text-secondary`) so it clears 1.4.3 on its own, and a state-bearing border is
+// painted at full opacity (an `/60` border is a state signal at ~40% strength — not allowed).
+describe('StatusBar semantic colour roles (C32 U6/U7)', () => {
+  beforeEach(() => {
+    docState.doc = {
+      id: 'd1',
+      filePath: '/tmp/a.md',
+      wordCount: 42,
+      encoding: 'GBK',
+      encodingConfidence: 0.3,
+    }
+    useUIStore.getState().setActiveDocumentId('d1')
+    useUIStore.getState().setDirty(false)
+    useUIStore.getState().setSaving(false)
+    useUIStore.getState().setPrinting(false)
+    useUIStore.getState().setJustSaved(false)
+    useUIStore.getState().setEditable(true)
+    useUIStore.getState().requestFileAction(null)
+    mockConfirm.mockResolvedValue(true)
+    mockWriteText.mockResolvedValue(undefined)
+    installApi()
+  })
+
+  it('keeps the unsaved label in the neutral text colour and colours only the ● indicator', async () => {
+    useUIStore.getState().setDirty(true)
+    render(<StatusBar />)
+    const label = await screen.findByTestId('status-unsaved')
+    expect(label).toHaveClass('text-[var(--color-text-secondary)]')
+    // The warning colour rides the indicator glyph alone.
+    const dot = screen.getByTestId('status-unsaved-dot')
+    expect(dot).toHaveClass('text-[var(--color-warning)]')
+    expect(label).not.toHaveClass('text-[var(--color-warning)]')
+  })
+
+  it('keeps the saved label in the neutral text colour and colours only the ✓ indicator', async () => {
+    render(<StatusBar />)
+    act(() => useUIStore.getState().setJustSaved(true))
+    const label = await screen.findByTestId('status-saved')
+    expect(label).toHaveClass('text-[var(--color-text-secondary)]')
+    const check = screen.getByTestId('status-saved-check')
+    expect(check).toHaveClass('text-[var(--color-success)]')
+    expect(label).not.toHaveClass('text-[var(--color-success)]')
+  })
+
+  it('paints the low-confidence encoding border at full opacity (no /60)', async () => {
+    render(<StatusBar />)
+    const pill = await screen.findByTestId('status-encoding')
+    expect(pill.className).toContain('border-[var(--color-warning)]')
+    // A state-bearing border must not be dimmed: `/60` would drop it below the 3:1 floor.
+    expect(pill.className).not.toContain('/60')
+    expect(pill.className).not.toContain('border-[var(--color-warning)]/')
   })
 })

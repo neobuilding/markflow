@@ -37,7 +37,33 @@ let appMenu: Electron.Menu | null = null
 // resetting every item back to its disabled default.
 let editableState = false
 let hasDocumentState = false
-let printingState = false
+let hasFolderState = false
+// "An unsaved draft already exists" — the renderer enforces at most ONE memory-only draft, so its
+// New Draft entry points disable themselves in that state. The native File > New Draft item has to
+// follow, or the menu becomes the one control that still invites a second draft.
+let hasDraftState = false
+let fileLockedState = false
+
+// The three theme choices the app supports. Mirrors the renderer's `ThemeMode`
+// (src/renderer/src/types) — the main process cannot import renderer types, so the domain concept
+// gets its own small type here instead of repeating the string union at every use.
+export type ThemeMode = 'light' | 'dark' | 'system'
+
+// Active theme mirrored from the renderer so the native theme menu's radio group can show the
+// current choice. The renderer is the source of truth; main only mirrors it for the checkmark.
+// Default 'system' matches the renderer store's default (ui.ts), so a freshly built menu before
+// the first sync already shows the "follow the system" entry as checked.
+let currentTheme: ThemeMode = 'system'
+
+/**
+ * Mirror the renderer's active theme into the native menu and rebuild it so the theme radio group's
+ * `checked` state reflects the current choice. Called from the `app:set-theme` IPC handler (the
+ * renderer bridges every theme change — including the initial one — through that channel).
+ */
+export function applyThemeToMenu(theme: ThemeMode): void {
+  currentTheme = theme
+  setupMenu()
+}
 
 // Re-apply the renderer-synced states to the current menu so that a menu rebuild (such as a
 // language switch via setupMenu()) preserves the enabled/disabled state the renderer last sent.
@@ -54,13 +80,28 @@ function applyMenuStates(): void {
   const exportItem = appMenu.getMenuItemById('export-html')
   const printItem = appMenu.getMenuItemById('print')
   const closeFileItem = appMenu.getMenuItemById('close-file')
-  if (saveItem) saveItem.enabled = editableState
-  if (saveAsItem) saveAsItem.enabled = editableState
-  if (reloadItem) reloadItem.enabled = hasDocumentState
-  if (detailsItem) detailsItem.enabled = hasDocumentState
-  if (exportItem) exportItem.enabled = hasDocumentState
-  if (printItem) printItem.enabled = hasDocumentState && !printingState
-  if (closeFileItem) closeFileItem.enabled = hasDocumentState
+  const closeWorkspaceItem = appMenu.getMenuItemById('close-workspace')
+  const newFileItem = appMenu.getMenuItemById('new-file')
+  const newDraftItem = appMenu.getMenuItemById('new-draft')
+  const openFileItem = appMenu.getMenuItemById('open-file')
+  const openFolderItem = appMenu.getMenuItemById('open-folder')
+  // R5 plan A: the document/file-set action lock is a document transaction. The main window stays
+  // ENABLED so its preview pane can be scrolled — a whole-window setEnabled(false) would freeze it —
+  // so the native menu must instead refuse EVERY file/document mutation for the duration. A disabled
+  // menu item also stops its accelerator from firing, which closes the Ctrl+N/O/W/S/Shift+X/P paths.
+  const active = !fileLockedState
+  if (newFileItem) newFileItem.enabled = hasFolderState && active
+  if (newDraftItem) newDraftItem.enabled = !hasDraftState && active
+  if (openFileItem) openFileItem.enabled = active
+  if (openFolderItem) openFolderItem.enabled = active
+  if (saveItem) saveItem.enabled = editableState && active
+  if (saveAsItem) saveAsItem.enabled = editableState && active
+  if (reloadItem) reloadItem.enabled = hasDocumentState && active
+  if (detailsItem) detailsItem.enabled = hasDocumentState && active
+  if (exportItem) exportItem.enabled = hasDocumentState && active
+  if (printItem) printItem.enabled = hasDocumentState && active
+  if (closeFileItem) closeFileItem.enabled = hasDocumentState && active
+  if (closeWorkspaceItem) closeWorkspaceItem.enabled = active
   Menu.setApplicationMenu(appMenu)
 }
 
@@ -71,12 +112,27 @@ export function setupMenu(): void {
       label: menuT('menu.file'),
       submenu: [
         {
+          // At most one unsaved draft exists at a time (the renderer's `createDraft` refuses a
+          // second one), so this item is disabled while a draft is alive — see
+          // `menu:set-has-draft`. A disabled item also stops its CmdOrCtrl+N accelerator from
+          // firing, which is the native half of the same rule.
+          id: 'new-draft',
           label: menuT('menu.newDraft'),
           accelerator: 'CmdOrCtrl+N',
           click: () => getMainWindow()?.webContents.send('menu:new-document'),
         },
+        {
+          // "New File…" writes a real Markdown file into the OPEN FOLDER (VS Code's File >
+          // New File…), so it is disabled until a folder is open. No accelerator: only the
+          // direct-to-draft command gets the mainstream Ctrl/Cmd+N binding.
+          id: 'new-file',
+          label: menuT('menu.newFile'),
+          enabled: false,
+          click: () => getMainWindow()?.webContents.send('menu:new-file'),
+        },
         { type: 'separator' },
         {
+          id: 'open-file',
           label: menuT('menu.openFile'),
           accelerator: 'CmdOrCtrl+O',
           click: async () => {
@@ -97,6 +153,7 @@ export function setupMenu(): void {
           },
         },
         {
+          id: 'open-folder',
           label: menuT('menu.openFolder'),
           accelerator: 'CmdOrCtrl+Shift+O',
           click: async () => {
@@ -146,14 +203,18 @@ export function setupMenu(): void {
         {
           id: 'file-details',
           label: menuT('menu.fileDetails'),
-          accelerator: 'CmdOrCtrl+I',
+          // ⌘I belongs to the editor's ITALIC action since ADR-0032 (the mainstream
+          // Markdown-editor binding), so File Details moved to the ⌘⇧I chord.
+          accelerator: 'CmdOrCtrl+Shift+I',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => getMainWindow()?.webContents.send('menu:file-details'),
         },
         {
           id: 'export-html',
           label: menuT('menu.exportHtml'),
-          accelerator: 'CmdOrCtrl+Shift+E',
+          // Shift+E is now ⌘⇧E = Files view (VS Code parity). Export moves to Shift+X; the id and
+          // the IPC channel name are unchanged, so no renderer wiring moves with it.
+          accelerator: 'CmdOrCtrl+Shift+X',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => getMainWindow()?.webContents.send('menu:export-html'),
         },
@@ -219,11 +280,39 @@ export function setupMenu(): void {
           click: () => getMainWindow()?.webContents.send('menu:toggle-sidebar'),
         },
         {
+          id: 'toggle-preview',
           label: menuT('menu.togglePreview'),
           accelerator: 'CmdOrCtrl+Shift+P',
           click: () => getMainWindow()?.webContents.send('menu:toggle-preview'),
         },
         { type: 'separator' },
+        // Theme (light / dark / follow the system). The radio `checked` state mirrors
+        // `currentTheme`, which the renderer keeps in sync via `app:set-theme`; choosing an item
+        // forwards the pick back to the renderer (single source of truth) rather than mutating
+        // nativeTheme from the main thread.
+        {
+          label: menuT('menu.theme'),
+          submenu: [
+            {
+              label: menuT('menu.themeLight'),
+              type: 'radio',
+              checked: currentTheme === 'light',
+              click: () => getMainWindow()?.webContents.send('menu:set-theme', 'light'),
+            },
+            {
+              label: menuT('menu.themeDark'),
+              type: 'radio',
+              checked: currentTheme === 'dark',
+              click: () => getMainWindow()?.webContents.send('menu:set-theme', 'dark'),
+            },
+            {
+              label: menuT('menu.themeSystem'),
+              type: 'radio',
+              checked: currentTheme === 'system',
+              click: () => getMainWindow()?.webContents.send('menu:set-theme', 'system'),
+            },
+          ],
+        },
         { label: menuT('menu.resetZoom'), role: 'resetZoom' },
         { label: menuT('menu.zoomIn'), role: 'zoomIn' },
         { label: menuT('menu.zoomOut'), role: 'zoomOut' },
@@ -253,15 +342,6 @@ export function setupMenu(): void {
       ],
     },
     {
-      label: menuT('menu.help'),
-      submenu: [
-        {
-          label: menuT('menu.about'),
-          click: () => getMainWindow()?.webContents.send('menu:about'),
-        },
-      ],
-    },
-    {
       label: menuT('menu.language'),
       submenu: [
         {
@@ -275,6 +355,15 @@ export function setupMenu(): void {
           type: 'radio',
           checked: getCurrentLocale() === 'zh-CN',
           click: () => setMenuLocale('zh-CN', true),
+        },
+      ],
+    },
+    {
+      label: menuT('menu.help'),
+      submenu: [
+        {
+          label: menuT('menu.about'),
+          click: () => getMainWindow()?.webContents.send('menu:about'),
         },
       ],
     },
@@ -311,9 +400,25 @@ export function registerMenuHandlers(): void {
     applyMenuStates()
   })
 
-  // Disable the Print menu item during printing to avoid the user triggering it repeatedly.
-  ipcMain.on('menu:set-printing', (_event, printing: boolean) => {
-    printingState = printing
+  // "New File…" is filesystem-bound: it needs an open folder to write into. The renderer mirrors
+  // `activeFolder` here so the native menu item is greyed out on the welcome screen.
+  ipcMain.on('menu:set-has-folder', (_event, has: boolean) => {
+    hasFolderState = has
+    applyMenuStates()
+  })
+
+  // The renderer mirrors "an unsaved draft exists" so File > New Draft greys out in lockstep with
+  // the toolbar / context-menu entries that share the same rule (at most one memory-only draft).
+  ipcMain.on('menu:set-has-draft', (_event, has: boolean) => {
+    hasDraftState = has
+    applyMenuStates()
+  })
+
+  // Mirror the renderer's file-locked capability (printing, exporting, or the export dialog open).
+  // One boolean from the renderer means the native menu no longer needs to know WHICH trigger is
+  // active; adding a future trigger source is a store-side change only.
+  ipcMain.on('menu:set-file-locked', (_event, locked: boolean) => {
+    fileLockedState = locked
     applyMenuStates()
   })
 

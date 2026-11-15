@@ -30,12 +30,15 @@ export function formatDate(ts: number): string {
 export function debounce<T extends (...args: Parameters<T>) => ReturnType<T>>(
   fn: T,
   delay: number,
-): (...args: Parameters<T>) => void {
+) {
   let timer: ReturnType<typeof setTimeout>
-  return (...args: Parameters<T>) => {
+  const debounced = (...args: Parameters<T>) => {
     clearTimeout(timer)
     timer = setTimeout(() => fn(...args), delay)
   }
+  // A pending call can outlive the state it was scheduled from (e.g. an editor echo fired
+  // after a document switch). Callers must be able to drop it instead of emitting stale data.
+  return Object.assign(debounced, { cancel: () => clearTimeout(timer) })
 }
 
 // Whether the current platform is macOS (navigator.platform is deprecated; use userAgent)
@@ -288,7 +291,7 @@ export function buildFileTree(
 // that exists, even if the filter is currently hiding it.
 //
 // A folder survives when any of these holds:
-//   • 显示所有文件夹 is ON — the user asked to see the document-less ones;
+//   • Show All Folders is ON — the user asked to see the document-less ones;
 //   • it is pinned (created this session, see Recently-created folder) — a folder must not vanish
 //     the instant it is named;
 //   • it still has a surviving child — which is exactly "it transitively holds Markdown", plus the
@@ -360,6 +363,29 @@ export function siblingBasenames(tree: readonly FileTreeNode[], parentPath: stri
   return new Set(siblings.map((c) => baseName(c.path)))
 }
 
+// Split a name typed into a "create a file" surface into the title `documents:create` expects and the
+// extension that will land on disk — the ADR-0011 rule, shared by the sidebar's inline row and the
+// File ▸ New File… dialog so the two entry points cannot disagree about the resulting name:
+//   • a supported Markdown extension (`notes.md`, `notes.markdown`, …) is used exactly as typed and
+//     overrides the caller's default extension;
+//   • any other dotted suffix (`notes.txt`) is refused (null) instead of silently becoming
+//     `notes.txt.md` — the folder watcher is filtered by `MD_EXTS`, so such a file could never be
+//     re-opened by the app;
+//   • a name with no suffix takes `fallbackExt`.
+// Returns null for a name that cannot be written as a Markdown document.
+export function resolveNewFileTarget(
+  typed: string,
+  fallbackExt: string,
+): { title: string; ext: string } | null {
+  const name = typed.trim()
+  const typedExt = markdownExtOf(name)
+  if (typedExt) return { title: stripMarkdownExt(name), ext: typedExt.toLowerCase() }
+  // A trailing `.<alnum>` run is an extension attempt, not part of the stem: `v1.2` counts, while a
+  // dotted phrase (`v1.2 notes`) does not, because its suffix carries a space.
+  if (/\.[A-Za-z0-9]{1,8}$/.test(name)) return null
+  return { title: name, ext: fallbackExt }
+}
+
 // Characters that can never appear in a file or folder name. VS Code splits the typed name on
 // separators and validates each segment (so `a/b` may still create nested folders); ours is
 // stricter on purpose — mkdir is non-recursive now, so `a/b` could only ever fail, and a name
@@ -374,6 +400,22 @@ export function invalidBaseName(name: string): boolean {
   if (!trimmed) return false
   if (trimmed === '.' || trimmed === '..') return true
   return INVALID_NAME_CHARS.test(trimmed)
+}
+
+// True when a create/rename was refused because the name is already taken on disk.
+//
+// The main-process handlers reject with an EEXIST error (ADR-0011: never silently renumber), but
+// `ipcRenderer.invoke` re-throws a plain `Error` whose only own properties are `stack` and
+// `message` — the Node `code` is lost, as measured on the real bridge:
+//
+//   "Error invoking remote method 'documents:create': Error: EEXIST: file already exists, open …"
+//
+// So the match has to be on the message text. `code` is still honoured when present (an in-process
+// call, or a future structured error, may carry it) — that branch must not regress.
+export function isAlreadyExistsError(error: unknown): boolean {
+  if ((error as { code?: unknown } | null)?.code === 'EEXIST') return true
+  const message = error instanceof Error ? error.message : String(error)
+  return /EEXIST|already exists|FILE_EXISTS/i.test(message)
 }
 
 // Re-point an `expanded` folder set when a folder is renamed: every entry equal to

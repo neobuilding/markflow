@@ -22,6 +22,8 @@ If either doesn't exist, **proceed silently**. Don't flag their absence; don't s
 └── src/
 ```
 
+When writing docs (not just consuming them): code comments hold the local why, invariants and rejected alternatives; README holds externally observable behaviour; `CONTEXT.md` holds term definitions only — don't record implementation details or measurements that go stale on the next edit. Before deleting existing prose, judge each item on its own and keep decision rationale, path inventories and troubleshooting lessons.
+
 ## Use the glossary's vocabulary
 
 When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.

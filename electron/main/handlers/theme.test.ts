@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const handlers: Record<string, (...a: unknown[]) => unknown> = {}
-const h = vi.hoisted(() => ({ dark: false, themeSource: '' as string }))
+const h = vi.hoisted(() => ({ dark: false, themeSource: '' as string, applied: [] as string[] }))
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (ch: string, fn: (...a: unknown[]) => unknown) => {
@@ -17,6 +17,13 @@ vi.mock('electron', () => ({
     },
   },
 }))
+// The menu module is mocked out: it pulls in Electron's Menu, which this unit does not provide,
+// and the only thing the handler needs from it is the radio-group sync.
+vi.mock('../menu', () => ({
+  applyThemeToMenu: (theme: string) => {
+    h.applied.push(theme)
+  },
+}))
 
 import { registerThemeHandlers } from './theme'
 
@@ -25,6 +32,7 @@ describe('theme handlers', () => {
     for (const k of Object.keys(handlers)) delete handlers[k]
     h.dark = false
     h.themeSource = ''
+    h.applied.length = 0
     registerThemeHandlers()
   })
 
@@ -40,5 +48,14 @@ describe('theme handlers', () => {
     expect(h.themeSource).toBe('dark')
     handlers['app:set-theme'](null, 'system')
     expect(h.themeSource).toBe('system')
+  })
+
+  // The native theme menu's radio group must show the CURRENT choice, so the handler mirrors the
+  // renderer's value into the menu (ADR-0028). The renderer stays the source of truth.
+  it('set-theme mirrors the theme into the native menu so its radio group stays in sync', () => {
+    handlers['app:set-theme'](null, 'dark')
+    expect(h.applied).toEqual(['dark'])
+    handlers['app:set-theme'](null, 'system')
+    expect(h.applied).toEqual(['dark', 'system'])
   })
 })

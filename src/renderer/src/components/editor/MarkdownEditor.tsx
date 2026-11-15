@@ -1,12 +1,11 @@
-import React, { useEffect, useRef, useMemo, useCallback, useState } from 'react'
+import React, { useEffect, useRef, useCallback, useState } from 'react'
 import { EditorView, keymap, highlightActiveLine, drawSelection } from '@codemirror/view'
-import { EditorState, Compartment } from '@codemirror/state'
+import { EditorState, Compartment, Transaction } from '@codemirror/state'
 import {
   defaultKeymap,
   history,
   historyKeymap,
   indentWithTab,
-  isolateHistory,
   undo,
   redo,
   selectAll,
@@ -14,6 +13,8 @@ import {
   redoDepth,
 } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { useEditorHistory } from '../../store/editorHistory'
+import { useUIStore } from '../../store/ui'
 import { languages } from '@codemirror/language-data'
 import {
   searchKeymap,
@@ -41,6 +42,7 @@ import {
   FolderOpen,
 } from 'lucide-react'
 import { debounce, formatShortcut } from '../../lib/utils'
+import { FORMAT_SHORTCUTS } from '../../lib/format-shortcuts'
 import { scrollSync } from '../../lib/scrollSync'
 import { useT } from '../../i18n'
 import {
@@ -51,9 +53,77 @@ import {
   ContextMenuSeparator,
 } from '../ui/context-menu'
 
+/**
+ * One EDITING SESSION per document. It owns the debounce AND the right to write: a keystroke
+ * may only be committed while it was applied to exactly the text this session wrote, so a
+ * session that outlives its document can never write that document's text into the next one.
+ * `preview()` is the 400ms debounce that ONLY refreshes the preview/React state. Correctness
+ * state (dirty, registry, draftRef) is committed synchronously on the keystroke via
+ * `onImmediateChange`, never through this debounce.
+ *
+ * Two teardown paths, and the difference matters:
+ *   - `abort()` — a DOCUMENT SWITCH: drop the pending refresh, because that text belongs to the
+ *     document being left.
+ *   - `flushAndAbort()` — the editor unmounts while the SAME document stays open (switching to
+ *     preview-only): land the pending refresh first, or the preview would show stale text.
+ * This is the "land pending work before teardown" rule from ADR-0033.
+ */
+interface EditingSession {
+  /**
+   * WRITE OWNERSHIP: the text this session last wrote into the view. A keystroke is committed
+   * only when it was applied to exactly this text — that is how a session knows the view still
+   * holds ITS document. A document switch rotates the session BEFORE the view is updated, so a
+   * keystroke landing in that window still carries the PREVIOUS document's text; committing it
+   * would write that text into the new document's draft.
+   * `null` = this session owns nothing yet (it was just rotated, or the view was never written).
+   */
+  owned: string | null
+  /** The 400ms debounce that only refreshes the preview/React state. */
+  preview: (text: string) => void
+  /** Drop the pending refresh: that text belongs to the document being left. */
+  abort: () => void
+  /** Land the pending refresh first, then invalidate: the same document stays open. */
+  flushAndAbort: () => void
+}
+
+function createSession(emitPreview: (text: string) => void): EditingSession {
+  const controller = new AbortController()
+  let pending: string | null = null
+  const fire = (text: string) => {
+    pending = null
+    if (controller.signal.aborted) return
+    emitPreview(text)
+  }
+  const debounced = debounce(fire, 400)
+  const invalidate = () => {
+    debounced.cancel()
+    pending = null
+    controller.abort()
+  }
+  return {
+    owned: null,
+    preview: (text) => {
+      pending = text
+      debounced(text)
+    },
+    abort: invalidate,
+    flushAndAbort: () => {
+      // A session that was already aborted (the store rotated it on a document switch) has
+      // nothing to land: its text belongs to the document being left.
+      const text = pending
+      const wasAborted = controller.signal.aborted
+      invalidate()
+      if (text !== null && !wasAborted) emitPreview(text)
+    },
+  }
+}
+
 interface MarkdownEditorProps {
   content: string
+  /** Debounced (400ms) preview/React-state refresh. Never carries correctness state. */
   onChange: (content: string) => void
+  /** Fires on the keystroke frame: commit dirty + registry + draftRef before any switch. */
+  onImmediateChange?: (content: string) => void
   autoFocus?: boolean
   editable?: boolean
   docId?: string | null
@@ -68,6 +138,7 @@ interface MarkdownEditorProps {
 export function MarkdownEditor({
   content,
   onChange,
+  onImmediateChange,
   autoFocus,
   editable = true,
   docId,
@@ -83,19 +154,16 @@ export function MarkdownEditor({
   // On a document switch we must force-apply the new content even if isInternalChange is true
   // from just having edited.
   const currentDocIdRef = useRef<string | null | undefined>(undefined)
-  // True from the moment the doc id changes until the new document's content has
-  // actually been written. Needed because a switch now spans TWO commits: the
-  // panes are first emptied (still the new id) and only filled once the query
-  // data lands. `isDocSwitch` is true on the first of those and FALSE on the
-  // second, so keying the undo-history isolation off it alone would leave the
-  // fill un-isolated Ctrl+Z would then undo across the document boundary back
-  // into the previous file.
-  const pendingSwitchRef = useRef(false)
   // A programmatic write (document switch / external sync) is in progress: suppress the
   // updateListener echo during it, otherwise the normalized editor content would be mistaken
   // for user input and written back, causing a false "unsaved" flag after switching documents.
   const isApplyingExternal = useRef(false)
   const editableCompartment = useRef(new Compartment())
+  // The undo history lives in a compartment so a document switch can DROP the field and add it
+  // back: CodeMirror then re-creates the StateField with an empty history. There is no public
+  // `clearHistory` API, and re-creating the EditorView per document would bring back the
+  // "can't type after switching files" focus bug this persistent view exists to avoid.
+  const historyCompartment = useRef(new Compartment())
   // Mirror of the current editable flag, read lazily when the find panel is (re)created
   // so the panel always reflects the latest edit mode rather than the mount-time value.
   const editableRef = useRef(editable)
@@ -114,7 +182,19 @@ export function MarkdownEditor({
     panelUpdateRef.current = panelUpdate
   }, [panelUpdate])
 
-  const debouncedOnChange = useMemo(() => debounce((val: string) => onChange(val), 400), [onChange])
+  // Mount-time listeners must not capture a stale parent render (advanced-event-handler-refs),
+  // and must never re-subscribe when a callback identity changes. Both callbacks live in refs.
+  const onChangeRef = useRef(onChange)
+  const onImmediateChangeRef = useRef(onImmediateChange)
+  useEffect(() => {
+    onChangeRef.current = onChange
+    onImmediateChangeRef.current = onImmediateChange
+  }, [onChange, onImmediateChange])
+
+  // One session per document. Created at mount, aborted + replaced on every switch. Reading a
+  // ref is deliberately confined to effects/handlers: `react-hooks/refs` forbids it during render.
+  const sessionRef = useRef<EditingSession | null>(null)
+  const emitPreview = useCallback((text: string) => onChangeRef.current(text), [])
 
   // Focus the editor's content DOM directly and retry across a few animation frames as a
   // best-effort to make the editor typeable immediately. A real pointerdown into the editor
@@ -326,12 +406,26 @@ export function MarkdownEditor({
     /* v8 ignore next -- defensive: the container div is rendered unconditionally, so the ref is always attached when this effect runs */
     if (!containerRef.current) return
 
+    // Session lifecycle is driven by the STORE, synchronously: `selectDocument` commits the new
+    // activeDocumentId before React renders, so subscribing here closes the window between
+    // "store switched" and "effect cleanup ran" that a pending 400ms timer could otherwise fire in.
+    // docId is used here ONLY as a switch signal, never as a write target or callback argument.
+    sessionRef.current = createSession(emitPreview)
+    const unsubscribe = useUIStore.subscribe((state, prev) => {
+      if (state.activeDocumentId === prev.activeDocumentId) return
+      // A real document switch: the pending preview text belongs to the OLD document, drop it.
+      sessionRef.current?.abort()
+      // The fresh session owns NOTHING yet: the view still holds the old document's text until
+      // the sync effect writes the new one, so a keystroke in that window is not committed.
+      sessionRef.current = createSession(emitPreview)
+    })
+
     const startState = EditorState.create({
       doc: content,
       extensions: [
         // Read-only / edit mode, reconfigurable via the editable compartment.
         editableCompartment.current.of(readOnlyFacets(editable)),
-        history(),
+        historyCompartment.current.of(history()),
         highlightActiveLine(),
         // Draw the selection even when the editor is NOT focused. A resident-search hit sets
         // the selection programmatically (the sidebar keeps focus), so without this the
@@ -377,11 +471,32 @@ export function MarkdownEditor({
         autocompletion(),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !isApplyingExternal.current) {
-            isInternalChange.current = true
-            debouncedOnChange(update.state.doc.toString())
+            const session = sessionRef.current
+            const text = update.state.doc.toString()
+            // WRITE OWNERSHIP: a keystroke may only be committed while it was applied to exactly
+            // the text this session wrote. A document switch rotates the session BEFORE the view
+            // is updated, so a keystroke landing in that window still carries the PREVIOUS
+            // document's text — committing it would write that text into the new document's
+            // draft, which is exactly the "Ctrl+Z replays the previous file" bug (ADR-0033).
+            if (session !== null && session.owned === update.startState.doc.toString()) {
+              isInternalChange.current = true
+              // Correctness state lands on THIS frame; the 400ms debounce only refreshes the
+              // preview. A switch that happens in between can no longer lose the keystroke.
+              onImmediateChangeRef.current?.(text)
+              session.preview(text)
+              session.owned = text
+            }
           }
           // Refresh the find panel's k/n counter when the cursor moves between matches.
           if (update.selectionSet) panelUpdateRef.current?.(view)
+          // Publish live undo/redo availability so the editor pane bar's buttons track it in real
+          // time (ADR-0024 §10 trade-off 47). Only doc changes alter history depth, so gate there.
+          if (update.docChanged) {
+            useEditorHistory.getState().update({
+              canUndo: undoDepth(update.state) > 0,
+              canRedo: redoDepth(update.state) > 0,
+            })
+          }
         }),
         EditorView.theme({
           '&': {
@@ -389,20 +504,26 @@ export function MarkdownEditor({
             fontSize: '14px',
           },
           '.cm-content': {
-            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            // Follow the theme variable instead of naming fonts that are never shipped —
+            // `.cm-editor { font-family: … !important }` cannot reach this child element anyway.
+            fontFamily: 'var(--font-mono)',
             lineHeight: '1.7',
-            caretColor: '#5e6ad2',
-            color: '#1a1a1a',
+            caretColor: 'var(--color-accent)',
+            color: 'var(--color-text-primary)',
             padding: '24px 0',
           },
           '.cm-line': { padding: '0 32px' },
-          '.cm-activeLine': { backgroundColor: 'rgba(94,106,210,0.04)' },
-          '.cm-gutters': { display: 'none' },
-          '.cm-selectionBackground': { backgroundColor: 'rgba(94,106,210,0.2) !important' },
-          '&.cm-focused .cm-selectionBackground': {
-            backgroundColor: 'rgba(94,106,210,0.2) !important',
+          '.cm-activeLine': {
+            backgroundColor: 'color-mix(in srgb, var(--color-accent) 4%, transparent)',
           },
-          '.cm-cursor': { borderLeftColor: '#5e6ad2' },
+          '.cm-gutters': { display: 'none' },
+          '.cm-selectionBackground': {
+            backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent) !important',
+          },
+          '&.cm-focused .cm-selectionBackground': {
+            backgroundColor: 'color-mix(in srgb, var(--color-accent) 20%, transparent) !important',
+          },
+          '.cm-cursor': { borderLeftColor: 'var(--color-accent)' },
         }),
         EditorView.lineWrapping,
       ],
@@ -414,6 +535,17 @@ export function MarkdownEditor({
     })
 
     viewRef.current = view
+
+    // The session owns the view from here on: a keystroke may be committed only while it builds
+    // on exactly this text. Read it from the VIEW, not from the `content` prop — CodeMirror
+    // normalizes line endings, so the view's text can differ from the prop.
+    if (sessionRef.current) sessionRef.current.owned = view.state.doc.toString()
+
+    // A fresh CodeMirror instance starts with an EMPTY history. The editor pane bar's undo/redo
+    // buttons read their disabled state from the editorHistory store, which outlives this view
+    // (the editor pane is unmounted in preview-only mode), so clear it here — otherwise the
+    // buttons would stay enabled while `undo()` had nothing to undo.
+    useEditorHistory.getState().reset()
 
     // Register with the scroll-sync controller: the source pane acts as the "editor" side
     // (ratio mapping, no getView needed).
@@ -432,26 +564,18 @@ export function MarkdownEditor({
       })
     }
 
-    // Handle toolbar insert events
+    // Handle toolbar / shortcut insert events. All THREE formatting entry points — the right-click
+    // menu, the toolbar button and the keyboard shortcut — share ONE implementation (`wrap`), so an
+    // action behaves identically however it is triggered. With nothing selected the markers are
+    // inserted with the caret parked between them (the mainstream Markdown-editor behaviour:
+    // Obsidian / VS Code / Typora) and never a literal 'text' placeholder. `wrap` reads the live
+    // editor selection, so it is the single source of truth for "format the selection". The
+    // `editable` guard is the read-only safety net — the menu item is disabled, but the toolbar
+    // button and the keyboard shortcut still dispatch and must no-op in read-only mode.
     const handleInsert = (e: Event) => {
-      if (!editable) return // ignore formatting inserts in read-only mode
+      if (!editable) return
       const { before, after } = (e as CustomEvent<{ before: string; after: string }>).detail
-      const v = viewRef.current
-      // Insert events are only dispatched after the editor has mounted, so the ref is
-      // always populated here; the guard only narrows its nullable type.
-      /* v8 ignore next -- defensive: insert events are only dispatched after the editor mounts, so the ref is never null */
-      if (!v) return
-      const sel = v.state.selection.main
-      const selectedText = v.state.sliceDoc(sel.from, sel.to)
-      const insertion = before + (selectedText || 'text') + after
-      v.dispatch({
-        changes: { from: sel.from, to: sel.to, insert: insertion },
-        selection: {
-          anchor: sel.from + before.length,
-          head: sel.from + before.length + (selectedText || 'text').length,
-        },
-      })
-      v.focus()
+      wrap(before, after)
     }
 
     document.addEventListener('markdown:insert', handleInsert)
@@ -508,13 +632,29 @@ export function MarkdownEditor({
     }
     document.addEventListener('markdown:replaceAll', handleReplaceAll)
 
+    // Undo/redo entry points for the editor pane bar (ADR-0024 §10 trade-off 47). They call the
+    // same CodeMirror commands the right-click menu uses, so both surfaces share one history.
+    const handleUndo = () => doUndo()
+    const handleRedo = () => doRedo()
+    document.addEventListener('markdown:undo', handleUndo)
+    document.addEventListener('markdown:redo', handleRedo)
+
     return () => {
       document.removeEventListener('markdown:insert', handleInsert)
       document.removeEventListener('markdown:select-all', handleSelectAll)
       document.removeEventListener('markdown:find', handleFind)
       document.removeEventListener('markdown:replace', handleReplace)
       document.removeEventListener('markdown:replaceAll', handleReplaceAll)
+      document.removeEventListener('markdown:undo', handleUndo)
+      document.removeEventListener('markdown:redo', handleRedo)
       scrollSync.unregister('editor')
+      unsubscribe()
+      // Unmount keeps the same document open (e.g. view-preview hides the editor), so any
+      // pending preview refresh must be flushed rather than discarded. A document switch/close
+      // has already rotated the session (the store subscription above), so that session has
+      // nothing pending to flush.
+      sessionRef.current?.flushAndAbort()
+      sessionRef.current = null
       view.destroy()
       viewRef.current = null
     }
@@ -556,8 +696,13 @@ export function MarkdownEditor({
     // recently-edited isInternalChange would make this effect return early, leaving the editor
     // on the previous document while the preview has already switched).
     const isDocSwitch = docId !== currentDocIdRef.current
-    if (isDocSwitch) pendingSwitchRef.current = true
     currentDocIdRef.current = docId
+    if (isDocSwitch) {
+      // The store subscription above normally rotates the session first; abort again here as a
+      // no-op guard for prop-driven switches (unit tests / an id change without a store update).
+      sessionRef.current?.abort()
+      sessionRef.current = createSession(emitPreview)
+    }
     if (isInternalChange.current && !isDocSwitch) {
       isInternalChange.current = false
       return
@@ -599,37 +744,55 @@ export function MarkdownEditor({
       jumpOff && jumpOff.from >= 0 && jumpOff.from <= jumpOff.to && jumpOff.to <= content.length
         ? jumpOff
         : null
-    if (isDocSwitch || currentContent !== content || jumpTarget) {
-      // The whole switch sequence (empty → fill) must be isolated, not just the
-      // frame where the id changed: see pendingSwitchRef above.
-      const isolateUndo = pendingSwitchRef.current
+    const replacingContent = currentContent !== content
+    if (isDocSwitch || replacingContent || jumpTarget) {
+      // A programmatic content load starts with an EMPTY undo history — whether it is a
+      // document switch, a reload from disk, or an external file change on the SAME doc id.
+      // Dropping the history field and adding it back in two separate transactions makes
+      // CodeMirror re-create the StateField; otherwise old edits remain undoable and Ctrl+Z
+      // past the new text's beginning replaces the whole document with stale content.
+      //
+      // Keeping the history for a SAME-doc reload was considered and rejected: CodeMirror's
+      // history events map through the document, so once the buffer was replaced wholesale the
+      // older events can no longer be mapped back (measured: the second Ctrl+Z after such a
+      // reload does nothing at all). VS Code does the same on a model-wide replacement — its
+      // `TextModel.setValue` swaps the buffer and then destroys the edit history
+      // (`this._commandManager.clear()`, textModel.ts:530-531) — so a reload ending with an
+      // empty undo stack is the mainstream behaviour, not a MarkFlow-only shortcut. Clearing
+      // also gives the user a predictable state: after a reload, Ctrl+Z has nothing to undo.
+      // A selection-only jump (replacingContent === false) keeps the user's history.
+      if (isDocSwitch || replacingContent) {
+        view.dispatch({ effects: historyCompartment.current.reconfigure([]) })
+        view.dispatch({ effects: historyCompartment.current.reconfigure(history()) })
+      }
       // Mark as a programmatic write: suppress this frame's updateListener echo so the 400ms
       // debounce doesn't mistake the normalized content for "unsaved changes" (dirty flag)
       // after a document switch.
       isApplyingExternal.current = true
       try {
-        const tr = {
+        view.dispatch({
           changes: { from: 0, to: currentContent.length, insert: content },
           selection: jumpTarget ? { anchor: jumpTarget.from, head: jumpTarget.to } : { anchor: 0 },
           scrollIntoView: true,
-          // Isolate undo history at the document boundary so edits to the previous document can't
-          // be undone from the new one (we keep a single persistent EditorView instead of remounting
-          // per document, which is what fixed the "can't type after switching files" focus bug).
-          annotations: isolateUndo ? (isolateHistory as any).of(undefined) : undefined,
-        }
-        view.dispatch(tr as Parameters<typeof view.dispatch>[0])
+          // Loading a document is never an undoable edit. `isolateHistory` is NOT enough:
+          // it only prevents event MERGING, and the old `.of(undefined)` value was falsy,
+          // so the full-document replacement itself stayed in the history and Ctrl+Z
+          // could walk back into the previous file.
+          annotations: Transaction.addToHistory.of(false),
+        })
       } finally {
         isApplyingExternal.current = false
       }
-      // Non-empty content means the new document has actually landed, so the
-      // switch sequence is over. (An empty document leaves the flag set until the
-      // next switch resets it, which only costs one redundant isolation.)
-      if (content !== '') pendingSwitchRef.current = false
       // The jump offset is consumed only once the cursor was actually placed + scrolled into
       // view. An offset that did not fit the content yet (mid-switch / drifted buffer) is left
       // pending so a later run with the correct content applies it instead of dropping it.
       if (jumpTarget) onConsumeSelection?.()
     }
+
+    // The session owns the view again: from here on a keystroke that builds on the text the
+    // view holds is committed to THIS document. Without this, a session that was rotated by the
+    // store subscription would keep owning nothing and the editor would stop committing.
+    if (sessionRef.current) sessionRef.current.owned = view.state.doc.toString()
 
     // After a document switch, apply the REAL read-only/edit state (the write above happened with
     // readOnly temporarily OFF so it wouldn't be rejected). Skipped when not a switch because the
@@ -637,7 +800,7 @@ export function MarkdownEditor({
     if (isDocSwitch) {
       view.dispatch({ effects: editableCompartment.current.reconfigure(readOnlyFacets(editable)) })
     }
-  }, [content, docId, editable, selectionOffset, onConsumeSelection])
+  }, [content, docId, editable, selectionOffset, onConsumeSelection, emitPreview])
 
   // Focus the editor on a REAL user gesture (pointerdown into the editor area). This runs
   // synchronously inside the browser's user-activation context, so the browser WILL grant the
@@ -720,35 +883,44 @@ export function MarkdownEditor({
           <List size={13} /> {t('ctx.selectAll')}
         </ContextMenuItem>
         <ContextMenuSeparator />
+        {/* The four formatting items DO advertise their shortcut: ADR-0032 wired ⌘B / ⌘I / ⌘E / ⌘K
+            to the editor, so the labels are truthful now (they were withheld while those keys
+            belonged to other commands — "no false promises"). The glyphs and the wrapped markup
+            come from the shared format-shortcut table, the same source the toolbar reads.
+            All four formatting paths — this right-click menu via `wrap`, the toolbar button and the
+            keyboard shortcut via `markdown:insert` → `handleInsert` — share ONE implementation, so an
+            action behaves identically however it is triggered. With nothing selected the markers are
+            inserted with the caret parked between them (the mainstream Markdown-editor behaviour)
+            and never a literal 'text' placeholder. */}
         <ContextMenuItem
           data-testid="me-bold"
-          shortcut={formatShortcut('⌘B')}
+          shortcut={formatShortcut(FORMAT_SHORTCUTS.bold.glyph)}
           disabled={!editable}
-          onClick={() => wrap('**', '**')}
+          onClick={() => wrap(FORMAT_SHORTCUTS.bold.before, FORMAT_SHORTCUTS.bold.after)}
         >
           <Bold size={13} /> {t('editor.fmt.bold')}
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-italic"
-          shortcut={formatShortcut('⌘I')}
+          shortcut={formatShortcut(FORMAT_SHORTCUTS.italic.glyph)}
           disabled={!editable}
-          onClick={() => wrap('_', '_')}
+          onClick={() => wrap(FORMAT_SHORTCUTS.italic.before, FORMAT_SHORTCUTS.italic.after)}
         >
           <Italic size={13} /> {t('editor.fmt.italic')}
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-inline-code"
-          shortcut={formatShortcut('⌘E')}
+          shortcut={formatShortcut(FORMAT_SHORTCUTS.code.glyph)}
           disabled={!editable}
-          onClick={() => wrap('`', '`')}
+          onClick={() => wrap(FORMAT_SHORTCUTS.code.before, FORMAT_SHORTCUTS.code.after)}
         >
           <Code size={13} /> {t('editor.fmt.code')}
         </ContextMenuItem>
         <ContextMenuItem
           data-testid="me-link"
-          shortcut={formatShortcut('⌘K')}
+          shortcut={formatShortcut(FORMAT_SHORTCUTS.link.glyph)}
           disabled={!editable}
-          onClick={() => wrap('[', '](url)')}
+          onClick={() => wrap(FORMAT_SHORTCUTS.link.before, FORMAT_SHORTCUTS.link.after)}
         >
           <Link2 size={13} /> {t('editor.fmt.link')}
         </ContextMenuItem>

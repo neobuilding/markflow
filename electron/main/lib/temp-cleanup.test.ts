@@ -5,10 +5,16 @@
 // this machine is never affected.
 import { describe, it, expect } from 'vitest'
 import { mkdirSync, existsSync, writeFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import { join } from 'node:path'
 import { mkTestDir } from '../test-support/tmp'
 import {
   OWN_TEMP_DIR_NAME,
+  DEFER_DELAY_MS,
+  RETRY_GRACE_MS,
+  RETRY_INTERVAL_MS,
+  DELETER_MAX_LIFETIME_MS,
+  buildDeleterScript,
   removeOwnTempDir,
   scheduleRemoveAfterExit,
   type TempCleanupDeps,
@@ -117,5 +123,82 @@ describe('temp-cleanup', () => {
     }) as unknown as TempCleanupDeps['spawn']
 
     expect(() => scheduleRemoveAfterExit(victim, { spawn: throwingSpawn })).not.toThrow()
+  })
+
+  // --- Deferred deleter retry loop (the EPERM regression) ---
+  //
+  // The deleter is a JS *string* handed to a detached child, so a real spawn cannot
+  // be awaited in a unit test. Execute the script in a `vm` with injected timers and
+  // a fake clock instead: "one variable at a time", with a positive assertion that
+  // the retry really happened (docs/agents/testing.md, "Regression tests must be
+  // able to fail"). Removing the retry loop makes these tests go red.
+  describe('buildDeleterScript retry behaviour', () => {
+    /** Drive the script's setTimeout callbacks with a controllable clock. */
+    function runScript(path: string, failTimes: number) {
+      type Timer = { fn: () => void; ms: number }
+      const timers: Timer[] = []
+      let now = 0
+      let rmCalls = 0
+      const sandbox = {
+        Date: { now: () => now },
+        setTimeout: (fn: () => void, ms: number) => {
+          timers.push({ fn, ms })
+          return timers.length
+        },
+        require: (id: string) => {
+          expect(id).toBe('node:fs')
+          return {
+            rmSync: (p: string) => {
+              expect(p).toBe(path)
+              rmCalls++
+              if (rmCalls <= failTimes) throw new Error('EPERM')
+            },
+          }
+        },
+      }
+      runInNewContext(buildDeleterScript(path), sandbox)
+      // First timer is the defer; each later timer is one retry attempt.
+      let guard = 0
+      while (timers.length > 0 && guard++ < 200) {
+        const timer = timers.shift()!
+        now += timer.ms
+        timer.fn()
+      }
+      return { rmCalls, elapsed: now }
+    }
+
+    it('defers the first attempt until the app and its Chromium children have exited', () => {
+      const path = join(mkTestDir(`${OWN_TEMP_DIR_NAME}-script-`), 'userData')
+      const script = buildDeleterScript(path)
+      expect(script).toContain(`setTimeout(function attempt()`)
+      expect(script).toContain(`,${DEFER_DELAY_MS})`)
+      expect(script).toContain(JSON.stringify(path))
+    })
+
+    it('retries a transient EPERM until it succeeds, instead of giving up once', () => {
+      const path = join(mkTestDir(`${OWN_TEMP_DIR_NAME}-retry-`), 'userData')
+      const result = runScript(path, 3)
+      // 1 failed attempt + retries; a single-attempt deleter leaves this at 1.
+      expect(result.rmCalls).toBeGreaterThan(1)
+      expect(result.rmCalls).toBe(4) // three EPERM then success
+      expect(result.elapsed).toBeLessThan(DELETER_MAX_LIFETIME_MS)
+    })
+
+    it('starts the retry budget at the FIRST attempt, not at script parse time', () => {
+      // Regression: `start=Date.now()` at the top level charged the 2s defer
+      // against the 6s retry window, so only ~4s of retries actually happened.
+      const path = join(mkTestDir(`${OWN_TEMP_DIR_NAME}-budget-`), 'userData')
+      const script = buildDeleterScript(path)
+      expect(script).toContain('var start=0')
+      expect(script).toContain('if(!start)start=Date.now()')
+      expect(script).not.toContain('var start=Date.now()')
+      expect(script).toContain(`<${RETRY_GRACE_MS}`)
+      expect(script).toContain(`,${RETRY_INTERVAL_MS})`)
+      // A never-succeeding deleter must keep retrying across the FULL window:
+      // defer + grace, i.e. attempts spanning at least RETRY_GRACE_MS of retries.
+      const result = runScript(path, Number.MAX_SAFE_INTEGER)
+      expect(result.elapsed).toBeGreaterThanOrEqual(DEFER_DELAY_MS + RETRY_GRACE_MS)
+      expect(result.rmCalls).toBeGreaterThan(RETRY_GRACE_MS / RETRY_INTERVAL_MS)
+    })
   })
 })

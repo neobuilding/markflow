@@ -15,6 +15,9 @@ import { setExportHtml } from '../../lib/exportStore'
 import { sanitizeHtml } from '../../lib/sanitize'
 import '../../i18n'
 
+const h = vi.hoisted(() => ({ printDocument: vi.fn(async () => {}) }))
+vi.mock('../../lib/printDocument', () => ({ printDocument: () => h.printDocument() }))
+
 const docWithPath: Document = {
   id: 'a',
   title: 'Note A',
@@ -31,6 +34,7 @@ const docWithPath: Document = {
 // Spy on the rich-copy primitives so the menu wiring can be asserted without relying on
 // jsdom's non-functional execCommand('copy') / Image rasterization.
 beforeEach(() => {
+  h.printDocument.mockClear()
   useUIStore.getState().setViewMode('split')
   useUIStore.getState().setExportOpen(false)
   useUIStore.getState().requestFileAction(null)
@@ -219,11 +223,31 @@ describe('PreviewContextMenu — generic', () => {
     expect(useUIStore.getState().viewMode).toBe('preview')
   })
 
-  it('print calls export.print with the stashed html', async () => {
+  // ADR 0019: the preview cache holds LAZY diagrams, so printing it directly would omit every
+  // mermaid diagram that never scrolled into view. Both print entry points now share the action
+  // that bakes the whole document first.
+  it('print goes through the shared printDocument action (full diagram bake)', async () => {
     mount(docWithPath)
     fireEvent.contextMenu(article())
     fireEvent.click(await screen.findByTestId('preview-print'))
-    expect(window.api.export.print).toHaveBeenCalled()
+    expect(h.printDocument).toHaveBeenCalledTimes(1)
+    expect(window.api.export.print).not.toHaveBeenCalled()
+  })
+
+  // R5 plan A: re-triggering Print and opening the export dialog are both refused while a print
+  // job is in flight, so the two menu items must show the disabled state.
+  it('disables Print and Export while printing', async () => {
+    useUIStore.getState().setPrinting(true)
+    try {
+      mount(docWithPath)
+      fireEvent.contextMenu(article())
+      expect(await screen.findByTestId('preview-print')).toHaveAttribute('aria-disabled', 'true')
+      expect(screen.getByTestId('preview-export-html')).toHaveAttribute('aria-disabled', 'true')
+      // Read-only entries stay available so the preview is still usable.
+      expect(screen.getByTestId('preview-copy')).not.toHaveAttribute('aria-disabled', 'true')
+    } finally {
+      useUIStore.getState().setPrinting(false)
+    }
   })
 
   it('export opens the export dialog', async () => {

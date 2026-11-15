@@ -3,11 +3,12 @@ import type { Document } from '../types'
 import { computeDirty, displayTitle, markdownExtOf, stripMarkdownExt } from '../lib/utils'
 import { useUIStore } from '../store/ui'
 
-export function useLocalDocument(
-  doc: Document | null | undefined,
-  _activeDocumentId: string | null,
-) {
+export function useLocalDocument(doc: Document | null | undefined) {
   const [localContent, setLocalContent] = useState('')
+  // The AUTHORITATIVE text: written on the keystroke frame, never throttled. `localContent` is
+  // only the preview/React-state mirror (400ms debounced), so Save / Save As / a switch guard
+  // must read THIS ref instead. See docs/adr/0033-editor-draft-session-isolation.md.
+  const contentRef = useRef('')
   // The title draft is kept in DISPLAY form (`notes.md`, extension included) so the
   // title bar can simply render it see the dirty computation below
   const [localTitle, setLocalTitle] = useState('')
@@ -23,8 +24,10 @@ export function useLocalDocument(
   // The most recent "saved" content/title baseline, used to compute the dirty state
   const savedContentRef = useRef('')
   const savedTitleRef = useRef('')
-  // The current document id, used to distinguish "switching documents" from "refreshing the same document's content"
-  const prevIdRef = useRef<string | null>(null)
+  // The current document id, used to distinguish "switching documents" from "refreshing the same
+  // document's content". Empty means "no document yet" — the registry and the store both treat an
+  // empty id as "nothing to clear", so no null-check branches are needed downstream.
+  const prevIdRef = useRef<string>('')
   // Set by the switch branch (layout effect) so the refresh effect below can skip
   // the same pass instead of repeating it notably re-issuing setDirty(false),
   // which would push another global store update for no reason.
@@ -54,10 +57,10 @@ export function useLocalDocument(
   const clearDirty = useCallback(() => {
     const ui = useUIStore.getState()
     ui.setDirty(false)
-    // Defensive: every caller of clearDirty runs after the layout effect has set prevIdRef, so the
-    // falsy branch is unreachable in practice.
-    /* v8 ignore next */
-    if (prevIdRef.current) ui.clearUnsavedBuffer(prevIdRef.current)
+    // Every caller runs after the layout effect set prevIdRef to a real document id, so there
+    // is always something to clear; `clearUnsavedBuffer` ignores an unknown id anyway.
+    ui.clearUnsavedBuffer(prevIdRef.current)
+    dirtyRef.current = false
     setDirtyState(false)
   }, [])
 
@@ -76,6 +79,7 @@ export function useLocalDocument(
     appliedEncodingRef.current = doc.encoding
     const title = displayTitle(doc)
     eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
+    contentRef.current = doc.content
     setLocalContent(doc.content)
     setLocalTitle(title)
     savedContentRef.current = doc.content
@@ -108,6 +112,7 @@ export function useLocalDocument(
       return
     }
     eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
+    contentRef.current = doc.content
     setLocalContent(doc.content)
     setLocalTitle(title)
     savedContentRef.current = doc.content
@@ -128,6 +133,7 @@ export function useLocalDocument(
     if (doc.encoding === appliedEncodingRef.current) return
     const title = displayTitle(doc)
     appliedEncodingRef.current = doc.encoding
+    contentRef.current = doc.content
     setLocalContent(doc.content)
     setLocalTitle(title)
     savedContentRef.current = doc.content
@@ -152,19 +158,28 @@ export function useLocalDocument(
     }
   }, [doc?.id, doc?.filePath])
 
-  const setDirty = useCallback((d: boolean, content?: string) => {
-    setDirtyState(d)
-    const ui = useUIStore.getState()
-    ui.setDirty(d)
+  const setDirty = useCallback((d: boolean, content: string) => {
+    // Keystrokes arrive far more often than the flag changes. Only the FIRST dirty keystroke
+    // needs to flip React/store state; later ones just refresh the registry content (which the
+    // main process reads at query call time). This keeps per-keystroke work O(1) and allocation-low.
+    if (d !== dirtyRef.current) {
+      dirtyRef.current = d
+      setDirtyState(d)
+      const ui = useUIStore.getState()
+      ui.setDirty(d)
+    }
+    // The registry is keyed by the document whose DRAFT this is — `prevIdRef`, not the store's
+    // `activeDocumentId`. During a switch those two disagree (the store flips first), and the
+    // text being registered belongs to the document being LEFT, so keying by the store would
+    // file the previous document's text under the new document's id.
     const id = prevIdRef.current
     if (!id) return
+    const ui = useUIStore.getState()
     if (!d) {
       ui.clearUnsavedBuffer(id)
       return
     }
-    // d === true here. Every caller supplies `content` when marking dirty; the guard is defensive.
-    /* v8 ignore next */
-    if (content !== undefined) ui.reportUnsavedBuffer(id, content)
+    ui.reportUnsavedBuffer(id, content)
   }, [])
 
   // Before saving, restore the editor-normalized LF back to the document's original line ending,
@@ -193,9 +208,27 @@ export function useLocalDocument(
     [],
   )
 
-  // Content change: only update the local draft and mark dirty; no longer auto-write to disk
+  /**
+   * KEYSTROKE-FRAME commit. Writes the authoritative text and the two dirty signals BEFORE any
+   * 400ms debounce or document switch can intervene. The debounced `handleContentChange` below
+   * still recomputes dirty precisely (e.g. the user deleted their way back to the saved text).
+   */
+  const commitDraft = useCallback(
+    (text: string) => {
+      contentRef.current = text
+      setDirty(true, text)
+    },
+    [setDirty],
+  )
+
+  /** Latest editor text, independent of the throttled preview state. Safe to call from Save. */
+  const getAuthoritativeContent = useCallback(() => contentRef.current, [])
+
+  // Content change from the 400ms debounce: refresh the preview/React state and correct the
+  // dirty flag precisely. It never decides WHETHER the keystroke was real — commitDraft already did.
   const handleContentChange = useCallback(
     (newContent: string) => {
+      contentRef.current = newContent
       setLocalContent(newContent)
       setDirty(computeDraftDirty(newContent, localTitleRef.current), newContent)
     },
@@ -245,6 +278,7 @@ export function useLocalDocument(
     (content: string, title: string) => {
       savedContentRef.current = content
       savedTitleRef.current = title
+      contentRef.current = content
       setLocalContent(content)
       setLocalTitle(title)
       clearDirty()
@@ -262,6 +296,8 @@ export function useLocalDocument(
     startTitleEdit,
     cancelTitleEdit,
     handleContentChange,
+    commitDraft,
+    getAuthoritativeContent,
     handleTitleSave,
     dirty,
     markSaved,

@@ -5,5 +5,7 @@ import { ipcRenderer } from 'electron'
 export const menuApi = {
   setEditable: (editable: boolean) => ipcRenderer.send('menu:set-editable', editable),
   setHasDocument: (has: boolean) => ipcRenderer.send('menu:set-has-document', has),
-  setPrinting: (printing: boolean) => ipcRenderer.send('menu:set-printing', printing),
+  setHasFolder: (has: boolean) => ipcRenderer.send('menu:set-has-folder', has),
+  setHasDraft: (has: boolean) => ipcRenderer.send('menu:set-has-draft', has),
+  setFileLocked: (locked: boolean) => ipcRenderer.send('menu:set-file-locked', locked),
 }

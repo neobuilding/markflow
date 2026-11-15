@@ -11,8 +11,9 @@ coverage threshold would either force pointless tests or let the important logic
 
 ## Decision
 
-`npm run test:coverage` (the CI `ut` job, after the `quality` job passes) enforces **100%** on the
-repository's **unit-testable logic surface**, with `perFile: true`:
+`npm run test:coverage` (the CI `ut` job, which starts in parallel with — not after — the separate
+`quality` job) enforces **100%** on the repository's **unit-testable logic surface**, with
+`perFile: true`:
 
 - Statements / branches / functions / lines all at 100%, and **every individual file** in `vitest.include`
   must hit 100% (not just the project aggregate).

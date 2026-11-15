@@ -1,6 +1,10 @@
 # ADR-0001: Disk-driven document model (remove the database layer)
 
 - **Status:** Accepted
+- **Superseded in part by:** `docs/adr/0023-search-scope-and-specialized-surfaces.md` (the
+  minisearch-based search decision in §Decision below); the current design is the
+  **Index-free search scanner** in `CONTEXT.md` §Storage & search. The disk-driven document model
+  itself remains in force.
 - **Decided:** 2026-08-24
 - **Implemented:** 2026-08-28 (verified: 84 files / 951 unit cases pass, all `electron/main/model/**` at 100%)
 
@@ -26,6 +30,12 @@ Remove the SQLite layer entirely and adopt a **disk-driven document model**:
 - The main-process source of truth is an in-memory `documentStore` (`Map`) in
   `electron/main/model/documentStore.ts`.
 - Full-text search uses **minisearch** (replacing FTS5), rebuilt per query in `electron/main/ipc/search.ts`.
+
+> **Note (2026-11-14):** MiniSearch was never wired into the runtime; the minisearch design above is
+> superseded by `docs/adr/0023-search-scope-and-specialized-surfaces.md` (see the "Superseded in part by"
+> status at the top). Live search is the index-free ripgrep/literal scanner described in `CONTEXT.md`
+> §Storage & search, so MiniSearch has no role. This text is preserved for history.
+
 - Recursive **chokidar** folder watching (`electron/main/model/folderWatcher.ts`) syncs disk changes into
   the store and feeds the sidebar, replacing the prior per-file `fs.watch` approach.
 - Markdown files are written to disk (dual-write); there is no separate index file.

@@ -55,4 +55,7 @@ export type {
 }
 
 export type ViewMode = 'edit' | 'preview' | 'split'
+// View-mode radio-group order (also the arrow-key order in EditorPane). Shared so the store's
+// `cycleViewMode` and the editor's radio/arrow navigation never drift apart.
+export const VIEW_MODE_ORDER: ViewMode[] = ['edit', 'split', 'preview']
 export type ThemeMode = 'light' | 'dark' | 'system'

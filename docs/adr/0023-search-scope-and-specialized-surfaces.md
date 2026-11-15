@@ -69,6 +69,8 @@ folderPath`, producing "title hit, no body hit" groups and inflating replace cou
 1. **Three specialized surfaces, no unifying mode switch.**
    - **Quick Open** (`Ctrl/Cmd+K`): file **name + relative path** only, flat list, no scope,
      no replace. Reuses the existing filename glob behavior (ADR-0013 #5).
+     **Amended 2026-11-04 (ADR-0032):** the chord moved to **`Ctrl/Cmd+Shift+K`** — `⌘K` now
+     belongs to the editor's **Link** action. The surface, its scope and its flat list are unchanged.
    - **Search view** (sidebar, `Ctrl/Cmd+Shift+F`): **Markdown body content only**, with
      include/exclude scope and cross-file replace.
    - **In-place find** (editor / preview, existing shortcuts): locates within the current
@@ -130,6 +132,8 @@ folderPath`, producing "title hit, no body hit" groups and inflating replace cou
    are disabled, and drafts never enter a disk replace. **The same premise applies to dirty disk
    documents**: an open document with unsaved edits is searched from its **current buffer**, not
    from the stale on-disk bytes, so what the user sees as searchable is what replace can act on.
+
+> **Note (2026-11-14):** the `_rank_` contingency in Decision 4 above was closed by ruling 8 (the later `relPath`-sort decision): current search sorts hits by `relPath` and never ranks them, so MiniSearch has no role at all. This Decision text is preserved for history; see `CONTEXT.md` for the live, accurate description.
 
 5. **Safe cross-file replace as a plan/apply/undo service.** `search:replace:plan` builds the
    full candidate set (independent of UI caps `MAX_MATCHES_PER_DOC=50` / `MAX_RESULT_DOCS=200`;

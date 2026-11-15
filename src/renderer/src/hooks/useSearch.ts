@@ -27,15 +27,24 @@ export function useQuickOpen() {
   })
 }
 
-// Debounced copy of the document-state revision: the revision changes on every keystroke in the
-// editor, and re-querying the whole workspace per keystroke would be wasteful.
+// Debounced copy of the document-state revision. The revision changes on EVERY keystroke (the
+// unsaved-buffer registry is committed on the keystroke frame, ADR-0033). Subscribing to it with
+// a selector would re-render the Search view on every keystroke even though the query only needs
+// the settled value — so subscribe imperatively and setState once per quiet period instead.
 function useDebouncedDocumentStateRevision(): number {
-  const revision = useUIStore((s) => s.documentStateRevision)
-  const [debounced, setDebounced] = useState(revision)
+  const [debounced, setDebounced] = useState(() => useUIStore.getState().documentStateRevision)
   useEffect(() => {
-    const id = setTimeout(() => setDebounced(revision), 300)
-    return () => clearTimeout(id)
-  }, [revision])
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const unsubscribe = useUIStore.subscribe((state, prev) => {
+      if (state.documentStateRevision === prev.documentStateRevision) return
+      clearTimeout(timer)
+      timer = setTimeout(() => setDebounced(state.documentStateRevision), 300)
+    })
+    return () => {
+      clearTimeout(timer)
+      unsubscribe()
+    }
+  }, [])
   return debounced
 }
 

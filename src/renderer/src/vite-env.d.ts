@@ -23,6 +23,7 @@ export interface FileStat {
 // Event names triggered by the main process via native menus / file associations
 export type MenuEvent =
   | 'new-document'
+  | 'new-file'
   | 'save'
   | 'save-as'
   | 'reload'
@@ -38,6 +39,7 @@ export type MenuEvent =
   | 'print'
   | 'language'
   | 'select-all'
+  | 'set-theme'
 
 // Electron preload bridge exposed on window.api
 export interface Api {
@@ -144,7 +146,9 @@ export interface Api {
   menu: {
     setEditable: (editable: boolean) => void
     setHasDocument: (has: boolean) => void
-    setPrinting: (printing: boolean) => void
+    setHasFolder: (has: boolean) => void
+    setHasDraft: (has: boolean) => void
+    setFileLocked: (locked: boolean) => void
   }
   clipboard: {
     writeText: (text: string) => Promise<void>

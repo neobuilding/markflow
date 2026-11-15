@@ -1,6 +1,6 @@
 // e2e/helpers/large-doc-perf.ts
 // Measurement primitives for the LARGE-DOCUMENT preview performance diagnostic
-// (e2e/perf/large-doc-perf.e2e.spec.ts).
+// (e2e/perf-gate/large-doc-perf.e2e.spec.ts).
 //
 // Why this is separate from perf-fixture.ts: that helper measures the "open a
 // folder then switch files" chokidar scenario (many small docs). This one measures
@@ -33,11 +33,11 @@ export const LARGE_DOC_NAME = 'demo-large.en.md'
 export const RESULTS_DIR = join(PROJECT_ROOT, 'reports', 'perf')
 
 /**
- * Optional committed baseline. It does NOT exist until someone decides the numbers
- * are stable enough to freeze (run with PERF_UPDATE_BASELINE=1 to write it).
- * Until then the diagnostic only records + prints.
+ * The committed baseline the gate compares against (frozen 2026-09-20), so a run can report the
+ * delta against a known-good build. It exists — re-freeze it with PERF_UPDATE_BASELINE=1 after an
+ * intentional change; until then the numbers are the reference.
  */
-export const BASELINE_PATH = join(PROJECT_ROOT, 'e2e', 'perf', 'baselines', 'large-doc.json')
+export const BASELINE_PATH = join(PROJECT_ROOT, 'e2e', 'perf-baselines', 'large-doc.json')
 
 export interface LargeDocMetrics {
   // ── structure actually rendered (guards against a vacuous perf run) ──
@@ -65,6 +65,9 @@ export interface LargeDocMetrics {
   firstMermaidMs: number
   /** Activation -> every local image decoded. */
   localImagesMs: number
+  /** First -> last `beforeinput` during the typing burst (key dispatch cost). Recorded, never
+   *  gated: it separates "slow key dispatch" from "slow render" on a future red run. */
+  inputDispatchMs: number
   /** Editor input -> the new block is visible in the preview (D-D / D-E cost). */
   typeToPreviewMs: number
   /** Single keystroke -> the inserted text is visible in the preview (per-keystroke proxy). */
@@ -139,6 +142,35 @@ export async function collectLoadProbe(page: Page): Promise<{
         cls: [],
       },
   )
+}
+
+/**
+ * Passive probe for the typing burst: records the first and last `beforeinput` so the input
+ * window can be split into "CDP key dispatch" and "post-input render". It observes only; the
+ * numbers are RECORDED, never asserted against a threshold (wall-clock gates stay in the spec).
+ */
+export async function installInputDispatchProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as any
+    const d = { first: 0, last: 0 }
+    w.__inputDispatch = d
+    document.querySelector('.cm-content')?.addEventListener(
+      'beforeinput',
+      () => {
+        if (d.first === 0) d.first = performance.now()
+        d.last = performance.now()
+      },
+      true,
+    )
+  })
+}
+
+/** Span (ms) between the first and last `beforeinput`; 0 when the burst fired no events. */
+export async function collectInputDispatchMs(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const d = (window as any).__inputDispatch as { first: number; last: number } | undefined
+    return d && d.last > d.first ? d.last - d.first : 0
+  })
 }
 
 /** Count the structural landmarks that prove the real document rendered. */
@@ -281,6 +313,7 @@ export function baselineDelta(current: LargeDocMetrics, baseline: LargeDocMetric
     'firstContentMs',
     'firstMermaidMs',
     'localImagesMs',
+    'inputDispatchMs',
     'typeToPreviewMs',
     'typeCharToPreviewMs',
     'cls',

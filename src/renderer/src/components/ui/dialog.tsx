@@ -42,7 +42,9 @@ const DialogContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded opacity-70 hover:opacity-100 transition-opacity focus:outline-none focus:ring-2 focus:ring-accent">
+      {/* `.focus-ring` is the ONE focus indicator (ADR-0024 §"One focus indicator"):
+          `:focus-visible`-gated, 2px, and forced-colors aware. This used to hand-roll a 2px ring. */}
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded opacity-70 hover:opacity-100 transition-opacity focus-ring">
         <X size={16} />
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>

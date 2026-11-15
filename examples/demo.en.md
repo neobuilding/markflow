@@ -100,13 +100,13 @@ gantt
     title project plan
     dateFormat  YYYY-MM-DD
     section Design
-    需求分析     :done, a1, 2026-06-01, 3d
-    原型设计     :active, a2, 2026-06-04, 4d
+    requirements analysis :done, a1, 2026-06-01, 3d
+    prototype design      :active, a2, 2026-06-04, 4d
     section Development
-    核心功能     :b1, 2026-06-08, 7d
-    测试修复     :b2, 2026-06-15, 5d
+    core features         :b1, 2026-06-08, 7d
+    testing and fixes     :b2, 2026-06-15, 5d
     section Release
-    Beta 发布    :c1, 2026-06-20, 1d
+    Beta release          :c1, 2026-06-20, 1d
 ```
 
 ## 🔷 Mermaid pie

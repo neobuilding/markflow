@@ -26,7 +26,7 @@ folders containing heavy non-md output, and depends on machine load at the time.
 skip dot dirs / `node_modules` + non-`.md`/`.markdown`/… files); `dispatch` keeps an
 `isMarkdownFile` defense-in-depth check.
 
-**CI gate**: a performance regression gate in `e2e/perf/switch-perf-gate.e2e.spec.ts`
+**CI gate**: a performance regression gate in `e2e/perf-gate/switch-perf-gate.e2e.spec.ts`
 guards against silently reverting "watcher watches markdown only". Threshold is **single,
 identical locally and in CI**.
 
@@ -205,6 +205,21 @@ Test: `expect(r.enc).toBe('gbk')`.
   - `electron-perf` (testMatch `switch-perf`).
 - `package.json`: `e2e = playwright test --project=electron-app --project=electron-perf-gate`.
 
+> **Historical note (2026-11-07)**: the names above are the ones used when this split was introduced
+> on 2026-08-31. They have since been renamed: `electron-app` → `e2e-app`,
+> `electron-perf-gate` → `e2e-perf-gate`, `electron-perf` → `e2e-perf-diag`, plus a new
+> `e2e-clipboard`. The spec files themselves also moved directories (`e2e/specs/` → `e2e/app/`,
+> `e2e/perf/` → `e2e/perf-gate/` and `e2e/perf-diag/`). The `npm run e2e:perf` script **no longer
+> exists** — use `npm run e2e:perf-diag`
+> for on-demand diagnostics and `npm run e2e:full` for the CI combination (two Playwright
+> invocations, with the perf gate owning the second). Also note that `e2e-perf-diag` has collected
+> `large-doc-perf` between 2026-09-21 and ADR-0034, which briefly made it not entirely
+> threshold-free; that overlap has been removed and the diagnostic project is threshold-free again.
+> As of 2026-11-11, CI runs four `e2e-app-shard` jobs plus one `e2e-serial` job (clipboard and
+> perf-gate in separate invocations); `e2e:full` is only the local combination covering the same
+> projects, not the command CI executes.
+> See `docs/adr/0034-e2e-spec-files-belong-to-one-project.md`.
+
 ### 5.2 Unified threshold (no local/CI split)
 
 ```ts
@@ -238,38 +253,39 @@ const MAX_LAG_MS = Number(process.env.PERF_MAX_LAG ?? 250)
 
 ## 6. Key code location index
 
-| Concern                                 | File                                            | Symbol                                              |
-| --------------------------------------- | ----------------------------------------------- | --------------------------------------------------- |
-| chokidar markdown-only                  | `electron/main/model/folderWatcher.ts`          | `IGNORED`, `shouldIgnore`, `dispatch`               |
-| ASCII fast path (NUL-excluded)          | `electron/main/ipc/documents.ts`                | `isPlainAsciiText`, `detectEncoding`                |
-| CJK second-pass (full sample)           | `electron/main/ipc/documents.ts`                | `cjkSecondPass`, `countReplacements`                |
-| quit safety-net reset                   | `electron/main/window.ts`                       | `win.on('close')` start `setQuitPending(false)`     |
-| before-quit reset                       | `electron/main/lifecycle.ts`                    | `before-quit` handler                               |
-| quit flag state                         | `electron/main/state.ts`                        | `quitPending` / `setQuitPending`                    |
-| rebuild-window reset                    | `electron/main/index.ts`                        | `activate` `setQuitPending(false)`                  |
-| perf gate                               | `e2e/perf/switch-perf-gate.e2e.spec.ts`         | `MAX_P95_MS` etc.                                   |
-| perf diagnostic                         | `e2e/perf/switch-perf.e2e.spec.ts`              | no threshold                                        |
-| quit-regression e2e                     | `e2e/specs/quit-unsaved-regression.e2e.spec.ts` | `requestCloseWindow` real close                     |
-| deterministic "markdown-only" assertion | `e2e/specs/folder-watch.e2e.spec.ts`            | "only watches markdown" case (no timing dependence) |
-| e2e launch/teardown                     | `e2e/helpers/launch.ts`                         | `launchApp` / `closeApp` (kill process tree)        |
-| CI config                               | `.github/workflows/ci.yml`                      | `npm run e2e` (incl. perf-gate)                     |
+| Concern                                 | File                                          | Symbol                                              |
+| --------------------------------------- | --------------------------------------------- | --------------------------------------------------- |
+| chokidar markdown-only                  | `electron/main/model/folderWatcher.ts`        | `IGNORED`, `shouldIgnore`, `dispatch`               |
+| ASCII fast path (NUL-excluded)          | `electron/main/ipc/documents.ts`              | `isPlainAsciiText`, `detectEncoding`                |
+| CJK second-pass (full sample)           | `electron/main/ipc/documents.ts`              | `cjkSecondPass`, `countReplacements`                |
+| quit safety-net reset                   | `electron/main/window.ts`                     | `win.on('close')` start `setQuitPending(false)`     |
+| before-quit reset                       | `electron/main/lifecycle.ts`                  | `before-quit` handler                               |
+| quit flag state                         | `electron/main/state.ts`                      | `quitPending` / `setQuitPending`                    |
+| rebuild-window reset                    | `electron/main/index.ts`                      | `activate` `setQuitPending(false)`                  |
+| perf gate                               | `e2e/perf-gate/switch-perf-gate.e2e.spec.ts`  | `MAX_P95_MS` etc.                                   |
+| perf diagnostic                         | `e2e/perf-diag/switch-perf.e2e.spec.ts`       | no threshold                                        |
+| quit-regression e2e                     | `e2e/app/quit-unsaved-regression.e2e.spec.ts` | `requestCloseWindow` real close                     |
+| deterministic "markdown-only" assertion | `e2e/app/folder-watch.e2e.spec.ts`            | "only watches markdown" case (no timing dependence) |
+| e2e launch/teardown                     | `e2e/helpers/launch.ts`                       | `launchApp` / `closeApp` (kill process tree)        |
+| CI config                               | `.github/workflows/ci.yml`                    | `e2e-app-shard` (4 shards), `e2e-serial` (2 runs)   |
 
 ---
 
 ## 7. How to resume analysis in a fresh session
 
 1. **Read this doc** for the full story (root cause, fix, gate, known weakness).
-2. **Reproduce gate flake**: `PERF_MAX_P95=300 npm run e2e:perf` (diagnostic, no threshold)
-   to see real p95/stallMs/maxLag spread; or `npm run e2e` to see if the gate reds intermittently.
+2. **Reproduce gate flake**: `PERF_MAX_P95=300 npm run e2e:perf-diag` (diagnostic, no threshold)
+   to see real p95/stallMs/maxLag spread; or `npm run e2e:perf-gate` to see if the gate reds
+   intermittently.
 3. **Suspect watcher reverted**: check `folderWatcher.ts` `IGNORED` is still `[shouldIgnore]`;
    functional e2e should assert "only watches markdown".
 4. **Suspect encoding misdetect**: run `electron/main/ipc/encoding.test.ts` (UTF-16 / GBK
    cases); check `isPlainAsciiText` still excludes NUL and `cjkSecondPass` uses full sample.
-5. **Suspect exit hang**: run `e2e/specs/quit-unsaved-regression.e2e.spec.ts`; check the
+5. **Suspect exit hang**: run `e2e/app/quit-unsaved-regression.e2e.spec.ts`; check the
    per-attempt `quitPending` reset is still in all three places (window/lifecycle/index).
 6. **Deterministic alternative (user declined)**: to eliminate gate flake entirely, consider
    adding `getWatchedFileCount()` + e2e handler asserting watched-file count is markdown-order
    via `chokidar.getWatched()` — zero timing dependence.
 
 **All changes remain uncommitted as of this writing** (awaiting user authorization). Commands:
-`npm run quality`, `npm run ci`, `npm run e2e` (on CI: `xvfb-run --auto-servernum --`).
+`npm run quality`, `npm run ci`, `npm run e2e:full` (on CI: `xvfb-run --auto-servernum --`).

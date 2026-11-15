@@ -130,7 +130,7 @@ beforeEach(() => {
       unmaximize: vi.fn(async () => {}),
       isMaximized: vi.fn(async () => false),
     },
-    menu: { setEditable: vi.fn(), setHasDocument: vi.fn(), setPrinting: vi.fn() },
+    menu: { setEditable: vi.fn(), setHasDocument: vi.fn(), setFileLocked: vi.fn() },
     clipboard: { writeText: vi.fn(async () => {}) },
     onMenuEvent: vi.fn(() => noopUnsub),
     onFileChanged: vi.fn(() => noopUnsub),
@@ -182,23 +182,27 @@ async function setEditable(editable: boolean): Promise<void> {
 // clickable.
 async function makeDirty(container: HTMLElement): Promise<void> {
   // The document loads via React Query, so the rename button only appears after
-  // the doc resolves. Wait for it (it is always present for our fixtures, which
-  // have a non-empty file name) and exercise the real title-edit path.
-  const renameBtn = await screen.findByTestId('rename-title-btn')
-  // Use fireEvent (not userEvent) for the whole sequence. userEvent's click
-  // restores the previously-focused element at the end of the interaction, which
-  // steals focus from the just-mounted autoFocus <input>; its onBlur fires
-  // handleTitleSave → setEditingTitle(false) and the <input> vanishes before the
-  // next step can hold it a racy flake ("expected null not to be null" /
-  // user.clear on null). fireEvent dispatches synchronously inside act, and we
-  // grab + edit + commit the input in the SAME sync flush, so the async focus
-  // restore never gets a window to remove it.
-  fireEvent.click(renameBtn) // rename button → inline title edit (synchronous in act)
-  const input = container.querySelector('input') as HTMLInputElement
-  expect(input).not.toBeNull()
+  // the doc resolves. openTitleEdit waits for the button (it is always present
+  // for our fixtures, which have a non-empty file name) and exercises the real
+  // title-edit path with fireEvent (not userEvent — see openTitleEdit for why
+  // userEvent's focus-restore blurs the autoFocus input and closes the edit).
+  const input = openTitleEdit(container)
   fireEvent.change(input, { target: { value: 'Renamed' } })
   fireEvent.blur(input) // onBlur → handleTitleSave marks dirty
   await flush()
+}
+
+// Open the inline title edit the same way makeDirty does: fireEvent (never userEvent).
+// userEvent's click restores focus to the previously-focused element at the end of the
+// interaction, which blurs the just-mounted autoFocus <input> and fires its onBlur →
+// handleTitleSave → the input unmounts. That race is masked locally but breaks in CI
+// under load. fireEvent.click is synchronous inside act, so the input is present by the
+// time we return it (no focus-restore window to remove it).
+function openTitleEdit(container: HTMLElement): HTMLInputElement {
+  fireEvent.click(screen.getByTestId('rename-title-btn'))
+  const input = container.querySelector('input') as HTMLInputElement
+  expect(input).not.toBeNull()
+  return input
 }
 
 describe('EditorPane — file operations (save / save-as / reload)', () => {
@@ -851,14 +855,12 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
   })
 
   it('seeds the rename input with the full file name and hides it in read-only mode', async () => {
-    const user = userEvent.setup()
     const { container } = mount()
     await openDoc()
     await setEditable(true)
     await flush()
 
-    await user.click(screen.getByTestId('rename-title-btn'))
-    const input = (await waitFor(() => container.querySelector('input'))) as HTMLInputElement
+    const input = openTitleEdit(container)
     // The input starts from the file name WITH its extension, not the stored title.
     expect(input.value).toBe('a.md')
   })
@@ -873,19 +875,15 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
   })
 
   it('edits the title and saves it on blur (marks dirty)', async () => {
-    const user = userEvent.setup()
     const { container } = mount()
     await openDoc()
     await setEditable(true)
     await flush()
 
-    await user.click(screen.getByTestId('rename-title-btn'))
-    await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
-    const input = container.querySelector('input') as HTMLInputElement
+    const input = openTitleEdit(container)
     expect(input).toBeTruthy()
-    await user.clear(input)
-    await user.type(input, 'Renamed')
-    await user.click(container) // blur
+    fireEvent.change(input, { target: { value: 'Renamed' } })
+    fireEvent.blur(input) // onBlur → handleTitleSave marks dirty
     await flush()
     expect(useUIStore.getState().dirty).toBe(true)
   })
@@ -929,17 +927,9 @@ describe('EditorPane — view mode, title edit, formatting & dialogs', () => {
     expect(useUIStore.getState().exportOpen).toBe(true)
   })
 
-  it('toggles the sidebar open via the toolbar button when it is closed', async () => {
-    const user = userEvent.setup()
-    useUIStore.getState().setSidebarOpen(false)
-    mount()
-    await openDoc()
-    await flush()
-
-    await user.click(screen.getByTestId('sidebar-toggle-btn'))
-    await flush()
-    expect(useUIStore.getState().sidebarOpen).toBe(true)
-  })
+  // The global-bar sidebar toggle BUTTON was removed in Q2a; the sidebar is now toggled via the
+  // ActivityBar right-click menu, the native View menu, and the ⌘\ handlers. That path is covered by
+  // the e2e sidebar-shortcuts spec, so this button-specific test is dropped.
 })
 
 describe('EditorPane — split-view drag', () => {
@@ -963,18 +953,14 @@ describe('EditorPane — split-view drag', () => {
 
 describe('EditorPane — title editing & breadcrumb & external dialog', () => {
   it('commits the title on Enter: shows the new name at once and marks dirty', async () => {
-    const user = userEvent.setup()
     const { container } = mount()
     await openDoc()
     await setEditable(true)
     await flush()
 
-    await user.click(screen.getByTestId('rename-title-btn'))
-    await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
-    const input = container.querySelector('input') as HTMLInputElement
-    await user.clear(input)
-    await user.type(input, 'Renamed')
-    await user.keyboard('{Enter}')
+    const input = openTitleEdit(container)
+    fireEvent.change(input, { target: { value: 'Renamed' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
     await flush()
     expect(useUIStore.getState().dirty).toBe(true)
     // The new name is displayed immediately, no Save needed to see it, with the
@@ -986,18 +972,14 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
   })
 
   it('cancels the title edit on Escape (reverts to the original title)', async () => {
-    const user = userEvent.setup()
     const { container } = mount()
     await openDoc()
     await setEditable(true)
     await flush()
 
-    await user.click(screen.getByTestId('rename-title-btn'))
-    await waitFor(() => expect(container.querySelector('input')).not.toBeNull())
-    const input = container.querySelector('input') as HTMLInputElement
-    await user.clear(input)
-    await user.type(input, 'Renamed')
-    await user.keyboard('{Escape}')
+    const input = openTitleEdit(container)
+    fireEvent.change(input, { target: { value: 'Renamed' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
     await flush()
     // original title is shown again, no dirty flag
     expect(screen.getByTestId('title-btn').textContent).toBe('a.md')

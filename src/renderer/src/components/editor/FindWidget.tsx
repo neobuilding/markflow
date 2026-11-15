@@ -165,7 +165,7 @@ export function FindWidget({
             onKeyDown={onInputKeyDown}
             placeholder={t('find.replacePlaceholder')}
             aria-label={t('find.replacePlaceholder')}
-            className="flex-1 bg-transparent text-sm outline-none text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
+            className="flex-1 bg-transparent text-sm focus-ring text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
           />
           <button
             type="button"

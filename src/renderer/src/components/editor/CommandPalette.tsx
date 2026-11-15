@@ -8,14 +8,12 @@ import { SearchResultList } from './SearchResults'
 import { hasModalSurface } from '../../lib/shortcut-scope'
 
 export function CommandPalette(): React.ReactElement | null {
-  const {
-    searchOpen,
-    setSearchOpen,
-    setSearchQuery,
-    searchQuery,
-    selectDocument,
-    setFileDetailsId,
-  } = useUIStore()
+  // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
+  const searchOpen = useUIStore((s) => s.searchOpen)
+  const searchQuery = useUIStore((s) => s.searchQuery)
+  // Actions are stable references created once by the store initializer, so reading them via
+  // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
+  const { setSearchOpen, setSearchQuery, selectDocument, setFileDetailsId } = useUIStore.getState()
   const { data, isFetching } = useQuickOpen()
   // Memoised: a fresh `[]` on every render would make the effect below re-run (and reset the
   // highlighted row) even when the results have not changed.
@@ -43,19 +41,30 @@ export function CommandPalette(): React.ReactElement | null {
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      // Ctrl/Cmd+Shift+K — the Quick Open chord. It MOVED here from Ctrl/Cmd+K when ADR-0032 gave
+      // ⌘K to the editor's Link action (the mainstream Markdown-editor binding).
+      //
+      // CAPTURE phase, and it stops propagation: CodeMirror's own default keymap binds ⌘⇧K to
+      // `deleteLine`, and its handler sits BELOW window on the editor's DOM — a bubble-phase
+      // listener runs after it, so the keystroke would delete the line AND open the palette.
+      // Claiming the key in the capture phase keeps exactly one owner (the same rule the format
+      // shortcuts follow in App.tsx).
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
         // Same modal guard as the other window-level shortcuts (lib/shortcut-scope): never stack
         // the palette on top of an already-open dialog, and leave the key un-swallowed.
         if (hasModalSurface(document)) return
         e.preventDefault()
+        e.stopPropagation()
         setSearchOpen(true)
+        return
       }
       if (e.key === 'Escape' && searchOpen) {
         setSearchOpen(false)
       }
     }
-    window.addEventListener('keydown', handleKey)
-    return () => window.removeEventListener('keydown', handleKey)
+    // Capture phase — see the note on the ⌘⇧K branch above.
+    window.addEventListener('keydown', handleKey, true)
+    return () => window.removeEventListener('keydown', handleKey, true)
   }, [searchOpen, setSearchOpen])
 
   if (!searchOpen) return null
@@ -106,7 +115,7 @@ export function CommandPalette(): React.ReactElement | null {
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={t('palette.placeholder')}
-              className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] outline-none"
+              className="flex-1 bg-transparent text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)] focus-ring"
             />
           </InputContextMenu>
           {searchQuery && (

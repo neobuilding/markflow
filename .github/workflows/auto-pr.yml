@@ -52,7 +52,7 @@ jobs:
                   # Full history so `git log main..HEAD` is accurate.
                   fetch-depth: 0
             - uses: actions/setup-node@v7
-              with: { node-version: 22, cache: npm }
+              with: { node-version-file: .nvmrc, cache: npm }
             # The action consumes the bundled actions/create-pr/dist/index.mjs directly.
             # We do NOT commit dist/: instead build it from the committed src right here,
             # so the code auto-pr runs is always fresh and can never be stale.

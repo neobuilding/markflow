@@ -422,16 +422,66 @@ describe('buildBody', () => {
     expect(blockContent(out, 'checklist')).toContain('- [ ] My code follows the style guidelines')
   })
 
-  it('A2: prepends filled template and keeps the whole legacy body when no blocks exist', async () => {
+  it('A2: appends every template block after a marker-free legacy body', async () => {
     const filled = await fill({
       title: 'Auto pr',
       services: { git: { logRange: () => '- a1 add\n', logSubjects: () => '' } },
     })
     const legacy = '## Checklist\n\n- [x] reviewed\n\nSome human context here'
     const out = buildBody(filled, legacy)
-    expect(out.startsWith('<!-- AUTO:title -->')).toBe(true)
+    // The human-written text stays first and is never discarded.
+    expect(out.startsWith('## Checklist')).toBe(true)
     expect(out).toContain('- [x] reviewed')
     expect(out).toContain('Some human context here')
+    // Every template block is appended, in template order, after that text.
+    // Derive the keys so this cannot pass vacuously if the template changes.
+    const keys = discoverSegments(filled)
+    expect(keys.length).toBeGreaterThan(0)
+    const positions = keys.map((key) => out.indexOf(markersFor(key).open))
+    expect(positions.every((p) => p !== -1)).toBe(true)
+    expect(positions.every((p) => p > out.indexOf('Some human context here'))).toBe(true)
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+    expect(blockContent(out, 'title')).toBe('# Auto pr')
+    // Template prose outside the markers is NOT carried in.
+    expect(out).not.toContain('Please include a summary')
+    // Idempotent: a second refresh appends nothing.
+    expect(buildBody(filled, out)).toBe(out)
+  })
+
+  it('preserves human content between blocks and after the last block', async () => {
+    const tpl = [
+      '<!-- AUTO:before -->',
+      '### Before',
+      '<!-- /AUTO:before -->',
+      '',
+      '<!-- AUTO:after -->',
+      '### After',
+      '<!-- /AUTO:after -->',
+    ].join('\n')
+    const filled = await fillAutoBlocks(tpl, {}, {})
+    // Screenshots live OUTSIDE the markers: between the two blocks and after
+    // the last one. A refresh resets block contents but must never clear them.
+    const existingBody = [
+      '<!-- AUTO:before -->',
+      '### Before',
+      '<!-- /AUTO:before -->',
+      '',
+      '![before](b.png)',
+      '',
+      '<!-- AUTO:after -->',
+      '### After',
+      '<!-- /AUTO:after -->',
+      '',
+      '![after](a.png)',
+    ].join('\n')
+
+    const out = buildBody(filled, existingBody)
+
+    expect(out).toContain('![before](b.png)')
+    expect(out).toContain('![after](a.png)')
+    expect(out.indexOf('![before](b.png)')).toBeLessThan(out.indexOf(markersFor('after').open))
+    expect(out.indexOf('![after](a.png)')).toBeGreaterThan(out.indexOf(markersFor('after').close))
+    expect(buildBody(filled, out)).toBe(out)
   })
 
   it('refreshes a CUSTOM auto block key (not in any hard-coded list) on update', async () => {
@@ -469,6 +519,185 @@ describe('buildBody', () => {
     const existingBody = `human above\n\n${filled}\n\nhuman below`
     const out = buildBody(filledNoCommits, existingBody)
     expect(out).toContain('- a1 add')
+  })
+
+  it('appends blocks the template gained after the PR was created, in template order', async () => {
+    // Regression: PR #58 was created before the Screenshots blocks were added to
+    // the template. Refresh used to drop them because replaceAutoBlock is a
+    // no-op for keys with no markers in the existing body.
+    const oldTpl = [
+      '<!-- AUTO:title -->',
+      '# {{title}}',
+      '<!-- /AUTO:title -->',
+      '',
+      '<!-- AUTO:commits -->',
+      '## Commits',
+      '',
+      '{{commits}}',
+      '<!-- /AUTO:commits -->',
+    ].join('\n')
+    const grownTpl = [
+      oldTpl,
+      '',
+      '<!-- AUTO:screenshots-before -->',
+      '## Screenshots',
+      '',
+      '### Before',
+      '<!-- /AUTO:screenshots-before -->',
+      '',
+      '<!-- AUTO:screenshots-after -->',
+      '### After',
+      '<!-- /AUTO:screenshots-after -->',
+    ].join('\n')
+    const registry = { title: (ctx) => ctx.title, commits: () => '- a1 add' }
+    const oldBody = await fillAutoBlocks(oldTpl, { title: 'Stale Title' }, registry)
+    const fresh = await fillAutoBlocks(grownTpl, { title: 'Fresh Title' }, registry)
+    const existingBody = `human note above\n\n${oldBody}\n\nhuman note below`
+
+    const out = buildBody(fresh, existingBody)
+
+    // Existing blocks still refresh in place and human text is untouched.
+    expect(blockContent(out, 'title')).toBe('# Fresh Title')
+    expect(out).toContain('human note above')
+    expect(out).toContain('human note below')
+    // Both new blocks are backfilled, after existing content, in template order.
+    expect(blockContent(out, 'screenshots-before')).toContain('### Before')
+    expect(blockContent(out, 'screenshots-after')).toContain('### After')
+    expect(out.indexOf('human note below')).toBeLessThan(out.indexOf('AUTO:screenshots-before'))
+    expect(out.indexOf('AUTO:screenshots-before')).toBeLessThan(
+      out.indexOf('AUTO:screenshots-after'),
+    )
+    expect(out.match(/<!-- AUTO:screenshots-before -->/g)).toHaveLength(1)
+    // Idempotent: a second refresh must not append the blocks again.
+    expect(buildBody(fresh, out)).toBe(out)
+  })
+
+  it('appends a block added in the middle of the template at the end', async () => {
+    const tpl = [
+      '<!-- AUTO:a -->',
+      'A',
+      '<!-- /AUTO:a -->',
+      '',
+      '<!-- AUTO:new -->',
+      'New',
+      '<!-- /AUTO:new -->',
+      '',
+      '<!-- AUTO:b -->',
+      'B',
+      '<!-- /AUTO:b -->',
+    ].join('\n')
+    const filled = await fillAutoBlocks(tpl, {}, {})
+    const existingBody = [
+      '<!-- AUTO:a -->',
+      'A',
+      '<!-- /AUTO:a -->',
+      '',
+      'human note',
+      '',
+      '<!-- AUTO:b -->',
+      'B',
+      '<!-- /AUTO:b -->',
+    ].join('\n')
+
+    const out = buildBody(filled, existingBody)
+
+    expect(blockContent(out, 'new')).toBe('New')
+    // Deliberately NOT between A and B: template position is not an anchor.
+    expect(out.indexOf(markersFor('new').open)).toBeGreaterThan(out.indexOf(markersFor('b').close))
+    expect(out).toContain('human note')
+    expect(buildBody(filled, out)).toBe(out)
+  })
+
+  it('restores a block that was manually deleted from the PR body', async () => {
+    const tpl = [
+      '<!-- AUTO:a -->',
+      'A',
+      '<!-- /AUTO:a -->',
+      '',
+      '<!-- AUTO:b -->',
+      'B',
+      '<!-- /AUTO:b -->',
+    ].join('\n')
+    const filled = await fillAutoBlocks(tpl, {}, {})
+    const bodyWithoutB = ['<!-- AUTO:a -->', 'A', '<!-- /AUTO:a -->', '', 'human note'].join('\n')
+
+    const out = buildBody(filled, bodyWithoutB)
+
+    expect(blockContent(out, 'b')).toBe('B')
+    expect(out).toContain('human note')
+    expect(out.match(/<!-- AUTO:b -->/g)).toHaveLength(1)
+    expect(buildBody(filled, out)).toBe(out)
+  })
+
+  it('leaves a renamed block in place and appends the new key', async () => {
+    const tpl = '<!-- AUTO:renamed -->\nRenamed\n<!-- /AUTO:renamed -->'
+    const filled = await fillAutoBlocks(tpl, {}, {})
+    const existingBody = [
+      '<!-- AUTO:old -->',
+      'Old stays',
+      '<!-- /AUTO:old -->',
+      '',
+      'human note',
+    ].join('\n')
+
+    const out = buildBody(filled, existingBody)
+
+    expect(blockContent(out, 'old')).toBe('Old stays')
+    expect(blockContent(out, 'renamed')).toBe('Renamed')
+    expect(out.indexOf(markersFor('old').open)).toBeLessThan(
+      out.indexOf(markersFor('renamed').open),
+    )
+    expect(out).toContain('human note')
+    expect(buildBody(filled, out)).toBe(out)
+  })
+
+  it('keeps trailing whitespace and blank lines when appending blocks', async () => {
+    const tpl = [
+      '<!-- AUTO:a -->',
+      'A',
+      '<!-- /AUTO:a -->',
+      '',
+      '<!-- AUTO:b -->',
+      'B',
+      '<!-- /AUTO:b -->',
+    ].join('\n')
+    const filled = await fillAutoBlocks(tpl, {}, {})
+    // Two trailing spaces are a Markdown hard line break; the blank line after
+    // it is human formatting. Neither may be trimmed while appending.
+    const existingBody = [
+      '<!-- AUTO:a -->',
+      'A',
+      '<!-- /AUTO:a -->',
+      '',
+      'human line  ',
+      '',
+      '',
+    ].join('\n')
+
+    const out = buildBody(filled, existingBody)
+
+    expect(out).toContain('human line  \n\n')
+    expect(blockContent(out, 'b')).toBe('B')
+    expect(buildBody(filled, out)).toBe(out)
+  })
+
+  it('skips an incomplete template block instead of inserting a half-marker', async () => {
+    const brokenTpl = [
+      '<!-- AUTO:a -->',
+      'A',
+      '<!-- /AUTO:a -->',
+      '',
+      '<!-- AUTO:broken -->',
+      'no close marker here',
+    ].join('\n')
+
+    const out = buildBody(brokenTpl, 'human note')
+
+    expect(out).toContain('human note')
+    expect(blockContent(out, 'a')).toBe('A')
+    expect(out).not.toContain('AUTO:broken')
+    expect(out).not.toContain('no close marker here')
+    expect(buildBody(brokenTpl, out)).toBe(out)
   })
 })
 

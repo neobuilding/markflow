@@ -1,4 +1,4 @@
-// Shared fixture + measurement helpers for the performance specs (e2e/perf).
+// Shared fixture + measurement helpers for the performance specs (e2e/perf-gate and e2e/perf-diag).
 //
 // Split out of the specs themselves so the CI gate (switch-perf-gate) and the
 // on-demand diagnostic (switch-perf) drive the EXACT same code path. A gate that

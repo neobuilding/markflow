@@ -1,5 +1,6 @@
 import React from 'react'
 import { useT } from '../../i18n'
+import { useUIStore, selectFileLocked } from '../../store/ui'
 import { ContextMenuItem, ContextMenuSeparator } from '../ui/context-menu'
 import {
   PenLine,
@@ -64,6 +65,9 @@ export type FileMenuItemsProps = DocMenuProps | FolderMenuProps
 
 export function FileMenuItems(props: FileMenuItemsProps): React.ReactElement {
   const { t } = useT()
+  // R5 plan A: the native File menu already disables every document transaction while printing;
+  // the right-click menus must agree. Pure read-only entries (copy path, show in folder) stay live.
+  const fileLocked = useUIStore(selectFileLocked)
 
   if (props.variant === 'folder') {
     return (
@@ -89,7 +93,7 @@ export function FileMenuItems(props: FileMenuItemsProps): React.ReactElement {
   const renameItem = (
     <ContextMenuItem
       data-testid="doc-rename"
-      disabled={!editable}
+      disabled={!editable || fileLocked}
       title={!editable ? t('editor.needsEditMode') : undefined}
       onClick={actions.rename}
     >
@@ -120,7 +124,7 @@ export function FileMenuItems(props: FileMenuItemsProps): React.ReactElement {
     </ContextMenuItem>
   )
   const detailsItem = (
-    <ContextMenuItem data-testid="doc-details" onClick={actions.details}>
+    <ContextMenuItem data-testid="doc-details" disabled={fileLocked} onClick={actions.details}>
       <Info size={13} /> {t('editor.fileDetails')}
     </ContextMenuItem>
   )
@@ -148,16 +152,24 @@ export function FileMenuItems(props: FileMenuItemsProps): React.ReactElement {
           {/* Matches the toolbar save button: saving needs edit mode AND real changes. */}
           <ContextMenuItem
             data-testid="doc-save"
-            disabled={!editable || !dirty}
+            disabled={!editable || !dirty || fileLocked}
             onClick={actions.save}
           >
             <Save size={13} /> {t('editor.save')}
           </ContextMenuItem>
-          <ContextMenuItem data-testid="doc-save-as" disabled={!editable} onClick={actions.saveAs}>
+          <ContextMenuItem
+            data-testid="doc-save-as"
+            disabled={!editable || fileLocked}
+            onClick={actions.saveAs}
+          >
             <SaveAll size={13} /> {t('editor.saveAs')}
           </ContextMenuItem>
           {/* Reload re-reads from disk, so a draft (no file) can never do it. */}
-          <ContextMenuItem data-testid="doc-reload" disabled={!hasPath} onClick={actions.reload}>
+          <ContextMenuItem
+            data-testid="doc-reload"
+            disabled={!hasPath || fileLocked}
+            onClick={actions.reload}
+          >
             <RotateCcw size={13} /> {t('editor.reload')}
           </ContextMenuItem>
           <ContextMenuSeparator />
@@ -165,7 +177,11 @@ export function FileMenuItems(props: FileMenuItemsProps): React.ReactElement {
       )}
       {detailsItem}
       {variant === 'title' && (
-        <ContextMenuItem data-testid="doc-export-html" onClick={actions.exportHtml}>
+        <ContextMenuItem
+          data-testid="doc-export-html"
+          disabled={fileLocked}
+          onClick={actions.exportHtml}
+        >
           <FileOutput size={13} /> {t('editor.export')}
         </ContextMenuItem>
       )}

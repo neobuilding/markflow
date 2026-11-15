@@ -26,8 +26,18 @@ describe('preload menuApi', () => {
     expect(sends[0]).toEqual({ channel: 'menu:set-has-document', args: [false] })
   })
 
-  it('setPrinting sends menu:set-printing with the boolean', () => {
-    menuApi.setPrinting(true)
-    expect(sends[0]).toEqual({ channel: 'menu:set-printing', args: [true] })
+  it('setHasFolder sends menu:set-has-folder with the boolean', () => {
+    menuApi.setHasFolder(true)
+    expect(sends[0]).toEqual({ channel: 'menu:set-has-folder', args: [true] })
+  })
+
+  it('setHasDraft sends menu:set-has-draft with the boolean', () => {
+    menuApi.setHasDraft(true)
+    expect(sends[0]).toEqual({ channel: 'menu:set-has-draft', args: [true] })
+  })
+
+  it('setFileLocked sends menu:set-file-locked with the boolean', () => {
+    menuApi.setFileLocked(true)
+    expect(sends[0]).toEqual({ channel: 'menu:set-file-locked', args: [true] })
   })
 })

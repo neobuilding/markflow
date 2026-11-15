@@ -1,9 +1,8 @@
 // Rich-text copy for the preview pane.
-//
 import { getExportHtml } from './exportStore'
 import { prepareExportHtml, needsExportBake } from './exportBake'
 import { hasUnresolvedDiagram } from './mermaidBake'
-//
+
 // Strategy (decision D10 = option iii): we never construct the clipboard payload on the
 // main-process side. Instead the actual write happens inside the `copy` event handler
 // attached to the preview `<article>` (`e.clipboardData.setData`), which is synchronous and
@@ -23,7 +22,7 @@ import { hasUnresolvedDiagram } from './mermaidBake'
 // data-baked. A fifth is `tabindex`: markdown-it-anchor's defaults set `tabIndex: "-1"` on
 // EVERY heading (we call `md.use(anchor)` with no options), purely so permalink anchors can
 // take focus — author-invisible noise that would otherwise be pasted onto every heading.
-// Verified against the real clipboard in e2e/specs/context-menu.e2e.spec.ts ("…lands a clean payload").
+// Verified against the real clipboard in e2e/clipboard/context-menu.e2e.spec.ts ("…lands a clean payload").
 // (data-mermaid-source was removed together with the "Copy diagram source" menu item,
 // so its attribute must not be reintroduced.)
 const INTERNAL_ATTRS = ['data-line', 'data-mermaid-slot', 'data-lang', 'data-baked', 'tabindex']
@@ -42,8 +41,7 @@ export function stripInternalAttrs(html: string): string {
 
 // True only when the current selection lives inside the given preview article. A selection
 // made in the *editor* pane (anchor outside the article) must NOT be used for preview copy —
-// otherwise right-clicking the preview with editor text selected would copy the editor text
-//.
+// otherwise right-clicking the preview with editor text selected would copy the editor text.
 function selectionIsInPreview(article: HTMLElement): boolean {
   const sel = window.getSelection()
   return !!(

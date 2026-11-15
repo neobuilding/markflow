@@ -1931,7 +1931,7 @@ describe('isInFolder (folderMatch, shared with documentStore)', () => {
 })
 
 // ─── M3 new handlers (/3/6/7/11/13) ─────────────────────────────────────
-describe('documents IPC — resolve-appdoc (能力 3)', () => {
+describe('documents IPC — resolve-appdoc', () => {
   const dir = join(stableDocsRoot, 'ra')
   const filePath = join(dir, 'note.md')
   beforeEach(() => {
@@ -2046,7 +2046,7 @@ describe('documents IPC — image-size (R9, ADR-0018)', () => {
   })
 })
 
-describe('documents IPC — set-eol (能力 6)', () => {
+describe('documents IPC — set-eol', () => {
   const dir = join(stableDocsRoot, 'eol')
   const filePath = join(dir, 'file.md')
   beforeEach(() => {
@@ -2081,7 +2081,7 @@ describe('documents IPC — set-eol (能力 6)', () => {
   })
 })
 
-describe('documents IPC — detect-encoding (能力 11)', () => {
+describe('documents IPC — detect-encoding', () => {
   const dir = join(stableDocsRoot, 'det')
   const filePath = join(dir, 'file.md')
   beforeEach(() => {
@@ -2102,7 +2102,7 @@ describe('documents IPC — detect-encoding (能力 11)', () => {
   })
 })
 
-describe('documents IPC — folder ops (能力 7)', () => {
+describe('documents IPC — folder ops', () => {
   it('create-folder makes the directory', async () => {
     const p = join(stableDocsRoot, `mk-${Date.now()}`)
     await call('documents:create-folder', p)

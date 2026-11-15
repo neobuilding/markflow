@@ -142,34 +142,52 @@ export async function fillAutoBlocks(template, ctx, blocks = {}) {
   return out
 }
 
+// Extract a whole marker-wrapped block (open marker, content, close marker) so a
+// block the template gained can be transplanted into an older PR body. Returns
+// null when the block is incomplete. The layout matches replaceAutoBlock's, so
+// an inserted block looks exactly like one written on first creation.
+function blockSegment(body, key) {
+  const content = blockContent(body, key)
+  if (content === null) return null
+  const { open, close } = markersFor(key)
+  return `${open}\n${content}\n${close}`
+}
+
 // Rebuild the whole PR body from the refreshed template plus any manual content
-// the human has written. Because each auto block is refreshed independently by
-// key, everything *outside* the blocks (the Description, any notes) is preserved
-// verbatim. Deterministic (same inputs => same output), so re-running is a no-op
-// when nothing changed. Exported for unit testing.
+// the human has written. Everything outside the markers belongs to the human and
+// is preserved verbatim; each AUTO block is refreshed independently by key.
+// Deterministic (same inputs => same output), so re-running is a no-op.
 //
-// Cases:
-//   1. No existing body (first creation): use the freshly filled template
-// verbatim it already carries every AUTO block
-//   2. Existing body already has the AUTO blocks: refresh each block in place
-//      and keep all human content between/around them.
-//   3. Legacy body with no AUTO blocks at all: prepend the filled template and
-//      keep the entire original body below it, so no human-written content is
-//      ever discarded. The inserted template carries the blocks, so the next
-//      refresh lands in case 2 and stops stacking.
+// Rejected alternative: inserting new blocks at their position in the template.
+// Template order cannot uniquely determine an insertion point — for a new block
+// between A and B, "after A" and "before B" differ as soon as human-written text
+// sits between them. Reconciling order would also mean owning content outside
+// the markers, which ADR-0005 preserves as human-written. Appending at the end
+// is unambiguous, never displaces human content, and stays idempotent.
 export function buildBody(filledTemplate, existingBody) {
   if (!existingBody) return filledTemplate
   const bodyKeys = discoverSegments(existingBody)
-  if (bodyKeys.length > 0) {
-    const refreshKeys = new Set([...bodyKeys, ...discoverSegments(filledTemplate)])
-    let out = existingBody
-    for (const key of refreshKeys) {
-      const fresh = blockContent(filledTemplate, key)
-      if (fresh !== null) out = replaceAutoBlock(out, key, fresh)
-    }
-    return out
+  let out = existingBody
+  for (const key of bodyKeys) {
+    const fresh = blockContent(filledTemplate, key)
+    if (fresh !== null) out = replaceAutoBlock(out, key, fresh)
   }
-  return `${filledTemplate.trimEnd()}\n\n${existingBody.trim()}`
+  // replaceAutoBlock is a no-op for a key with no markers in the body, so blocks
+  // the template has gained (all of them for a marker-free legacy body) would be
+  // lost. Append them in template order instead. Idempotent: once appended they
+  // are part of bodyKeys, so a re-run adds nothing.
+  const bodyKeySet = new Set(bodyKeys)
+  const added = discoverSegments(filledTemplate)
+    .filter((key) => !bodyKeySet.has(key))
+    .map((key) => blockSegment(filledTemplate, key))
+    .filter((segment) => segment !== null)
+  if (added.length > 0) {
+    // Add only a blank-line separator: trimming would eat Markdown hard-line
+    // break spaces and trailing blank lines that belong to the human.
+    const gap = out.endsWith('\n') ? '\n' : '\n\n'
+    out = `${out}${gap}${added.join('\n\n')}\n`
+  }
+  return out
 }
 
 // Extract a block's inner content from a body, or null when the block is
