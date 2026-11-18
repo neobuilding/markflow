@@ -14,7 +14,7 @@ describe('createFsTemplateSource', () => {
   it('reads the template file as a utf8 string', () => {
     readFileSync.mockReturnValue('# Template\n')
     const src = createFsTemplateSource()
-    expect(src.read('.github/pull-request-template.md')).toBe('# Template\n')
-    expect(readFileSync).toHaveBeenCalledWith('.github/pull-request-template.md', 'utf8')
+    expect(src.read('.github/pull_request_template.md')).toBe('# Template\n')
+    expect(readFileSync).toHaveBeenCalledWith('.github/pull_request_template.md', 'utf8')
   })
 })

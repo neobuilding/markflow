@@ -14,13 +14,13 @@
 //   node actions/create-pr/src/cli-render.mjs \
 //     --head feature/my-branch \
 //     [--base main] \
-//     [--template .github/pull-request-template.md] \   # defaults to this path
+//     [--template .github/pull_request_template.md] \   # defaults to this path
 //     [--existing /path/to/current-pr-body.md] \   # preview a REFRESH (merge)
 //     [--blocks-dir .github/create-pr/blocks] \
 //     [--no-git]
 //
 // When --template is omitted, the same default path the Action uses
-// (.github/pull-request-template.md) is read, so a bare --head previews the
+// (.github/pull_request_template.md) is read, so a bare --head previews the
 // real PR template. When the template file is missing, it falls back to a
 // commits-only body (matching index.mjs).
 //
@@ -37,7 +37,7 @@ import { createFsTemplateSource } from './services/template-source.mjs'
 // Same default template path the GitHub Action uses in index.mjs. Mirroring it
 // here means a bare `cli-render.mjs --head x` previews the real PR template with
 // no extra flags.
-const DEFAULT_TEMPLATE_PATH = join(process.cwd(), '.github', 'pull-request-template.md')
+const DEFAULT_TEMPLATE_PATH = join(process.cwd(), '.github', 'pull_request_template.md')
 
 function parseArgs(argv) {
   const args = {}

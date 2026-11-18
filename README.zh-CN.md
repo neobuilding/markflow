@@ -244,7 +244,7 @@ npm run local-test-render    # 预览某个分支渲染出的 PR 正文（无需
 npm run local-test-render    # 下方示例的简写
 # 等价写法：
 node actions/create-pr/src/cli-render.mjs --head feature/my-branch
-# 可选参数：--base main、--template .github/pull-request-template.md、
+# 可选参数：--base main、--template .github/pull_request_template.md、
 #           --blocks-dir .github/create-pr/blocks、--no-git、--existing <body.md>
 ```
 
