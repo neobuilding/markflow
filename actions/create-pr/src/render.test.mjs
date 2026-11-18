@@ -26,7 +26,7 @@ import {
 } from './render.mjs'
 // Mock the fs boundary so no test reads from (or depends on) the real repo
 // filesystem at runtime. The template content is supplied INLINE by the mock
-// (PR_TEMPLATE, a verbatim copy of .github/pull-request-template.md, hoisted so
+// (PR_TEMPLATE, a verbatim copy of .github/pull_request_template.md, hoisted so
 // the module-level `readFileSync(...)` call below sees it). The block-plugin
 // loading below still uses loader.mjs's real dynamic import() against a fixture
 // directory (module loading, not file I/O). existsSync is stubbed true because
@@ -106,7 +106,7 @@ vi.mock('./services/fs-glue.mjs', () => ({
 
 // --- PR template integrity ----------------------------------------------
 describe('PR template integrity', () => {
-  const tpl = readFileSync('.github/pull-request-template.md', 'utf8')
+  const tpl = readFileSync('.github/pull_request_template.md', 'utf8')
 
   it('has exactly one open+close marker per auto block (title/type/issue/checklist/commits)', () => {
     for (const key of ['title', 'type', 'issue', 'checklist', 'commits']) {
@@ -284,7 +284,7 @@ describe('discoverSegments', () => {
 
 // --- fillAutoBlocks ------------------------------------------------------
 describe('fillAutoBlocks', () => {
-  const tpl = readFileSync('.github/pull-request-template.md', 'utf8')
+  const tpl = readFileSync('.github/pull_request_template.md', 'utf8')
 
   it('fills title, issue, commits and renders the types block via the registry', async () => {
     const out = await fillAutoBlocks(
@@ -377,7 +377,7 @@ describe('fillAutoBlocks', () => {
 
 // --- buildBody -----------------------------------------------------------
 describe('buildBody', () => {
-  const tpl = readFileSync('.github/pull-request-template.md', 'utf8')
+  const tpl = readFileSync('.github/pull_request_template.md', 'utf8')
 
   async function fill(ctx) {
     const reg = await realMarkflowRegistry()
@@ -703,7 +703,7 @@ describe('buildBody', () => {
 
 // --- end-to-end rendering via the real template + the dynamically loaded fixture plugin ---
 //
-// These helpers render the actual `.github/pull-request-template.md` markup (the
+// These helpers render the actual `.github/pull_request_template.md` markup (the
 // inlined PR_TEMPLATE) through `fillAutoBlocks` using the *real* built-in
 // plugins plus the fixture `types` plugin loaded by loader.mjs's dynamic
 // import(). They assert the rendered body end-to-end, including that the

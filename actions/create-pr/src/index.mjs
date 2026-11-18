@@ -27,7 +27,7 @@ async function main() {
   // explicitly bare truthiness on 'false' would be wrong
   const dryRun = core.getInput('dry-run') === 'true'
 
-  const templatePath = core.getInput('template') || '.github/pull-request-template.md'
+  const templatePath = core.getInput('template') || '.github/pull_request_template.md'
 
   const blocksDir =
     core.getInput('blocks-dir') || join(process.cwd(), '.github', 'create-pr', 'blocks')

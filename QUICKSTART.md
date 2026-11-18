@@ -73,7 +73,7 @@ npm run build:action        # ncc 打包 src/index.mjs -> dist/index.mjs（由 a
 npm run local-test-render    # 预览某分支将生成的 PR 正文（无需 token，无需 gh）
 ```
 
-`npm run local-test-render` 直接调用 `actions/create-pr/src/cli-render.mjs`，无需 GitHub token 或 `gh` CLI，即可预览 Action 会写入 PR 的正文。它按默认模板解析 `feature/my-branch` 并打印渲染结果；可选参数：`--base main`、`--template .github/pull-request-template.md`、`--blocks-dir .github/create-pr/blocks`、`--no-git`、`--existing <body.md>`（预览对已有 PR 的刷新）。
+`npm run local-test-render` 直接调用 `actions/create-pr/src/cli-render.mjs`，无需 GitHub token 或 `gh` CLI，即可预览 Action 会写入 PR 的正文。它按默认模板解析 `feature/my-branch` 并打印渲染结果；可选参数：`--base main`、`--template .github/pull_request_template.md`、`--blocks-dir .github/create-pr/blocks`、`--no-git`、`--existing <body.md>`（预览对已有 PR 的刷新）。
 
 > ℹ️ **改完 Action 后无需提交产物**：`actions/create-pr/dist/index.mjs` **不再提交**。`auto-pr.yml` 在 `uses: ./actions/create-pr` 之前会自动跑 `npm run build:action`，用已提交的 `src/` 现编 bundle，因此永远最新、不会过期。你只改 `src/`；本地预览/测试时再跑 `npm run build:action`（产物被 git 忽略）。
 

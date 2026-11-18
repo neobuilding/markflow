@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLI = join(__dirname, '..', '..', 'actions', 'create-pr', 'src', 'cli-render.mjs')
 const REPO_ROOT = join(__dirname, '..', '..')
-const DEFAULT_TEMPLATE = join(REPO_ROOT, '.github', 'pull-request-template.md')
+const DEFAULT_TEMPLATE = join(REPO_ROOT, '.github', 'pull_request_template.md')
 
 /**
  * @param {string[]} args
@@ -60,7 +60,7 @@ describe('cli-render — local preview CLI (integration)', () => {
 
   it('renders a FRESH body using the default template path when --template is omitted', async () => {
     // No --template: should fall back to the Action's default path and load the
-    // real .github/pull-request-template.md (not the commits-only fallback).
+    // real .github/pull_request_template.md (not the commits-only fallback).
     const { code, stdout } = await runCli(['--head', 'feature/my-branch', '--no-git'])
     expect(code).toBe(0)
     // The real repo template has an `AUTO:title` block; the commits-only fallback

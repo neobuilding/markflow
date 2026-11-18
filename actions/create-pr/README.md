@@ -13,7 +13,7 @@ template and AUTO-block body management.
 ## What it does
 
 - Opens (or refreshes) a PR via the GitHub CLI (`gh`) using the repo's PR
-  template (default `.github/pull-request-template.md`).
+  template (default `.github/pull_request_template.md`).
 - Does **not** push. The head branch must already exist on `origin`.
 - Idempotent: if a PR for the head branch already exists, it is refreshed (not
   re-created). Re-running on the same commits is a no-op.
@@ -122,7 +122,7 @@ PR body (no block rendering), so plain templates still "just create a PR".
   An explicit input wins; otherwise the action falls back to GitHub's refs.
 - `base` (optional, default `main`): Base branch.
 - `dry-run` (optional, default `false`): Print the body without writing.
-- `template` (optional, default `.github/pull-request-template.md`): Path to the
+- `template` (optional, default `.github/pull_request_template.md`): Path to the
   PR template (override for custom repos).
 - `blocks-dir` (optional, default `.github/create-pr/blocks`): Directory of
   user-provided block plugins (relative paths are resolved from the repo root).
@@ -185,7 +185,7 @@ GitHub token or `gh` CLI, run the rendering CLI from the repo root:
 
 ```bash
 node actions/create-pr/src/cli-render.mjs --head feature/my-branch
-# Optional: --base main, --template .github/pull-request-template.md,
+# Optional: --base main, --template .github/pull_request_template.md,
 #           --blocks-dir .github/create-pr/blocks, --no-git
 ```
 
@@ -196,10 +196,10 @@ resolved):
 
 - **From the repo root** (`markflow/package.json`):
   `npm run local-test-render` → `node actions/create-pr/src/cli-render.mjs --head feature/my-branch`
-  (the template defaults to `.github/pull-request-template.md` via `cli-render`'s
+  (the template defaults to `.github/pull_request_template.md` via `cli-render`'s
   own default, so `--template` is omitted).
 - **From inside `actions/create-pr`** (`actions/create-pr/package.json`):
-  `npm run local-test-render` → `node src/cli-render.mjs --template ./../../.github/pull-request-template.md --head feature/my-branch`
+  `npm run local-test-render` → `node src/cli-render.mjs --template ./../../.github/pull_request_template.md --head feature/my-branch`
   (it passes the real template path explicitly, relative to the action dir).
 
 Both resolve `feature/my-branch` against the default template and print the
@@ -228,7 +228,7 @@ body via `--existing`:
 node actions/create-pr/src/cli-render.mjs \
   --head feature/my-branch \
   --existing /path/to/current-pr-body.md
-# Optional: --base main, --template .github/pull-request-template.md,
+# Optional: --base main, --template .github/pull_request_template.md,
 #           --blocks-dir .github/create-pr/blocks, --no-git
 ```
 

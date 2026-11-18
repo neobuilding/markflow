@@ -15,7 +15,7 @@ inputs:
   template:
     description: 'Path to the PR template'
     required: false
-    default: '.github/pull-request-template.md'
+    default: '.github/pull_request_template.md'
   blocks-dir:
     description: 'Directory of user-provided block plugins (compiled into the registry, overriding same-named built-ins). Relative paths are resolved from the repo root. Default `.github/create-pr/blocks`.'
     required: false

@@ -290,7 +290,7 @@ the default template and prints the rendered body:
 npm run local-test-render    # shorthand for the example below
 # equivalent:
 node actions/create-pr/src/cli-render.mjs --head feature/my-branch
-# Optional flags: --base main, --template .github/pull-request-template.md,
+# Optional flags: --base main, --template .github/pull_request_template.md,
 #                 --blocks-dir .github/create-pr/blocks, --no-git, --existing <body.md>
 ```
 

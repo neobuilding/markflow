@@ -205,7 +205,7 @@ npm run local-test-render    # Preview the rendered PR body for a branch (no tok
 `npm run local-test-render` runs `actions/create-pr/src/cli-render.mjs` without any GitHub token or
 `gh` CLI, so you can verify the rendered body before opening a PR. It resolves `feature/my-branch`
 against the default template and prints the result. Optional flags: `--base main`,
-`--template .github/pull-request-template.md`, `--blocks-dir .github/create-pr/blocks`, `--no-git`,
+`--template .github/pull_request_template.md`, `--blocks-dir .github/create-pr/blocks`, `--no-git`,
 `--existing <body.md>` (to preview a refresh of an existing PR).
 
 > ℹ️ **No committed bundle**: `actions/create-pr/dist/index.mjs` is **not** committed (it is
