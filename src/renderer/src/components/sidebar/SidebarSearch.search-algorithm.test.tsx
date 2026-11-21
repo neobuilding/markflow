@@ -61,7 +61,7 @@ beforeEach(() => {
     searchDetailsOpen: false,
     searchFocusNonce: 0,
     searchScopeFocusNonce: 0,
-    activeFolder: '/ws',
+    workspaceRoot: '/ws',
     unsavedBuffers: {},
     documentStateRevision: 0,
     pendingMatch: null,

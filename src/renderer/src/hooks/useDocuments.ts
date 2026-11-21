@@ -33,8 +33,8 @@ export function useDocuments(folderPath?: string) {
  * so the answer stays correct with a folder open.
  */
 export function useHasMemoryOnlyDraft(): boolean {
-  const activeFolder = useUIStore((s) => s.activeFolder)
-  const { data } = useDocuments(activeFolder ?? undefined)
+  const workspaceRoot = useUIStore((s) => s.workspaceRoot)
+  const { data } = useDocuments(workspaceRoot ?? undefined)
   return (data ?? []).some(isMemoryOnly)
 }
 
@@ -70,10 +70,10 @@ export function useCreateDocument() {
       memoryOnly?: boolean
     }) => {
       // When the caller does not pin a folder, save non-memory-only docs into the
-      // currently opened folder (activeFolder, an absolute path) so they appear in
-      // the active list VS Code "save into the opened folder" semantics (#13)
-      const activeFolder = useUIStore.getState().activeFolder
-      const folderPath = params.folderPath ?? (activeFolder ? activeFolder : undefined)
+      // current workspace root (an absolute path) so they appear in the active list —
+      // VS Code "save into the opened folder" semantics (#13).
+      const workspaceRoot = useUIStore.getState().workspaceRoot
+      const folderPath = params.folderPath ?? (workspaceRoot ? workspaceRoot : undefined)
       return window.api.documents.create({
         ...params,
         folderPath,
@@ -123,8 +123,8 @@ let inFlight: Promise<void> | null = null
 // draft through. `documents:list` always includes memory-only drafts regardless of the folder
 // filter, so one folder-scoped call answers it authoritatively.
 async function hasMemoryOnlyDraft(): Promise<boolean> {
-  const activeFolder = useUIStore.getState().activeFolder
-  const docs = await window.api.documents.list(activeFolder ?? undefined)
+  const workspaceRoot = useUIStore.getState().workspaceRoot
+  const docs = await window.api.documents.list(workspaceRoot ?? undefined)
   return docs.some(isMemoryOnly)
 }
 
@@ -344,7 +344,7 @@ export function useOpenPaths() {
       if (imported.length === 0) return null
 
       const ui = useUIStore.getState()
-      ui.setActiveFolder(root)
+      ui.setWorkspaceRoot(root)
       ui.setActiveDocumentId(imported[0].id)
       // NOTE: do NOT force `editable` to false here. `editable` is a workspace-wide mode that
       // defaults to false only when there is no document open (store default + closeWorkspace/

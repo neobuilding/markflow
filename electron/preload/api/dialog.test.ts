@@ -47,4 +47,12 @@ describe('preload dialogApi', () => {
     dialogApi.confirm(opts)
     expect(invokes[0]).toEqual({ channel: 'dialog:confirm', args: [opts] })
   })
+
+  it('confirmOpenExternal invokes dialog:confirm-open-external with the target', () => {
+    dialogApi.confirmOpenExternal('file:///n/a.pdf')
+    expect(invokes[0]).toEqual({
+      channel: 'dialog:confirm-open-external',
+      args: ['file:///n/a.pdf'],
+    })
+  })
 })

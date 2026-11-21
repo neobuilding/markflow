@@ -3,6 +3,8 @@ import { ipcRenderer } from 'electron'
 // Document operations bridge wraps the main-process `documents:*` IPC handlers
 export const documentsApi = {
   list: (folderPath?: string) => ipcRenderer.invoke('documents:list', folderPath),
+  getWorkspaceRoot: (): Promise<string | null> =>
+    ipcRenderer.invoke('documents:get-workspace-root'),
   get: (id: string) => ipcRenderer.invoke('documents:get', id),
   create: (params: {
     title?: string
@@ -14,7 +16,8 @@ export const documentsApi = {
   update: (id: string, updates: { title?: string; content?: string }) =>
     ipcRenderer.invoke('documents:update', id, updates),
   delete: (id: string) => ipcRenderer.invoke('documents:delete', id),
-  import: (filePath: string) => ipcRenderer.invoke('documents:import', filePath),
+  import: (filePath: string, opts?: { external?: boolean }) =>
+    ipcRenderer.invoke('documents:import', filePath, opts),
   importMany: (filePaths: string[]) => ipcRenderer.invoke('documents:import-many', filePaths),
   saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) =>
     ipcRenderer.invoke('documents:save-as', id, filePath, params),

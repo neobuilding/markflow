@@ -67,7 +67,7 @@ export interface ConfirmCall {
   cancelId?: number
   /** Dialog type, e.g. 'question'. */
   type?: string
-  /** The canned answer the spy auto-picked (1 = ok/Discard, 0 = cancel/Keep). */
+  /** The canned answer the spy auto-picked (0 = first button, 1 = second, 2 = third/Cancel). */
   response: number
 }
 
@@ -90,7 +90,7 @@ export interface ConfirmCall {
  */
 export async function installConfirmSpy(
   handle: AppHandle,
-  opts: { defaultResponse?: 0 | 1 } = {},
+  opts: { defaultResponse?: 0 | 1 | 2 } = {},
 ): Promise<void> {
   const defaultResponse = opts.defaultResponse ?? 1
   await handle.electronApp.evaluate((electron, defaultResponse) => {

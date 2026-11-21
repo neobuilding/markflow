@@ -44,13 +44,13 @@ test.describe('delete watched folder (admin-permission regression)', () => {
   })
 
   async function openFolder(page: Page, folder: string, expectedDocs: number): Promise<void> {
-    await page.evaluate(() => (window as any).__uiStore.getState().setActiveFolder(null))
+    await page.evaluate(() => (window as any).__uiStore.getState().setWorkspaceRoot(null))
     await page.evaluate(async (f: string) => {
       const { markdownFiles } = await (window as any).api.files.resolvePaths([f])
       await (window as any).api.documents.setWorkspaceRoot(f)
       const imported = await (window as any).api.documents.importMany(markdownFiles)
       const ui = (window as any).__uiStore.getState()
-      ui.setActiveFolder(f)
+      ui.setWorkspaceRoot(f)
       if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)
     }, folder)
     if (expectedDocs > 0) {

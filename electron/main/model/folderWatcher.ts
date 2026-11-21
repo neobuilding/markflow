@@ -75,6 +75,11 @@ const OWN_WRITE_MAX_ENTRIES = 256
 const ownWrites = new Map<string, number>()
 
 let watcher: FSWatcher | null = null
+// Workspace-external documents (opened from outside the root via the three-way choice) get one
+// dedicated watch each. They share `dispatch`, so change/unlink flow through the same handlers
+// as root files. The map is cleared on workspace switch / close / quit (Q28: external docs do not
+// survive a root swap), keeping no orphan handles.
+const externalWatchers = new Map<string, FSWatcher>()
 let handlers: FolderWatchHandlers | null = null
 
 function isOwnWrite(filePath: string): boolean {
@@ -157,6 +162,32 @@ function createWatcher(): FSWatcher | null {
   return w
 }
 
+// Watch one workspace-external Markdown file. Idempotent per path. Called after such a document
+// is imported; a delete/re-create of the file makes chokidar drop the handle, so callers may call
+// again on re-import to re-arm it (the old handle is closed first).
+export function watchExternalFile(filePath: string): void {
+  if (externalWatchers.has(filePath)) return
+  const w = watch(filePath, {
+    ignoreInitial: true,
+    ignorePermissionErrors: true,
+    awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+  })
+  w.on('change', (p) => dispatch('change', p))
+  w.on('unlink', (p) => dispatch('unlink', p))
+  w.on('error', () => {
+    /* a vanished external file is reported by unlink; swallow stray watch errors */
+  })
+  externalWatchers.set(filePath, w)
+}
+
+// Stop watching one external file (e.g. when its document is closed).
+export async function unwatchExternalFile(filePath: string): Promise<void> {
+  const w = externalWatchers.get(filePath)
+  if (!w) return
+  externalWatchers.delete(filePath)
+  await w.close()
+}
+
 // Install the store-mutation callbacks. Called once, from registerDocumentHandlers;
 // the watcher itself is only started once a folder has actually been opened.
 // Re-entrant safe: re-installing handlers must not orphan a watcher that is already
@@ -173,6 +204,14 @@ export function startFolderWatching(h: FolderWatchHandlers): void {
 export function refreshFolderWatching(): void {
   const previous = watcher
   watcher = null
+  // Q28: external documents do not survive a workspace switch, so their watches go too.
+  for (const [path, w] of externalWatchers) {
+    void w.close().catch(
+      /* v8 ignore next */
+      () => {},
+    )
+    externalWatchers.delete(path)
+  }
   if (previous)
     void previous.close().catch(
       // A close() rejection is not actionable — the watcher is being replaced regardless, so the
@@ -229,5 +268,8 @@ export async function stopFolderWatching(): Promise<void> {
   const w = watcher
   watcher = null
   ownWrites.clear()
+  const externals = [...externalWatchers.values()]
+  externalWatchers.clear()
+  await Promise.all(externals.map((ew) => ew.close()))
   if (w) await w.close()
 }

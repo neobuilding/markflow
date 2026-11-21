@@ -30,6 +30,12 @@ export interface Document {
   // document, or on restart (this store is in-memory and rebuilt from disk).
   // Optional for the same backward-compat reason; absent means "not missing".
   missing?: boolean
+  // True for a Markdown file opened from OUTSIDE the current workspace root (via the preview
+  // link / drag-drop three-way choice "open here, keep workspace"). It has a real filePath, is
+  // watched by a dedicated single-file watcher, and is deliberately excluded from the folder
+  // tree, search and replace scope (relToRoot returns null for it). Cleared by a workspace
+  // switch together with the rest of the store. Optional; absent means "inside the workspace".
+  external?: boolean
 }
 
 // Re-export so existing importers of `documentStore.isInFolder` keep working.
@@ -47,7 +53,7 @@ export function createDocumentStore(): void {
 }
 
 // List documents, optionally filtered to those inside `folderPath` (the renderer's
-// activeFolder, an absolute path). Memory-only drafts (no filePath) are always
+// workspaceRoot, an absolute path). Memory-only drafts (no filePath) are always
 // included regardless of folder, matching the old "return all + renderer filters"
 // behavior. Filtering uses isInFolder so sub-folders are included
 export function listDocuments(folderPath?: string): Document[] {

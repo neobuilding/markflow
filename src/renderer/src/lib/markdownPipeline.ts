@@ -75,6 +75,21 @@ const md: MarkdownItInstance = new MarkdownIt({
   },
 })
 
+// ADR-0038 §3.1.3: markdown-it's default validateLink rejects `file:` outright, which would
+// turn `[doc](file:///C:/x.md)` into plain text before the preview's click handler ever sees
+// it. Keep the dangerous-scheme rejection (`javascript:`, `vbscript:`, non-image `data:`) but
+// allow local file URLs and Windows drive paths; opening them still goes through the Open /
+// Copy / Cancel confirmation in the renderer, so this widening only admits targets the app
+// already handles deliberately.
+const BAD_LINK_PROTO_RE = /^(vbscript|javascript|data):/i
+const GOOD_DATA_LINK_RE = /^data:image\/(gif|png|jpeg|webp);/i
+const WINDOWS_DRIVE_LINK_RE = /^[a-z]:[\\/]/i
+md.validateLink = (url: string): boolean => {
+  const str = url.trim()
+  if (WINDOWS_DRIVE_LINK_RE.test(str)) return true
+  return BAD_LINK_PROTO_RE.test(str) ? GOOD_DATA_LINK_RE.test(str) : true
+}
+
 // Heading anchor ids (for TOC / navigation; does not generate clickable permalinks).
 // `markdown-it-anchor` v9 types narrow `permalink` to a generator, but omitting the option
 // yields the same "no permalink" behavior we want, so we pass no options.

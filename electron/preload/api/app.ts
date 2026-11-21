@@ -8,6 +8,8 @@ export const appApi = {
   getInitialPaths: () => ipcRenderer.invoke('app:get-initial-paths'),
   showInFolder: (filePath: string) => ipcRenderer.invoke('app:show-in-folder', filePath),
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
+  // Local non-Markdown file -> OS default associated application (ADR-0038 §3.1.3).
+  openPath: (filePath: string) => ipcRenderer.invoke('app:open-path', filePath),
   // Copy a file (disk path or appdoc:// URL) to a chosen destination (preview "Save as").
   copyFile: (src: string, dest: string) => ipcRenderer.invoke('app:copy-file', src, dest),
   setLanguage: (locale: 'en' | 'zh-CN') => ipcRenderer.send('app:set-language', locale),

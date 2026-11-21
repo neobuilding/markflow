@@ -9,7 +9,7 @@
 //   1. A file created on disk in the active folder shows up in the sidebar
 //      (per-directory coalesce must not drop the active folder's refresh).
 //   2. A file created on disk in an UNRELATED folder does NOT force a
-//      refetch of the active folder's list (renderer-side activeFolder scoping).
+//      refetch of the active folder's list (renderer-side workspaceRoot scoping).
 //   3. Closing the workspace while a refresh is pending does not crash the
 //      app (the coalesced broadcast is dropped, not delivered to a torn-down
 //      window).
@@ -50,11 +50,11 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
   // in-memory document store actually gets populated (a watcher alone shows
   // nothing in the sidebar chokidar only reports *changes*, it does not
   // back-fill existing files). This is exactly what useOpenPaths does:
-  //   setWorkspaceRoot → importMany → setActiveFolder/Document.
+  //   setWorkspaceRoot → importMany → setWorkspaceRoot/Document.
   // Sets the active folder on the UI store so the folder-changed handler's
-  // activeFolder scoping is exercised.
+  // workspaceRoot scoping is exercised.
   async function openFolder(page: Page, folder: string, expectedInitialDocs: number) {
-    await page.evaluate(() => (window as any).__uiStore.getState().setActiveFolder(null))
+    await page.evaluate(() => (window as any).__uiStore.getState().setWorkspaceRoot(null))
     const firstId = await page.evaluate(async (f) => {
       const { markdownFiles } = await (window as any).api.files.resolvePaths([f])
       // Set the root FIRST (opening replaces the workspace — ADR-0023), which also starts the
@@ -62,7 +62,7 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
       await (window as any).api.documents.setWorkspaceRoot(f)
       const imported = await (window as any).api.documents.importMany(markdownFiles)
       const ui = (window as any).__uiStore.getState()
-      ui.setActiveFolder(f)
+      ui.setWorkspaceRoot(f)
       if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)
       return imported.length > 0 ? imported[0].id : null
     }, folder)
@@ -99,7 +99,7 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
     await openFolder(page, active!, 1)
 
     // Create a file in the UNRELATED folder. The main process still watches it
-    // (chokidar watches every opened folder), but the renderer's activeFolder
+    // (chokidar watches every opened folder), but the renderer's workspaceRoot
     // filter must drop the refresh the active sidebar count stays at 1
     writeFileSync(join(other!, 'late.md'), '# Late\n\nbody', 'utf-8')
     // Give chokidar's stability window time to fire + any stray refetch to

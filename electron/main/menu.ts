@@ -168,7 +168,7 @@ export function setupMenu(): void {
               if (mdFiles.length > 0) {
                 // Send the *folder*, not the expanded file list: the renderer expands
                 // folders itself (files:resolve-paths), and only the folder path lets it
-                // pin `activeFolder` and therefore the watched root to the directory
+                // pin `workspaceRoot` and therefore the watched root to the directory
                 // the user actually chose. Sending the file list made the renderer fall
                 // back to the parent directory of whichever file happened to be listed
                 // first, which is a subdirectory whenever the picked folder has no .md
@@ -401,7 +401,7 @@ export function registerMenuHandlers(): void {
   })
 
   // "New File…" is filesystem-bound: it needs an open folder to write into. The renderer mirrors
-  // `activeFolder` here so the native menu item is greyed out on the welcome screen.
+  // `workspaceRoot` here so the native menu item is greyed out on the welcome screen.
   ipcMain.on('menu:set-has-folder', (_event, has: boolean) => {
     hasFolderState = has
     applyMenuStates()

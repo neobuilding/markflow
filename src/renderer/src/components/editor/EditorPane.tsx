@@ -12,6 +12,7 @@ import {
   PenLine,
 } from 'lucide-react'
 import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
+import { switchWorkspace } from '../../lib/workspaceSwitch'
 import { useUIStore, selectFileLocked } from '../../store/ui'
 import {
   useDocument,
@@ -251,7 +252,7 @@ export function EditorPane(): React.ReactElement {
     // Save As to a location OUTSIDE the current root re-roots the workspace (ADR-0023). Asked
     // BEFORE the write: after it, refusing would leave the user with a file on disk that the app
     // refuses to acknowledge as open.
-    const currentRoot = useUIStore.getState().activeFolder
+    const currentRoot = useUIStore.getState().workspaceRoot
     if (currentRoot && !isDirInFolder(newFilePath, currentRoot)) {
       const ok = await window.api.dialog.confirm({
         message: t('app.saveAsReroot'),
@@ -553,7 +554,7 @@ export function EditorPane(): React.ReactElement {
 
   const handleNavigateToSegment = useCallback(
     (segments: string[], index: number) => {
-      useUIStore.getState().setActiveFolder(segmentDir(segments, index))
+      void switchWorkspace(segmentDir(segments, index))
     },
     [segmentDir],
   )
@@ -1000,7 +1001,7 @@ export function EditorPane(): React.ReactElement {
                           <FileMenuItems
                             variant="folder"
                             folder={{
-                              openInSidebar: () => useUIStore.getState().setActiveFolder(dir),
+                              openInSidebar: () => void switchWorkspace(dir),
                               showInFolder: () => revealInFolder(dir),
                               copyPath: () => void window.api.clipboard.writeText(dir),
                             }}

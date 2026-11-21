@@ -16,8 +16,9 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   hidden default location.
 - **Memory-only document** — a draft created via `documents:create` with `memoryOnly: true`: no file is
   written and no watcher is attached; the store holds a row with `file_path = ''` and the UI marks it
-  `isNewUnsaved`. The sidebar lists such docs in a dedicated **"Unsaved drafts"** group (they have no path
-  to place in the folder tree). Drafts are never persisted across app restarts.
+  `isNewUnsaved`. Switching files closes it through the unsaved-changes guard and deletes its store
+  row (ADR-0038 §3.5), so at most one draft can exist. Drafts are never persisted across app restarts
+  or workspace switches.
 - **.mdx handling** — `.mdx` files open, list, and preview like regular Markdown (extension shown in the
   sidebar). JSX / embedded components are **not** parsed (true MDX compilation is a deferred RFC); `.mdx` is
   currently treated as plain Markdown.
@@ -61,6 +62,21 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   / `workspaceRoot`.
 - **Sidebar** — collapsible nested folder tree listing Markdown files; file names include their extension
   and subfolders start collapsed.
+- **Document navigation (文档导航)** — any change of the active document, whatever the entry point
+  (sidebar, search, preview link, new document). A target outside the current workspace replaces the
+  workspace with its folder (ADR-0038 §3.2).
+  _Avoid_: "link jump", "page navigation" (both name one entry point, not the concept)
+- **Navigation history (导航历史)** — the in-memory, app-session-lifetime list of document navigations,
+  with a cursor for Back/Forward. Entries are keyed by absolute file path so they survive workspace
+  replacement; a new navigation truncates the forward part and entries for missing files are skipped
+  and pruned.
+  _Avoid_: "browser history" (this is not a URL history)
+- **Back / Forward (后退/前进)** — the two global-toolbar controls that move along **Navigation history**,
+  with Chrome/Edge stack semantics and browser-style shortcuts (`Alt+←/→` on Windows/Linux,
+  `Cmd+[` / `Cmd+]` on macOS) only when focus is outside the editor. No history dropdown.
+- **Reveal in sidebar (在侧栏中定位)** — after any document change, expand the active document's
+  ancestor folders, switch `activeFolder` to its folder if needed, and scroll its row into view. It is
+  driven by the active document, not by a specific navigation entry point.
 - **File path breadcrumb** — current file path shown above the editor; folder icon reveals it in the system
   file manager.
 - **Open anywhere** — launch via CLI, drag-and-drop, or as the default app for `.md`. App starts fresh
@@ -298,6 +314,10 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   is UI drill state only — ADR-0023). The "Copy File Path" menu item still copies the **absolute** path —
   that is the form you can paste into a terminal or file manager.
   _Avoid_: rendering the absolute path in the UI.
+- **Link destination (链接目标)** — the href in a Markdown link, resolved for preview navigation by the
+  rules in ADR-0038: relative paths against the containing document, `/…` against the **workspace root**,
+  `C:\…` / `C:/…` and `file:///…` as filesystem absolute, and external schemes via a confirmation
+  dialog. Never resolved against the app shell URL. _See also_: **Document navigation**.
 - **File name (文件名)** — `basename(filePath)`, **including** the extension (e.g. `notes.md`).
 - **Document title (`title`)** — the document's derived, **extension-less** file name (e.g. `notes`); what
   the sidebar shows. _Avoid_: using "file name" to mean `title`.

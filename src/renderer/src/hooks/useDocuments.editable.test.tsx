@@ -114,7 +114,7 @@ beforeEach(() => {
   ;(window as unknown as { api: typeof api }).api = api
   useUIStore.getState().setActiveDocumentId(null)
   useUIStore.getState().setEditable(false)
-  useUIStore.getState().setActiveFolder(null)
+  useUIStore.getState().setWorkspaceRoot(null)
 })
 
 describe('editable mode — switching files always returns to read-only', () => {

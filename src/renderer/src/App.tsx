@@ -15,7 +15,8 @@ import { printDocument } from './lib/printDocument'
 import { routeSelectAll, createSelectAllKeydownHandler } from './lib/selectAllRouter'
 import { queryClient, DOCS_KEY } from './lib/queryClient'
 import { isDirInFolder } from './lib/utils'
-import { hasModalSurface, isEditableTarget } from './lib/shortcut-scope'
+import { hasModalSurface, isEditableTarget, isEditorSurface } from './lib/shortcut-scope'
+import { moveNavigationHistory } from './lib/documentNavigation'
 import { matchFormatShortcut } from './lib/format-shortcuts'
 import { t, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
@@ -116,6 +117,19 @@ export default function App(): React.ReactElement {
       // to whoever does own it. Without this, Ctrl+N would stack a second dialog on top of an open
       // one and Ctrl+\ would move the sidebar behind it.
       if (hasModalSurface(document)) return
+      // Browser-style document history (ADR-0038 §3.4): Alt+←/→ on Windows/Linux,
+      // Cmd+[ / Cmd+] on macOS. Only outside the editor — CodeMirror owns these keys when it has
+      // focus (syntax movement / indent), so stand down without preventDefault there.
+      const historyKey = isMac
+        ? e.metaKey && !e.ctrlKey && !e.altKey && (e.key === '[' || e.key === ']')
+        : e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      if (historyKey) {
+        if (isEditorSurface(document.activeElement)) return
+        e.preventDefault()
+        e.stopPropagation()
+        void moveNavigationHistory(e.key === 'ArrowLeft' || e.key === '[' ? -1 : 1)
+        return
+      }
       if (mod && e.key === 'n') {
         // VS Code parity: Ctrl/Cmd+N creates an in-memory draft immediately, never a dialog.
         // The native menu accelerator fires the same action through 'menu:new-document'; the
@@ -375,9 +389,9 @@ export default function App(): React.ReactElement {
   useEffect(() => {
     if (!window.api?.menu?.setHasFolder) return
     const send = (has: boolean) => window.api.menu.setHasFolder(has)
-    send(!!useUIStore.getState().activeFolder)
+    send(!!useUIStore.getState().workspaceRoot)
     const unsub = useUIStore.subscribe((state, prev) => {
-      if (state.activeFolder !== prev.activeFolder) send(!!state.activeFolder)
+      if (state.workspaceRoot !== prev.workspaceRoot) send(!!state.workspaceRoot)
     })
     return () => unsub()
   }, [])
@@ -417,7 +431,7 @@ export default function App(): React.ReactElement {
     if (!window.api?.onFolderChanged) return
     let buf: ReturnType<typeof setTimeout> | null = null
     const remove = window.api.onFolderChanged((data) => {
-      const active = useUIStore.getState().activeFolder
+      const active = useUIStore.getState().workspaceRoot
       // Only refresh when the event touches the folder currently displayed (or its subtree).
       // When no folder is open yet, fall back to refreshing so early events aren't lost.
       if (active && !isDirInFolder(data?.dirPath ?? '', active)) return
@@ -434,7 +448,7 @@ export default function App(): React.ReactElement {
         // refetch competes with the very switch/edit the renderer may be busy
         // with. Narrowing to the active folder's list keeps the sidebar current
         // without touching the open document.
-        const active = useUIStore.getState().activeFolder
+        const active = useUIStore.getState().workspaceRoot
         // Two separate calls, NOT one ternary: DOCS_KEY is `as const` (a 1-tuple),
         // so a ternary mixing it with the 3-element list key makes TypeScript
         // infer the filter's key type from one branch and reject the other (TS2345).

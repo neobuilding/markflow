@@ -52,11 +52,11 @@ test.describe('sidebar Search view (ADR-0023)', () => {
   // Open the workspace so the Search view has a root to reason about: without one, scope is
   // disabled and content search refuses to run. This sets the MAIN-PROCESS root (the
   // authoritative one the search handler reads via getWorkspaceRoot), not just the renderer's
-  // activeFolder — exactly what the Open File dialog flow does.
+  // workspaceRoot — exactly what the Open File dialog flow does.
   async function openWorkspace(page: Page): Promise<void> {
     await page.evaluate((root) => {
       const w = window as any
-      w.__uiStore.getState().setActiveFolder(root)
+      w.__uiStore.getState().setWorkspaceRoot(root)
       w.__queryClient.invalidateQueries({ queryKey: ['documents'] })
       return window.api.documents.setWorkspaceRoot(root)
     }, scratch)

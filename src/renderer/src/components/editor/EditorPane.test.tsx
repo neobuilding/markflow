@@ -33,6 +33,11 @@ const h = vi.hoisted(() => ({
   ),
 }))
 
+// Breadcrumb / path-menu "open in sidebar" now switches the workspace through a service. The
+// full transaction is covered by workspaceSwitch.test.ts; here the mock just mirrors the root.
+const switchWorkspaceMock = vi.hoisted(() => vi.fn())
+vi.mock('../../lib/workspaceSwitch', () => ({ switchWorkspace: switchWorkspaceMock }))
+
 vi.mock('../../hooks/useDocuments', () => ({
   useDocument: () => ({
     data: h.noDoc
@@ -93,6 +98,10 @@ vi.mock('../../lib/parseClient', () => ({
 }))
 
 beforeEach(() => {
+  switchWorkspaceMock.mockImplementation((root: string) => {
+    useUIStore.getState().setWorkspaceRoot(root)
+    return Promise.resolve(true)
+  })
   h.startTitleEdit.mockClear()
   h.isLoading = false
   h.noDoc = false
@@ -421,7 +430,7 @@ describe('EditorPane file context menus', () => {
     // Right-click the inner folder 'y'.
     fireEvent.contextMenu(segments[1])
     fireEvent.click(await screen.findByTestId('doc-open-folder-in-sidebar'))
-    expect(useUIStore.getState().activeFolder).toBe('/x/y')
+    expect(useUIStore.getState().workspaceRoot).toBe('/x/y')
 
     fireEvent.contextMenu(segments[1])
     fireEvent.click(await screen.findByTestId('doc-copy-folder-path'))
@@ -481,10 +490,10 @@ describe('EditorPane file context menus', () => {
     expect(segments).toHaveLength(3)
     fireEvent.contextMenu(segments[0])
     fireEvent.click(await screen.findByTestId('doc-open-folder-in-sidebar'))
-    expect(useUIStore.getState().activeFolder).toBe('C:/')
+    expect(useUIStore.getState().workspaceRoot).toBe('C:/')
     fireEvent.contextMenu(segments[2])
     fireEvent.click(await screen.findByTestId('doc-open-folder-in-sidebar'))
-    expect(useUIStore.getState().activeFolder).toBe('C:/docs/sub')
+    expect(useUIStore.getState().workspaceRoot).toBe('C:/docs/sub')
   })
 
   it('swallows a rejected reveal without surfacing an unhandled rejection', async () => {

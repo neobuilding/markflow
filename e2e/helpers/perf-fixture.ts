@@ -122,7 +122,7 @@ export async function openFolder(
     await w.api.documents.setWorkspaceRoot(f)
     const docs = await w.api.documents.importMany(markdownFiles)
     const ui = w.__uiStore.getState()
-    ui.setActiveFolder(f)
+    ui.setWorkspaceRoot(f)
     if (docs.length > 0) ui.setActiveDocumentId(docs[0].id)
     return { resolved: markdownFiles.length, imported: docs.length }
   }, folder)

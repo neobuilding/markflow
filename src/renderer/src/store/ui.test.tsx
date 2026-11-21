@@ -12,7 +12,7 @@ describe('useUIStore — all setters and toggles', () => {
     const s = useUIStore.getState()
     s.setSidebarOpen(true)
     s.setActiveDocumentId(null)
-    s.setActiveFolder(null)
+    s.setWorkspaceRoot(null)
     s.setEditable(false)
     s.setViewMode('split')
     s.setSearchOpen(false)
@@ -40,6 +40,45 @@ describe('useUIStore — all setters and toggles', () => {
     s.setActiveDocumentTitle(null)
   })
 
+  it('records path-keyed document switches through the preload bridge', async () => {
+    const { useNavigationHistory } = await import('./navigationHistory')
+    useNavigationHistory.getState().reset()
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { get: vi.fn(async () => ({ id: 'doc-1', filePath: 'C:/n/a.md' })) },
+    }
+    useUIStore.getState().setActiveDocumentId('doc-1')
+    await vi.waitFor(() =>
+      expect(useNavigationHistory.getState().entries[0]?.path).toBe('C:/n/a.md'),
+    )
+  })
+
+  it('keeps history quiet without a bridge, for drafts, and for suppressed history moves', async () => {
+    const { useNavigationHistory, withoutHistoryRecording } = await import('./navigationHistory')
+    useNavigationHistory.getState().reset()
+    delete (window as unknown as { api?: unknown }).api
+    useUIStore.getState().setActiveDocumentId(null)
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { get: vi.fn(async () => ({ id: 'draft', filePath: '' })) },
+    }
+    useUIStore.getState().setActiveDocumentId('draft')
+    await withoutHistoryRecording(async () => {
+      useUIStore.getState().setActiveDocumentId('doc-1')
+      await Promise.resolve()
+    })
+    expect(useNavigationHistory.getState().entries).toEqual([])
+  })
+
+  it('stays quiet when the bridge cannot resolve a document path', async () => {
+    const { useNavigationHistory } = await import('./navigationHistory')
+    useNavigationHistory.getState().reset()
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { get: vi.fn(async () => Promise.reject(new Error('ipc down'))) },
+    }
+    useUIStore.getState().setActiveDocumentId('doc-1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(useNavigationHistory.getState().entries).toEqual([])
+  })
+
   it('toggleSidebar flips the flag', () => {
     useUIStore.getState().toggleSidebar()
     expect(useUIStore.getState().sidebarOpen).toBe(false)
@@ -56,8 +95,8 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().setActiveDocumentId('x')
     expect(useUIStore.getState().activeDocumentId).toBe('x')
 
-    useUIStore.getState().setActiveFolder('/f')
-    expect(useUIStore.getState().activeFolder).toBe('/f')
+    useUIStore.getState().setWorkspaceRoot('/f')
+    expect(useUIStore.getState().workspaceRoot).toBe('/f')
 
     useUIStore.getState().setViewMode('preview')
     expect(useUIStore.getState().viewMode).toBe('preview')
@@ -152,10 +191,10 @@ describe('useUIStore — all setters and toggles', () => {
   it('closeWorkspace clears the active document and folder', () => {
     const s = useUIStore.getState()
     s.setActiveDocumentId('x')
-    s.setActiveFolder('/f')
+    s.setWorkspaceRoot('/f')
     useUIStore.getState().closeWorkspace()
     expect(useUIStore.getState().activeDocumentId).toBeNull()
-    expect(useUIStore.getState().activeFolder).toBeNull()
+    expect(useUIStore.getState().workspaceRoot).toBeNull()
   })
 
   // Closing means the edits are discarded, so the global dirty flag must not survive:
@@ -218,7 +257,7 @@ describe('useUIStore — all setters and toggles', () => {
   it('printing locks document switches/closes and the export dialog, and releases them afterwards', async () => {
     const s = useUIStore.getState()
     s.setActiveDocumentId('doc-a')
-    s.setActiveFolder('/workspace')
+    s.setWorkspaceRoot('/workspace')
     s.setDirty(false)
     s.setPrinting(true)
 
@@ -232,7 +271,7 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().closeDocument()
     expect(useUIStore.getState().activeDocumentId).toBe('doc-a')
     useUIStore.getState().closeWorkspace()
-    expect(useUIStore.getState().activeFolder).toBe('/workspace')
+    expect(useUIStore.getState().workspaceRoot).toBe('/workspace')
     useUIStore.getState().setExportOpen(true)
     expect(useUIStore.getState().exportOpen, 'the export dialog must not open').toBe(false)
 
@@ -274,14 +313,14 @@ describe('useUIStore — all setters and toggles', () => {
     ;(
       window as unknown as { api: { documents: { setWorkspaceRoot: typeof setWorkspaceRoot } } }
     ).api = { documents: { setWorkspaceRoot } }
-    useUIStore.getState().setActiveFolder('/watched')
+    useUIStore.getState().setWorkspaceRoot('/watched')
 
     useUIStore.getState().closeWorkspace()
 
     // The root is CLEARED, not just unwatched: leaving it set would keep scope and replace
     // reasoning about a workspace that is supposed to be closed (ADR-0023).
     expect(setWorkspaceRoot).toHaveBeenCalledWith(null)
-    expect(useUIStore.getState().activeFolder).toBeNull()
+    expect(useUIStore.getState().workspaceRoot).toBeNull()
   })
 
   it('closeWorkspace still closes when the root teardown rejects', async () => {
@@ -291,25 +330,25 @@ describe('useUIStore — all setters and toggles', () => {
     ).api = { documents: { setWorkspaceRoot } }
     const s = useUIStore.getState()
     s.setActiveDocumentId('x')
-    s.setActiveFolder('/watched')
+    s.setWorkspaceRoot('/watched')
 
     useUIStore.getState().closeWorkspace()
     await Promise.resolve()
 
     // The workspace must still be cleared: teardown is best-effort, never a gate.
     expect(useUIStore.getState().activeDocumentId).toBeNull()
-    expect(useUIStore.getState().activeFolder).toBeNull()
+    expect(useUIStore.getState().workspaceRoot).toBeNull()
   })
 
   it('closeWorkspace still closes when the preload bridge is unavailable', () => {
     ;(window as unknown as { api?: unknown }).api = undefined
     const s = useUIStore.getState()
     s.setActiveDocumentId('x')
-    s.setActiveFolder('/watched')
+    s.setWorkspaceRoot('/watched')
 
     expect(() => useUIStore.getState().closeWorkspace()).not.toThrow()
     expect(useUIStore.getState().activeDocumentId).toBeNull()
-    expect(useUIStore.getState().activeFolder).toBeNull()
+    expect(useUIStore.getState().workspaceRoot).toBeNull()
   })
 })
 

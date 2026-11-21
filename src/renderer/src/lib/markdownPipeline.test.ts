@@ -23,6 +23,23 @@ describe('markdownPipeline — GFM', () => {
   })
 })
 
+describe('markdownPipeline — local file links (ADR-0038 §3.1.3)', () => {
+  it('emits an anchor with href for a file:/// target', () => {
+    const { html } = render('[d](file:///C:/docs/note.md)\n', docId)
+    expect(html).toContain('<a href="file:///C:/docs/note.md">d</a>')
+  })
+
+  it('emits an anchor with href for Windows drive paths', () => {
+    expect(render('[d](C:/docs/note.md)\n', docId).html).toContain('href="C:/docs/note.md"')
+    expect(render('[d](C:\\docs\\note.md)\n', docId).html).toContain('href="C:%5Cdocs%5Cnote.md"')
+  })
+
+  it('keeps refusing dangerous link destinations', () => {
+    const { html } = render('[x](javascript:alert(1))\n[d](data:text/html,hi)\n', docId)
+    expect(html).not.toContain('<a')
+  })
+})
+
 describe('markdownPipeline — math (katex)', () => {
   it('renders inline $...$', () => {
     const { html } = render('Inline $E=mc^2$ end\n', docId)

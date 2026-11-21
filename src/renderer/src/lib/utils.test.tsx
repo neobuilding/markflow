@@ -468,14 +468,14 @@ describe('useUIStore discards unsaved drafts on close', () => {
   it('blocks closeWorkspace while exporting and clears the folder', () => {
     act(() => {
       useUIStore.getState().setActiveDocumentId('doc-5')
-      useUIStore.getState().setActiveFolder('/tmp/x')
+      useUIStore.getState().setWorkspaceRoot('/tmp/x')
       useUIStore.getState().setExporting(true)
     })
     act(() => {
       useUIStore.getState().closeWorkspace()
     })
     expect(useUIStore.getState().activeDocumentId).toBe('doc-5')
-    expect(useUIStore.getState().activeFolder).toBe('/tmp/x')
+    expect(useUIStore.getState().workspaceRoot).toBe('/tmp/x')
   })
 })
 

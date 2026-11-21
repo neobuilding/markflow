@@ -287,13 +287,13 @@ test.describe('context menus — M3 surfaces (status bar / search / file-details
   // mirroring what the "Open Folder" menu does, so the document store is populated
   // and the folder menus have a target.
   async function openFolder(page: Page, folder: string, expectedDocs: number): Promise<void> {
-    await page.evaluate(() => (window as any).__uiStore.getState().setActiveFolder(null))
+    await page.evaluate(() => (window as any).__uiStore.getState().setWorkspaceRoot(null))
     await page.evaluate(async (f: string) => {
       const { markdownFiles } = await (window as any).api.files.resolvePaths([f])
       await (window as any).api.documents.setWorkspaceRoot(f)
       const imported = await (window as any).api.documents.importMany(markdownFiles)
       const ui = (window as any).__uiStore.getState()
-      ui.setActiveFolder(f)
+      ui.setWorkspaceRoot(f)
       if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)
     }, folder)
     await expect
@@ -468,13 +468,13 @@ test.describe('M3 write-operation menus (supplement)', () => {
     return dir
   }
   async function openFolder(page: Page, folder: string, expectedDocs: number): Promise<void> {
-    await page.evaluate(() => (window as any).__uiStore.getState().setActiveFolder(null))
+    await page.evaluate(() => (window as any).__uiStore.getState().setWorkspaceRoot(null))
     await page.evaluate(async (f: string) => {
       const { markdownFiles } = await (window as any).api.files.resolvePaths([f])
       await (window as any).api.documents.setWorkspaceRoot(f)
       const imported = await (window as any).api.documents.importMany(markdownFiles)
       const ui = (window as any).__uiStore.getState()
-      ui.setActiveFolder(f)
+      ui.setWorkspaceRoot(f)
       if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)
     }, folder)
     await expect
