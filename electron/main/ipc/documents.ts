@@ -16,6 +16,7 @@ import {
   pauseFolderWatching,
   resumeFolderWatching,
   refreshFolderWatching,
+  watchExternalFile,
 } from '../model/folderWatcher'
 import { getWorkspaceRoot, setWorkspaceRoot } from '../model/workspaceRoot'
 import {
@@ -58,6 +59,7 @@ function makeDocument(params: {
   createdAt: number
   updatedAt: number
   memoryOnly?: boolean
+  external?: boolean
 }): Document {
   return {
     id: params.id,
@@ -71,6 +73,7 @@ function makeDocument(params: {
     createdAt: params.createdAt,
     updatedAt: params.updatedAt,
     memoryOnly: params.memoryOnly,
+    external: params.external,
   }
 }
 
@@ -622,7 +625,7 @@ export function registerDocumentHandlers(
       }
 
       // When an absolute folder path is supplied (e.g. the
-      // renderer's activeFolder), write directly there (VS Code "save into the
+      // renderer's workspaceRoot), write directly there (VS Code "save into the
       // opened folder" semantics). A relative sub-folder name is still joined onto
       // the default docs dir to preserve the legacy behavior.
       const baseDir = folderPath
@@ -632,7 +635,7 @@ export function registerDocumentHandlers(
         : getDefaultDocsDir(io)
       // D20: with a workspace root open, the new file must land inside it. Refusing is the
       // documented behaviour ("rejects out-of-root paths with a prompt"); the renderer never hits this — it passes the
-      // open folder (activeFolder) as folderPath whenever a root exists.
+      // open folder (workspaceRoot) as folderPath whenever a root exists.
       const workspaceRoot = getWorkspaceRoot()
       if (workspaceRoot && !isDirInFolder(baseDir, workspaceRoot)) {
         throw new Error(`Cannot create a document outside the workspace root: ${baseDir}`)
@@ -808,6 +811,10 @@ export function registerDocumentHandlers(
       updatedAt: now,
     })
   })
+
+  // Read-only view of the single root for renderer-side path resolution (a leading `/` in a
+  // preview link is workspace-root-relative, ADR-0038 §3.1.2). Never rejects.
+  ipcMain.handle('documents:get-workspace-root', () => getWorkspaceRoot() || null)
 
   // Set (or clear) the single workspace root — ADR-0023.
   //
@@ -1108,10 +1115,13 @@ export function registerDocumentHandlers(
     notifyFolderChanged(parent)
   })
 
-  // Import markdown file from disk
-  ipcMain.handle('documents:import', (_event, filePath: string) => {
-    // D20: never store a document outside the workspace root (see outsideWorkspaceRoot).
-    if (outsideWorkspaceRoot(filePath)) return null
+  // Import a Markdown file from disk. `opts.external` is an explicit opt-in used ONLY by the
+  // three-way "open here, keep workspace" choice: it admits a file outside the workspace root,
+  // marks it external (so the tree / search / replace exclude it) and gives it a single-file
+  // watch. Every other caller keeps the D20 single-root backstop.
+  ipcMain.handle('documents:import', (_event, filePath: string, opts?: { external?: boolean }) => {
+    const external = opts?.external === true
+    if (external ? !filePath : outsideWorkspaceRoot(filePath)) return null
     let text: string
     let encoding: string
     let confidence: number
@@ -1129,13 +1139,16 @@ export function registerDocumentHandlers(
     if (existing) {
       // Re-open an already-imported file: refresh the record from the current on-disk content,
       // avoiding stale cached content (e.g. unsaved changes from a previous session, or external edits).
-      return storeUpdate(existing.id, {
+      const updated = storeUpdate(existing.id, {
         content: text,
         wordCount,
         encoding,
         encodingConfidence: confidence,
         updatedAt: now,
+        external: existing.external || external,
       })
+      if (external) watchExternalFile(filePath)
+      return updated
     }
 
     const doc = makeDocument({
@@ -1150,8 +1163,11 @@ export function registerDocumentHandlers(
       createdAt: now,
       updatedAt: now,
       memoryOnly: false,
+      external,
     })
-    return storeUpsert(doc)
+    const stored = storeUpsert(doc)
+    if (external) watchExternalFile(filePath)
+    return stored
   })
 
   // Batch import multiple markdown files

@@ -23,6 +23,11 @@ describe('preload documentsApi', () => {
     expect(invokes[0]).toEqual({ channel: 'documents:list', args: ['MyFolder'] })
   })
 
+  it('getWorkspaceRoot invokes documents:get-workspace-root', () => {
+    documentsApi.getWorkspaceRoot()
+    expect(invokes[0]).toEqual({ channel: 'documents:get-workspace-root', args: [] })
+  })
+
   it('get invokes documents:get with the id', () => {
     documentsApi.get('d1')
     expect(invokes[0]).toEqual({ channel: 'documents:get', args: ['d1'] })

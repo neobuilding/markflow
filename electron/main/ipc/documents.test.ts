@@ -1182,6 +1182,14 @@ describe('documents IPC — workspace root (ADR-0023)', () => {
     expect(latestWatcher()?.paths).toEqual([dir])
   })
 
+  it('exposes the root read-only for preview-link resolution', async () => {
+    const dir = mkTestDir('mf-get-root-')
+    await call('documents:set-workspace-root', dir)
+    expect(await call('documents:get-workspace-root')).toBe(dir)
+    await call('documents:set-workspace-root', null)
+    expect(await call('documents:get-workspace-root')).toBeNull()
+  })
+
   // Opening REPLACES the workspace: the old folder set could accumulate entries, which silently
   // produced a multi-root store in an app that advertises one root (F20/F21).
   it('replaces the watcher instead of extending it when another root is opened', async () => {
@@ -1247,6 +1255,32 @@ describe('documents IPC — single-root invariant backstop (D20)', () => {
       filePath: string
     }>
     expect(many.map((d) => d.filePath)).toEqual([inside])
+  })
+
+  it('imports an outside-root file as an external document only with explicit opt-in', async () => {
+    const dir = mkTestDir('mf-ext-in-')
+    const outside = mkTestDir('mf-ext-out-')
+    const outsideFile = join(outside, 'ext.md')
+    writeFileSync(outsideFile, '# External', 'utf-8')
+    await call('documents:set-workspace-root', dir)
+
+    // Without opt-in the D20 backstop still applies.
+    expect(await call('documents:import', outsideFile)).toBeNull()
+
+    const doc = (await call('documents:import', outsideFile, { external: true })) as {
+      id: string
+      external?: boolean
+      filePath: string
+    } | null
+    expect(doc?.external).toBe(true)
+    expect(doc?.filePath).toBe(outsideFile)
+
+    // External docs are excluded from the folder-scoped list (no sidebar row) ...
+    const scoped = (await call('documents:list', dir)) as Array<{ id: string }>
+    expect(scoped.map((d) => d.id)).not.toContain(doc!.id)
+    // ... but exist in the unscoped list so they can be activated / searched by id.
+    const all = (await call('documents:list')) as Array<{ id: string }>
+    expect(all.map((d) => d.id)).toContain(doc!.id)
   })
 
   it('refuses to create a document outside the workspace root', async () => {

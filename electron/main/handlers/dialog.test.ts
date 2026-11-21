@@ -113,6 +113,26 @@ describe('dialog handlers', () => {
     expect(h.calls[0].cancelId).toBe(0)
   })
 
+  it('confirm-open-external maps Open / Copy / Cancel responses and uses localized buttons', async () => {
+    h.calls.length = 0
+    h.confirm = { response: 0 }
+    expect(await handlers['dialog:confirm-open-external'](null, 'https://example.com')).toBe('open')
+    h.confirm = { response: 1 }
+    expect(await handlers['dialog:confirm-open-external'](null, 'https://example.com')).toBe('copy')
+    h.confirm = { response: 2 }
+    expect(await handlers['dialog:confirm-open-external'](null, 'https://example.com')).toBe(
+      'cancel',
+    )
+    expect(h.calls[0]).toMatchObject({
+      type: 'question',
+      message: 'app.openExternalTitle',
+      detail: 'https://example.com',
+      buttons: ['app.openExternalOpen', 'app.openExternalCopy', 'app.cancel'],
+      defaultId: 0,
+      cancelId: 2,
+    })
+  })
+
   it('save-html returns the html path or null', async () => {
     h.save = { canceled: false, filePath: '/out.html' }
     expect(await handlers['dialog:save-html'](null)).toBe('/out.html')

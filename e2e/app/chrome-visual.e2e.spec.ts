@@ -20,6 +20,10 @@
 // localised further (to the trailing find/replace/undo/redo/read-only segment). The full record,
 // including what was NOT established, is docs/adr/0031-ui-round-3-shortcuts-overflow-and-menu.md
 // §5.1 — a re-capture whose cause is not understood must be REPORTED, not silently merged.
+//
+// Re-captured 2026-11-21: global-bar (light) only, 1093 pixels over budget. The diff was confined
+// to the two Back/Forward buttons added to the left of Quick Open by ADR-0038 §3.4; no other row
+// changed. The cause is understood, so the baseline was updated instead of widening the budget.
 import { test, expect } from '@playwright/test'
 import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
 import { VIEWPORTS } from '../helpers/viewports'

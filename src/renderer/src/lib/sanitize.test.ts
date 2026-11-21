@@ -53,6 +53,24 @@ describe('sanitizeHtml — URI scheme whitelist (appdoc://)', () => {
   })
 })
 
+describe('sanitizeHtml — local file links (ADR-0038 §3.1.3)', () => {
+  it('keeps file:/// and Windows drive hrefs so the click handler can see them', () => {
+    expect(sanitizeHtml('<a href="file:///C:/docs/note.md">d</a>')).toContain(
+      'href="file:///C:/docs/note.md"',
+    )
+    expect(sanitizeHtml('<a href="C:/docs/note.md">d</a>')).toContain('href="C:/docs/note.md"')
+    expect(sanitizeHtml('<a href="C:%5Cdocs%5Cnote.md">d</a>')).toContain(
+      'href="C:%5Cdocs%5Cnote.md"',
+    )
+  })
+
+  it('still strips dangerous schemes after the local-file widening', () => {
+    expect(sanitizeHtml('<a href="javascript:alert(1)">x</a>')).not.toContain('javascript:')
+    expect(sanitizeHtml('<a href="vbscript:msgbox(1)">x</a>')).not.toContain('vbscript:')
+    expect(sanitizeHtml('<a href="data:text/html,hi">x</a>')).not.toContain('data:text/html')
+  })
+})
+
 describe('sanitizeHtml — style whitelist (BUG-5)', () => {
   it('strips style on non-allowed elements (div/p/a/pre)', () => {
     const out = sanitizeHtml(

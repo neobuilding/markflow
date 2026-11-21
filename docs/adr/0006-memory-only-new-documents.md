@@ -1,6 +1,9 @@
 # ADR-0006: Memory-only new documents (no disk write until first explicit save)
 
-- **Status:** Accepted
+- **Status:** Superseded in part by ADR-0038 §3.5: switching the active document now closes and
+  deletes a memory-only draft, so no draft can be switched back to. The "Unsaved drafts" group
+  still shows the one current draft while it is active. The no-disk-write-before-first-save rule
+  below remains in force.
 - **Implemented:** 2026-08 (`PLAN-improvements-2026-08-done.md` §6.3 / §6.5)
 
 ## Context
@@ -41,14 +44,16 @@ whatever folder is open. Every entry point then disables itself in that state:
 The rule is a state, not a one-way latch: closing the draft (`closeDocument`) deletes its store row
 and re-enables all of the above.
 
-The sidebar shows memory-only drafts in a dedicated **"Unsaved drafts"** group (empty `file_path` is
-excluded from the folder tree via `isInFolder`, which is always false for `''`).
+The sidebar shows the current memory-only draft in a dedicated **"Unsaved drafts"** group (empty
+`file_path` is excluded from the folder tree via `isInFolder`, which is always false for `''`).
+ADR-0038 §3.5 closes and deletes the draft when the active document switches, so no draft can be
+switched back to; the group only ever holds the single current draft.
 
 ## Consequences
 
 - **Positive:** no stray files; new-document editing reuses the exact same dirty-prompt path as existing
   files.
-- **Positive:** the "Unsaved drafts" group gives the otherwise-pathless doc a sidebar entry to switch back
-  to.
+- **Positive:** the "Unsaved drafts" group gives the pathless doc a visible sidebar entry while it
+  is active.
 - **Negative / trade-off:** the window-close/quit path is unified and slightly more involved; the dirty
   prompt must be fired from the renderer before the main process may quit.

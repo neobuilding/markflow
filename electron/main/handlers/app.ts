@@ -128,6 +128,18 @@ export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
     }
   })
 
+  // Open a LOCAL non-Markdown file in the OS default associated application (ADR-0038 §3.1.3).
+  // shell.openPath (not shell.openExternal(file://…)) is the correct API here: it takes a native
+  // path, so percent escapes and platform-specific URL quirks cannot mangle the filename. The
+  // renderer asks for confirmation first; a failure is reported as a string, never thrown.
+  ipcMain.handle('app:open-path', async (_event, filePath: string) => {
+    try {
+      return await shell.openPath(filePath)
+    } catch {
+      return 'Failed to open file'
+    }
+  })
+
   // Copy a file to a user-chosen destination (used by the preview's "Save image as" /
   // "Save diagram as" menu items, / ). `src` may be a disk path or an
   // `appdoc://` URL; the same security layer from the protocol handler bounds the resolution.

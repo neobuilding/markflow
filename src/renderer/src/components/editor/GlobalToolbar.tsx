@@ -1,9 +1,22 @@
 import React from 'react'
-import { FileInput, FileText, Save, SaveAll, RotateCcw, Info, FileOutput, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  FileInput,
+  FileText,
+  Save,
+  SaveAll,
+  RotateCcw,
+  Info,
+  FileOutput,
+  X,
+} from 'lucide-react'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { useT } from '../../i18n'
 import { useUIStore, selectFileLocked } from '../../store/ui'
+import { useNavigationHistory } from '../../store/navigationHistory'
+import { moveNavigationHistory } from '../../lib/documentNavigation'
 import { formatShortcut } from '../../lib/utils'
 import { createDraft, useHasMemoryOnlyDraft } from '../../hooks/useDocuments'
 
@@ -47,9 +60,48 @@ export function GlobalToolbar({
   // the button is disabled. `createDraft` (keyboard) and the native File > New Draft item read the
   // same rule, so no entry point can disagree.
   const draftExists = useHasMemoryOnlyDraft()
+  const historyCursor = useNavigationHistory((s) => s.cursor)
+  const historyLength = useNavigationHistory((s) => s.entries.length)
+  const canGoBack = historyCursor > 0
+  const canGoForward = historyCursor >= 0 && historyCursor < historyLength - 1
+  const isMac = /mac|iphone|ipad/i.test(navigator.userAgent)
+  const backShortcut = isMac ? '⌘[' : 'Alt+←'
+  const forwardShortcut = isMac ? '⌘]' : 'Alt+→'
 
   return (
     <div className="titlebar-no-drag flex items-center gap-1.5">
+      {/* Browser-style document history (ADR-0038 §3.4). These sit before Quick Open so they are
+          always reachable, including with no document open — history survives Close file. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="toolbar"
+            size="icon"
+            aria-label={t('nav.back')}
+            data-testid="nav-back-btn"
+            disabled={!canGoBack || fileLocked}
+            onClick={() => void moveNavigationHistory(-1)}
+          >
+            <ArrowLeft size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t('nav.backShortcut', { shortcut: backShortcut })}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="toolbar"
+            size="icon"
+            aria-label={t('nav.forward')}
+            data-testid="nav-forward-btn"
+            disabled={!canGoForward || fileLocked}
+            onClick={() => void moveNavigationHistory(1)}
+          >
+            <ArrowRight size={16} />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{t('nav.forwardShortcut', { shortcut: forwardShortcut })}</TooltipContent>
+      </Tooltip>
       {/* "Go to file…" — the Quick Open trigger (ADR-0023). It is the FIRST entry of the global
           toolbar — the sidebar toggle that used to sit before it was removed (Q2a). It wears a
           "jump into a file" arrow glyph (FileInput) rather than a document glyph: a bare document

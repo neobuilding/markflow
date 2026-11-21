@@ -30,7 +30,7 @@ export function NewDocumentDialog(): React.ReactElement {
   const { t } = useT()
   // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
   const newDocOpen = useUIStore((s) => s.newDocOpen)
-  const activeFolder = useUIStore((s) => s.activeFolder)
+  const workspaceRoot = useUIStore((s) => s.workspaceRoot)
   // Actions are stable references created once by the store initializer, so reading them via
   // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
   const { setNewDocOpen, setActiveDocumentId, setEditable, setIsNewUnsaved } = useUIStore.getState()
@@ -58,7 +58,7 @@ export function NewDocumentDialog(): React.ReactElement {
     // function: a double Enter would fire two creates, and the loser's EEXIST would be reported
     // after the dialog had already closed.
     if (createMut.isPending) return
-    if (!activeFolder) {
+    if (!workspaceRoot) {
       setError(t('new.noFolder'))
       return
     }
@@ -82,7 +82,7 @@ export function NewDocumentDialog(): React.ReactElement {
     if (!(await useUIStore.getState().guardUnsavedSwitch())) return
     setError(null)
     try {
-      const existing = await window.api.documents.stat(joinPath(activeFolder, fileName))
+      const existing = await window.api.documents.stat(joinPath(workspaceRoot, fileName))
       if (existing?.exists) {
         setError(t('new.nameExists', { name: fileName }))
         return
@@ -90,7 +90,7 @@ export function NewDocumentDialog(): React.ReactElement {
       const doc = await createMut.mutateAsync({
         title: target.title,
         ext: target.ext,
-        folderPath: activeFolder,
+        folderPath: workspaceRoot,
         memoryOnly: false,
       })
       // Raw setter is correct here: the guard has already been obtained (same as Sidebar's inline
@@ -173,7 +173,7 @@ export function NewDocumentDialog(): React.ReactElement {
               variant="accent"
               size="sm"
               onClick={() => void handleCreate()}
-              disabled={createMut.isPending || !activeFolder}
+              disabled={createMut.isPending || !workspaceRoot}
             >
               {t('new.create')}
             </Button>

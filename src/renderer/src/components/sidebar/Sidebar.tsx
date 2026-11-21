@@ -60,6 +60,7 @@ import {
   useDeleteFolder,
   useUndoRename,
   useFolderDirs,
+  useDocument,
   createDraft,
 } from '../../hooks/useDocuments'
 import { Button } from '../ui/button'
@@ -81,6 +82,7 @@ import {
 } from '../ui/context-menu'
 import type { Document } from '../../types'
 import { relativePath } from '../../../../../shared/fileUtils'
+import { switchWorkspace } from '../../lib/workspaceSwitch'
 import { SidebarSearch } from './SidebarSearch'
 
 // Inline folder naming : 'create' adds a subfolder under `parentPath`,
@@ -118,6 +120,83 @@ function resolveTypedFileName(typed: string): { name: string; refused?: string; 
     refused: refused ? name : undefined,
     ext: hasExt && !supported ? flat.slice(dot) : undefined,
   }
+}
+
+// Reveal in sidebar (ADR-0038 §3.3): walk the tree itself rather than rebuilding ancestor paths
+// from strings, so the paths cannot disagree with the nodes that are actually rendered.
+function findDocAncestorPaths(
+  nodes: readonly FileTreeNode[],
+  docId: string,
+  trail: string[] = [],
+): string[] | null {
+  for (const node of nodes) {
+    if (!node.isFolder) {
+      if (node.doc?.id === docId) return trail
+      continue
+    }
+    const found = findDocAncestorPaths(node.children, docId, [...trail, node.path])
+    if (found) return found
+  }
+  return null
+}
+
+// VS Code's explorer shows the full resource path on a tree row's hover. We keep that content but
+// show it only while the label is actually ellipsized — the request is about truncated names, and
+// a tooltip on every row would be noise. The shared Radix tooltip (not a native title)
+// keeps the bubble consistent with the rest of the sidebar and assertable by the e2e helpers.
+function TruncatedLabel({
+  text,
+  fullText,
+  className,
+  testId,
+}: {
+  text: string
+  fullText: string
+  className?: string
+  testId?: string
+}) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [truncated, setTruncated] = useState(false)
+  useEffect(() => {
+    let alive = true
+    // Always read the CURRENT node: swapping JSX branches would detach the first span and leave
+    // observers measuring a zero-sized orphan, which flips the state back to "not truncated".
+    const measure = () => {
+      const el = ref.current
+      if (alive && el) setTruncated(el.scrollWidth > el.clientWidth)
+    }
+    measure()
+    // Layout settles after the sidebar width effect and web fonts; a ResizeObserver alone misses
+    // a scrollWidth change when the box itself did not resize.
+    // Timers, not rAF: tree-row tests drive requestAnimationFrame manually to count the
+    // focus-grab retry budget, and an rAF scheduled here would be miscounted as a retry.
+    let second: ReturnType<typeof setTimeout> | undefined
+    const first = setTimeout(() => {
+      measure()
+      second = setTimeout(measure, 0)
+    }, 0)
+    if (document.fonts) void document.fonts.ready.then(measure)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    if (ref.current && observer) observer.observe(ref.current)
+    return () => {
+      alive = false
+      clearTimeout(first)
+      clearTimeout(second)
+      observer?.disconnect()
+    }
+  }, [text])
+  // The trigger stays mounted in BOTH states so the measured node is never replaced; only the
+  // bubble is conditional. A trigger without content is a no-op for hover.
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span ref={ref} data-testid={testId} className={cn('truncate', className)}>
+          {text}
+        </span>
+      </TooltipTrigger>
+      {truncated && <TooltipContent>{fullText}</TooltipContent>}
+    </Tooltip>
+  )
 }
 
 /** Width of the always-present icon column (VS Code-style activity bar). */
@@ -285,7 +364,7 @@ export function Sidebar(): React.ReactElement | null {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen)
   const activeDocumentId = useUIStore((s) => s.activeDocumentId)
   const sidebarView = useUIStore((s) => s.sidebarView)
-  const activeFolder = useUIStore((s) => s.activeFolder)
+  const workspaceRoot = useUIStore((s) => s.workspaceRoot)
   const showAllFolders = useUIStore((s) => s.showAllFolders)
   const recentlyCreatedFolders = useUIStore((s) => s.recentlyCreatedFolders)
   // Actions are stable references created once by the store initializer, so reading them via
@@ -295,7 +374,6 @@ export function Sidebar(): React.ReactElement | null {
     setActiveDocumentId,
     selectDocument,
     setSidebarView,
-    setActiveFolder,
     closeWorkspace,
     setShowAllFolders,
     toggleShowAllFolders,
@@ -348,7 +426,10 @@ export function Sidebar(): React.ReactElement | null {
     })
   }, [])
 
-  const { data: allDocs = [], isLoading: loading } = useDocuments(activeFolder ?? undefined)
+  const { data: allDocs = [], isLoading: loading } = useDocuments(workspaceRoot ?? undefined)
+  // Reveal needs the target's own path; the folder-scoped list above cannot supply it when the
+  // active document lives in another branch. React Query deduplicates this with the editor pane.
+  const { data: activeDoc } = useDocument(activeDocumentId)
 
   // Split memory-only drafts (filePath === '') from folder documents. Drafts are shown in a
   // dedicated "Unsaved drafts" group above the tree, never via isInFolder (which is always false
@@ -358,20 +439,20 @@ export function Sidebar(): React.ReactElement | null {
   // Only show documents within the "current folder" (empty when no folder is open, the welcome
   // page takes over). Memoized so it's a stable dependency for the tree useMemo below.
   const folderDocs = useMemo(
-    () => (activeFolder ? allDocs.filter((d) => isInFolder(d.filePath, activeFolder)) : []),
-    [activeFolder, allDocs],
+    () => (workspaceRoot ? allDocs.filter((d) => isInFolder(d.filePath, workspaceRoot)) : []),
+    [workspaceRoot, allDocs],
   )
 
   // Directories that exist on disk below the active folder. They always go INTO the model, not
   // only when the user asks to see them: the inline create/rename rows have to tell "this name is
   // taken" apart from "this name is merely hidden right now", and only the model knows the
   // difference. What is on screen is decided afterwards, by the filter below.
-  const { data: folderDirs = [] } = useFolderDirs(activeFolder)
+  const { data: folderDirs = [] } = useFolderDirs(workspaceRoot)
 
   // The complete model: every on-disk folder (empty ones included) + every loaded document.
   const fullTree = useMemo(
-    () => (activeFolder ? buildFileTree(folderDocs, activeFolder, folderDirs) : []),
-    [folderDocs, activeFolder, folderDirs],
+    () => (workspaceRoot ? buildFileTree(folderDocs, workspaceRoot, folderDirs) : []),
+    [folderDocs, workspaceRoot, folderDirs],
   )
 
   // What the sidebar shows: the model with the document-less folders filtered out, unless
@@ -507,13 +588,10 @@ export function Sidebar(): React.ReactElement | null {
     setExpanded((prev) => new Set(prev).add(folder))
   }, [])
 
-  // Enter a subfolder: make it the active (current) folder.
-  const handleEnterFolder = useCallback(
-    (folder: string) => {
-      setActiveFolder(folder)
-    },
-    [setActiveFolder],
-  )
+  // Enter a subfolder: switch the whole workspace to it (no residual parent root).
+  const handleEnterFolder = useCallback((folder: string) => {
+    void switchWorkspace(folder)
+  }, [])
 
   // ── Inline folder create / rename / delete ──
   // VS Code-style: instead of opening a dialog, the menu flips the tree row into an
@@ -589,13 +667,13 @@ export function Sidebar(): React.ReactElement | null {
               clearCreatedFolder(pinned)
             }
           }
-          // The active folder may be the renamed one (or below it): re-point it, otherwise
-          // the tree filter still looks under the old path and flips to the empty state.
-          const active = useUIStore.getState().activeFolder
+          // The workspace root may be the renamed folder (or below it): re-point the local mirror,
+          // matching the main process's repointWorkspaceRoot, else the tree filter flips empty.
+          const active = useUIStore.getState().workspaceRoot
           if (active && isDirInFolder(active, folderEdit.targetPath)) {
             useUIStore
               .getState()
-              .setActiveFolder(newPath + active.slice(folderEdit.targetPath.length))
+              .setWorkspaceRoot(newPath + active.slice(folderEdit.targetPath.length))
           }
           // Re-point the expanded set so the renamed folder (and any expanded descendants)
           // keep the same open/closed state under the new path instead of collapsing.
@@ -797,12 +875,12 @@ export function Sidebar(): React.ReactElement | null {
 
   // Parent folder of the current folder; null when at a root level (no parent to go up to).
   const parentFolder = useMemo(() => {
-    if (!activeFolder) return null
-    const parts = activeFolder.split(/[\\/]/).filter(Boolean)
+    if (!workspaceRoot) return null
+    const parts = workspaceRoot.split(/[\\/]/).filter(Boolean)
     if (parts.length <= 1) return null
-    const parent = activeFolder.slice(0, activeFolder.length - parts[parts.length - 1].length - 1)
+    const parent = workspaceRoot.slice(0, workspaceRoot.length - parts[parts.length - 1].length - 1)
     return parent
-  }, [activeFolder])
+  }, [workspaceRoot])
 
   // F2 — rename whichever sidebar row currently holds focus. Bound on the sidebar root, so
   // a keypress anywhere else in the app (notably the editor) never reaches it: the editor's
@@ -870,6 +948,60 @@ export function Sidebar(): React.ReactElement | null {
     return () => cancelAnimationFrame(frame)
   }, [focusPath])
 
+  // Reveal in sidebar (ADR-0038 §3.3) — ONE seam for every active-document change (sidebar,
+  // search, preview link, new document, Back/Forward), not per-entry-point logic. A request is
+  // recorded when the active ID changes; the effect below converges in VS Code's order: switch
+  // the drilled folder → expand ancestors → scroll only when the row is offscreen, centring it
+  // (`tree.reveal(item, 0.5)`). Clearing the request on completion leaves later manual collapses
+  // alone — reveal follows the document change, not the expanded-state changes it caused.
+  const lastActiveIdRef = useRef<string | null>(null)
+  const pendingRevealRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (lastActiveIdRef.current === activeDocumentId) return
+    lastActiveIdRef.current = activeDocumentId
+    pendingRevealRef.current = activeDocumentId
+  }, [activeDocumentId])
+
+  useEffect(() => {
+    const targetId = pendingRevealRef.current
+    if (!targetId || sidebarView !== 'files') return
+    if (!activeDoc || activeDoc.id !== targetId) return // detail query still in flight
+    const path = activeDoc.filePath
+    if (!path || !workspaceRoot) {
+      pendingRevealRef.current = null // draft / no workspace: nothing to reveal
+      return
+    }
+    // A workspace-external document has no row in the tree (the folder-scoped list excludes it),
+    // so there is nothing to reveal — stay quiet instead of clearing the expanded state.
+    if (!isDirInFolder(path, workspaceRoot)) {
+      pendingRevealRef.current = null
+      return
+    }
+    const ancestors = findDocAncestorPaths(tree, targetId)
+    if (!ancestors) return // tree has not caught up with the document list yet
+    const missing = ancestors.filter((p) => !expanded.has(p))
+    if (missing.length > 0) {
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        for (const p of missing) next.add(p)
+        return next
+      })
+      return
+    }
+    const rows = asideRef.current?.querySelectorAll<HTMLElement>('[data-doc-id]')
+    const row = rows && Array.from(rows).find((el) => el.dataset.docId === targetId)
+    if (!row) return
+    const container = asideRef.current?.querySelector<HTMLElement>(
+      '[data-testid="sidebar-tree-area"]',
+    )
+    if (container) {
+      const r = row.getBoundingClientRect()
+      const c = container.getBoundingClientRect()
+      if (r.top < c.top || r.bottom > c.bottom) row.scrollIntoView({ block: 'center' })
+    }
+    pendingRevealRef.current = null
+  }, [activeDoc, workspaceRoot, expanded, sidebarView, tree])
+
   // Clicking / arrow-keying the activity bar keeps focus ON the tab (APG automatic activation,
   // so ↑↓ can be pressed repeatedly). Only programmatic switches (⌘⇧E / ⌘⇧F) hand focus to the
   // panel. Without this flag the effect below would yank focus off the tab that was just focused,
@@ -899,22 +1031,23 @@ export function Sidebar(): React.ReactElement | null {
     requestAnimationFrame(() => asideRef.current?.focus())
   }, [panelFocusNonce, sidebarOpen])
 
-  const folderName = activeFolder
-    ? (activeFolder.split(/[\\/]/).filter(Boolean).pop() ?? activeFolder)
+  const folderName = workspaceRoot
+    ? (workspaceRoot.split(/[\\/]/).filter(Boolean).pop() ?? workspaceRoot)
     : ''
 
   // A create row aimed at the current folder itself (as opposed to one of its subfolders).
   // It must render even when the tree is empty: otherwise "New Folder" from the empty state
   // would set the edit state and then show nothing, making the menu item look broken.
   const rootCreatePending =
-    (folderEdit?.mode === 'create' && folderEdit.parentPath === activeFolder) ||
-    (fileEdit?.mode === 'create' && fileEdit.parentPath === activeFolder)
+    (folderEdit?.mode === 'create' && folderEdit.parentPath === workspaceRoot) ||
+    (fileEdit?.mode === 'create' && fileEdit.parentPath === workspaceRoot)
 
   // A new FOLDER is inserted at the front of its level (before the first folder); a new FILE keeps
   // the folder/file seam (after the last folder, before the first file). Two independent slots so
   // both can be open at once — folder row on top, file row at the seam. See createRowIndex.
-  const folderCreatingRoot = folderEdit?.mode === 'create' && folderEdit.parentPath === activeFolder
-  const fileCreatingRoot = fileEdit?.mode === 'create' && fileEdit.parentPath === activeFolder
+  const folderCreatingRoot =
+    folderEdit?.mode === 'create' && folderEdit.parentPath === workspaceRoot
+  const fileCreatingRoot = fileEdit?.mode === 'create' && fileEdit.parentPath === workspaceRoot
   const rootFolderCreateIndex = folderCreatingRoot ? 0 : tree.length
   const rootFileCreateIndex = fileCreatingRoot ? createRowIndex(tree) : tree.length
 
@@ -925,7 +1058,7 @@ export function Sidebar(): React.ReactElement | null {
       hint={folderHint}
       onSubmit={submitFolderName}
       onCancel={cancelFolderEdit}
-      validate={(raw) => nameExists('folder', activeFolder, null, raw)}
+      validate={(raw) => nameExists('folder', workspaceRoot, null, raw)}
     />
   ) : null
   const rootFileCreateRows = fileCreatingRoot ? (
@@ -935,7 +1068,7 @@ export function Sidebar(): React.ReactElement | null {
       hint={fileHint}
       onSubmit={submitFileName}
       onCancel={cancelFileEdit}
-      validate={(raw) => nameExists('file', activeFolder, null, raw)}
+      validate={(raw) => nameExists('file', workspaceRoot, null, raw)}
     />
   ) : null
 
@@ -1018,14 +1151,14 @@ export function Sidebar(): React.ReactElement | null {
                   write, so the button is hidden entirely rather than disabled (the global toolbar
                   owns the always-available in-memory "New Draft" action). Deliberately NOT bound
                   to Ctrl/Cmd+N — that shortcut belongs to New Draft. */}
-              {activeFolder && (
+              {workspaceRoot && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant="ghost"
                       size="icon"
                       aria-label={t('sidebar.newFile')}
-                      onClick={() => setFileEdit({ mode: 'create', parentPath: activeFolder })}
+                      onClick={() => setFileEdit({ mode: 'create', parentPath: workspaceRoot })}
                       data-testid="side-new-file-btn"
                       disabled={fileLocked}
                     >
@@ -1038,7 +1171,7 @@ export function Sidebar(): React.ReactElement | null {
               {/* "Show All Folders": opt-in reveal of folders that hold no Markdown. Only
                 meaningful while a folder is open. Shares one store flag with the
                 background right-click menu, so the two can never disagree. */}
-              {activeFolder && (
+              {workspaceRoot && (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -1060,7 +1193,7 @@ export function Sidebar(): React.ReactElement | null {
           </div>
 
           {/* Current folder bar right-click menu . The sidebar top bar and the empty list area deliberately stay silent (G2) */}
-          {activeFolder && (
+          {workspaceRoot && (
             <ContextMenu>
               <ContextMenuTrigger asChild>
                 <div
@@ -1076,7 +1209,7 @@ export function Sidebar(): React.ReactElement | null {
                         aria-label={t('sidebar.up')}
                         data-testid="up-folder-btn"
                         disabled={!parentFolder}
-                        onClick={() => parentFolder && setActiveFolder(parentFolder)}
+                        onClick={() => parentFolder && void switchWorkspace(parentFolder)}
                       >
                         <ArrowUp size={12} />
                       </Button>
@@ -1084,7 +1217,7 @@ export function Sidebar(): React.ReactElement | null {
                     <TooltipContent>{t('sidebar.up')}</TooltipContent>
                   </Tooltip>
                   <Folder size={11} className="text-[var(--color-text-tertiary)] shrink-0" />
-                  {folderEdit?.mode === 'rename' && folderEdit.targetPath === activeFolder ? (
+                  {folderEdit?.mode === 'rename' && folderEdit.targetPath === workspaceRoot ? (
                     <FolderNameInput
                       initial={folderName}
                       size="folder"
@@ -1104,7 +1237,7 @@ export function Sidebar(): React.ReactElement | null {
                   ) : (
                     <span
                       className="text-xs text-[var(--color-text-tertiary)] truncate flex-1"
-                      title={activeFolder}
+                      title={workspaceRoot}
                     >
                       {folderName}
                     </span>
@@ -1136,13 +1269,13 @@ export function Sidebar(): React.ReactElement | null {
               >
                 <ContextMenuItem
                   data-testid="side-copy-folder-path"
-                  onClick={() => copyText(activeFolder)}
+                  onClick={() => copyText(workspaceRoot)}
                 >
                   <Copy size={13} /> {t('ctx.copyFolderPath')}
                 </ContextMenuItem>
                 <ContextMenuItem
                   data-testid="side-show-in-folder"
-                  onClick={() => revealInFolder(activeFolder)}
+                  onClick={() => revealInFolder(workspaceRoot)}
                 >
                   <FolderOpen size={13} /> {t('editor.showInFolder')}
                 </ContextMenuItem>
@@ -1150,19 +1283,19 @@ export function Sidebar(): React.ReactElement | null {
                 so creating one directly under it needs an entry here too. */}
                 <ContextMenuItem
                   data-testid="side-new-folder-here"
-                  onClick={() => startFolderEdit({ mode: 'create', parentPath: activeFolder })}
+                  onClick={() => startFolderEdit({ mode: 'create', parentPath: workspaceRoot })}
                 >
                   <FolderPlus size={13} /> {t('ctx.newFolderHere')}
                 </ContextMenuItem>
                 <ContextMenuItem
                   data-testid="side-rename-folder"
-                  onClick={() => startFolderEdit({ mode: 'rename', targetPath: activeFolder })}
+                  onClick={() => startFolderEdit({ mode: 'rename', targetPath: workspaceRoot })}
                 >
                   <PenLine size={13} /> {t('ctx.renameFolder')}
                 </ContextMenuItem>
                 <ContextMenuItem
                   data-testid="side-delete-folder"
-                  onClick={() => void handleDeleteFolder(activeFolder)}
+                  onClick={() => void handleDeleteFolder(workspaceRoot)}
                 >
                   <Trash2 size={13} /> {t('ctx.deleteFolder')}
                 </ContextMenuItem>
@@ -1170,7 +1303,7 @@ export function Sidebar(): React.ReactElement | null {
                 <ContextMenuItem
                   data-testid="side-go-up"
                   disabled={!parentFolder}
-                  onClick={() => parentFolder && setActiveFolder(parentFolder)}
+                  onClick={() => parentFolder && void switchWorkspace(parentFolder)}
                 >
                   <ArrowUp size={13} /> {t('ctx.goUp')}
                 </ContextMenuItem>
@@ -1197,7 +1330,7 @@ export function Sidebar(): React.ReactElement | null {
             <ContextMenu>
               <ContextMenuTrigger asChild>
                 <div className="flex-1 overflow-y-auto" data-testid="sidebar-tree-area">
-                  {!activeFolder && memoryOnlyDocs.length === 0 ? (
+                  {!workspaceRoot && memoryOnlyDocs.length === 0 ? (
                     // No folder open and no drafts: show the welcome/empty guidance. (G2)
                     <WelcomeState
                       onOpenFile={handleImportFile}
@@ -1211,11 +1344,11 @@ export function Sidebar(): React.ReactElement | null {
                   ) : memoryOnlyDocs.length === 0 && tree.length === 0 && !rootCreatePending ? (
                     <EmptyState
                       onNewFile={() =>
-                        activeFolder && setFileEdit({ mode: 'create', parentPath: activeFolder })
+                        workspaceRoot && setFileEdit({ mode: 'create', parentPath: workspaceRoot })
                       }
                       onNewFolder={() =>
-                        activeFolder &&
-                        startFolderEdit({ mode: 'create', parentPath: activeFolder })
+                        workspaceRoot &&
+                        startFolderEdit({ mode: 'create', parentPath: workspaceRoot })
                       }
                       showAllFolders={showAllFolders}
                       onToggleShowAllFolders={setShowAllFolders}
@@ -1316,17 +1449,17 @@ export function Sidebar(): React.ReactElement | null {
                 {/* Both create items need an open folder. The guard sits here — while rendering —
               rather than inside each click handler: with no folder open this menu is
               unreachable, so an in-handler check could never be exercised. */}
-                {activeFolder && (
+                {workspaceRoot && (
                   <>
                     <ContextMenuItem
                       data-testid="side-bg-new-folder"
-                      onClick={() => startFolderEdit({ mode: 'create', parentPath: activeFolder })}
+                      onClick={() => startFolderEdit({ mode: 'create', parentPath: workspaceRoot })}
                     >
                       <FolderPlus size={13} /> {t('ctx.newFolderHere')}
                     </ContextMenuItem>
                     <ContextMenuItem
                       data-testid="side-bg-new-file"
-                      onClick={() => setFileEdit({ mode: 'create', parentPath: activeFolder })}
+                      onClick={() => setFileEdit({ mode: 'create', parentPath: workspaceRoot })}
                     >
                       <Plus size={13} /> {t('sidebar.newFile')}
                     </ContextMenuItem>
@@ -1730,19 +1863,21 @@ function DocItem({
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1">
-              <span
+              <TruncatedLabel
                 className={cn(
-                  'text-xs font-medium truncate',
+                  'text-xs font-medium',
                   // A missing document (its file was deleted outside the app) is kept open on
                   // purpose, so it stays listed here struck through, like the title bar
                   doc.missing
                     ? 'text-[var(--color-text-tertiary)] line-through'
                     : 'text-[var(--color-text-primary)]',
                 )}
-              >
-                {/* A memory-only new document has no file on disk yet; it is listed in the dedicated "Unsaved drafts" group , falling back to its title here */}
-                {doc.filePath ? baseName(doc.filePath) : doc.title}
-              </span>
+                // A memory-only new document has no file on disk yet; it is listed in the
+                // dedicated "Unsaved drafts" group, falling back to its title here.
+                text={doc.filePath ? baseName(doc.filePath) : doc.title}
+                fullText={doc.filePath || doc.title}
+                testId={`sidebar-doc-name-${doc.id}`}
+              />
               {!doc.filePath && (
                 <span className="text-2xs font-medium text-accent border border-accent/40 rounded px-1 py-px shrink-0">
                   {t('sidebar.newBadge')}
@@ -2086,7 +2221,7 @@ function TreeRow({
 }: TreeRowProps) {
   const { t } = useT()
   const open = expanded.has(node.path)
-  const activeFolder = useUIStore((s) => s.activeFolder)
+  const workspaceRoot = useUIStore((s) => s.workspaceRoot)
   const setSearchInclude = useUIStore((s) => s.setSearchInclude)
   const setSearchDetailsOpen = useUIStore((s) => s.setSearchDetailsOpen)
   const requestScopeFocus = useUIStore((s) => s.requestScopeFocus)
@@ -2094,7 +2229,7 @@ function TreeRow({
   // "Search in This Folder" (ADR-0023): scope comes from a PLACE the user pointed at, expressed as
   // a path relative to the root — the same rule VS Code follows with "Find in Folder…". Disabled
   // when the folder is not under the root, because there would be no relative path to write.
-  const canSearchInFolder = !!activeFolder && isDirInFolder(node.path, activeFolder)
+  const canSearchInFolder = !!workspaceRoot && isDirInFolder(node.path, workspaceRoot)
   if (node.isFolder) {
     const renaming = folderEdit?.mode === 'rename' && folderEdit.targetPath === node.path
     // A folder create row goes to the front of this level; a file create row keeps the seam
@@ -2185,7 +2320,11 @@ function TreeRow({
                 ) : (
                   <Folder size={13} className="shrink-0 text-[var(--color-text-tertiary)]" />
                 )}
-                <span className="truncate">{node.name}</span>
+                <TruncatedLabel
+                  text={node.name}
+                  fullText={node.path}
+                  testId={`sidebar-folder-name-${node.path}`}
+                />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span
@@ -2223,8 +2362,8 @@ function TreeRow({
               data-testid="side-search-in-folder"
               disabled={!canSearchInFolder}
               onClick={() => {
-                if (!activeFolder) return
-                const rel = relativePath(node.path, activeFolder)
+                if (!workspaceRoot) return
+                const rel = relativePath(node.path, workspaceRoot)
                 // The root itself needs no `include` — an empty scope means the whole root.
                 setSearchInclude(rel ? `./${rel}` : '')
                 setSidebarView('search')

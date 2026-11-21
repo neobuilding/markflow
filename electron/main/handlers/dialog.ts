@@ -3,6 +3,7 @@
 import { ipcMain, dialog } from 'electron'
 import { menuT } from '../i18n'
 import { collectMarkdownFiles } from '../lib/md-files'
+import type { ExternalOpenChoice, WorkspaceExternalChoice } from '../../../shared/linkTypes'
 
 export function registerDialogHandlers(): void {
   // Let the renderer proactively open a file-picker dialog
@@ -77,6 +78,60 @@ export function registerDialogHandlers(): void {
         detail: opts.detail,
       })
       return result.response === 1
+    },
+  )
+
+  // ADR-0038 §3.1.3: opening a web link or a local non-Markdown file with the OS default handler is
+  // an explicit choice. Three buttons (Open / Copy / Cancel) mirror VS Code; `cancelId` maps the
+  // window close / Esc path to 'cancel' so no handler is called by accident.
+  ipcMain.handle(
+    'dialog:confirm-open-external',
+    async (_event, target: string): Promise<ExternalOpenChoice> => {
+      const result = await dialog.showMessageBox({
+        type: 'question',
+        buttons: [
+          menuT('app.openExternalOpen'),
+          menuT('app.openExternalCopy'),
+          menuT('app.cancel'),
+        ],
+        defaultId: 0,
+        cancelId: 2,
+        message: menuT('app.openExternalTitle'),
+        detail: target,
+      })
+      return result.response === 0 ? 'open' : result.response === 1 ? 'copy' : 'cancel'
+    },
+  )
+
+  // A file (preview link / dropped / file-association) resolved outside the workspace root.
+  // Four explicit exits: separate window, here keeping the workspace, here switching the
+  // workspace, or cancel. Default is the new window (least destructive to the current session).
+  ipcMain.handle(
+    'dialog:confirm-workspace-external',
+    async (_event, target: string): Promise<WorkspaceExternalChoice> => {
+      const result = await dialog.showMessageBox({
+        type: 'question',
+        buttons: [
+          menuT('app.workspaceExternalNewWindow'),
+          menuT('app.workspaceExternalKeep'),
+          menuT('app.workspaceExternalSwitch'),
+          menuT('app.cancel'),
+        ],
+        defaultId: 0,
+        cancelId: 3,
+        message: menuT('app.workspaceExternalTitle'),
+        detail: target,
+      })
+      switch (result.response) {
+        case 0:
+          return 'new-window'
+        case 1:
+          return 'keep-workspace'
+        case 2:
+          return 'switch-workspace'
+        default:
+          return 'cancel'
+      }
     },
   )
 

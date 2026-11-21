@@ -96,12 +96,12 @@ export function SidebarSearch(): React.ReactElement {
   }, [searchScopeFocusNonce, detailsOpen])
 
   const results = data.results
-  const activeFolder = useUIStore((s) => s.activeFolder)
-  // The scope inputs are meaningful only when a workspace root exists. That is whether the user has
-  // opened a folder (the renderer mirrors the main-process root in `activeFolder`), so read it from
-  // there — NOT from `data.appliedScope.root`, which is unknown until a search actually runs (and a
-  // search never runs for an empty query, which would wrongly leave the inputs disabled).
-  const scopeDisabled = activeFolder === null
+  const workspaceRoot = useUIStore((s) => s.workspaceRoot)
+  // The scope inputs are meaningful only when a workspace root exists (the renderer mirrors the
+  // main-process root in `workspaceRoot`), so read it from there — NOT from `data.appliedScope.root`,
+  // which is unknown until a search actually runs (and a search never runs for an empty query,
+  // which would wrongly leave the inputs disabled).
+  const scopeDisabled = workspaceRoot === null
   // A non-empty scope must never be hidden — the whole complaint that started this plan was a
   // scope the user could not see.
   const detailsVisible =

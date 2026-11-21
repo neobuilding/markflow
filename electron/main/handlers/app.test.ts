@@ -4,7 +4,11 @@ import { createMemoryDiskIO, type MemoryDiskIO } from '../lib/disk-io'
 
 const handlers: Record<string, (...a: unknown[]) => unknown> = {}
 const clipboardMock = vi.hoisted(() => ({ writeText: vi.fn(), write: vi.fn() }))
-const shellMock = vi.hoisted(() => ({ showItemInFolder: vi.fn(), openExternal: vi.fn() }))
+const shellMock = vi.hoisted(() => ({
+  showItemInFolder: vi.fn(),
+  openExternal: vi.fn(),
+  openPath: vi.fn(async () => ''),
+}))
 const h = vi.hoisted(() => ({ version: '9.9.9' }))
 const nativeImageMock = vi.hoisted(() => ({
   createFromBuffer: (buf: Buffer) => ({
@@ -68,6 +72,17 @@ describe('app handlers', () => {
       throw new Error('nope')
     })
     expect(() => handlers['app:show-in-folder'](null, '/x.md')).not.toThrow()
+  })
+
+  it('opens a local file with the OS default application via shell.openPath', async () => {
+    shellMock.openPath.mockResolvedValueOnce('')
+    await expect(handlers['app:open-path'](null, 'C:/notes/photo.png')).resolves.toBe('')
+    expect(shellMock.openPath).toHaveBeenCalledWith('C:/notes/photo.png')
+  })
+
+  it('reports shell.openPath failures as a string instead of rejecting', async () => {
+    shellMock.openPath.mockRejectedValueOnce(new Error('no handler'))
+    await expect(handlers['app:open-path'](null, '/n/a.bin')).resolves.toBe('Failed to open file')
   })
 
   it('returns the app version', () => {
