@@ -17,6 +17,7 @@ import {
   onDocumentRefresh,
   onOpenPaths,
   onAppRequestQuit,
+  onRevealFile,
 } from './api/events'
 
 // Custom APIs exposed to renderer. Each group is assembled from the per-domain
@@ -39,6 +40,7 @@ const api = {
   onDocumentRefresh,
   onOpenPaths,
   onAppRequestQuit,
+  onRevealFile,
   onReplaceProgress,
 }
 

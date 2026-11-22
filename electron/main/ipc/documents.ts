@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { detect } from 'jschardet-ultra'
 import iconv from 'iconv-lite'
 import { MD_EXTS, stripMarkdownExt } from '../lib/markdown-ext'
+import { scopedHandleFor } from '../model/ipcScope'
 // Every filesystem access goes through this port (see lib/disk-io.ts): the handlers
 // below stay pure orchestration and can be driven by an in-memory fake in tests.
 import { nodeDiskIO, type DirEntry, type DiskIO, type ReadHandle } from '../lib/disk-io'
@@ -16,8 +17,11 @@ import {
   pauseFolderWatching,
   resumeFolderWatching,
   refreshFolderWatching,
+  watchExternalFile,
+  unwatchExternalFile,
 } from '../model/folderWatcher'
 import { getWorkspaceRoot, setWorkspaceRoot } from '../model/workspaceRoot'
+import { currentContext } from '../model/windowContext'
 import {
   type Document,
   createDocumentStore,
@@ -58,6 +62,7 @@ function makeDocument(params: {
   createdAt: number
   updatedAt: number
   memoryOnly?: boolean
+  external?: boolean
 }): Document {
   return {
     id: params.id,
@@ -71,6 +76,7 @@ function makeDocument(params: {
     createdAt: params.createdAt,
     updatedAt: params.updatedAt,
     memoryOnly: params.memoryOnly,
+    external: params.external,
   }
 }
 
@@ -246,15 +252,31 @@ function getDefaultDocsDir(io: DiskIO = nodeDiskIO): string {
   return docsDir
 }
 
+// Renderer notification target. `isDestroyed` is optional so test fakes (plain objects with just
+// webContents.send) still satisfy the type.
+type NotifyWindow = {
+  webContents: { send: (channel: string, ...args: unknown[]) => void }
+  isDestroyed?: () => boolean
+}
+
 // Get a reference to the main window (registerDocumentHandlers is called before createWindow,
-// so we fetch it lazily via a getter to avoid the closure capturing null). `isDestroyed` is
-// optional so test fakes (plain objects with just webContents.send) still satisfy the type.
-let _getMainWindow:
-  | (() => {
-      webContents: { send: (channel: string, ...args: unknown[]) => void }
-      isDestroyed?: () => boolean
-    } | null)
-  | null = null
+// so we fetch it lazily via a getter to avoid the closure capturing null). Kept as a fallback
+// for headless callers and unit tests that invoke handlers without an IPC sender.
+let _getMainWindow: (() => NotifyWindow | null) | null = null
+
+// Watcher callbacks re-enter the OWNING window's ALS scope (folderWatcher.ts withContext), so
+// the scope — not `getMainWindow()` — identifies which renderer must receive a notification.
+// With two windows open, sending to the focused/main window would refresh the wrong sidebar and
+// leave the owner's sidebar stale. IPC handlers are scoped too, so the same rule covers every
+// caller; the injected getter is only used when no window is registered (tests/headless startup).
+function notificationWindow(): NotifyWindow | null {
+  // Do not filter `isDestroyed` here: a window can close BETWEEN scheduling a coalesced
+  // broadcast and sending it, and every sender below re-checks at send time. Filtering here
+  // would drop the notification without exercising (or needing) that guard.
+  const scoped = currentContext()?.win as NotifyWindow | null | undefined
+  if (scoped?.webContents) return scoped
+  return _getMainWindow?.() ?? null
+}
 
 // ─── Disk folder watching ────────────────────────────────────────────
 // The store is the single source of truth; a recursive chokidar watcher over the
@@ -279,49 +301,75 @@ let _getMainWindow:
 // created in the active folder would stay invisible in the sidebar until some later
 // event happened to touch that folder again.
 const FOLDER_CHANGED_COALESCE_MS = 300
-const folderChangedTimers = new Map<string, ReturnType<typeof setTimeout>>()
+type PendingFolderChanged = {
+  ctxId: number
+  timer: ReturnType<typeof setTimeout>
+  win: NotifyWindow
+  dirPath: string
+}
+// Keyed by WINDOW + directory: two windows can watch overlapping roots, and a single
+// directory-scoped map would collapse their bursts into one broadcast to the wrong renderer.
+const folderChangedTimers = new Map<string, PendingFolderChanged>()
+
+function currentContextId(): number {
+  // currentContext() always resolves (ALS store → active window → headless fallback).
+  return currentContext().id
+}
+
+function folderChangeKey(dirPath: string): string {
+  return `${currentContextId()}|${dirPath}`
+}
 
 function notifyFolderChanged(dirPath: string): void {
-  // Already queued for this directory: the pending broadcast will pick up everything
+  const key = folderChangeKey(dirPath)
+  // Already queued for this window+directory: the pending broadcast will pick up everything
   // that changed in the meantime, because the renderer re-reads the whole folder list.
-  if (folderChangedTimers.has(dirPath)) return
+  if (folderChangedTimers.has(key)) return
+  const win = notificationWindow()
+  if (!win) return
+  // Capture the owner here: setTimeout keeps the ALS scope, but the window can be closed
+  // during the coalesce window, so the saved handle is checked again before sending.
   const timer = setTimeout(() => {
-    folderChangedTimers.delete(dirPath)
+    folderChangedTimers.delete(key)
     // The coalesce window delays this send, and the quit flow keeps the main process
     // alive briefly after the window is destroyed — sending to a destroyed webContents
     // throws. Guard, same as the other delayed senders (menu.ts / lifecycle.ts).
-    const win = _getMainWindow?.()
-    if (win && !win.isDestroyed?.()) win.webContents.send('app:folder-changed', { dirPath })
+    if (!win.isDestroyed?.()) win.webContents.send('app:folder-changed', { dirPath })
   }, FOLDER_CHANGED_COALESCE_MS)
-  folderChangedTimers.set(dirPath, timer)
+  folderChangedTimers.set(key, { ctxId: currentContextId(), timer, win, dirPath })
 }
 
 // Test seam: deliver every coalesced folder-changed broadcast immediately and cancel its
 // timer, so tests can assert `sentFolderChanged` synchronously without waiting for the
 // real 300ms coalesce window. Production code never calls this.
 export function __flushFolderChanged(): void {
-  const dirs = [...folderChangedTimers.keys()]
-  for (const timer of folderChangedTimers.values()) clearTimeout(timer)
+  const pending = [...folderChangedTimers.values()]
   folderChangedTimers.clear()
-  const win = _getMainWindow?.()
-  if (!win || win.isDestroyed?.()) return
-  for (const dir of dirs) win.webContents.send('app:folder-changed', { dirPath: dir })
+  for (const { timer, win, dirPath } of pending) {
+    clearTimeout(timer)
+    if (!win.isDestroyed?.()) win.webContents.send('app:folder-changed', { dirPath })
+  }
 }
 
-// Drop every coalesced-but-not-yet-sent broadcast and its timer without sending anything.
-// Called when the watcher is torn down (workspace closed): any folder event still pending
-// was produced by the watcher being discarded, so telling the renderer to "refresh"
-// because of it would be a spurious post-teardown refetch.
+// Drop coalesced-but-not-yet-sent broadcasts for the CURRENT window, without sending anything.
+// Called when that window's watcher is torn down (workspace closed): any folder event still
+// pending came from the discarded watcher, so refreshing with it would be spurious. Other
+// windows' pending broadcasts belong to their own watchers and must remain scheduled (ADR-0039
+// §3.1: per-window isolation).
 function cancelPendingFolderChanged(): void {
-  for (const timer of folderChangedTimers.values()) clearTimeout(timer)
-  folderChangedTimers.clear()
+  const ctxId = currentContextId()
+  for (const [key, pending] of folderChangedTimers) {
+    if (pending.ctxId !== ctxId) continue
+    clearTimeout(pending.timer)
+    folderChangedTimers.delete(key)
+  }
 }
 
 // Tell the renderer that `filePath` changed on disk (backs the "reload?" prompt).
 // Guarded the same way as notifyFolderChanged: the reload-prompt IPC is pointless once
 // the window is gone, and a destroyed webContents would throw on send.
 function notifyFileChanged(id: string, filePath: string): void {
-  const win = _getMainWindow?.()
+  const win = notificationWindow()
   if (win && !win.isDestroyed?.()) win.webContents.send('app:file-changed', { id, filePath })
 }
 
@@ -332,7 +380,7 @@ function notifyFileChanged(id: string, filePath: string): void {
 // title bar reads. Widening the folder event to invalidate every detail was a measured
 // source of lag while switching documents (see App.tsx), so the two stay separate.
 function notifyDocumentRefresh(id: string): void {
-  const win = _getMainWindow?.()
+  const win = notificationWindow()
   if (win && !win.isDestroyed?.()) win.webContents.send('app:document-refresh', { id })
 }
 
@@ -570,17 +618,18 @@ export function registerDocumentHandlers(
 
   // List all documents (sorted by updated_at): read directly from the store, the single
   // source of truth (kept in sync with the filesystem by the folder watcher above).
-  ipcMain.handle('documents:list', (_event, folderPath?: string) => {
+  scopedHandleFor(ipcMain, 'documents:list', (_event, folderPath?: string) => {
     return storeList(folderPath)
   })
 
   // Get single document
-  ipcMain.handle('documents:get', (_event, id: string) => {
+  scopedHandleFor(ipcMain, 'documents:get', (_event, id: string) => {
     return storeGet(id)
   })
 
   // Create new document
-  ipcMain.handle(
+  scopedHandleFor(
+    ipcMain,
     'documents:create',
     (
       _event,
@@ -622,7 +671,7 @@ export function registerDocumentHandlers(
       }
 
       // When an absolute folder path is supplied (e.g. the
-      // renderer's activeFolder), write directly there (VS Code "save into the
+      // renderer's workspaceRoot), write directly there (VS Code "save into the
       // opened folder" semantics). A relative sub-folder name is still joined onto
       // the default docs dir to preserve the legacy behavior.
       const baseDir = folderPath
@@ -632,7 +681,7 @@ export function registerDocumentHandlers(
         : getDefaultDocsDir(io)
       // D20: with a workspace root open, the new file must land inside it. Refusing is the
       // documented behaviour ("rejects out-of-root paths with a prompt"); the renderer never hits this — it passes the
-      // open folder (activeFolder) as folderPath whenever a root exists.
+      // open folder (workspaceRoot) as folderPath whenever a root exists.
       const workspaceRoot = getWorkspaceRoot()
       if (workspaceRoot && !isDirInFolder(baseDir, workspaceRoot)) {
         throw new Error(`Cannot create a document outside the workspace root: ${baseDir}`)
@@ -674,7 +723,8 @@ export function registerDocumentHandlers(
   )
 
   // Update document content
-  ipcMain.handle(
+  scopedHandleFor(
+    ipcMain,
     'documents:update',
     (_event, id: string, updates: Partial<{ title: string; content: string }>) => {
       const now = Date.now()
@@ -749,7 +799,8 @@ export function registerDocumentHandlers(
 
   // Save As: write the content to a brand-new file path and point the record at that new file
   // (folder_path / file_path / title are updated in sync). The original file is left untouched.
-  ipcMain.handle(
+  scopedHandleFor(
+    ipcMain,
     'documents:save-as',
     (_event, id: string, newFilePath: string, updates: { title?: string; content?: string }) => {
       const existing = storeGet(id)
@@ -786,7 +837,7 @@ export function registerDocumentHandlers(
 
   // Reload: re-read the current file from disk, write back to the store, and return the latest document.
   // Returns null if the file has been deleted.
-  ipcMain.handle('documents:reload', (_event, id: string) => {
+  scopedHandleFor(ipcMain, 'documents:reload', (_event, id: string) => {
     const existing = storeGet(id)
     if (!existing) return null
 
@@ -809,6 +860,10 @@ export function registerDocumentHandlers(
     })
   })
 
+  // Read-only view of the single root for renderer-side path resolution (a leading `/` in a
+  // preview link is workspace-root-relative, ADR-0038 §3.1.2). Never rejects.
+  scopedHandleFor(ipcMain, 'documents:get-workspace-root', (_event) => getWorkspaceRoot() || null)
+
   // Set (or clear) the single workspace root — ADR-0023.
   //
   // Opening a folder REPLACES the workspace: the document store is cleared and the watcher is
@@ -817,19 +872,23 @@ export function registerDocumentHandlers(
   // no longer existed.
   //
   // `null` closes the workspace. Never rejects — the renderer fires this and ignores the result.
-  ipcMain.handle('documents:set-workspace-root', async (_event, rootPath: string | null) => {
-    try {
-      await stopFolderWatching()
-    } catch {
-      // The watcher is being discarded anyway; a failed close must not propagate.
-    }
-    createDocumentStore()
-    setWorkspaceRoot(rootPath || null)
-    refreshFolderWatching()
-    // A folder-changed broadcast still pending came from the previous root and must not reach the
-    // renderer as a refresh for the workspace it just described.
-    cancelPendingFolderChanged()
-  })
+  scopedHandleFor(
+    ipcMain,
+    'documents:set-workspace-root',
+    async (_event, rootPath: string | null) => {
+      try {
+        await stopFolderWatching()
+      } catch {
+        // The watcher is being discarded anyway; a failed close must not propagate.
+      }
+      createDocumentStore()
+      setWorkspaceRoot(rootPath || null)
+      refreshFolderWatching()
+      // A folder-changed broadcast still pending came from the previous root and must not reach the
+      // renderer as a refresh for the workspace it just described.
+      cancelPendingFolderChanged()
+    },
+  )
 
   // Delete document — move the file to the OS trash rather than permanently deleting it
   // A memory-only draft has no file on disk
@@ -837,7 +896,7 @@ export function registerDocumentHandlers(
   // trashItem is asynchronous and rejects on failure; per Electron's guidance we must NOT
   // silently fall back to a permanent delete — if the move fails we keep the original file
   // and still drop the store record so the UI stays consistent.
-  ipcMain.handle('documents:delete', async (_event, id: string) => {
+  scopedHandleFor(ipcMain, 'documents:delete', async (_event, id: string) => {
     const existing = storeGet(id)
     if (!existing) return false
 
@@ -852,6 +911,9 @@ export function registerDocumentHandlers(
           console.error('Failed to move file to trash:', e)
         }
       }
+      // The single-file watch of a workspace-external document follows the document's
+      // lifetime: once the file is gone, the watch has nothing left to report.
+      if (existing.external) await unwatchExternalFile(existing.filePath)
     }
 
     return storeDelete(id)
@@ -861,7 +923,7 @@ export function registerDocumentHandlers(
   // security layer in appdoc.ts (doc lookup → containment → exists). Returns null for
   // malformed URLs, escapes, or missing files; callers must handle the null (the
   // renderer greys out / skips the menu item).
-  ipcMain.handle('documents:resolve-appdoc', (_event, src: string) => {
+  scopedHandleFor(ipcMain, 'documents:resolve-appdoc', (_event, src: string) => {
     try {
       return resolveAppdocPath(src)
     } catch {
@@ -877,7 +939,7 @@ export function registerDocumentHandlers(
   // in-memory fs.
   const imageSizeCache = new Map<string, { width: number; height: number }>()
   const MAX_HEADER_BYTES = 512 * 1024
-  ipcMain.handle('documents:image-size', async (_event, src: string) => {
+  scopedHandleFor(ipcMain, 'documents:image-size', async (_event, src: string) => {
     const p = resolveAppdocPath(src)
     if (!p) return null
     const cached = imageSizeCache.get(p)
@@ -906,7 +968,7 @@ export function registerDocumentHandlers(
   // Re-detect a file's encoding without modifying its bytes. Reads the raw
   // buffer and runs the same detector used on import. Returns utf-8 / confidence 0 on any
   // read error so the caller (the encoding re-detect menu item) can fall back gracefully.
-  ipcMain.handle('documents:detect-encoding', (_event, filePath: string) => {
+  scopedHandleFor(ipcMain, 'documents:detect-encoding', (_event, filePath: string) => {
     try {
       const buf = io.readFile(filePath)
       return detectEncoding(buf)
@@ -919,7 +981,7 @@ export function registerDocumentHandlers(
   // file with the chosen EOL, so the renderer must confirm first and reload afterwards.
   // The document's stored encoding is preserved byte-for-byte (R5). Fails silently when the
   // file is gone or unreadable.
-  ipcMain.handle('documents:set-eol', (_event, filePath: string, eol: '\r\n' | '\n') => {
+  scopedHandleFor(ipcMain, 'documents:set-eol', (_event, filePath: string, eol: '\r\n' | '\n') => {
     try {
       const buf = io.readFile(filePath)
       const enc = storeGetByPath(filePath)?.encoding ?? 'utf-8'
@@ -942,7 +1004,7 @@ export function registerDocumentHandlers(
   // need mkdir to create ancestors.
   // No watcher registration: a new folder is always inside the root, which is watched
   // recursively, so `addWatchedFolder` here was a no-op (ADR-0023).
-  ipcMain.handle('documents:create-folder', (_event, folderPath: string) => {
+  scopedHandleFor(ipcMain, 'documents:create-folder', (_event, folderPath: string) => {
     io.mkdir(folderPath, { recursive: false })
   })
 
@@ -992,22 +1054,26 @@ export function registerDocumentHandlers(
     )
   }
 
-  ipcMain.handle('documents:rename-folder', (_event, oldPath: string, newPath: string) => {
-    guardRenameTarget(io, oldPath, newPath)
-    io.rename(oldPath, newPath)
-    // The new path is inside the recursively watched root, so no watcher registration is needed
-    // (D21 step 4) — but when the renamed folder IS the root, the root must follow the move.
-    repointWorkspaceRoot(oldPath, newPath)
-    rePointFolderRecords(oldPath, newPath)
-    rememberRename('folder', oldPath, newPath)
-  })
+  scopedHandleFor(
+    ipcMain,
+    'documents:rename-folder',
+    (_event, oldPath: string, newPath: string) => {
+      guardRenameTarget(io, oldPath, newPath)
+      io.rename(oldPath, newPath)
+      // The new path is inside the recursively watched root, so no watcher registration is needed
+      // (D21 step 4) — but when the renamed folder IS the root, the root must follow the move.
+      repointWorkspaceRoot(oldPath, newPath)
+      rePointFolderRecords(oldPath, newPath)
+      rememberRename('folder', oldPath, newPath)
+    },
+  )
 
   // Rename a single file on disk. Parallel to rename-folder but for one document: the
   // watcher is not told about a new folder (the file stays inside an already-watched one),
   // and the one tracked record is re-pointed (title + path) so the sidebar keeps the same
   // document under the new name with no stale duplicate. Renaming is a direct on-disk move,
   // independent of any open editor / edit mode, so it persists immediately.
-  ipcMain.handle('documents:rename-file', (_event, oldPath: string, newPath: string) => {
+  scopedHandleFor(ipcMain, 'documents:rename-file', (_event, oldPath: string, newPath: string) => {
     guardRenameTarget(io, oldPath, newPath)
     io.rename(oldPath, newPath)
     rePointFileRecord(oldPath, newPath)
@@ -1018,7 +1084,7 @@ export function registerDocumentHandlers(
   // record re-pointing so no stale duplicate is left behind.
   // Single slot by design. It is NOT bound to a global Ctrl+Z: the renderer only calls it
   // when focus is in the sidebar, so the editor keeps Ctrl+Z for text undo.
-  ipcMain.handle('documents:undo-rename', () => {
+  scopedHandleFor(ipcMain, 'documents:undo-rename', (_event) => {
     const last = lastRename
     if (!last) return { ok: false, reason: 'none' as const }
     // Refuse instead of clobbering: the old name may have been taken again since the rename,
@@ -1048,7 +1114,7 @@ export function registerDocumentHandlers(
   // documents alone, which has no node to represent an empty folder — and a folder the
   // user just created is always empty. Hidden directories are skipped: .git/.cache are
   // noise in a document workspace and can be enormous.
-  ipcMain.handle('documents:list-folders', (_event, folderPath: string) => {
+  scopedHandleFor(ipcMain, 'documents:list-folders', (_event, folderPath: string) => {
     const MAX_DEPTH = 8
     const out: string[] = []
     const walk = (dir: string, depth: number): void => {
@@ -1077,7 +1143,7 @@ export function registerDocumentHandlers(
   // Code behaviour. trashItem rejects on failure; per Electron's guidance we must NOT silently
   // fall back to a permanent delete, so a non-ENOENT rejection is re-thrown (the caller logs it
   // and keeps the folder in the tree). A folder already gone (ENOENT) is treated as success.
-  ipcMain.handle('documents:delete-folder', async (_event, folderPath: string) => {
+  scopedHandleFor(ipcMain, 'documents:delete-folder', async (_event, folderPath: string) => {
     const resolved = resolve(folderPath)
     const parent = dirname(resolved)
     // Release the watcher first: on Windows a directory that chokidar still holds open
@@ -1108,55 +1174,68 @@ export function registerDocumentHandlers(
     notifyFolderChanged(parent)
   })
 
-  // Import markdown file from disk
-  ipcMain.handle('documents:import', (_event, filePath: string) => {
-    // D20: never store a document outside the workspace root (see outsideWorkspaceRoot).
-    if (outsideWorkspaceRoot(filePath)) return null
-    let text: string
-    let encoding: string
-    let confidence: number
-    try {
-      ;({ text, encoding, confidence } = readMarkdownText(filePath, io))
-    } catch {
-      return null
-    }
-    const title = stripMarkdownExt(basename(filePath))
-    const now = Date.now()
-    const wordCount = countWords(text)
+  // Import a Markdown file from disk. `opts.external` is an explicit opt-in used ONLY by the
+  // four-way "open here, keep workspace" choice: it admits a file outside the workspace root,
+  // marks it external (so the tree / search / replace exclude it) and gives it a single-file
+  // watch. Every other caller keeps the D20 single-root backstop.
+  scopedHandleFor(
+    ipcMain,
+    'documents:import',
+    (_event, filePath: string, opts?: { external?: boolean }) => {
+      const external = opts?.external === true
+      if (external ? !filePath : outsideWorkspaceRoot(filePath)) return null
+      let text: string
+      let encoding: string
+      let confidence: number
+      try {
+        ;({ text, encoding, confidence } = readMarkdownText(filePath, io))
+      } catch {
+        return null
+      }
+      const title = stripMarkdownExt(basename(filePath))
+      const now = Date.now()
+      const wordCount = countWords(text)
 
-    // Check if already imported (by file path)
-    const existing = storeGetByPath(filePath)
-    if (existing) {
-      // Re-open an already-imported file: refresh the record from the current on-disk content,
-      // avoiding stale cached content (e.g. unsaved changes from a previous session, or external edits).
-      return storeUpdate(existing.id, {
+      // Check if already imported (by file path)
+      const existing = storeGetByPath(filePath)
+      if (existing) {
+        // Re-open an already-imported file: refresh the record from the current on-disk content,
+        // avoiding stale cached content (e.g. unsaved changes from a previous session, or external edits).
+        const updated = storeUpdate(existing.id, {
+          content: text,
+          wordCount,
+          encoding,
+          encodingConfidence: confidence,
+          updatedAt: now,
+          external: existing.external || external,
+        })
+        if (external) watchExternalFile(filePath)
+        return updated
+      }
+
+      const doc = makeDocument({
+        id: randomUUID(),
+        title,
+        folderPath: '',
+        filePath,
         content: text,
         wordCount,
         encoding,
         encodingConfidence: confidence,
+        createdAt: now,
         updatedAt: now,
+        memoryOnly: false,
+        external,
       })
-    }
-
-    const doc = makeDocument({
-      id: randomUUID(),
-      title,
-      folderPath: '',
-      filePath,
-      content: text,
-      wordCount,
-      encoding,
-      encodingConfidence: confidence,
-      createdAt: now,
-      updatedAt: now,
-      memoryOnly: false,
-    })
-    return storeUpsert(doc)
-  })
+      const stored = storeUpsert(doc)
+      if (external) watchExternalFile(filePath)
+      return stored
+    },
+  )
 
   // Batch import multiple markdown files
   // Returns array of imported documents (skips already-imported files, but includes them in result)
-  ipcMain.handle('documents:import-many', (_event, filePaths: string[]) => {
+  scopedHandleFor(ipcMain, 'documents:import-many', (_event, filePaths: string[]) => {
     const results: Document[] = []
     const now = Date.now()
 
@@ -1219,7 +1298,7 @@ export function registerDocumentHandlers(
   // sidebar list and the document fetch) stalls. That is the "the whole app
   // freezes for a moment when I switch files" symptom, and it is intermittent
   // precisely because it depends on the storage path's current latency.
-  ipcMain.handle('documents:eol', async (_event, filePath: string) => {
+  scopedHandleFor(ipcMain, 'documents:eol', async (_event, filePath: string) => {
     let handle: ReadHandle | undefined
     try {
       handle = await io.openForRead(filePath)
@@ -1240,7 +1319,7 @@ export function registerDocumentHandlers(
   })
 
   // File details: return the on-disk size / creation time / modification time (for the details dialog)
-  ipcMain.handle('documents:stat', (_event, filePath: string) => {
+  scopedHandleFor(ipcMain, 'documents:stat', (_event, filePath: string) => {
     try {
       const st = io.stat(filePath)
       return {
@@ -1256,7 +1335,7 @@ export function registerDocumentHandlers(
 
   // Manual encoding switch: re-decode the on-disk file with the user-selected encoding and update store content + encoding metadata.
   // Does not write to disk (file bytes unchanged); only refreshes the in-memory decode result for the editor to re-render.
-  ipcMain.handle('documents:set-encoding', (_event, id: string, enc: string) => {
+  scopedHandleFor(ipcMain, 'documents:set-encoding', (_event, id: string, enc: string) => {
     const existing = storeGet(id)
     if (!existing) return null
     let buf: Buffer

@@ -12,6 +12,7 @@ import {
   PenLine,
 } from 'lucide-react'
 import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
+import { switchWorkspace } from '../../lib/workspaceSwitch'
 import { useUIStore, selectFileLocked } from '../../store/ui'
 import {
   useDocument,
@@ -251,7 +252,7 @@ export function EditorPane(): React.ReactElement {
     // Save As to a location OUTSIDE the current root re-roots the workspace (ADR-0023). Asked
     // BEFORE the write: after it, refusing would leave the user with a file on disk that the app
     // refuses to acknowledge as open.
-    const currentRoot = useUIStore.getState().activeFolder
+    const currentRoot = useUIStore.getState().workspaceRoot
     if (currentRoot && !isDirInFolder(newFilePath, currentRoot)) {
       const ok = await window.api.dialog.confirm({
         message: t('app.saveAsReroot'),
@@ -355,6 +356,11 @@ export function EditorPane(): React.ReactElement {
       }
     } catch (e) {
       console.error('Reload failed', e)
+      // A discard-on-switch-to-read-only already dropped the in-memory edits, so a silent
+      // failure here would leave stale text on screen with dirty === false and no way for the
+      // user to notice. Native window.alert is OS-modal (not the ADR-0009 app-modal dialog,
+      // which is reserved for unsaved decisions); focus returns to the renderer on close.
+      window.alert(t('app.reloadFailed'))
     } finally {
       useUIStore.getState().setSaving(false)
     }
@@ -463,7 +469,7 @@ export function EditorPane(): React.ReactElement {
   // Consume a pending file action requested by another component (the sidebar's "Rename"
   // menu; the status bar's save/save-as/reload items). Each action is
   // dispatched to its handler once the active document is fully loaded; the request is cleared
-  // after dispatch (or immediately when the document is not editable / not yet ready).
+  // after dispatch (or immediately when the action is not allowed in the current mode / not ready).
   const pendingFileAction = useUIStore((s) => s.pendingFileAction)
   const requestFileAction = useUIStore((s) => s.requestFileAction)
   useEffect(() => {
@@ -481,12 +487,15 @@ export function EditorPane(): React.ReactElement {
     }
     // save / saveAs / reload: act on the currently active document.
     if (!doc || isLoading) return
-    if (!editable) {
+    // Reload stays available in read-only mode, just like the native menu and the toolbar:
+    // discarding on switch-to-read-only flips editable BEFORE requesting the reload. Save and
+    // Save As still need edit mode — read-only has no draft worth persisting.
+    if (!editable && pendingFileAction.type !== 'reload') {
       requestFileAction(null)
       return
     }
-    // After the rename branch above and the !editable early-return, the only remaining
-    // pendingFileAction types are save/saveAs/reload (rename is handled and returns).
+    // After the rename branch above and the mode gate, the only remaining pendingFileAction
+    // types are save/saveAs/reload (rename is handled and returns).
     switch (pendingFileAction.type) {
       case 'save':
         void handleSave()
@@ -553,7 +562,7 @@ export function EditorPane(): React.ReactElement {
 
   const handleNavigateToSegment = useCallback(
     (segments: string[], index: number) => {
-      useUIStore.getState().setActiveFolder(segmentDir(segments, index))
+      void switchWorkspace(segmentDir(segments, index))
     },
     [segmentDir],
   )
@@ -582,6 +591,9 @@ export function EditorPane(): React.ReactElement {
     copyFileName: () => void handleCopyPath('name'),
     copyFullPath: () => void handleCopyPath('full'),
     showInFolder: () => revealInFolder(doc?.filePath as string),
+    openInNewWindow: () => {
+      if (doc?.filePath) void window.api.app.openInNewWindow(doc.filePath)
+    },
     save: () => void handleSave(),
     saveAs: () => void handleSaveAs(),
     reload: () => void handleReload(),
@@ -843,6 +855,15 @@ export function EditorPane(): React.ReactElement {
                     />
                   </ContextMenuContent>
                 </ContextMenu>
+                {doc?.external && (
+                  <span
+                    data-testid="external-doc-badge"
+                    className="text-2xs font-medium border border-accent/40 text-accent rounded px-1 py-px shrink-0"
+                    title={t('app.workspaceExternalTitle')}
+                  >
+                    {t('editor.externalBadge')}
+                  </span>
+                )}
                 {editable && (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1000,7 +1021,7 @@ export function EditorPane(): React.ReactElement {
                           <FileMenuItems
                             variant="folder"
                             folder={{
-                              openInSidebar: () => useUIStore.getState().setActiveFolder(dir),
+                              openInSidebar: () => void switchWorkspace(dir),
                               showInFolder: () => revealInFolder(dir),
                               copyPath: () => void window.api.clipboard.writeText(dir),
                             }}

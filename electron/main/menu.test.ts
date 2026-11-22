@@ -418,8 +418,9 @@ describe('native menu', () => {
     ]) {
       expect(labelByRole.get(role), `role ${role} must be kept and carry a label`).toBeTruthy()
     }
-    // File menu: quit on Windows/Linux, close on macOS (both carry their own localized label).
-    expect(labelByRole.has('quit') || labelByRole.has('close')).toBe(true)
+    // File menu ends with Close Window on every platform; there is no app-level Quit role.
+    expect(labelByRole.has('close')).toBe(true)
+    expect(labelByRole.has('quit')).toBe(false)
   })
 
   it('builds the darwin-specific menu (close role + hiddenInset title bar)', () => {
@@ -501,7 +502,7 @@ describe('native menu', () => {
     }
     expect(sent).toBe(true)
     // The folder path itself is sent (not the expanded file list) so the renderer can
-    // pin activeFolder and the watched root to the directory the user picked
+    // pin workspaceRoot and the watched root to the directory the user picked
     expect(h.openFilesSent).toContainEqual(['menu:open-files', ['/some/folder']])
   })
 

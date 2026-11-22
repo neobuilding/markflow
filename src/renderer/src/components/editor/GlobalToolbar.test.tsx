@@ -5,17 +5,24 @@ import '../../i18n'
 import { GlobalToolbar } from './GlobalToolbar'
 import { TooltipProvider } from '../ui/tooltip'
 import { useUIStore } from '../../store/ui'
+import { useNavigationHistory } from '../../store/navigationHistory'
 import { formatShortcut } from '../../lib/utils'
 
 const h = vi.hoisted(() => {
   const createDraft = vi.fn(async () => {})
   // The "at most one draft" predicate the button's disabled state is derived from.
   const hasDraft = vi.fn(() => false)
-  return { createDraft, hasDraft }
+  const moveNavigationHistory = vi.fn(async (_delta: -1 | 1) => true)
+  const moveToHistoryIndex = vi.fn(async (_index: number) => true)
+  return { createDraft, hasDraft, moveNavigationHistory, moveToHistoryIndex }
 })
 vi.mock('../../hooks/useDocuments', () => ({
   createDraft: () => h.createDraft(),
   useHasMemoryOnlyDraft: () => h.hasDraft(),
+}))
+vi.mock('../../lib/documentNavigation', () => ({
+  moveNavigationHistory: (delta: -1 | 1) => h.moveNavigationHistory(delta),
+  moveToHistoryIndex: (index: number) => h.moveToHistoryIndex(index),
 }))
 
 // The global toolbar was extracted from `EditorPane` into its own component (ADR-0030). This suite
@@ -36,6 +43,9 @@ describe('GlobalToolbar', () => {
     onSaveAs.mockClear()
     onReload.mockClear()
     onClose.mockClear()
+    h.moveNavigationHistory.mockClear()
+    h.moveToHistoryIndex.mockClear()
+    useNavigationHistory.getState().reset()
     useUIStore.setState({
       activeDocumentId: null,
       editable: true,
@@ -73,10 +83,100 @@ describe('GlobalToolbar', () => {
     expect(screen.getByTestId('close-btn')).toBeInTheDocument()
   })
 
+  // Browser-style document history (ADR-0038 §3.4): Back/Forward live before Quick Open and are
+  // available even with no document open — navigation history survives Close file.
+  describe('navigation history buttons', () => {
+    it('renders both buttons while no document is open', () => {
+      mount()
+      expect(screen.getByTestId('nav-back-btn')).toBeInTheDocument()
+      expect(screen.getByTestId('nav-forward-btn')).toBeInTheDocument()
+    })
+
+    it('disables both at the ends of an empty history', () => {
+      mount()
+      expect(screen.getByTestId('nav-back-btn')).toBeDisabled()
+      expect(screen.getByTestId('nav-forward-btn')).toBeDisabled()
+    })
+
+    it('enables Back but not Forward after navigating forward', () => {
+      useNavigationHistory.getState().push('/a.md')
+      useNavigationHistory.getState().push('/b.md')
+      mount()
+      expect(screen.getByTestId('nav-back-btn')).not.toBeDisabled()
+      expect(screen.getByTestId('nav-forward-btn')).toBeDisabled()
+    })
+
+    it('enables Forward but not Back after moving back', () => {
+      useNavigationHistory.getState().push('/a.md')
+      useNavigationHistory.getState().push('/b.md')
+      act(() => useNavigationHistory.getState().setCursor(0))
+      mount()
+      expect(screen.getByTestId('nav-back-btn')).toBeDisabled()
+      expect(screen.getByTestId('nav-forward-btn')).not.toBeDisabled()
+    })
+
+    it('wires the buttons to move back and forward along history', () => {
+      useNavigationHistory.getState().push('/a.md')
+      useNavigationHistory.getState().push('/b.md')
+      mount()
+      fireEvent.click(screen.getByTestId('nav-back-btn'))
+      expect(h.moveNavigationHistory).toHaveBeenCalledWith(-1)
+      act(() => useNavigationHistory.getState().setCursor(0))
+      fireEvent.click(screen.getByTestId('nav-forward-btn'))
+      expect(h.moveNavigationHistory).toHaveBeenCalledWith(1)
+    })
+
+    it('opens a right-click menu whose items jump the cursor without pushing (P5)', async () => {
+      const hist = useNavigationHistory.getState()
+      hist.push('/a.md', { title: 'A' })
+      hist.push('/b.md', { title: 'B' })
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('nav-back-btn'))
+      const item = await screen.findByTestId('nav-back-item-0')
+      fireEvent.click(item)
+      expect(h.moveToHistoryIndex).toHaveBeenCalledWith(0)
+    })
+
+    it('caps the right-click menu at the ten most recent entries (ADR-0039 §3.5)', async () => {
+      const hist = useNavigationHistory.getState()
+      for (let i = 0; i < 12; i++) hist.push(`/doc-${i}.md`, { title: `Doc ${i}` })
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('nav-back-btn'))
+      // cursor is at 11; the ten most recent earlier entries are indices 10..1.
+      expect(await screen.findByTestId('nav-back-item-10')).toBeInTheDocument()
+      expect(screen.queryByTestId('nav-back-item-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('nav-back-item-0')).not.toBeInTheDocument()
+    })
+
+    it('disables both buttons while a file transaction is locked', () => {
+      useNavigationHistory.getState().push('/a.md')
+      useNavigationHistory.getState().push('/b.md')
+      mount()
+      expect(screen.getByTestId('nav-back-btn')).not.toBeDisabled()
+      try {
+        act(() => useUIStore.getState().setPrinting(true))
+        expect(screen.getByTestId('nav-back-btn')).toBeDisabled()
+        expect(screen.getByTestId('nav-forward-btn')).toBeDisabled()
+      } finally {
+        act(() => useUIStore.getState().setPrinting(false))
+      }
+      expect(screen.getByTestId('nav-back-btn')).not.toBeDisabled()
+    })
+
+    it('advertises the browser-style shortcut in each tooltip', async () => {
+      useNavigationHistory.getState().push('/a.md')
+      useNavigationHistory.getState().push('/b.md')
+      mount()
+      screen.getByTestId('nav-back-btn').focus()
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Back (')
+      screen.getByTestId('nav-back-btn').blur()
+    })
+  })
+
   // The single direct-create entry point. It is unconditional: an in-memory draft needs no
   // folder, unlike the sidebar's filesystem-bound "New File" button.
   it('always renders the New Draft button, even with no document or folder open', () => {
-    useUIStore.setState({ activeDocumentId: null, activeFolder: null })
+    useUIStore.setState({ activeDocumentId: null, workspaceRoot: null })
     mount()
     expect(screen.getByTestId('new-document-btn')).toBeInTheDocument()
     expect(screen.getByTestId('new-document-btn')).not.toBeDisabled()

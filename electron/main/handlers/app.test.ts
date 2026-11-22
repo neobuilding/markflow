@@ -4,7 +4,11 @@ import { createMemoryDiskIO, type MemoryDiskIO } from '../lib/disk-io'
 
 const handlers: Record<string, (...a: unknown[]) => unknown> = {}
 const clipboardMock = vi.hoisted(() => ({ writeText: vi.fn(), write: vi.fn() }))
-const shellMock = vi.hoisted(() => ({ showItemInFolder: vi.fn(), openExternal: vi.fn() }))
+const shellMock = vi.hoisted(() => ({
+  showItemInFolder: vi.fn(),
+  openExternal: vi.fn(),
+  openPath: vi.fn(async () => ''),
+}))
 const h = vi.hoisted(() => ({ version: '9.9.9' }))
 const nativeImageMock = vi.hoisted(() => ({
   createFromBuffer: (buf: Buffer) => ({
@@ -40,12 +44,14 @@ vi.mock('../ipc/appdoc', () => ({ resolveAppdocPath: vi.fn(() => null) }))
 
 import { registerAppHandlers } from './app'
 import { pendingInitialPaths } from '../state'
+import { currentContext } from '../model/windowContext'
 
 describe('app handlers', () => {
   let mem: MemoryDiskIO
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k]
     pendingInitialPaths.length = 0
+    currentContext().pendingPaths.length = 0
     mem = createMemoryDiskIO()
     registerAppHandlers(mem)
   })
@@ -58,6 +64,16 @@ describe('app handlers', () => {
     expect(pendingInitialPaths.length).toBe(0)
   })
 
+  it('drains a window context pending paths before the shared launch queue (P3)', () => {
+    currentContext().pendingPaths.push('/window-only.md')
+    pendingInitialPaths.push('/launch.md')
+    const out = handlers['app:get-initial-paths'](null) as string[]
+    expect(out).toEqual(['/window-only.md'])
+    // The window's own queue wins; the shared launch paths remain untouched for other windows.
+    expect(currentContext().pendingPaths).toEqual([])
+    expect(pendingInitialPaths).toEqual(['/launch.md'])
+  })
+
   it('shows a file in the folder via the shell', () => {
     handlers['app:show-in-folder'](null, '/x.md')
     expect(handlers['app:show-in-folder']).toBeDefined()
@@ -68,6 +84,17 @@ describe('app handlers', () => {
       throw new Error('nope')
     })
     expect(() => handlers['app:show-in-folder'](null, '/x.md')).not.toThrow()
+  })
+
+  it('opens a local file with the OS default application via shell.openPath', async () => {
+    shellMock.openPath.mockResolvedValueOnce('')
+    await expect(handlers['app:open-path'](null, 'C:/notes/photo.png')).resolves.toBe('')
+    expect(shellMock.openPath).toHaveBeenCalledWith('C:/notes/photo.png')
+  })
+
+  it('reports shell.openPath failures as a string instead of rejecting', async () => {
+    shellMock.openPath.mockRejectedValueOnce(new Error('no handler'))
+    await expect(handlers['app:open-path'](null, '/n/a.bin')).resolves.toBe('Failed to open file')
   })
 
   it('returns the app version', () => {

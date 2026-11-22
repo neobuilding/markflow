@@ -47,6 +47,11 @@ export const onDocumentRefresh = (callback: (data: { id: string }) => void) =>
 export const onOpenPaths = (callback: (paths: string[]) => void) =>
   onIpc('app:open-paths', callback)
 
+// Another window asked this one to reveal a file that lives in its workspace (the "reuse
+// existing window" branch of open-in-new-window).
+export const onRevealFile = (callback: (filePath: string) => void) =>
+  onIpc('app:reveal-file', callback)
+
 // Main requests the renderer to close the workspace (running the unified unsaved
-// prompt) before quitting the app.
+// prompt) as part of THIS window's close; the renderer calls allowQuit() once safe.
 export const onAppRequestQuit = (callback: () => void) => onIpc('app:request-quit', callback)

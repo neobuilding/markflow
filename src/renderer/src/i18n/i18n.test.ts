@@ -41,7 +41,6 @@ describe('i18n dictionaries', () => {
     expect(zhCN['menu.toggleFullScreen']).toBe('切换全屏')
     expect(zhCN['menu.minimize']).toBe('最小化')
     expect(zhCN['menu.zoom']).toBe('缩放')
-    expect(zhCN['menu.quit']).toBe('退出')
     expect(zhCN['menu.closeWindow']).toBe('关闭窗口')
   })
 

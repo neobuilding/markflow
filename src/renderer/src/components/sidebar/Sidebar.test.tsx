@@ -55,6 +55,8 @@ const undoRenameMock = vi.fn(async (): Promise<{ ok: boolean; reason: string }> 
 // Directories reported by the main process for the active folder; set per test so the
 // tree can be exercised with folders that hold no document.
 let folderDirs: string[] = []
+// Detail query for the active document, used by Reveal in sidebar. Set per test.
+let activeDoc: Document | undefined
 
 // Platform seam: name comparison is case-insensitive off Linux (VS Code's rule), so the tests
 // below pin the platform instead of inheriting whatever host happens to run them.
@@ -71,6 +73,7 @@ function restoreUserAgent() {
 
 vi.mock('../../hooks/useDocuments', () => ({
   useDocuments: () => ({ data: allDocs, isLoading: false }),
+  useDocument: () => ({ data: activeDoc }),
   useDeleteDocument: () => ({ mutate: deleteMock }),
   useCreateDocument: () => ({ mutateAsync: createMock, isPending: false }),
   useOpenPaths: () => ({ mutate: openPathsMock, isPending: false }),
@@ -82,6 +85,14 @@ vi.mock('../../hooks/useDocuments', () => ({
   useUndoRename: () => ({ mutateAsync: undoRenameMock, isPending: false }),
   useFolderDirs: () => ({ data: folderDirs }),
   createDraft: () => createDraftMock(),
+}))
+
+// Sidebar delegates "enter / go-up / open-in-sidebar" to switchWorkspace. The full transaction
+// (IPC swap, buffer migration, history) is covered by workspaceSwitch.test.ts; here we only need
+// the UI to invoke it and reflect the root change, so the mock mirrors the root locally.
+const switchWorkspaceMock = vi.hoisted(() => vi.fn())
+vi.mock('../../lib/workspaceSwitch', () => ({
+  switchWorkspace: switchWorkspaceMock,
 }))
 
 function mount() {
@@ -98,8 +109,13 @@ function mount() {
 }
 
 beforeEach(() => {
+  activeDoc = undefined
+  switchWorkspaceMock.mockImplementation((root: string) => {
+    useUIStore.getState().setWorkspaceRoot(root)
+    return Promise.resolve(true)
+  })
   useUIStore.getState().setSidebarOpen(true)
-  useUIStore.getState().setActiveFolder(null)
+  useUIStore.getState().setWorkspaceRoot(null)
   useUIStore.getState().setActiveDocumentId(null)
   useUIStore.getState().setDirty(false)
   // "Show All Folders" and the just-created-folder pins are session state on the same
@@ -200,14 +216,14 @@ describe('Sidebar', () => {
   })
 
   it('lists documents once a folder is active', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     // memory-only draft + folder doc both listed
     expect(await screen.findAllByTestId('doc-item')).toHaveLength(2)
   })
 
   it('hides a folder that holds no Markdown document by default', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     folderDirs = ['/docs/empty']
     mount()
     // Default: the tree is derived from documents alone, so the empty folder present in
@@ -217,7 +233,7 @@ describe('Sidebar', () => {
   })
 
   it('shows every folder once "Show All Folders" is turned on', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     useUIStore.getState().setShowAllFolders(true)
     folderDirs = ['/docs/empty']
     mount()
@@ -225,7 +241,7 @@ describe('Sidebar', () => {
   })
 
   it('keeps a just-created folder visible even while it is still empty', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     // Created this session, so it is pinned: without the pin the filter would hide it
     // immediately and naming a folder would look like it did nothing.
     useUIStore.setState({ recentlyCreatedFolders: new Set(['/docs/empty']) })
@@ -235,7 +251,7 @@ describe('Sidebar', () => {
   })
 
   it('creates a folder directly under the current folder', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     // The current folder has no tree row of its own, so the entry lives in its own bar.
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
@@ -247,7 +263,7 @@ describe('Sidebar', () => {
   })
 
   it('shows the name-clash note when the main process refuses a duplicate folder (EEXIST)', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     createFolderMock.mockRejectedValueOnce(Object.assign(new Error('EEXIST'), { code: 'EEXIST' }))
     mount()
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
@@ -262,7 +278,7 @@ describe('Sidebar', () => {
   })
 
   it('shows a generic note when folder creation fails for a non-clash reason', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     createFolderMock.mockRejectedValueOnce(Object.assign(new Error('EPERM'), { code: 'EPERM' }))
     mount()
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
@@ -278,14 +294,14 @@ describe('Sidebar', () => {
   // The sidebar's + button is filesystem-bound: it opens the inline naming row that writes a
   // real .md file. The always-available in-memory "New Draft" moved to the global toolbar.
   it('hides the New File button entirely when no folder is open', () => {
-    useUIStore.getState().setActiveFolder(null)
+    useUIStore.getState().setWorkspaceRoot(null)
     mount()
     expect(screen.queryByTestId('side-new-file-btn')).toBeNull()
     expect(screen.queryByTestId('new-document-btn')).toBeNull()
   })
 
   it('opens the inline New File naming row from the sidebar button', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     fireEvent.click(await screen.findByTestId('side-new-file-btn'))
     expect(await screen.findByTestId('file-create-row')).toBeTruthy()
@@ -309,7 +325,7 @@ describe('Sidebar', () => {
   })
 
   it('deletes a document via the context menu', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     const items = await screen.findAllByTestId('doc-item')
     // open the three-dot menu of the saved file (a.md) and choose delete
@@ -383,7 +399,7 @@ describe('Sidebar — interactions', () => {
       }),
       doc({ id: 'draft', title: 'Untitled', folderPath: '', filePath: '' }),
     ])
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     useUIStore.getState().setActiveDocumentId(null)
     useUIStore.getState().setDirty(false)
     ;(window as unknown as { api: unknown }).api = {
@@ -435,9 +451,9 @@ describe('Sidebar — interactions', () => {
     allDocs.length = 0
     try {
       // This describe's beforeEach pins an active folder, so the welcome state would never
-      // show. Clear it (the welcome state requires !activeFolder && no drafts) to exercise the
+      // show. Clear it (the welcome state requires !workspaceRoot && no drafts) to exercise the
       // sidebar's New Draft delegation from the empty state.
-      useUIStore.getState().setActiveFolder(null)
+      useUIStore.getState().setWorkspaceRoot(null)
       useUIStore.getState().setActiveDocumentId('b')
       useUIStore.getState().setActiveDocumentTitle('Note B')
       useUIStore.getState().setDirty(true)
@@ -513,14 +529,14 @@ describe('Sidebar — interactions', () => {
     mount()
     await userEvent.click(screen.getByTestId('close-workspace-btn'))
     await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
-    expect(useUIStore.getState().activeFolder).toBe('/docs')
+    expect(useUIStore.getState().workspaceRoot).toBe('/docs')
   })
 
   it('closes the workspace after confirming unsaved discard', async () => {
     useUIStore.getState().setDirty(true)
     mount()
     await userEvent.click(screen.getByTestId('close-workspace-btn'))
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBeNull())
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBeNull())
   })
 
   it('closes the workspace directly with no unsaved changes (skips confirm)', async () => {
@@ -535,7 +551,7 @@ describe('Sidebar — interactions', () => {
     }
     mount()
     await userEvent.click(screen.getByTestId('close-workspace-btn'))
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBeNull())
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBeNull())
     expect(confirm).not.toHaveBeenCalled()
   })
 
@@ -666,51 +682,51 @@ describe('Sidebar — interactions', () => {
   })
 
   it('navigates to the parent folder via the up button', async () => {
-    useUIStore.getState().setActiveFolder('/docs/sub')
+    useUIStore.getState().setWorkspaceRoot('/docs/sub')
     mount()
     // parentFolder('/docs/sub') = '/docs', so the button is enabled.
     const upBtn = screen.getByTestId('up-folder-btn') as HTMLButtonElement
     expect(upBtn.disabled).toBe(false)
     await userEvent.click(upBtn)
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('/docs'))
   })
 
   it('disables the up button at a root-level folder (no parent)', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     // '/docs' has a single path segment, so there is no parent folder to go up to.
     const upBtn = screen.getByTestId('up-folder-btn') as HTMLButtonElement
     expect(upBtn.disabled).toBe(true)
     await userEvent.click(upBtn)
     // A disabled button is a no-op: the active folder stays put.
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('/docs'))
   })
 
   it('renders the root folder name when the active folder ends with a separator', async () => {
-    useUIStore.getState().setActiveFolder('/docs/')
+    useUIStore.getState().setWorkspaceRoot('/docs/')
     mount()
     // '/docs/'.split('/').filter(Boolean) = ['docs'], so pop() is 'docs' (no fallback).
-    // Use a root-level path with a trailing separator to exercise the `?? activeFolder` fallback.
-    useUIStore.getState().setActiveFolder('/')
+    // Use a root-level path with a trailing separator to exercise the `?? workspaceRoot` fallback.
+    useUIStore.getState().setWorkspaceRoot('/')
     // The folder name falls back to the full path when the last segment is empty.
     await waitFor(() => expect(screen.getByText('/')).toBeInTheDocument())
   })
 
   it('enters a subfolder via the enter button in the tree', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     // Expand the nested 'sub' folder so its enter button is rendered.
     await userEvent.click(screen.getByText('sub'))
     expect(await screen.findByText('b.md')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('enter-folder-btn'))
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs/sub'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('/docs/sub'))
   })
 
   it('enters a subfolder by double-clicking the folder row', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     fireEvent.doubleClick(screen.getByText('sub'))
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs/sub'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('/docs/sub'))
   })
 })
 
@@ -718,7 +734,7 @@ describe('Sidebar — external deletion (VS Code-style missing document)', () =>
   it('strikes through a document whose file was deleted outside the app', () => {
     // The list only renders once a folder is active (otherwise the welcome state shows),
     // matching the existing "lists documents once a folder is active" test.
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     allDocs.push({
       id: 'gone',
       title: 'Gone',
@@ -776,7 +792,7 @@ describe('Sidebar document item context menu', () => {
         wordCount: 0,
       },
     )
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     useUIStore.getState().setActiveDocumentId(null)
     useUIStore.getState().setDirty(false)
     useUIStore.getState().setEditable(true)
@@ -902,9 +918,9 @@ describe('Sidebar document item context menu', () => {
   it('renders a memory-only row whose filePath is nullish (data-path falls back to empty)', async () => {
     // Covers the `doc.filePath ?? ''` RIGHT branch: a memory-only draft whose filePath is
     // nullish (never assigned a path) must still render, with data-path defaulting to ''.
-    // activeFolder is null so the folder tree — which would call dirName on every doc and crash
+    // workspaceRoot is null so the folder tree — which would call dirName on every doc and crash
     // on a nullish path — stays empty, and the doc falls into the "Unsaved drafts" group instead.
-    useUIStore.getState().setActiveFolder(null)
+    useUIStore.getState().setWorkspaceRoot(null)
     useUIStore.getState().setActiveDocumentId(null)
     const saved = [...allDocs]
     allDocs.length = 0
@@ -1137,7 +1153,7 @@ describe('Sidebar — current folder bar context menu', () => {
     seed([
       d({ id: 'a', title: 'Note A', folderPath: '/docs', filePath: '/docs/a.md', wordCount: 3 }),
     ])
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     useUIStore.getState().setActiveDocumentId(null)
     useUIStore.getState().setDirty(false)
     useUIStore.getState().setExportOpen(false)
@@ -1184,13 +1200,13 @@ describe('Sidebar — current folder bar context menu', () => {
   })
 
   it('enables go-up for a nested folder and navigates to the parent', async () => {
-    useUIStore.getState().setActiveFolder('/docs/sub')
+    useUIStore.getState().setWorkspaceRoot('/docs/sub')
     mount()
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
     const up = await screen.findByTestId('side-go-up')
     expect(up).not.toHaveAttribute('aria-disabled', 'true')
     fireEvent.click(up)
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('/docs'))
   })
 
   it('disables close-workspace while exporting', async () => {
@@ -1226,7 +1242,7 @@ describe('Sidebar — current folder bar context menu', () => {
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
     fireEvent.click(await screen.findByTestId('side-close-workspace'))
     await waitFor(() => expect(window.api.dialog.confirm).toHaveBeenCalled())
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBeNull())
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBeNull())
   })
 })
 
@@ -1261,7 +1277,7 @@ describe('Sidebar — folder row context menu', () => {
       }),
       d({ id: 'draft', title: 'Untitled', folderPath: '', filePath: '' }),
     ])
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     useUIStore.getState().setActiveDocumentId(null)
     useUIStore.getState().setDirty(false)
     ;(window as unknown as { api: unknown }).api = {
@@ -1296,7 +1312,7 @@ describe('Sidebar — folder row context menu', () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-open-folder'))
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs/sub'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('/docs/sub'))
   })
 
   it('collapses via the menu after expanding', async () => {
@@ -1545,7 +1561,7 @@ describe('Sidebar — folder high-order items', () => {
       }),
       d({ id: 'draft', title: 'Untitled', folderPath: '', filePath: '' }),
     ])
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     useUIStore.getState().setActiveDocumentId(null)
     useUIStore.getState().setDirty(false)
     ;(window as unknown as { api: unknown }).api = {
@@ -1621,7 +1637,7 @@ describe('Sidebar — folder high-order items', () => {
 
   it('opens the search panel from the welcome-state menu', async () => {
     seed([])
-    useUIStore.getState().setActiveFolder(null)
+    useUIStore.getState().setWorkspaceRoot(null)
     useUIStore.getState().setSearchOpen(false)
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-welcome-state'))
@@ -1669,7 +1685,7 @@ describe('Sidebar — folder high-order items', () => {
       d({ id: 'draft', title: 'Untitled', folderPath: '', filePath: '' }),
     ])
     folderDirs = ['/docs', '/docs/zzz']
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     // The folder listing only seeds the tree when the user asks for all folders.
     useUIStore.getState().setShowAllFolders(true)
     mount()
@@ -1679,7 +1695,7 @@ describe('Sidebar — folder high-order items', () => {
     expect(await screen.findByText('zzz')).toBeInTheDocument()
   })
 
-  it('renames the active folder from the current-folder-bar menu and re-points activeFolder', async () => {
+  it('renames the active folder from the current-folder-bar menu and re-points workspaceRoot', async () => {
     mount()
     fireEvent.contextMenu(screen.getByTestId('current-folder-bar'))
     fireEvent.click(await screen.findByTestId('side-rename-folder'))
@@ -1700,7 +1716,7 @@ describe('Sidebar — folder high-order items', () => {
   // lives under /docs/sub; we expand that folder, rename it to 'renamed', and assert the new
   // folder is still expanded (its child stays visible) and the old name is gone. The mock
   // rename also re-points the document data so the tree renders the renamed folder; the
-  // component re-points the expanded set via repointExpandedSet, and since activeFolder
+  // component re-points the expanded set via repointExpandedSet, and since workspaceRoot
   // ('/docs') is not inside the renamed folder it stays put.
   it('keeps a renamed subfolder expanded', async () => {
     mount()
@@ -1713,7 +1729,7 @@ describe('Sidebar — folder high-order items', () => {
     // The mock rename must also re-point the document data so the tree renders the renamed
     // folder. We return a NEW array (not mutate in place) so the component's useMemo over
     // `allDocs` recomputes and the tree reflects the rename. The component re-points the
-    // expanded set (repointExpandedSet), and since activeFolder ('/docs') is not inside the
+    // expanded set (repointExpandedSet), and since workspaceRoot ('/docs') is not inside the
     // renamed folder it stays put.
     renameFolderMock.mockImplementation(async () => {
       allDocs = allDocs.map((doc) =>
@@ -1782,7 +1798,7 @@ describe('Sidebar — create row placement (folder / file boundary)', () => {
       d({ id: 'sub', folderPath: '/docs/sub', filePath: '/docs/sub/x.md' }),
     ])
     folderDirs = ['/docs/sub']
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
     fireEvent.click(await screen.findByTestId('side-bg-new-file'))
@@ -1796,7 +1812,7 @@ describe('Sidebar — create row placement (folder / file boundary)', () => {
       d({ id: 'sub', folderPath: '/docs/sub', filePath: '/docs/sub/x.md' }),
     ])
     folderDirs = ['/docs/sub']
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
     fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
@@ -1811,7 +1827,7 @@ describe('Sidebar — create row placement (folder / file boundary)', () => {
       d({ id: 'two', folderPath: '/docs/sub/inner', filePath: '/docs/sub/inner/two.md' }),
     ])
     folderDirs = ['/docs/sub', '/docs/sub/inner']
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-new-subfolder'))
@@ -1825,7 +1841,7 @@ describe('Sidebar — create row placement (folder / file boundary)', () => {
       d({ id: 'a', folderPath: '/docs', filePath: '/docs/a.md' }),
       d({ id: 'draft', title: 'Untitled', folderPath: '', filePath: '' }),
     ])
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
     fireEvent.click(await screen.findByTestId('side-bg-new-file'))
@@ -1835,7 +1851,7 @@ describe('Sidebar — create row placement (folder / file boundary)', () => {
 
   it('still renders the row when the current folder is completely empty', async () => {
     seed([])
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     await userEvent.click(screen.getByTestId('empty-create-btn'))
     // Regression: the tree list used to be rendered only when it had rows of its own, which made
@@ -1851,7 +1867,7 @@ describe('Sidebar — create row placement (folder / file boundary)', () => {
       d({ id: 'two', folderPath: '/docs/sub/inner', filePath: '/docs/sub/inner/two.md' }),
     ])
     folderDirs = ['/docs/sub', '/docs/sub/inner']
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     // 'sub' holds a subfolder and a file, so the row has to land between them — and it opens
     // inside 'sub' without expanding it by hand.
@@ -1872,7 +1888,7 @@ describe('Sidebar — create row placement (folder / file boundary)', () => {
       d({ id: 'sub', folderPath: '/docs/sub', filePath: '/docs/sub/x.md' }),
     ])
     folderDirs = ['/docs/sub']
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     fireEvent.contextMenu(screen.getByTestId('sidebar-tree-area'))
     fireEvent.click(await screen.findByTestId('side-bg-new-folder'))
@@ -1893,7 +1909,7 @@ describe('Sidebar — create row placement (folder / file boundary)', () => {
     // A folder with no Markdown only reaches the tree when the user asks to see all folders.
     folderDirs = ['/docs/empty']
     useUIStore.getState().setShowAllFolders(true)
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     mount()
     fireEvent.contextMenu(screen.getByTestId('folder-row'))
     fireEvent.click(await screen.findByTestId('side-new-subfolder'))
@@ -1920,7 +1936,7 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
     allDocs.length = 0
     allDocs.push(docA())
     folderDirs = []
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     useUIStore.getState().setActiveDocumentId(null)
     ;(window as unknown as { api: unknown }).api = {
       dialog: {
@@ -1939,7 +1955,7 @@ describe('Sidebar — folder filtering & tree-area menu', () => {
   })
 
   it('hides the toolbar toggle when no folder is open', async () => {
-    useUIStore.getState().setActiveFolder(null)
+    useUIStore.getState().setWorkspaceRoot(null)
     mount()
     await waitFor(() => expect(screen.queryByTestId('show-all-folders-btn')).toBeNull())
   })
@@ -2572,5 +2588,44 @@ describe('Sidebar — activity bar', () => {
     expect(screen.getByRole('tablist')).toBeTruthy()
     fireEvent.contextMenu(screen.getByRole('tablist'))
     expect(await screen.findByTestId('activity-reset-sidebar-width')).toBeTruthy()
+  })
+})
+
+describe('Sidebar — reveal in sidebar (ADR-0038)', () => {
+  const d = (over: Partial<Document>): Document => ({
+    id: 'x',
+    title: 'Untitled',
+    folderPath: '',
+    content: '',
+    filePath: '',
+    encoding: 'utf-8',
+    encodingConfidence: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    wordCount: 0,
+    ...over,
+  })
+
+  it('expands the ancestors of the active document without drilling into its folder', async () => {
+    const deep = d({
+      id: 'deep',
+      title: 'deep',
+      folderPath: '/docs/nested',
+      filePath: '/docs/nested/deep.md',
+    })
+    allDocs.length = 0
+    allDocs.push(deep)
+    folderDirs = ['/docs/nested']
+    activeDoc = deep
+    useUIStore.getState().setWorkspaceRoot('/docs')
+    useUIStore.getState().setActiveDocumentId('deep')
+    useUIStore.getState().setSidebarView('files')
+
+    mount()
+
+    // Folders start collapsed; the row only exists after reveal expands its ancestor.
+    expect(await screen.findByText('deep.md')).toBeInTheDocument()
+    // The current tree root is already an ancestor, so no unnecessary drill-down.
+    expect(useUIStore.getState().workspaceRoot).toBe('/docs')
   })
 })

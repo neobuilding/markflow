@@ -84,7 +84,13 @@ export const en = {
   'editor.closeFile': 'Close file',
   'editor.renameTitle': 'Rename file',
   'editor.fileDeleted': 'Deleted on disk — save to restore it',
+  'editor.externalBadge': 'Outside workspace',
   'editor.goToFileShortcut': 'Go to file… ({{shortcut}})',
+  'nav.back': 'Back',
+  'nav.forward': 'Forward',
+  'nav.historyTitle': 'Recent documents',
+  'nav.backShortcut': 'Back ({{shortcut}})',
+  'nav.forwardShortcut': 'Forward ({{shortcut}})',
   'editor.switchReadOnly': 'Switch to read-only mode',
   'editor.switchEdit': 'Switch to edit mode',
   'editor.readOnly': 'Read-only',
@@ -293,6 +299,9 @@ export const en = {
   // `{{title}}` names the document being left: "which unsaved file?" is the first thing a user
   // asks when this appears.
   'app.unsavedSwitch': 'You have unsaved changes in "{{title}}". Discard them and switch files?',
+  // Edit -> read-only also leaves the editing surface. A confirmed discard reloads from disk.
+  'app.unsavedSwitchReadOnly':
+    'You have unsaved changes in "{{title}}". Discard them and switch to read-only mode?',
   // Opening a folder/file REPLACES the workspace (ADR-0023), so unsaved edits would be lost.
   'app.unsavedOpenWorkspace':
     'You have unsaved changes in "{{title}}". Discard them and open the new workspace?',
@@ -311,7 +320,16 @@ export const en = {
   'app.unsavedClose': 'You have unsaved changes. Discard them?',
   'app.confirmDiscard': 'Discard',
   'app.confirmKeep': 'Keep editing',
+  // ADR-0038 §3.1.3: web links and local non-Markdown files need an explicit Open / Copy / Cancel.
+  'app.openExternalTitle': 'Open this link outside MarkFlow?',
+  'app.openExternalOpen': 'Open',
+  'app.openExternalCopy': 'Copy',
+  'app.workspaceExternalTitle': 'This file is outside the current workspace',
+  'app.workspaceExternalNewWindow': 'Open in new window',
+  'app.workspaceExternalKeep': 'Open here (keep workspace)',
+  'app.workspaceExternalSwitch': 'Open here & switch workspace',
   'app.saveFailed': 'Failed to save the file.',
+  'app.reloadFailed': 'Could not reload the file from disk.',
   'app.fileGone': 'The file no longer exists on disk.',
   'app.deleteConfirm': 'Delete this file?',
   'app.discardDraftConfirm': 'Discard this draft? This cannot be undone.',
@@ -395,7 +413,6 @@ export const en = {
   'menu.toggleFullScreen': 'Toggle Full Screen',
   'menu.minimize': 'Minimize',
   'menu.zoom': 'Zoom',
-  'menu.quit': 'Quit',
   'menu.closeWindow': 'Close Window',
   'menu.dlgOpenFile': 'Open Markdown File',
   'menu.dlgOpenFolder': 'Open Folder (batch import .md files)',

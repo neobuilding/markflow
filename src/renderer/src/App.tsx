@@ -15,7 +15,9 @@ import { printDocument } from './lib/printDocument'
 import { routeSelectAll, createSelectAllKeydownHandler } from './lib/selectAllRouter'
 import { queryClient, DOCS_KEY } from './lib/queryClient'
 import { isDirInFolder } from './lib/utils'
-import { hasModalSurface, isEditableTarget } from './lib/shortcut-scope'
+import { hasModalSurface, isEditableTarget, isEditorSurface } from './lib/shortcut-scope'
+import { moveNavigationHistory, navigateToPath } from './lib/documentNavigation'
+import { maybeDecideExternalPaths } from './lib/workspaceExternalDecision'
 import { matchFormatShortcut } from './lib/format-shortcuts'
 import { t, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
@@ -32,47 +34,65 @@ export default function App(): React.ReactElement {
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
 
+  // Single Markdown files opened from outside the workspace (drop / file association / menu) go
+  // through the shared four-way choice; everything else keeps the normal useOpenPaths funnel.
+  const openPathsWithDecision = useCallback(async (paths: string[]) => {
+    if (await maybeDecideExternalPaths(paths)) return
+    openPathsMutRef.current.mutate(paths)
+  }, [])
+
   // Try to close the workspace, running the SAME unsaved-changes prompt used by the
   // "close workspace" menu item. Returns true if the workspace was actually closed
-  // (or didn't need to be). Used both by the menu and by the app-quit flow below so
-  // quitting the app is identical to closing the workspace no separate logic / prompt
-  const tryCloseWorkspace = useCallback((): boolean => {
-    const st = useUIStore.getState()
-    // R5 plan A: refuse closing the workspace (and its "discard changes?" prompt) while the
-    // system print dialog is up — otherwise the print job loses its source document.
-    if (st.printing) return false
-    if (st.exportOpen) {
-      st.setExportOpen(false)
-      return false
-    }
-    if (st.exporting) return false
-    if (!st.dirty) {
-      closeWorkspace()
-      return true
-    }
-    // Dirty: keep this synchronous contract (before-quit needs an immediate boolean) by
-    // returning false and firing an async app-modal confirm instead of blocking. If the user
-    // accepts, close the workspace and tell the main process it is safe to quit. Replaces the
-    // old window.confirm, whose OS-modal close triggered a window blur that broke typing.
-    //
-    // BEFORE opening the async confirm, tell the main process we're about to prompt the
-    // user. This disarms the 5s "renderer is dead" safety net so the user has unlimited
-    // time to decide; without it, the safety net would force-quit 5s after the prompt
-    // opened, silently discarding the user's edits (the dirty-confirm regression).
-    window.api.app.notifyQuitPending()
-    void window.api.dialog
-      .confirm({
-        message: t('app.unsavedCloseWorkspace'),
-        okText: t('app.confirmDiscard'),
-        cancelText: t('app.confirmKeep'),
-      })
-      .then((ok: boolean) => {
-        if (!ok) return
+  // (or didn't need to be). Used by the menu and by the main process's window-close
+  // request (`app:request-quit`); in both cases the prompt is identical.
+  //
+  // `quit` tells the two callers apart:
+  //   - true  — the MAIN process requested a WINDOW close (`app:request-quit`). The
+  //             handshake (`notifyQuitPending` / `allowQuit`) belongs to that request:
+  //             allowQuit lets THAT window close; it does not quit the app or other windows.
+  //   - false — the "Close Workspace" MENU action, which closes the workspace in THIS
+  //             window only and leaves the window (and every other window) open.
+  const tryCloseWorkspace = useCallback(
+    (quit: boolean): boolean => {
+      const st = useUIStore.getState()
+      // R5 plan A: refuse closing the workspace (and its "discard changes?" prompt) while the
+      // system print dialog is up — otherwise the print job loses its source document.
+      if (st.printing) return false
+      if (st.exportOpen) {
+        st.setExportOpen(false)
+        return false
+      }
+      if (st.exporting) return false
+      if (!st.dirty) {
         closeWorkspace()
-        window.api.app.allowQuit()
-      })
-    return false
-  }, [closeWorkspace])
+        return true
+      }
+      // Dirty: keep this synchronous contract (the window-close handler needs an immediate
+      // boolean) by returning false and firing an async app-modal confirm instead of blocking.
+      // If the user accepts, close the workspace and — for a main-process window close — tell
+      // the main process it may close that window. Replaces the old window.confirm, whose
+      // OS-modal close triggered a window blur that broke typing.
+      //
+      // BEFORE opening the async confirm, tell the main process we're about to prompt the
+      // user. This disarms THIS window's 5s "renderer is dead" safety net so the user has
+      // unlimited time to decide; without it, the net would force-close this window 5s after
+      // the prompt opened, silently discarding the user's edits (the dirty-confirm regression).
+      if (quit) window.api.app.notifyQuitPending()
+      void window.api.dialog
+        .confirm({
+          message: t('app.unsavedCloseWorkspace'),
+          okText: t('app.confirmDiscard'),
+          cancelText: t('app.confirmKeep'),
+        })
+        .then((ok: boolean) => {
+          if (!ok) return
+          closeWorkspace()
+          if (quit) window.api.app.allowQuit()
+        })
+      return false
+    },
+    [closeWorkspace],
+  )
 
   useEffect(() => {
     // `window.matchMedia` is not guaranteed to exist outside a browser engine (jsdom does not
@@ -116,6 +136,19 @@ export default function App(): React.ReactElement {
       // to whoever does own it. Without this, Ctrl+N would stack a second dialog on top of an open
       // one and Ctrl+\ would move the sidebar behind it.
       if (hasModalSurface(document)) return
+      // Browser-style document history (ADR-0038 §3.4): Alt+←/→ on Windows/Linux,
+      // Cmd+[ / Cmd+] on macOS. Only outside the editor — CodeMirror owns these keys when it has
+      // focus (syntax movement / indent), so stand down without preventDefault there.
+      const historyKey = isMac
+        ? e.metaKey && !e.ctrlKey && !e.altKey && (e.key === '[' || e.key === ']')
+        : e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      if (historyKey) {
+        if (isEditorSurface(document.activeElement)) return
+        e.preventDefault()
+        e.stopPropagation()
+        void moveNavigationHistory(e.key === 'ArrowLeft' || e.key === '[' ? -1 : 1)
+        return
+      }
       if (mod && e.key === 'n') {
         // VS Code parity: Ctrl/Cmd+N creates an in-memory draft immediately, never a dialog.
         // The native menu accelerator fires the same action through 'menu:new-document'; the
@@ -238,10 +271,10 @@ export default function App(): React.ReactElement {
       if (blocked()) return
       const paths = Array.isArray(data) ? data : data ? [data as string] : []
       if (paths.length === 0) return
-      openPathsMut.mutate(paths)
+      void openPathsWithDecision(paths)
     })
     const removeClose = window.api.onMenuEvent('close-workspace', () => {
-      tryCloseWorkspace()
+      tryCloseWorkspace(false)
     })
     const removeCloseFile = window.api.onMenuEvent('close-file', async () => {
       if (blocked()) return
@@ -280,9 +313,18 @@ export default function App(): React.ReactElement {
     )
     const removeOpenPaths = window.api.onOpenPaths((paths) => {
       if (blocked()) return
-      if (paths && paths.length > 0) openPathsMut.mutate(paths)
+      if (paths && paths.length > 0) void openPathsWithDecision(paths)
     })
+    // Another window (the "reuse existing window" branch) asked us to reveal one of our files.
+    // Guarded because older test/preload mocks may not expose this newest event yet.
+    const removeRevealFile = window.api.onRevealFile
+      ? window.api.onRevealFile((filePath) => {
+          if (blocked()) return
+          void navigateToPath(filePath)
+        })
+      : () => {}
     return () => {
+      removeRevealFile()
       removeNew()
       removeNewFile()
       removeSidebar()
@@ -298,7 +340,14 @@ export default function App(): React.ReactElement {
       removeSelectAll()
       removeTogglePreview()
     }
-  }, [setNewDocOpen, toggleSidebar, openPathsMut, closeWorkspace, tryCloseWorkspace])
+  }, [
+    setNewDocOpen,
+    toggleSidebar,
+    openPathsMut,
+    closeWorkspace,
+    tryCloseWorkspace,
+    openPathsWithDecision,
+  ])
 
   // ── i18n: keep the UI language in sync with the native menu ─────────────
   // When the user picks a language in the native menu, the main process sends
@@ -343,10 +392,10 @@ export default function App(): React.ReactElement {
     window.api.app
       .getInitialPaths()
       .then((paths: string[]) => {
-        if (paths && paths.length > 0) openPathsMutRef.current.mutate(paths)
+        if (paths && paths.length > 0) void openPathsWithDecision(paths)
       })
       .catch(() => {})
-  }, [])
+  }, [openPathsWithDecision])
 
   // Sync the editable (read-only / edit) state to the main process, to enable/disable the native menu's Save / Save As
   useEffect(() => {
@@ -375,9 +424,9 @@ export default function App(): React.ReactElement {
   useEffect(() => {
     if (!window.api?.menu?.setHasFolder) return
     const send = (has: boolean) => window.api.menu.setHasFolder(has)
-    send(!!useUIStore.getState().activeFolder)
+    send(!!useUIStore.getState().workspaceRoot)
     const unsub = useUIStore.subscribe((state, prev) => {
-      if (state.activeFolder !== prev.activeFolder) send(!!state.activeFolder)
+      if (state.workspaceRoot !== prev.workspaceRoot) send(!!state.workspaceRoot)
     })
     return () => unsub()
   }, [])
@@ -391,15 +440,15 @@ export default function App(): React.ReactElement {
     window.api.menu.setHasDraft(draftExists)
   }, [draftExists])
 
-  // When the main process wants to quit, run the exact same "close workspace" flow
-  // (with its unified unsaved-changes prompt). If the user confirms (or there's nothing
-  // to save), tell the main process it's safe to quit; otherwise we simply don't reply
-  // and the quit is aborted. New (memory-only) docs and edits to existing files are
-  // treated identically no special quit prompt
+  // When the main process requests THIS window to close, run the exact same "close workspace"
+  // flow (with its unified unsaved-changes prompt). If the user confirms (or there's nothing to
+  // save), tell the main process it may close that window; otherwise we simply don't reply and
+  // the window stays open. New (memory-only) docs and edits to existing files are treated
+  // identically — no special close prompt.
   useEffect(() => {
     if (!window.api?.onAppRequestQuit) return
     const remove = window.api.onAppRequestQuit(() => {
-      if (tryCloseWorkspace()) window.api.app.allowQuit()
+      if (tryCloseWorkspace(true)) window.api.app.allowQuit()
     })
     return () => remove()
   }, [tryCloseWorkspace])
@@ -417,7 +466,7 @@ export default function App(): React.ReactElement {
     if (!window.api?.onFolderChanged) return
     let buf: ReturnType<typeof setTimeout> | null = null
     const remove = window.api.onFolderChanged((data) => {
-      const active = useUIStore.getState().activeFolder
+      const active = useUIStore.getState().workspaceRoot
       // Only refresh when the event touches the folder currently displayed (or its subtree).
       // When no folder is open yet, fall back to refreshing so early events aren't lost.
       if (active && !isDirInFolder(data?.dirPath ?? '', active)) return
@@ -434,7 +483,7 @@ export default function App(): React.ReactElement {
         // refetch competes with the very switch/edit the renderer may be busy
         // with. Narrowing to the active folder's list keeps the sidebar current
         // without touching the open document.
-        const active = useUIStore.getState().activeFolder
+        const active = useUIStore.getState().workspaceRoot
         // Two separate calls, NOT one ternary: DOCS_KEY is `as const` (a 1-tuple),
         // so a ternary mixing it with the 3-element list key makes TypeScript
         // infer the filter's key type from one branch and reject the other (TS2345).
@@ -479,23 +528,20 @@ export default function App(): React.ReactElement {
     }
   }, [])
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    if (!e.dataTransfer.types.includes('Files')) return
-    e.preventDefault()
-    // Don't silently discard unsaved work when a file is dropped onto the window.
-    if (useUIStore.getState().dirty) {
-      const ok = await window.api.dialog.confirm({
-        message: t('app.unsavedClose'),
-        okText: t('app.confirmDiscard'),
-        cancelText: t('app.confirmKeep'),
-      })
-      if (!ok) return
-    }
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => window.api.files.getPathForFile(f))
-      .filter((p): p is string => typeof p === 'string' && p.length > 0)
-    if (paths.length > 0) openPathsMutRef.current.mutate(paths)
-  }, [])
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes('Files')) return
+      e.preventDefault()
+      // No dirty guard here (Q30): the single guard point lives in the close path of each branch.
+      // A workspace-external single Markdown goes through the four-way choice; everything else keeps
+      // the normal useOpenPaths funnel, whose own guard fires only when it actually closes a doc.
+      const paths = Array.from(e.dataTransfer.files)
+        .map((f) => window.api.files.getPathForFile(f))
+        .filter((p): p is string => typeof p === 'string' && p.length > 0)
+      if (paths.length > 0) await openPathsWithDecision(paths)
+    },
+    [openPathsWithDecision],
+  )
 
   return (
     <TooltipProvider delayDuration={400}>

@@ -3,6 +3,7 @@ import { VIEW_MODE_ORDER, type ViewMode, type ThemeMode } from '../types'
 import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/storage'
 import { t } from '../i18n/translate'
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
+import { isHistoryRecordingSuspended, useNavigationHistory } from './navigationHistory'
 
 // Cross-component bridge for file actions requested from a different component than the
 // one that performs them . Today only `rename` is used: the sidebar's
@@ -14,6 +15,7 @@ export type FileAction = { type: 'rename'; id: string } | { type: 'save' | 'save
 // Remove a memory-only draft (never saved to disk) and refresh the document list so the
 // sidebar no longer shows the orphan draft
 function deleteUnsavedDraft(id: string) {
+  if (!window.api?.documents?.delete) return Promise.resolve()
   return window.api.documents.delete(id).finally(() => {
     queryClient.invalidateQueries({ queryKey: DOCS_KEY })
   })
@@ -25,16 +27,19 @@ function clearWorkspaceRoot() {
   try {
     void Promise.resolve(window.api.documents.setWorkspaceRoot(null)).catch(() => {})
   } catch {
-    // Nothing to tear down; the watcher is discarded when the app quits anyway.
+    // Nothing to tear down; the watcher is stopped on window close / process exit anyway.
   }
+  // The mirror is local state: clear it even when the IPC is unavailable (unit tests).
+  useUIStore.getState().setWorkspaceRoot(null)
 }
 
-// Ask the user whether the unsaved edits of `title` may be thrown away.
-// Resolves true = discard and continue, false = keep editing (cancel the switch).
-async function confirmDiscard(title: string): Promise<boolean> {
+// Ask the user whether the pending unsaved edits may be thrown away. `message` names the exact
+// action (switch file / switch to read-only) so the two guards cannot share misleading wording.
+// Resolves true = discard and continue, false = keep editing (cancel the action).
+async function confirmDiscard(message: string): Promise<boolean> {
   try {
     const ok = await window.api.dialog.confirm({
-      message: t('app.unsavedSwitch', { title }),
+      message,
       okText: t('app.confirmDiscard'),
       cancelText: t('app.confirmKeep'),
     })
@@ -50,6 +55,25 @@ async function confirmDiscard(title: string): Promise<boolean> {
 // looks lost.
 function focusEditorPane(): void {
   document.dispatchEvent(new CustomEvent('editor:focus-request'))
+}
+
+// Record a user-initiated document switch in the session navigation history (ADR-0038 §3.4).
+// Resolving id → path is async; ignore races where a newer switch has already won, and stay quiet
+// in unit tests where no preload bridge exists.
+function recordNavigation(id: string | null): void {
+  if (!id || isHistoryRecordingSuspended() || !window.api?.documents?.get) return
+  void window.api.documents
+    .get(id)
+    .then((doc) => {
+      if (
+        doc?.filePath &&
+        useUIStore.getState().activeDocumentId === id &&
+        !isHistoryRecordingSuspended()
+      ) {
+        useNavigationHistory.getState().push(doc.filePath)
+      }
+    })
+    .catch(() => {})
 }
 
 interface UnsavedBuffer {
@@ -120,14 +144,17 @@ interface UIState {
   /** Switch and jump to a hit. Only writes `pendingMatch` once the guard has passed. */
   openDocumentAt: (id: string, start: number, end: number) => Promise<boolean>
 
-  // Active folder (the opened folder / the folder of the opened file)
-  activeFolder: string | null
-  setActiveFolder: (folder: string | null) => void
+  // The workspace root — a local mirror of the main process's authoritative value. There is no
+  // separate "active folder": the sidebar always shows this root. Written only after the IPC that
+  // actually swaps the main store/watcher succeeds (see switchWorkspace / openPaths).
+  workspaceRoot: string | null
+  setWorkspaceRoot: (root: string | null) => void
 
   // Edit mode: false = read-only (default), true = editable
   editable: boolean
   setEditable: (editable: boolean) => void
-  toggleEditable: () => void
+  /** Leaves edit mode; async because leaving while dirty asks for a discard confirmation. */
+  toggleEditable: () => Promise<boolean>
 
   // Close only the current file (keep the opened folder / sidebar)
   closeDocument: () => void
@@ -326,14 +353,32 @@ export const useUIStore = create<UIState>((set, get) => ({
   // edits: every file opens/switches into read-only, and the user must explicitly switch to edit
   // mode to modify it. New documents opt back into edit mode afterwards (Sidebar/NewDocumentDialog
   // call setEditable(true) right after setActiveDocumentId).
-  setActiveDocumentId: (id) => set({ activeDocumentId: id, editable: false }),
+  setActiveDocumentId: (id) => {
+    const previous = get().activeDocumentId
+    if (previous && previous !== id && get().isNewUnsaved) {
+      // ADR-0038 §3.5: switching away closes a memory-only draft. The unsaved guard has already
+      // been obtained by every sanctioned call path (selectDocument / openDocumentAt / create
+      // flows); deleting here is the "close the document" half, not a second prompt.
+      void deleteUnsavedDraft(previous)
+    }
+    set({
+      activeDocumentId: id,
+      editable: false,
+      ...(previous !== id && get().isNewUnsaved
+        ? { isNewUnsaved: false, dirty: false, unsavedBuffers: {} }
+        : {}),
+    })
+    recordNavigation(id)
+  },
 
   activeDocumentTitle: null,
   setActiveDocumentTitle: (title) => set({ activeDocumentTitle: title }),
 
   guardUnsavedSwitch: async () => {
     if (!get().dirty) return true
-    if (!(await confirmDiscard(get().activeDocumentTitle ?? ''))) {
+    if (
+      !(await confirmDiscard(t('app.unsavedSwitch', { title: get().activeDocumentTitle ?? '' })))
+    ) {
       focusEditorPane()
       return false
     }
@@ -369,20 +414,46 @@ export const useUIStore = create<UIState>((set, get) => ({
       if (!(await get().guardUnsavedSwitch())) return false
       get().clearUnsavedBuffer(state.activeDocumentId ?? '')
     }
-    set({ activeDocumentId: id, editable: false, pendingMatch: { id, start, end } })
+    get().setActiveDocumentId(id)
+    set({ pendingMatch: { id, start, end } })
     return true
   },
 
-  activeFolder: null,
-  setActiveFolder: (folder) => set({ activeFolder: folder }),
+  workspaceRoot: null,
+  setWorkspaceRoot: (root) => set({ workspaceRoot: root }),
 
   editable: false,
   setEditable: (editable) => set({ editable }),
-  // The edit/read-only toggle is a document mutation too — refuse it while printing (R5 plan A),
-  // otherwise the document would silently become editable the moment the print dialog closes.
-  toggleEditable: () => {
-    if (selectFileLocked(get())) return
-    set((s) => ({ editable: !s.editable }))
+  // Leaving edit mode is a discard decision just like switching files: the user stops working
+  // on the draft. Refuse it while printing (R5 plan A) and ask when dirty. A confirmed discard
+  // must be REAL: drop the unsaved buffer and reload the bytes from disk, otherwise the stale
+  // draft would keep showing while the bar claims the document is read-only.
+  toggleEditable: async () => {
+    const s = get()
+    if (selectFileLocked(s)) return false
+    if (s.editable && s.dirty) {
+      const ok = await confirmDiscard(
+        t('app.unsavedSwitchReadOnly', { title: s.activeDocumentTitle ?? '' }),
+      )
+      if (!ok) {
+        focusEditorPane()
+        return false
+      }
+      // A memory-only draft has no file to reload: closing it IS the discard (ADR-0038 §3.5).
+      if (s.isNewUnsaved) {
+        s.closeDocument()
+        return true
+      }
+      s.clearUnsavedBuffer(s.activeDocumentId ?? '')
+      s.setDirty(false)
+      set({ editable: false })
+      // EditorPane owns the reload mutation; the FileAction bridge is the sanctioned way to
+      // reach it from here. It must stay enabled in read-only mode for exactly this flow.
+      s.requestFileAction({ type: 'reload' })
+      return true
+    }
+    set({ editable: !s.editable })
+    return true
   },
 
   // While exporting, with the export dialog open, or WHILE PRINTING, forbid closing the current
@@ -426,7 +497,7 @@ export const useUIStore = create<UIState>((set, get) => ({
     set((s) => ({
       activeDocumentId: null,
       activeDocumentTitle: null,
-      activeFolder: null,
+      workspaceRoot: null,
       editable: false,
       isNewUnsaved: false,
       dirty: false,

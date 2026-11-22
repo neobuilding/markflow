@@ -15,6 +15,10 @@ import {
 } from '../../lib/previewCopy'
 import { safeEnhanceForPaste } from '../../lib/copyFidelity'
 import { extractFrontmatterLang } from '../../lib/lang'
+import { followPreviewLink, resolvePreviewLink } from '../../lib/previewLinkNavigation'
+import { navigateToPath } from '../../lib/documentNavigation'
+import { decideExternalFile } from '../../lib/workspaceExternalDecision'
+import { isInFolder } from '../../../../../shared/fileUtils'
 import type { Document, ThemeMode } from '../../types'
 // D-B (ADR-0018): the single source of truth for markdown styling is github-markdown-css
 // (the same sheet the exporter uses), injected as a string so we can toggle light/dark by
@@ -313,6 +317,49 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
     return () => scrollSync.unregister('preview')
   }, [])
 
+  // Intercept plain left-clicks on preview links. Without this the browser navigates the whole
+  // Electron shell (the window wipe/hang bug), resolving relative hrefs against the app's own
+  // URL instead of the markdown document's directory.
+  const onLinkClick = (e: React.MouseEvent<HTMLElement>) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    const anchor = (e.target as HTMLElement).closest('a')
+    const href = anchor?.getAttribute('href')
+    if (!href) return
+    e.preventDefault()
+    // The root lives in main process state; only a leading `/` needs it, but reading it here
+    // keeps resolution in one pure function. The click is already intercepted, so an IPC round
+    // trip here cannot cause a shell navigation.
+    void (async () => {
+      const workspaceRoot = await window.api.documents.getWorkspaceRoot()
+      const target = resolvePreviewLink(href, doc?.filePath, workspaceRoot)
+      if (target.kind === 'ignored') return
+      if (target.kind === 'anchor') {
+        const nodes = previewRef.current?.querySelectorAll('[id]')
+        Array.from(nodes ?? [])
+          .find((el) => el.id === target.id)
+          ?.scrollIntoView()
+        return
+      }
+      // A Markdown target outside the current workspace goes through the shared four-way choice
+      // (new window / open here keeping workspace / open here & switch / cancel). Workspace-internal
+      // targets keep the existing in-place navigation + sidebar reveal.
+      if (target.kind === 'document' && workspaceRoot && !isInFolder(target.path, workspaceRoot)) {
+        await decideExternalFile(target.path)
+        return
+      }
+      await followPreviewLink(target, {
+        listDocuments: () => window.api.documents.list(),
+        importDocument: async (path) => window.api.documents.import(path),
+        selectDocument: (id) => useUIStore.getState().selectDocument(id),
+        navigateToDocument: (path) => navigateToPath(path),
+        openExternal: (url) => void window.api.app.openExternal(url),
+        openLocalFile: (path) => void window.api.app.openPath(path),
+        copyTarget: (text) => void window.api.clipboard.writeText(text),
+        confirmOpenTarget: (value) => window.api.dialog.confirmOpenExternal(value),
+      })
+    })()
+  }
+
   return (
     <div
       ref={scrollRef}
@@ -326,6 +373,7 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
           role="document"
           lang={lang ?? undefined}
           className="markdown-body markdown-preview max-w-none px-6 py-6 w-full"
+          onClick={onLinkClick}
           onKeyDown={(e) => {
             if (
               (e.ctrlKey || e.metaKey) &&

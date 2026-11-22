@@ -44,7 +44,7 @@ describe('NewDocumentDialog ("New File…")', () => {
     }
     useUIStore.getState().setNewDocOpen(false)
     useUIStore.getState().setDirty(false)
-    useUIStore.getState().setActiveFolder(FOLDER)
+    useUIStore.getState().setWorkspaceRoot(FOLDER)
     vi.mocked(useDocuments.useCreateDocument).mockReturnValue({
       mutateAsync: mockMutateAsync,
       isPending: false,
@@ -238,7 +238,7 @@ describe('NewDocumentDialog ("New File…")', () => {
   })
 
   it('is unusable with no active folder (filesystem-bound command)', async () => {
-    useUIStore.getState().setActiveFolder(null)
+    useUIStore.getState().setWorkspaceRoot(null)
     useUIStore.getState().setNewDocOpen(true)
     render(<NewDocumentDialog />)
     await screen.findByPlaceholderText('Untitled')

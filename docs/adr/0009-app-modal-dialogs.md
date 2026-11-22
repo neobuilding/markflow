@@ -27,7 +27,7 @@ close, so no WIN-BLUR residual remains.
 ## Consequences
 
 - **Positive:** focus preserved; one consistent unsaved-change prompt across close-file / close-workspace
-  / switch-doc / drop.
+  / switch-doc / drop / edit-to-read-only (ADR-0029 §5).
 - **Negative:** a main-process IPC handler + preload entry + i18n strings (`app.confirmDiscard` /
   `app.confirmKeep`); the renderer `sandbox` is disabled (recorded in the security review). Native
   `window.confirm` must never be reintroduced for these prompts.

@@ -50,3 +50,15 @@ export function isEditableTarget(el: Element | null): boolean {
 export function isFindWidgetField(el: Element | null): boolean {
   return el instanceof HTMLElement && el.closest('.cm-panel') !== null
 }
+
+// Back/Forward shortcuts stand down while the editor owns the same keys (ADR-0038 §3.4). This uses
+// the app's established editor-surface classifier from selectAllRouter: the CodeMirror content,
+// its .cm-editor host, and the editor pane's editable region all count as "in the editor".
+export function isEditorSurface(el: Element | null): boolean {
+  return (
+    el instanceof HTMLElement &&
+    (el.closest('.cm-content') !== null ||
+      el.closest('.cm-editor') !== null ||
+      el.closest('.editor-content') !== null)
+  )
+}

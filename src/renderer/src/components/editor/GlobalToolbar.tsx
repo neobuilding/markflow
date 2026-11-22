@@ -1,10 +1,29 @@
 import React from 'react'
-import { FileInput, FileText, Save, SaveAll, RotateCcw, Info, FileOutput, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  FileInput,
+  FileText,
+  Save,
+  SaveAll,
+  RotateCcw,
+  Info,
+  FileOutput,
+  X,
+} from 'lucide-react'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '../ui/context-menu'
 import { useT } from '../../i18n'
 import { useUIStore, selectFileLocked } from '../../store/ui'
-import { formatShortcut } from '../../lib/utils'
+import { useNavigationHistory } from '../../store/navigationHistory'
+import { moveNavigationHistory, moveToHistoryIndex } from '../../lib/documentNavigation'
+import { baseName, formatShortcut, isMac } from '../../lib/utils'
 import { createDraft, useHasMemoryOnlyDraft } from '../../hooks/useDocuments'
 
 interface GlobalToolbarProps {
@@ -47,9 +66,96 @@ export function GlobalToolbar({
   // the button is disabled. `createDraft` (keyboard) and the native File > New Draft item read the
   // same rule, so no entry point can disagree.
   const draftExists = useHasMemoryOnlyDraft()
+  const historyCursor = useNavigationHistory((s) => s.cursor)
+  const historyEntries = useNavigationHistory((s) => s.entries)
+  const historyLength = historyEntries.length
+  const canGoBack = historyCursor > 0
+  const canGoForward = historyCursor >= 0 && historyCursor < historyLength - 1
+  // Browser-style right-click menus: back lists earlier entries (nearest first), forward lists
+  // later ones. Clicking jumps the cursor directly via moveToHistoryIndex (never pushes).
+  // ADR-0039 §3.5 keeps Back/Forward menus browser-like: cap the recent entries so the
+  // popup stays scannable instead of listing the whole history. Pinned by the menu tests.
+  const HISTORY_MENU_MAX = 10
+  const backEntries = historyEntries
+    .map((entry, index) => ({ entry, index }))
+    .slice(0, Math.max(0, historyCursor))
+    .reverse()
+    .slice(0, HISTORY_MENU_MAX)
+  const forwardEntries = historyEntries
+    .map((entry, index) => ({ entry, index }))
+    .slice(historyCursor + 1)
+    .slice(0, HISTORY_MENU_MAX)
+  const isMacPlatform = isMac()
+  const backShortcut = isMacPlatform ? '⌘[' : 'Alt+←'
+  const forwardShortcut = isMacPlatform ? '⌘]' : 'Alt+→'
 
   return (
     <div className="titlebar-no-drag flex items-center gap-1.5">
+      {/* Browser-style document history (ADR-0038 §3.4). These sit before Quick Open so they are
+          always reachable, including with no document open — history survives Close file.
+          Right-click lists recent entries; choosing one jumps the cursor without pushing (P5). */}
+      <ContextMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <ContextMenuTrigger asChild>
+              <Button
+                variant="toolbar"
+                size="icon"
+                aria-label={t('nav.back')}
+                data-testid="nav-back-btn"
+                disabled={!canGoBack || fileLocked}
+                onClick={() => void moveNavigationHistory(-1)}
+              >
+                <ArrowLeft size={16} />
+              </Button>
+            </ContextMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>{t('nav.backShortcut', { shortcut: backShortcut })}</TooltipContent>
+        </Tooltip>
+        <ContextMenuContent data-testid="nav-back-menu">
+          <ContextMenuItem disabled>{t('nav.historyTitle')}</ContextMenuItem>
+          {backEntries.map(({ entry, index }) => (
+            <ContextMenuItem
+              key={`${index}:${entry.path}`}
+              data-testid={`nav-back-item-${index}`}
+              onClick={() => void moveToHistoryIndex(index)}
+            >
+              {entry.title || baseName(entry.path)}
+            </ContextMenuItem>
+          ))}
+        </ContextMenuContent>
+      </ContextMenu>
+      <ContextMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <ContextMenuTrigger asChild>
+              <Button
+                variant="toolbar"
+                size="icon"
+                aria-label={t('nav.forward')}
+                data-testid="nav-forward-btn"
+                disabled={!canGoForward || fileLocked}
+                onClick={() => void moveNavigationHistory(1)}
+              >
+                <ArrowRight size={16} />
+              </Button>
+            </ContextMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>{t('nav.forwardShortcut', { shortcut: forwardShortcut })}</TooltipContent>
+        </Tooltip>
+        <ContextMenuContent data-testid="nav-forward-menu">
+          <ContextMenuItem disabled>{t('nav.historyTitle')}</ContextMenuItem>
+          {forwardEntries.map(({ entry, index }) => (
+            <ContextMenuItem
+              key={`${index}:${entry.path}`}
+              data-testid={`nav-forward-item-${index}`}
+              onClick={() => void moveToHistoryIndex(index)}
+            >
+              {entry.title || baseName(entry.path)}
+            </ContextMenuItem>
+          ))}
+        </ContextMenuContent>
+      </ContextMenu>
       {/* "Go to file…" — the Quick Open trigger (ADR-0023). It is the FIRST entry of the global
           toolbar — the sidebar toggle that used to sit before it was removed (Q2a). It wears a
           "jump into a file" arrow glyph (FileInput) rather than a document glyph: a bare document

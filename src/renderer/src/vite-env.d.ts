@@ -11,6 +11,10 @@ import type {
   ReplaceApplyOutcome,
   ReplaceUndoOutcome,
 } from './types'
+import type {
+  ExternalOpenChoice,
+  WorkspaceExternalChoice,
+} from '../../../shared/linkTypes'
 
 // Status information of a file on disk (size / creation time / modification time)
 export interface FileStat {
@@ -57,7 +61,7 @@ export interface Api {
     ) => Promise<Document>
     update: (id: string, updates: { title?: string; content?: string }) => Promise<Document | null>
     delete: (id: string) => Promise<void>
-    import: (filePath: string) => Promise<Document | null>
+    import: (filePath: string, opts?: { external?: boolean }) => Promise<Document | null>
     importMany: (filePaths: string[]) => Promise<Document[]>
     saveAs: (id: string, filePath: string, params: { title?: string; content?: string }) => Promise<Document | null>
     reload: (id: string) => Promise<Document | null>
@@ -93,6 +97,8 @@ export interface Api {
     // The single workspace root is owned by the main process. Setting it REPLACES the workspace
     // (document store cleared, watcher rebuilt); `null` closes it. (ADR-0023)
     setWorkspaceRoot: (rootPath: string | null) => Promise<void>
+    // Read-only view of that root for preview-link path resolution (ADR-0038 §3.1.2).
+    getWorkspaceRoot: () => Promise<string | null>
   }
   export: {
     embedImages: (html: string) => Promise<string>
@@ -115,6 +121,8 @@ export interface Api {
     getInitialPaths: () => Promise<string[]>
     showInFolder: (filePath: string) => Promise<void>
     openExternal: (url: string) => Promise<void>
+    openPath: (filePath: string) => Promise<string>
+    openInNewWindow: (filePath: string) => Promise<boolean>
     copyFile: (src: string, dest: string) => Promise<void>
     setLanguage: (locale: 'en' | 'zh-CN') => void
     allowQuit: () => void
@@ -137,6 +145,10 @@ export interface Api {
       okText?: string
       cancelText?: string
     }) => Promise<boolean>
+    // ADR-0038 §3.1.3: Open / Copy / Cancel choice before handing a link to the OS.
+    confirmOpenExternal: (target: string) => Promise<ExternalOpenChoice>
+    // Four-way choice for a file resolved outside the workspace root.
+    confirmWorkspaceExternal: (target: string) => Promise<WorkspaceExternalChoice>
   }
   window: {
     maximize: () => Promise<void>
@@ -160,6 +172,7 @@ export interface Api {
   onFolderChanged: (callback: (data: { dirPath: string }) => void) => () => void
   onDocumentRefresh: (callback: (data: { id: string }) => void) => () => void
   onOpenPaths: (callback: (paths: string[]) => void) => () => void
+  onRevealFile: (callback: (filePath: string) => void) => () => void
   onAppRequestQuit: (callback: () => void) => () => void
   onReplaceProgress: (
     callback: (progress: { cancelToken: string; done: number; total: number }) => void,

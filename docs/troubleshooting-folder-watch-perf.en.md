@@ -172,6 +172,8 @@ Test: `expect(r.enc).toBe('gbk')`.
 
 ## 4. Review findings & fixes (full chain)
 
+> **Historical note (2026-11-22)**: rows #3/#4/#6 and the "quit flow" entries later in this document describe the former application-level quit design. That design has since been removed entirely (no Cmd+Q / menu Quit / app-level handshake); `setQuitPending` and the global `quitPending` are gone. Unsaved prompting now happens only at window close, with the 5s safety net tracked per window via `ctx.quitPending`.
+
 | #   | Issue                                                                                                    | Origin                        | Fix location                                                                                                                                                                                              | Status |
 | --- | -------------------------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | 1   | UTF-16LE misclassified as utf-8 (garbage)                                                                | my ASCII fast path missed NUL | `documents.ts` `isPlainAsciiText` excludes NUL                                                                                                                                                            | ✅     |

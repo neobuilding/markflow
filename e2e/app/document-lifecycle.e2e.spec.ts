@@ -42,7 +42,7 @@ test.describe('document lifecycle', () => {
   }
 
   // Open a workspace holding ONE real file, through the same IPC pipeline the "Open Folder" menu
-  // uses: setWorkspaceRoot -> importMany -> setActiveFolder, and activate the imported file.
+  // uses: setWorkspaceRoot -> importMany -> setWorkspaceRoot, and activate the imported file.
   //
   // The file is (re)written on every call: `resetAppState` deletes the documents of the previous
   // case, and deleting a FILE document moves the file to the OS trash — a file seeded once in
@@ -56,10 +56,32 @@ test.describe('document lifecycle', () => {
       await w.api.documents.setWorkspaceRoot(root)
       const imported = await w.api.documents.importMany(markdownFiles)
       const ui = w.__uiStore.getState()
-      ui.setActiveFolder(root)
+      ui.setWorkspaceRoot(root)
       if (imported.length > 0) ui.setActiveDocumentId(imported[0].id)
       w.__queryClient.invalidateQueries({ queryKey: ['documents'] })
     }, scratch)
+  }
+
+  // A second PERSISTED document for switch-back cases: ADR-0038 §3.5 deletes a memory-only draft
+  // when the active document changes, so a draft cannot be the return leg of a switch.
+  async function importFileIntoWorkspace(
+    page: Page,
+    name: string,
+    content: string,
+  ): Promise<string> {
+    const filePath = join(scratch, name)
+    writeFileSync(filePath, content, 'utf-8')
+    const id = await page.evaluate(async (path) => {
+      const doc = await window.api.documents.import(path)
+      if (!doc) return null
+      const w = window as any
+      w.__uiStore.getState().setActiveDocumentId(doc.id)
+      w.__queryClient.invalidateQueries({ queryKey: ['documents'] })
+      return doc.id
+    }, filePath)
+    expect(id).toBeTruthy()
+    await expect(page.locator('.cm-content')).toContainText(content.trim())
+    return id!
   }
 
   // Read a native menu item's live enabled flag from the MAIN process. The renderer only mirrors
@@ -210,10 +232,9 @@ test.describe('document lifecycle', () => {
     }
     const editor = page.locator('.cm-content')
 
-    // These are UNSAVED documents, so a switch reloads the stored content. That is fine: the case
-    // asserts that no PREVIOUS document text ever leaks in, not that unsaved typing survives a
-    // switch. Only ONE unsaved draft may exist at a time (the New Draft control is disabled while
-    // one is open), so the pair is a real file on disk (A) plus that draft (B).
+    // Both documents are real files: the case asserts that no PREVIOUS document text ever leaks
+    // into the next one (not that unsaved typing survives a switch), and ADR-0038 §3.5 destroys a
+    // memory-only draft on switch, so a draft cannot be the return leg of this sidebar switch.
     await openWorkspaceWithFile(page) // A: a real file on disk
     const alphaId = await activeId()
     // The editor mounts once the activated document's detail query resolves.
@@ -223,8 +244,7 @@ test.describe('document lifecycle', () => {
     await page.keyboard.type('ALPHA-DOC')
 
     await clearDirty()
-    await createViaButton(page) // B
-    const betaId = await activeId()
+    const betaId = await importFileIntoWorkspace(page, 'beta.md', '# Beta document\n') // B
     await editor.click()
     await page.keyboard.type('BETA-DOC')
 
@@ -243,7 +263,7 @@ test.describe('document lifecycle', () => {
     await page.locator(`[data-testid="doc-item"][data-doc-id="${betaId}"]`).click()
     await expect.poll(activeId).toBe(betaId)
     // The PREVIOUS document's editing session is aborted on switch, so its pending preview
-    // debounce can no longer write A's text into B's draft (which isDocSwitch would otherwise
+    // debounce can no longer write A's text into B's document (which isDocSwitch would otherwise
     // force-apply here and Ctrl+Z would replay).
     await expect(
       editor,

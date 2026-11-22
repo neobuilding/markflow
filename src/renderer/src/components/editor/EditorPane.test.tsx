@@ -31,7 +31,19 @@ const h = vi.hoisted(() => ({
       missing: false,
     }),
   ),
+  reloadMutateAsync: vi.fn(async () => ({
+    id: 'a',
+    title: 'a',
+    filePath: '/a.md',
+    content: '# A',
+    missing: false,
+  })),
 }))
+
+// Breadcrumb / path-menu "open in sidebar" now switches the workspace through a service. The
+// full transaction is covered by workspaceSwitch.test.ts; here the mock just mirrors the root.
+const switchWorkspaceMock = vi.hoisted(() => vi.fn())
+vi.mock('../../lib/workspaceSwitch', () => ({ switchWorkspace: switchWorkspaceMock }))
 
 vi.mock('../../hooks/useDocuments', () => ({
   useDocument: () => ({
@@ -53,13 +65,7 @@ vi.mock('../../hooks/useDocuments', () => ({
   }),
   useReloadDocument: () => ({
     mutate: vi.fn(),
-    mutateAsync: vi.fn(async () => ({
-      id: 'a',
-      title: 'a',
-      filePath: '/a.md',
-      content: '# A',
-      missing: false,
-    })),
+    mutateAsync: h.reloadMutateAsync,
     isPending: false,
   }),
   useHasMemoryOnlyDraft: () => h.hasDraft,
@@ -93,6 +99,10 @@ vi.mock('../../lib/parseClient', () => ({
 }))
 
 beforeEach(() => {
+  switchWorkspaceMock.mockImplementation((root: string) => {
+    useUIStore.getState().setWorkspaceRoot(root)
+    return Promise.resolve(true)
+  })
   h.startTitleEdit.mockClear()
   h.isLoading = false
   h.noDoc = false
@@ -103,6 +113,7 @@ beforeEach(() => {
   h.createDraft.mockClear()
   h.hasDraft = false
   h.saveMutateAsync.mockClear()
+  h.reloadMutateAsync.mockClear()
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setEditable(true)
   useUIStore.getState().setPendingMatch(null)
@@ -333,6 +344,18 @@ describe('EditorPane pendingFileAction save / saveAs / reload', () => {
     await waitFor(() => expect(useUIStore.getState().pendingFileAction).toBeNull())
   })
 
+  // The discard-on-read-only flow sets editable=false BEFORE requesting the reload, so the
+  // bridge must not drop 'reload' the way it drops 'save'/'saveAs' in read-only mode.
+  it('reloads in read-only mode when the discard-and-reload action arrives', async () => {
+    useUIStore.getState().setEditable(false)
+    mount()
+    act(() => {
+      useUIStore.getState().requestFileAction({ type: 'reload' })
+    })
+    await waitFor(() => expect(useUIStore.getState().pendingFileAction).toBeNull())
+    expect(h.reloadMutateAsync).toHaveBeenCalledWith('a')
+  })
+
   it('clears a save request in read-only mode without saving', async () => {
     useUIStore.getState().setEditable(false)
     mount()
@@ -421,7 +444,7 @@ describe('EditorPane file context menus', () => {
     // Right-click the inner folder 'y'.
     fireEvent.contextMenu(segments[1])
     fireEvent.click(await screen.findByTestId('doc-open-folder-in-sidebar'))
-    expect(useUIStore.getState().activeFolder).toBe('/x/y')
+    expect(useUIStore.getState().workspaceRoot).toBe('/x/y')
 
     fireEvent.contextMenu(segments[1])
     fireEvent.click(await screen.findByTestId('doc-copy-folder-path'))
@@ -481,10 +504,10 @@ describe('EditorPane file context menus', () => {
     expect(segments).toHaveLength(3)
     fireEvent.contextMenu(segments[0])
     fireEvent.click(await screen.findByTestId('doc-open-folder-in-sidebar'))
-    expect(useUIStore.getState().activeFolder).toBe('C:/')
+    expect(useUIStore.getState().workspaceRoot).toBe('C:/')
     fireEvent.contextMenu(segments[2])
     fireEvent.click(await screen.findByTestId('doc-open-folder-in-sidebar'))
-    expect(useUIStore.getState().activeFolder).toBe('C:/docs/sub')
+    expect(useUIStore.getState().workspaceRoot).toBe('C:/docs/sub')
   })
 
   it('swallows a rejected reveal without surfacing an unhandled rejection', async () => {

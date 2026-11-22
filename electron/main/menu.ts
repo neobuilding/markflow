@@ -168,7 +168,7 @@ export function setupMenu(): void {
               if (mdFiles.length > 0) {
                 // Send the *folder*, not the expanded file list: the renderer expands
                 // folders itself (files:resolve-paths), and only the folder path lets it
-                // pin `activeFolder` and therefore the watched root to the directory
+                // pin `workspaceRoot` and therefore the watched root to the directory
                 // the user actually chose. Sending the file list made the renderer fall
                 // back to the parent directory of whichever file happened to be listed
                 // first, which is a subdirectory whenever the picked folder has no .md
@@ -240,12 +240,12 @@ export function setupMenu(): void {
           click: () => getMainWindow()?.webContents.send('menu:close-workspace'),
         },
         { type: 'separator' },
-        // A bare `{ role: 'quit' }` renders Electron's OWN label, which follows the *system*
-        // locale and therefore stayed English after an in-app switch to Chinese. Pairing the
-        // role with an explicit label keeps the behavior/accelerator and localizes the text.
-        process.platform === 'darwin'
-          ? { label: menuT('menu.closeWindow'), role: 'close' }
-          : { label: menuT('menu.quit'), role: 'quit' },
+        // No application-level Quit item (no Cmd+Q / File > Exit): the only unsaved-changes
+        // guard lives at window close. `role: 'close'` closes the focused window only;
+        // Win/Linux exit when the last window closes (lifecycle.ts window-all-closed), and
+        // macOS keeps the process alive with the Dock icon. macOS Dock Quit is supplied by
+        // Electron/OS, not by this menu, and still closes windows through the same guard.
+        { label: menuT('menu.closeWindow'), role: 'close' },
       ],
     },
     {
@@ -401,7 +401,7 @@ export function registerMenuHandlers(): void {
   })
 
   // "New File…" is filesystem-bound: it needs an open folder to write into. The renderer mirrors
-  // `activeFolder` here so the native menu item is greyed out on the welcome screen.
+  // `workspaceRoot` here so the native menu item is greyed out on the welcome screen.
   ipcMain.on('menu:set-has-folder', (_event, has: boolean) => {
     hasFolderState = has
     applyMenuStates()

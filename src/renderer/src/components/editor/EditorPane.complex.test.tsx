@@ -143,7 +143,7 @@ beforeEach(() => {
   vi.spyOn(window, 'alert').mockImplementation(() => {})
   useUIStore.getState().setActiveDocumentId(null)
   useUIStore.getState().setEditable(false)
-  useUIStore.getState().setActiveFolder(null)
+  useUIStore.getState().setWorkspaceRoot(null)
   useUIStore.getState().setViewMode('edit')
   useUIStore.getState().setIsNewUnsaved(false)
   useUIStore.getState().setExternalChange(null)
@@ -273,7 +273,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
   // refusing after it would leave a file on disk the app refuses to acknowledge as open.
   it('re-roots the workspace after a confirmed Save As outside the root', async () => {
     const user = userEvent.setup()
-    useUIStore.getState().setActiveFolder('/old')
+    useUIStore.getState().setWorkspaceRoot('/old')
     api.dialog.saveFile = vi.fn(async () => '/new/target.md')
     api.files.resolvePaths = vi.fn(async (p: string[]) => ({
       directories: ['/new'],
@@ -296,7 +296,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
 
   it('keeps the old root when the Save As re-root confirmation is declined', async () => {
     const user = userEvent.setup()
-    useUIStore.getState().setActiveFolder('/old')
+    useUIStore.getState().setWorkspaceRoot('/old')
     api.dialog.saveFile = vi.fn(async () => '/new/target.md')
     api.dialog.confirm = vi.fn(async () => false)
     const { container } = mount()
@@ -309,12 +309,12 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     // Refused BEFORE the write: nothing is saved, nothing is re-rooted.
     expect(api.documents.saveAs).not.toHaveBeenCalled()
     expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
-    expect(useUIStore.getState().activeFolder).toBe('/old')
+    expect(useUIStore.getState().workspaceRoot).toBe('/old')
   })
 
   it('does not re-root when Save As itself fails', async () => {
     const user = userEvent.setup()
-    useUIStore.getState().setActiveFolder('/old')
+    useUIStore.getState().setWorkspaceRoot('/old')
     api.dialog.saveFile = vi.fn(async () => '/new/target.md')
     api.documents.saveAs = vi.fn(async () => {
       throw new Error('disk full')
@@ -328,7 +328,7 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
     await user.click(screen.getByTestId('save-as-btn'))
     await waitFor(() => expect(alertSpy).toHaveBeenCalled())
     expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
-    expect(useUIStore.getState().activeFolder).toBe('/old')
+    expect(useUIStore.getState().workspaceRoot).toBe('/old')
     alertSpy.mockRestore()
   })
 
@@ -366,12 +366,17 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
       throw new Error('read error')
     })
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // A failed reload after a discard would otherwise leave stale text on screen with
+    // dirty === false, so the failure must be visible to the user, not only in the console.
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     mount()
     await openDoc()
 
     await user.click(screen.getByTestId('reload-btn'))
     await waitFor(() => expect(errorSpy).toHaveBeenCalled())
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled())
     errorSpy.mockRestore()
+    alertSpy.mockRestore()
   })
 
   it('external-change dialog "reload" refreshes content and clears the change', async () => {
@@ -1043,7 +1048,7 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     const segments = screen.getAllByTitle('Go to this folder')
     expect(segments.length).toBeGreaterThan(0)
     await user.click(segments[0])
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('/docs'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('/docs'))
     docs.a = { ...docs.a, filePath: originalPath }
   })
 
@@ -1059,13 +1064,13 @@ describe('EditorPane — title editing & breadcrumb & external dialog', () => {
     expect(segments).toHaveLength(3)
 
     await user.click(segments[0])
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('D:/'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('D:/'))
 
     await user.click(segments[1])
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('D:/GitHub'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('D:/GitHub'))
 
     await user.click(segments[2])
-    await waitFor(() => expect(useUIStore.getState().activeFolder).toBe('D:/GitHub/markflow'))
+    await waitFor(() => expect(useUIStore.getState().workspaceRoot).toBe('D:/GitHub/markflow'))
 
     docs.a = { ...docs.a, filePath: originalPath }
   })

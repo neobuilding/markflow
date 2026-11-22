@@ -67,7 +67,7 @@ export interface ConfirmCall {
   cancelId?: number
   /** Dialog type, e.g. 'question'. */
   type?: string
-  /** The canned answer the spy auto-picked (1 = ok/Discard, 0 = cancel/Keep). */
+  /** The canned answer the spy auto-picked (0 = first button, 1 = second, 2 = third/Cancel). */
   response: number
 }
 
@@ -81,38 +81,45 @@ export interface ConfirmCall {
  * replaces `dialog.showMessageBox` with a recorder that:
  *   - captures the exact options the production code would pass to the OS box
  *     (message, buttons array, defaultId, cancelId, type);
- *   - returns a canned `response` (default 1 = Discard) so the app quits gracefully.
+ *   - returns a canned `response` (default 1 = Discard) so the window closes gracefully.
  *
  * The production `dialog:confirm` handler is left UNTOUCHED and still runs, so the real
- * dirty-quit flow (tryCloseWorkspace → app:quit-pending → discard → closeWorkspace +
+ * dirty-close flow (tryCloseWorkspace → app:quit-pending → discard → closeWorkspace +
  * allowQuit) is fully exercised; only the native button render is skipped, which
  * Playwright cannot reach anyway.
  */
 export async function installConfirmSpy(
   handle: AppHandle,
-  opts: { defaultResponse?: 0 | 1 } = {},
+  opts: { defaultResponse?: 0 | 1 | 2 | 3; responses?: Array<0 | 1 | 2 | 3> } = {},
 ): Promise<void> {
   const defaultResponse = opts.defaultResponse ?? 1
-  await handle.electronApp.evaluate((electron, defaultResponse) => {
-    const dialog = (electron as any).dialog
-    const g = globalThis as any
-    g.__mf_confirm_calls = g.__mf_confirm_calls ?? []
-    // Replace the native box with a recorder + auto-answer. We deliberately do NOT call
-    // the real showMessageBox: it would open an OS modal Playwright cannot click, which
-    // would block until the 15s closeApp timeout + force-kill.
-    dialog.showMessageBox = async (o: any) => {
-      g.__mf_confirm_calls.push({
-        message: o?.message,
-        detail: o?.detail,
-        buttons: o?.buttons,
-        defaultId: o?.defaultId,
-        cancelId: o?.cancelId,
-        type: o?.type,
-        response: defaultResponse,
-      })
-      return { response: defaultResponse, checkboxChecked: false }
-    }
-  }, defaultResponse)
+  const responses = opts.responses
+  await handle.electronApp.evaluate(
+    (electron, { defaultResponse, responses }) => {
+      const dialog = (electron as any).dialog
+      const g = globalThis as any
+      g.__mf_confirm_calls = g.__mf_confirm_calls ?? []
+      // Replace the native box with a recorder + auto-answer. We deliberately do NOT call
+      // the real showMessageBox: it would open an OS modal Playwright cannot click, which
+      // would block until the 15s closeApp timeout + force-kill. `responses` lets one case
+      // answer a chain of dialogs (e.g. four-way choice, then the single unsaved-file guard).
+      dialog.showMessageBox = async (o: any) => {
+        const index = g.__mf_confirm_calls.length
+        const response = responses?.[index] ?? defaultResponse
+        g.__mf_confirm_calls.push({
+          message: o?.message,
+          detail: o?.detail,
+          buttons: o?.buttons,
+          defaultId: o?.defaultId,
+          cancelId: o?.cancelId,
+          type: o?.type,
+          response,
+        })
+        return { response, checkboxChecked: false }
+      }
+    },
+    { defaultResponse, responses },
+  )
 }
 
 /** Read the native confirm invocations recorded by installConfirmSpy. */
@@ -218,8 +225,8 @@ export async function forceEnglish(page: Page): Promise<void> {
  * Discard in the main process see the inline note below. Playwright cannot click
  * native OS dialog buttons, so a dirty workspace would otherwise block the graceful
  * quit until CLOSE_TIMEOUT_MS and force-kill the tree (noisy + ~15s slower per dirty
- * test, and it skips the real graceful-quit + folder-watcher teardown). Auto-answering
- * still drives the REAL quit flow and only bypasses the native button render.
+ * test, and it skips the real graceful exit + folder-watcher teardown). Auto-answering
+ * still drives the REAL window-close flow and only bypasses the native button render.
  */
 export async function closeApp(handle: AppHandle): Promise<void> {
   // The harness reclaims every temp dir it allocated. Doing this in `finally`

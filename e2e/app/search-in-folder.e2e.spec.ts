@@ -39,7 +39,7 @@ test.describe('tree context menu — search in folder (D8)', () => {
   async function openWorkspace(page: Page): Promise<void> {
     await page.evaluate((root) => {
       const w = window as any
-      w.__uiStore.getState().setActiveFolder(root)
+      w.__uiStore.getState().setWorkspaceRoot(root)
       w.__queryClient.invalidateQueries({ queryKey: ['documents'] })
       return window.api.documents.setWorkspaceRoot(root)
     }, scratch)

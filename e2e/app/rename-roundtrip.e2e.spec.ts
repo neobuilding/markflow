@@ -21,9 +21,9 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
 
   /**
    * Open `file` through the same steps useOpenPaths performs (resolvePaths ->
-   * importMany -> setWorkspaceRoot -> setActiveFolder/setActiveDocumentId), switch it
+   * importMany -> setWorkspaceRoot -> setWorkspaceRoot/setActiveDocumentId), switch it
    * into edit mode, and instrument the renderer: every main-process push event and
-   * every activeDocumentId/activeFolder transition is recorded into window.__trace.
+   * every activeDocumentId/workspaceRoot transition is recorded into window.__trace.
    */
   async function openFile(file: string): Promise<string> {
     const { page } = handle
@@ -39,7 +39,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
         await window.api.documents.setWorkspaceRoot(directories[0] ?? dir)
         const imported = await window.api.documents.importMany(markdownFiles)
         const ui = w.__uiStore.getState()
-        ui.setActiveFolder(dir)
+        ui.setWorkspaceRoot(dir)
         ui.setActiveDocumentId(imported[0].id)
         ui.setDirty(false)
         ui.setEditable(true)
@@ -61,10 +61,10 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
         w.__uiStore.subscribe((s: any) => {
           if (
             s.activeDocumentId !== prev.activeDocumentId ||
-            s.activeFolder !== prev.activeFolder
+            s.workspaceRoot !== prev.workspaceRoot
           ) {
             trace.push(
-              `+${Date.now() - t0}ms STATE doc=${s.activeDocumentId} folder=${s.activeFolder}`,
+              `+${Date.now() - t0}ms STATE doc=${s.activeDocumentId} folder=${s.workspaceRoot}`,
             )
           }
           prev = s
@@ -90,7 +90,11 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
   async function dumpState(tag: string) {
     const state = await handle.page.evaluate(() => {
       const s = (window as any).__uiStore.getState()
-      return { activeDocumentId: s.activeDocumentId, activeFolder: s.activeFolder, dirty: s.dirty }
+      return {
+        activeDocumentId: s.activeDocumentId,
+        workspaceRoot: s.workspaceRoot,
+        dirty: s.dirty,
+      }
     })
     console.log(`--- state ${tag} ---`, JSON.stringify(state))
     return state
@@ -143,7 +147,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
     // Document still open, still the same record, original name; folder still open.
     await expect(page.getByTestId('title-btn')).toHaveText('a.md')
     expect(state.activeDocumentId).toBe(id)
-    expect(state.activeFolder).not.toBeNull()
+    expect(state.workspaceRoot).not.toBeNull()
 
     // Harness sanity: the folder watcher must be LIVE an external file creation
     // must reach the renderer as a folder-changed event. Without this check the
@@ -173,7 +177,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
 
     const state = await dumpState('fast round-trip final')
     expect(state.activeDocumentId).toBe(id)
-    expect(state.activeFolder).not.toBeNull()
+    expect(state.workspaceRoot).not.toBeNull()
     await expect(page.getByTestId('title-btn')).toHaveText('a.md')
   })
 
@@ -205,7 +209,7 @@ test.describe('rename round-trip keeps the document and workspace open', () => {
     // The SAME record (id) must have followed both renames never dropped, never
     // replaced by a new record that would leave the editor in the notFound state.
     expect(state.activeDocumentId).toBe(id)
-    expect(state.activeFolder).not.toBeNull()
+    expect(state.workspaceRoot).not.toBeNull()
     await expect(page.getByTestId('title-btn')).toHaveText('a.md')
   })
 })

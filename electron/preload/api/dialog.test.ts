@@ -47,4 +47,20 @@ describe('preload dialogApi', () => {
     dialogApi.confirm(opts)
     expect(invokes[0]).toEqual({ channel: 'dialog:confirm', args: [opts] })
   })
+
+  it('confirmOpenExternal invokes dialog:confirm-open-external with the target', () => {
+    dialogApi.confirmOpenExternal('file:///n/a.pdf')
+    expect(invokes[0]).toEqual({
+      channel: 'dialog:confirm-open-external',
+      args: ['file:///n/a.pdf'],
+    })
+  })
+
+  it('confirmWorkspaceExternal invokes dialog:confirm-workspace-external with the target', () => {
+    dialogApi.confirmWorkspaceExternal('C:/outside/note.md')
+    expect(invokes[0]).toEqual({
+      channel: 'dialog:confirm-workspace-external',
+      args: ['C:/outside/note.md'],
+    })
+  })
 })

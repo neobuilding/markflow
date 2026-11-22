@@ -13,6 +13,7 @@ import {
   FileOutput,
   Copy,
   ArrowRight,
+  ExternalLink,
 } from 'lucide-react'
 
 // Shared "file menu" content for the title bar file name and the file-path breadcrumb
@@ -34,6 +35,7 @@ export interface DocMenuActions {
   copyFileName: () => void
   copyFullPath: () => void
   showInFolder: () => void
+  openInNewWindow: () => void
   save: () => void
   saveAs: () => void
   reload: () => void
@@ -128,6 +130,15 @@ export function FileMenuItems(props: FileMenuItemsProps): React.ReactElement {
       <Info size={13} /> {t('editor.fileDetails')}
     </ContextMenuItem>
   )
+  const openInNewWindowItem = (
+    <ContextMenuItem
+      data-testid="doc-open-in-new-window"
+      disabled={!hasPath}
+      onClick={actions.openInNewWindow}
+    >
+      <ExternalLink size={13} /> {t('app.workspaceExternalNewWindow')}
+    </ContextMenuItem>
+  )
 
   if (variant === 'icon') {
     return (
@@ -176,6 +187,7 @@ export function FileMenuItems(props: FileMenuItemsProps): React.ReactElement {
         </>
       )}
       {detailsItem}
+      {openInNewWindowItem}
       {variant === 'title' && (
         <ContextMenuItem
           data-testid="doc-export-html"

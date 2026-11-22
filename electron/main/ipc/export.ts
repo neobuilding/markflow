@@ -6,6 +6,7 @@
 // 2) export:write write the final HTML to the user-selected path
 // Image reading / network fetching must happen in the main process (the renderer sandbox has no Node API).
 import type { IpcMain } from 'electron'
+import { scopedHandleFor } from '../model/ipcScope'
 import { BrowserWindow, screen } from 'electron'
 import { getMainWindow } from '../state'
 import {
@@ -116,7 +117,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
   // Key pitfall: once String.prototype.replace's callback is marked async it returns a Promise,
   //   and replace will serialize it to "[object Promise]" as the replacement string, corrupting the HTML.
   //   So we loop with exec and await each match, then concatenate the result string.
-  ipcMain.handle('export:embed-images', async (_e, html: string): Promise<string> => {
+  scopedHandleFor(ipcMain, 'export:embed-images', async (_e, html: string): Promise<string> => {
     const RE = /<img([^>]*?)src="([^"]+)"([^>]*)>/gi
     let out = ''
     let last = 0
@@ -136,7 +137,8 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
   // and the caller did not explicitly pass overwrite=true, throw — the upper layer (renderer already
   // asks the user to confirm before calling) decides whether to retry.
   // This way, even if another entry point misuses export:write, it won't overwrite the user's file without confirmation.
-  ipcMain.handle(
+  scopedHandleFor(
+    ipcMain,
     'export:write',
     (_e, filePath: unknown, html: unknown, overwrite = false): void => {
       if (typeof filePath !== 'string' || typeof html !== 'string') {
@@ -375,7 +377,7 @@ export function registerExportHandlers(ipcMain: IpcMain): void {
   // Print: pop the system print dialog so the user picks the physical printer / copies / margins / target (can save as PDF).
   // Failures (invalid printer settings, no usable printer, etc.) are thrown upward as-is for the renderer to surface; no silent downgrade.
   // Note: this is real printing and is NOT downgraded to "export a PDF file".
-  ipcMain.handle('export:print', async (_e, html: unknown): Promise<void> => {
+  scopedHandleFor(ipcMain, 'export:print', async (_e, html: unknown): Promise<void> => {
     // The non-string branch throws (covered by the TypeError test); the string branch delegates to
     // the hidden owner BrowserWindow path, which is exercised only manually (no display / printer
     // in a Node unit test), so that delegation line is excluded from coverage below.

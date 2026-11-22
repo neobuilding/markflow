@@ -52,7 +52,7 @@ describe('main-process i18n', () => {
     expect(i18n.menuT('menu.undo')).toBe('撤销')
     expect(i18n.menuT('menu.copy')).toBe('复制')
     expect(i18n.menuT('menu.minimize')).toBe('最小化')
-    expect(i18n.menuT('menu.quit')).toBe('退出')
+    expect(i18n.menuT('menu.closeWindow')).toBe('关闭窗口')
     expect(i18n.menuT('app.ok')).toBe('确定')
     expect(i18n.menuT('app.cancel')).toBe('取消')
   })

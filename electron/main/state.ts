@@ -1,7 +1,7 @@
 // Zero-dependency state base for the main process.
 //
 // Splitting index.ts into focused modules created a potential cycle:
-//   window.ts   ── needs isQuiting ──► lifecycle.ts
+//   window.ts   ── needs readyToQuit ──► lifecycle.ts
 //   lifecycle.ts ── needs mainWindow ─► window.ts
 //   menu.ts / handlers/* ── need mainWindow ─► window.ts
 //   handlers/app.ts ── needs pendingInitialPaths ─► ?
@@ -18,25 +18,13 @@ export const setMainWindow = (w: BrowserWindow | null): void => {
   mainWindow = w
 }
 
-// Quit-flow flags shared by window.ts (close handler) and lifecycle.ts.
-let isQuiting = false
+// Exit flag for the best-effort draft purge in lifecycle's before-quit handler.
+// The per-window unsaved guard lives in WindowContext; there is deliberately no
+// process-global "is quitting" flag that could skip another window's guard.
 let readyToQuit = false
-// Set when the renderer is actively showing the unsaved-changes confirm box.
-// While true, the 5s "renderer is dead" safety net stays disarmed so the user
-// has unlimited time to decide; clearing on the next quit attempt preserves the
-// safety net for the dead-renderer case.
-let quitPending = false
-export const getIsQuiting = () => isQuiting
-export const setIsQuiting = (v: boolean) => {
-  isQuiting = v
-}
 export const getReadyToQuit = () => readyToQuit
 export const setReadyToQuit = (v: boolean) => {
   readyToQuit = v
-}
-export const getQuitPending = () => quitPending
-export const setQuitPending = (v: boolean) => {
-  quitPending = v
 }
 
 // Paths accumulated before the app is ready: fed from open-file / second-instance

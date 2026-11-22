@@ -4,11 +4,25 @@ import { Dialog, DialogContent } from '../components/ui/dialog'
 import {
   hasModalSurface,
   isEditableTarget,
+  isEditorSurface,
   isFindWidgetField,
   MODAL_SURFACE_SELECTOR,
 } from './shortcut-scope'
 
 describe('shortcut-scope', () => {
+  it('detects every editor surface that keeps the history shortcuts from firing', () => {
+    expect(isEditorSurface(null)).toBe(false)
+    expect(isEditorSurface(document.createElement('div'))).toBe(false)
+    for (const className of ['cm-content', 'cm-editor', 'editor-content']) {
+      const surface = document.createElement('div')
+      surface.className = className
+      expect(isEditorSurface(surface)).toBe(true)
+      const child = document.createElement('span')
+      surface.appendChild(child)
+      expect(isEditorSurface(child)).toBe(true)
+    }
+  })
+
   it('finds no modal surface in an empty root', () => {
     const root = document.createElement('div')
     expect(hasModalSurface(root)).toBe(false)

@@ -113,6 +113,64 @@ describe('dialog handlers', () => {
     expect(h.calls[0].cancelId).toBe(0)
   })
 
+  it('confirm-open-external maps Open / Copy / Cancel responses and uses localized buttons', async () => {
+    h.calls.length = 0
+    h.confirm = { response: 0 }
+    expect(await handlers['dialog:confirm-open-external'](null, 'https://example.com')).toBe('open')
+    h.confirm = { response: 1 }
+    expect(await handlers['dialog:confirm-open-external'](null, 'https://example.com')).toBe('copy')
+    h.confirm = { response: 2 }
+    expect(await handlers['dialog:confirm-open-external'](null, 'https://example.com')).toBe(
+      'cancel',
+    )
+    expect(h.calls[0]).toMatchObject({
+      type: 'question',
+      message: 'app.openExternalTitle',
+      detail: 'https://example.com',
+      buttons: ['app.openExternalOpen', 'app.openExternalCopy', 'app.cancel'],
+      defaultId: 0,
+      cancelId: 2,
+    })
+  })
+
+  it('confirm-workspace-external maps New Window / Keep / Switch / Cancel responses', async () => {
+    h.calls.length = 0
+    h.confirm = { response: 0 }
+    expect(await handlers['dialog:confirm-workspace-external'](null, '/out/outside.md')).toBe(
+      'new-window',
+    )
+    h.confirm = { response: 1 }
+    expect(await handlers['dialog:confirm-workspace-external'](null, '/out/outside.md')).toBe(
+      'keep-workspace',
+    )
+    h.confirm = { response: 2 }
+    expect(await handlers['dialog:confirm-workspace-external'](null, '/out/outside.md')).toBe(
+      'switch-workspace',
+    )
+    h.confirm = { response: 3 }
+    expect(await handlers['dialog:confirm-workspace-external'](null, '/out/outside.md')).toBe(
+      'cancel',
+    )
+    // Unexpected responses also fall through to cancel (the `default` branch).
+    h.confirm = { response: 99 }
+    expect(await handlers['dialog:confirm-workspace-external'](null, '/out/outside.md')).toBe(
+      'cancel',
+    )
+    expect(h.calls[0]).toMatchObject({
+      type: 'question',
+      message: 'app.workspaceExternalTitle',
+      detail: '/out/outside.md',
+      buttons: [
+        'app.workspaceExternalNewWindow',
+        'app.workspaceExternalKeep',
+        'app.workspaceExternalSwitch',
+        'app.cancel',
+      ],
+      defaultId: 0,
+      cancelId: 3,
+    })
+  })
+
   it('save-html returns the html path or null', async () => {
     h.save = { canceled: false, filePath: '/out.html' }
     expect(await handlers['dialog:save-html'](null)).toBe('/out.html')

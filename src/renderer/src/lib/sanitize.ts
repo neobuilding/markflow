@@ -36,14 +36,19 @@ DOMPurify.addHook('uponSanitizeAttribute', (_node, attr) => {
   if (attr.attrName.toLowerCase().startsWith('on')) attr.keepAttr = false
 })
 
-// DOMPurify's default URI whitelist, plus `appdoc:` — the app's own document-asset
-// scheme (appdoc://<docId>/<relativePath>). It resolves only through the registered
-// protocol handler in electron/main/ipc/appdoc.ts (doc lookup → containment check →
-// exists), and the CSP already allows `img-src … appdoc:`; without this entry
-// DOMPurify treats it as an unknown scheme and SILENTLY strips the src, so every
-// relative image in the preview renders as a src-less <img> (and export loses it too).
+// DOMPurify's default URI whitelist, plus two app-specific forms:
+//   - `appdoc:` — the app's own document-asset scheme (appdoc://<docId>/<relativePath>).
+//     It resolves only through electron/main/ipc/appdoc.ts (doc lookup → containment
+//     check → exists) and the CSP allows `img-src … appdoc:`. Without this entry every
+//     relative image in the preview renders as a src-less <img> (and export loses it).
+//   - local file links (ADR-0038 §3.1.3): `file:///…`, `C:/…`, `C:\…` (the latter arrives
+//     percent-escaped as `C:%5C…`). markdown-it now emits these anchors, so the gate must
+//     keep their href or the preview's click handler receives an anchor with no href.
+//     Opening them still requires the Open / Copy / Cancel confirmation in the renderer.
+// The dangerous schemes stay excluded: `javascript:`, `data:` (except images, which
+// markdown-it's validateLink keeps) and unknown schemes are still stripped here.
 const ALLOWED_URI_REGEXP =
-  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|appdoc):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i
+  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|appdoc|file):|(?:[a-z]:(?:[\\/]|%5c))|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i
 
 export function sanitizeHtml(html: string): SanitizedHtml {
   const out = DOMPurify.sanitize(html, {

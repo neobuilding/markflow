@@ -20,6 +20,7 @@ import {
   onAppRequestQuit,
   onFolderChanged,
   onDocumentRefresh,
+  onRevealFile,
 } from './events'
 
 beforeEach(() => {
@@ -65,6 +66,16 @@ describe('preload events subscriptions', () => {
     expect(typeof listeners['app:open-paths']).toBe('function')
     listeners['app:open-paths']({}, ['/a.md', '/b.md'])
     expect(payload).toEqual(['/a.md', '/b.md'])
+  })
+
+  it('onRevealFile maps to app:reveal-file and forwards the path', () => {
+    let payload: unknown
+    onRevealFile((filePath) => {
+      payload = filePath
+    })
+    expect(typeof listeners['app:reveal-file']).toBe('function')
+    listeners['app:reveal-file']({}, '/workspace/note.md')
+    expect(payload).toBe('/workspace/note.md')
   })
 
   it('onAppRequestQuit maps to app:request-quit with no payload', () => {

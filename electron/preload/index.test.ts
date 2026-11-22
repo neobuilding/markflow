@@ -33,6 +33,7 @@ const EXPECTED_API_KEYS = [
   'onFolderChanged',
   'onDocumentRefresh',
   'onOpenPaths',
+  'onRevealFile',
   'onAppRequestQuit',
   'onReplaceProgress',
 ]

@@ -80,7 +80,7 @@ const api = {
 beforeEach(() => {
   vi.clearAllMocks()
   ;(window as unknown as { api: unknown }).api = api
-  useUIStore.getState().setActiveFolder(null)
+  useUIStore.getState().setWorkspaceRoot(null)
   useUIStore.getState().setActiveDocumentId(null)
 })
 
@@ -113,7 +113,7 @@ describe('useDocument — detail query', () => {
 })
 
 describe('useCreateDocument — folder fallback', () => {
-  it('falls back to undefined folderPath when activeFolder is null and no folderPath is given', async () => {
+  it('falls back to undefined folderPath when workspaceRoot is null and no folderPath is given', async () => {
     const { result } = renderHook(() => useCreateDocument(), { wrapper: wrapper() })
     await act(async () => {
       await result.current.mutateAsync({ title: 'X' })
@@ -126,8 +126,8 @@ describe('useCreateDocument — folder fallback', () => {
     expect(call.memoryOnly).toBe(true) // default draft is memory-only
   })
 
-  it('uses activeFolder (absolute) when no folderPath is supplied and a folder is open', async () => {
-    useUIStore.getState().setActiveFolder('/opened/folder')
+  it('uses workspaceRoot (absolute) when no folderPath is supplied and a folder is open', async () => {
+    useUIStore.getState().setWorkspaceRoot('/opened/folder')
     const { result } = renderHook(() => useCreateDocument(), { wrapper: wrapper() })
     await act(async () => {
       await result.current.mutateAsync({ title: 'X' })
@@ -137,8 +137,8 @@ describe('useCreateDocument — folder fallback', () => {
     )
   })
 
-  it('prefers an explicit folderPath over activeFolder', async () => {
-    useUIStore.getState().setActiveFolder('/opened/folder')
+  it('prefers an explicit folderPath over workspaceRoot', async () => {
+    useUIStore.getState().setWorkspaceRoot('/opened/folder')
     const { result } = renderHook(() => useCreateDocument(), { wrapper: wrapper() })
     await act(async () => {
       await result.current.mutateAsync({ title: 'X', folderPath: '/explicit/path' })
@@ -388,7 +388,7 @@ describe('useOpenPaths', () => {
       out = await result.current.mutateAsync(['/opened'])
     })
     expect(out).toEqual({ folder: '/opened', documentId: '/opened/a.md', note: 'directory' })
-    expect(useUIStore.getState().activeFolder).toBe('/opened')
+    expect(useUIStore.getState().workspaceRoot).toBe('/opened')
     expect(useUIStore.getState().activeDocumentId).toBe('/opened/a.md')
     // The root is handed to the main process so it can be watched recursively — BEFORE the
     // import, because setting it clears the store (ADR-0023).
@@ -545,7 +545,7 @@ describe('useDocuments — documentStateRevision bumps', () => {
 describe('createDraft — the single New Draft action', () => {
   beforeEach(() => {
     useUIStore.getState().setDirty(false)
-    useUIStore.getState().setActiveFolder('/some/folder')
+    useUIStore.getState().setWorkspaceRoot('/some/folder')
   })
 
   it('creates a memory-only Untitled draft and opens it editable', async () => {
@@ -559,7 +559,7 @@ describe('createDraft — the single New Draft action', () => {
   })
 
   it('never needs an active folder (welcome screen)', async () => {
-    useUIStore.getState().setActiveFolder(null)
+    useUIStore.getState().setWorkspaceRoot(null)
     await act(async () => {
       await createDraft()
     })
@@ -707,7 +707,7 @@ describe('useHasMemoryOnlyDraft — the at-most-one-draft predicate', () => {
   // The list query is folder-scoped: the hook must ask for the ACTIVE folder, and the main process
   // always includes drafts in that answer, so an open folder cannot hide a draft.
   it('asks the active folder for its documents', async () => {
-    useUIStore.getState().setActiveFolder('/docs')
+    useUIStore.getState().setWorkspaceRoot('/docs')
     api.documents.list.mockResolvedValueOnce([draftDoc])
     const { result } = renderHook(() => useHasMemoryOnlyDraft(), { wrapper: wrapper() })
     await waitFor(() => expect(result.current).toBe(true))

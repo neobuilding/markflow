@@ -12,7 +12,7 @@ describe('useUIStore — all setters and toggles', () => {
     const s = useUIStore.getState()
     s.setSidebarOpen(true)
     s.setActiveDocumentId(null)
-    s.setActiveFolder(null)
+    s.setWorkspaceRoot(null)
     s.setEditable(false)
     s.setViewMode('split')
     s.setSearchOpen(false)
@@ -40,6 +40,45 @@ describe('useUIStore — all setters and toggles', () => {
     s.setActiveDocumentTitle(null)
   })
 
+  it('records path-keyed document switches through the preload bridge', async () => {
+    const { useNavigationHistory } = await import('./navigationHistory')
+    useNavigationHistory.getState().reset()
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { get: vi.fn(async () => ({ id: 'doc-1', filePath: 'C:/n/a.md' })) },
+    }
+    useUIStore.getState().setActiveDocumentId('doc-1')
+    await vi.waitFor(() =>
+      expect(useNavigationHistory.getState().entries[0]?.path).toBe('C:/n/a.md'),
+    )
+  })
+
+  it('keeps history quiet without a bridge, for drafts, and for suppressed history moves', async () => {
+    const { useNavigationHistory, withoutHistoryRecording } = await import('./navigationHistory')
+    useNavigationHistory.getState().reset()
+    delete (window as unknown as { api?: unknown }).api
+    useUIStore.getState().setActiveDocumentId(null)
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { get: vi.fn(async () => ({ id: 'draft', filePath: '' })) },
+    }
+    useUIStore.getState().setActiveDocumentId('draft')
+    await withoutHistoryRecording(async () => {
+      useUIStore.getState().setActiveDocumentId('doc-1')
+      await Promise.resolve()
+    })
+    expect(useNavigationHistory.getState().entries).toEqual([])
+  })
+
+  it('stays quiet when the bridge cannot resolve a document path', async () => {
+    const { useNavigationHistory } = await import('./navigationHistory')
+    useNavigationHistory.getState().reset()
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { get: vi.fn(async () => Promise.reject(new Error('ipc down'))) },
+    }
+    useUIStore.getState().setActiveDocumentId('doc-1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(useNavigationHistory.getState().entries).toEqual([])
+  })
+
   it('toggleSidebar flips the flag', () => {
     useUIStore.getState().toggleSidebar()
     expect(useUIStore.getState().sidebarOpen).toBe(false)
@@ -56,8 +95,8 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().setActiveDocumentId('x')
     expect(useUIStore.getState().activeDocumentId).toBe('x')
 
-    useUIStore.getState().setActiveFolder('/f')
-    expect(useUIStore.getState().activeFolder).toBe('/f')
+    useUIStore.getState().setWorkspaceRoot('/f')
+    expect(useUIStore.getState().workspaceRoot).toBe('/f')
 
     useUIStore.getState().setViewMode('preview')
     expect(useUIStore.getState().viewMode).toBe('preview')
@@ -152,10 +191,10 @@ describe('useUIStore — all setters and toggles', () => {
   it('closeWorkspace clears the active document and folder', () => {
     const s = useUIStore.getState()
     s.setActiveDocumentId('x')
-    s.setActiveFolder('/f')
+    s.setWorkspaceRoot('/f')
     useUIStore.getState().closeWorkspace()
     expect(useUIStore.getState().activeDocumentId).toBeNull()
-    expect(useUIStore.getState().activeFolder).toBeNull()
+    expect(useUIStore.getState().workspaceRoot).toBeNull()
   })
 
   // Closing means the edits are discarded, so the global dirty flag must not survive:
@@ -218,7 +257,7 @@ describe('useUIStore — all setters and toggles', () => {
   it('printing locks document switches/closes and the export dialog, and releases them afterwards', async () => {
     const s = useUIStore.getState()
     s.setActiveDocumentId('doc-a')
-    s.setActiveFolder('/workspace')
+    s.setWorkspaceRoot('/workspace')
     s.setDirty(false)
     s.setPrinting(true)
 
@@ -232,7 +271,7 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().closeDocument()
     expect(useUIStore.getState().activeDocumentId).toBe('doc-a')
     useUIStore.getState().closeWorkspace()
-    expect(useUIStore.getState().activeFolder).toBe('/workspace')
+    expect(useUIStore.getState().workspaceRoot).toBe('/workspace')
     useUIStore.getState().setExportOpen(true)
     expect(useUIStore.getState().exportOpen, 'the export dialog must not open').toBe(false)
 
@@ -274,14 +313,14 @@ describe('useUIStore — all setters and toggles', () => {
     ;(
       window as unknown as { api: { documents: { setWorkspaceRoot: typeof setWorkspaceRoot } } }
     ).api = { documents: { setWorkspaceRoot } }
-    useUIStore.getState().setActiveFolder('/watched')
+    useUIStore.getState().setWorkspaceRoot('/watched')
 
     useUIStore.getState().closeWorkspace()
 
     // The root is CLEARED, not just unwatched: leaving it set would keep scope and replace
     // reasoning about a workspace that is supposed to be closed (ADR-0023).
     expect(setWorkspaceRoot).toHaveBeenCalledWith(null)
-    expect(useUIStore.getState().activeFolder).toBeNull()
+    expect(useUIStore.getState().workspaceRoot).toBeNull()
   })
 
   it('closeWorkspace still closes when the root teardown rejects', async () => {
@@ -291,25 +330,25 @@ describe('useUIStore — all setters and toggles', () => {
     ).api = { documents: { setWorkspaceRoot } }
     const s = useUIStore.getState()
     s.setActiveDocumentId('x')
-    s.setActiveFolder('/watched')
+    s.setWorkspaceRoot('/watched')
 
     useUIStore.getState().closeWorkspace()
     await Promise.resolve()
 
     // The workspace must still be cleared: teardown is best-effort, never a gate.
     expect(useUIStore.getState().activeDocumentId).toBeNull()
-    expect(useUIStore.getState().activeFolder).toBeNull()
+    expect(useUIStore.getState().workspaceRoot).toBeNull()
   })
 
   it('closeWorkspace still closes when the preload bridge is unavailable', () => {
     ;(window as unknown as { api?: unknown }).api = undefined
     const s = useUIStore.getState()
     s.setActiveDocumentId('x')
-    s.setActiveFolder('/watched')
+    s.setWorkspaceRoot('/watched')
 
     expect(() => useUIStore.getState().closeWorkspace()).not.toThrow()
     expect(useUIStore.getState().activeDocumentId).toBeNull()
-    expect(useUIStore.getState().activeFolder).toBeNull()
+    expect(useUIStore.getState().workspaceRoot).toBeNull()
   })
 })
 
@@ -420,6 +459,117 @@ describe('useUIStore — guarded document switching (ADR-0023)', () => {
     const ok = await useUIStore.getState().openDocumentAt('b', 1, 2)
     expect(ok).toBe(true)
     expect(useUIStore.getState().pendingMatch).toEqual({ id: 'b', start: 1, end: 2 })
+  })
+})
+
+// Switching edit -> read-only is a "discard" decision too: the user leaves the editing surface.
+// It must use the same two-state guard as a document switch, and a confirmed discard must REALLY
+// throw the draft away and reload the on-disk bytes (not silently keep the stale editor text).
+describe('useUIStore — guarded edit/read-only toggle', () => {
+  let confirm: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    confirm = vi.fn(async () => true)
+    const deleteDoc = vi.fn(async () => true)
+    ;(window as unknown as { api: unknown }).api = {
+      dialog: { confirm },
+      documents: { delete: deleteDoc },
+    }
+    const s = useUIStore.getState()
+    s.setLanguage('en')
+    s.setActiveDocumentId('a')
+    s.setActiveDocumentTitle('Alpha')
+    s.setEditable(true)
+    s.setDirty(false)
+    s.setIsNewUnsaved(false)
+    s.setPrinting(false)
+    s.setExporting(false)
+    s.setExportOpen(false)
+    s.requestFileAction(null)
+    for (const id of Object.keys(s.unsavedBuffers)) s.clearUnsavedBuffer(id)
+  })
+
+  it('toggles freely without prompting when nothing is dirty', async () => {
+    await useUIStore.getState().toggleEditable()
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(useUIStore.getState().pendingFileAction).toBeNull()
+  })
+
+  it('keeps edit mode and the draft when the user chooses Keep editing', async () => {
+    confirm.mockResolvedValueOnce(false)
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text')
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(confirm).toHaveBeenCalledTimes(1)
+    // The prompt must describe the mode switch, not say "switch files".
+    expect(confirm.mock.calls[0][0].message).toContain('read-only')
+    expect(ok).toBe(false)
+    expect(useUIStore.getState().editable).toBe(true)
+    expect(useUIStore.getState().dirty).toBe(true)
+    expect(useUIStore.getState().unsavedBuffers.a?.content).toBe('unsaved text')
+    expect(useUIStore.getState().pendingFileAction).toBeNull()
+  })
+
+  it('discards the draft and requests a disk reload when the user confirms', async () => {
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text')
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(true)
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(useUIStore.getState().dirty).toBe(false)
+    expect(useUIStore.getState().unsavedBuffers.a).toBeUndefined()
+    expect(useUIStore.getState().pendingFileAction).toEqual({ type: 'reload' })
+  })
+
+  it('guards a dirty document with no title and no id on the discard path', async () => {
+    const s = useUIStore.getState()
+    s.setActiveDocumentId(null)
+    s.setActiveDocumentTitle(null)
+    // setActiveDocumentId resets edit mode, so re-enter it to exercise the edit -> read-only guard.
+    s.setEditable(true)
+    s.setDirty(true)
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(true)
+    expect(confirm.mock.calls[0][0].message).toContain('read-only')
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(useUIStore.getState().dirty).toBe(false)
+    expect(useUIStore.getState().pendingFileAction).toEqual({ type: 'reload' })
+  })
+
+  it('never discards silently when no dialog bridge is available', async () => {
+    ;(window as unknown as { api?: unknown }).api = undefined
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text')
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(false)
+    expect(useUIStore.getState().editable).toBe(true)
+    expect(useUIStore.getState().dirty).toBe(true)
+    expect(useUIStore.getState().unsavedBuffers.a).toBeDefined()
+  })
+
+  it('does not prompt when switching from read-only back to edit', async () => {
+    useUIStore.getState().setEditable(false)
+    useUIStore.getState().setDirty(true)
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(useUIStore.getState().editable).toBe(true)
+    // Still dirty: entering edit mode must not throw the draft away.
+    expect(useUIStore.getState().dirty).toBe(true)
+  })
+
+  it('closes a memory-only draft on discard instead of requesting a reload', async () => {
+    useUIStore.getState().setIsNewUnsaved(true)
+    useUIStore.getState().setDirty(true)
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(true)
+    expect(window.api.documents.delete).toHaveBeenCalledWith('a')
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(useUIStore.getState().dirty).toBe(false)
+    expect(useUIStore.getState().isNewUnsaved).toBe(false)
+    expect(useUIStore.getState().pendingFileAction).toBeNull()
   })
 })
 

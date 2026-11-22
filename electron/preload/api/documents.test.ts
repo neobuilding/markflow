@@ -23,6 +23,11 @@ describe('preload documentsApi', () => {
     expect(invokes[0]).toEqual({ channel: 'documents:list', args: ['MyFolder'] })
   })
 
+  it('getWorkspaceRoot invokes documents:get-workspace-root', () => {
+    documentsApi.getWorkspaceRoot()
+    expect(invokes[0]).toEqual({ channel: 'documents:get-workspace-root', args: [] })
+  })
+
   it('get invokes documents:get with the id', () => {
     documentsApi.get('d1')
     expect(invokes[0]).toEqual({ channel: 'documents:get', args: ['d1'] })
@@ -46,7 +51,7 @@ describe('preload documentsApi', () => {
 
   it('import invokes documents:import with the file path', () => {
     documentsApi.import('/a.md')
-    expect(invokes[0]).toEqual({ channel: 'documents:import', args: ['/a.md'] })
+    expect(invokes[0]).toEqual({ channel: 'documents:import', args: ['/a.md', undefined] })
   })
 
   it('importMany invokes documents:import-many with the path array', () => {

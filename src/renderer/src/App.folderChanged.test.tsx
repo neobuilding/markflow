@@ -5,7 +5,7 @@
 // invalidation to the active folder (events under an unrelated subtree are
 // dropped) and (b) coalesce a burst of folder-changed broadcasts into a single
 // invalidation. The handler composes three pieces changed during the chokidar
-// lag fix: the activeFolder filter (isDirInFolder), the renderer-side 300ms
+// lag fix: the workspaceRoot filter (isDirInFolder), the renderer-side 300ms
 // coalesce, and the React Query invalidation none of which were exercised
 // together by the per-unit tests (utils.test.tsx covers isDirInFolder alone).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -92,7 +92,7 @@ describe('App — app:folder-changed handler (integration)', () => {
   beforeEach(() => {
     folderCbs = []
     refreshCbs = []
-    useUIStore.getState().setActiveFolder(null)
+    useUIStore.getState().setWorkspaceRoot(null)
     useUIStore.getState().setActiveDocumentId(null)
   })
   afterEach(() => {
@@ -100,7 +100,7 @@ describe('App — app:folder-changed handler (integration)', () => {
   })
 
   it('scopes the invalidation to the active folder: an unrelated subtree is dropped', async () => {
-    useUIStore.getState().setActiveFolder('/notes')
+    useUIStore.getState().setWorkspaceRoot('/notes')
     mountApp()
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
     expect(folderCbs).toHaveLength(1)
@@ -113,7 +113,7 @@ describe('App — app:folder-changed handler (integration)', () => {
   })
 
   it('invalidates for an event under the active folder subtree', async () => {
-    useUIStore.getState().setActiveFolder('/notes')
+    useUIStore.getState().setWorkspaceRoot('/notes')
     mountApp()
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
 
@@ -123,7 +123,7 @@ describe('App — app:folder-changed handler (integration)', () => {
 
   it('coalesces a burst of broadcasts into a single invalidation', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    useUIStore.getState().setActiveFolder('/notes')
+    useUIStore.getState().setWorkspaceRoot('/notes')
     mountApp()
     // Let the initial mount-time refetch/invalidate settle so it does not
     // pollute the burst count below.
@@ -140,7 +140,7 @@ describe('App — app:folder-changed handler (integration)', () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to refreshing when no folder is open (activeFolder is null)', async () => {
+  it('falls back to refreshing when no folder is open (workspaceRoot is null)', async () => {
     mountApp()
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
 

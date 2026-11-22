@@ -1,4 +1,5 @@
 import type { IpcMain } from 'electron'
+import { scopedHandleFor } from '../model/ipcScope'
 import { getAllDocuments, type Document } from '../model/documentStore'
 import { hasGlobMeta, globMatch } from './glob'
 import { buildScope, inScope, relToRoot, scopeDiagnostics } from '../lib/scope-filter'
@@ -50,12 +51,15 @@ function emptyResponse(
 
 /**
  * Quick Open (Ctrl/Cmd+K): file names and relative paths only, no scope concept (D11).
- * Glob support is the ADR-0013 #5 behaviour and is deliberately unchanged (D9).
+ * Glob support is the ADR-0013 #5 behaviour and is deliberately unchanged (D9). External
+ * documents are excluded: they are not part of the workspace tree or any search surface
+ * (ADR-0039 §3.3), and their out-of-root path would otherwise leak into the flat list.
  */
 function filenameSearch(docs: Document[], query: string, root: string | null): SearchResult[] {
   const useGlob = hasGlobMeta(query)
   const lower = query.toLowerCase()
   const matched = docs.filter((d) => {
+    if (d.external) return false
     const rel = relativePath(d.filePath, root)
     if (useGlob) return globMatch(rel, query)
     return d.title.toLowerCase().includes(lower) || rel.toLowerCase().includes(lower)
@@ -365,7 +369,9 @@ export async function handleSearchQuery(
 }
 
 export function registerSearchHandlers(ipcMainInstance: IpcMain, io: DiskIO = nodeDiskIO): void {
-  ipcMainInstance.handle('search:query', (_event, params: SearchQueryOptions) =>
+  // Scoped so the parameterless getAllDocuments()/getWorkspaceRoot() below resolve to the
+  // requesting window's store/root (P3 per-window isolation).
+  scopedHandleFor(ipcMainInstance, 'search:query', (_event, params: SearchQueryOptions) =>
     handleSearchQuery(params, io),
   )
 }

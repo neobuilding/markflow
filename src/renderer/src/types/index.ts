@@ -13,6 +13,10 @@ export interface Document {
   // outside the app). The document itself is kept open struck through so it can
   // still be saved back. Absent means the file is there.
   missing?: boolean
+  // True for a Markdown file opened from outside the current workspace root (the "open here,
+  // keep workspace" choice). It has a real filePath but no sidebar row and is outside search
+  // scope. Absent means the file is inside the workspace.
+  external?: boolean
 }
 
 // The search wire types are shared with the Electron main process (they travel over IPC), so they
