@@ -122,6 +122,7 @@ export interface Api {
     showInFolder: (filePath: string) => Promise<void>
     openExternal: (url: string) => Promise<void>
     openPath: (filePath: string) => Promise<string>
+    openInNewWindow: (filePath: string) => Promise<boolean>
     copyFile: (src: string, dest: string) => Promise<void>
     setLanguage: (locale: 'en' | 'zh-CN') => void
     allowQuit: () => void
@@ -171,6 +172,7 @@ export interface Api {
   onFolderChanged: (callback: (data: { dirPath: string }) => void) => () => void
   onDocumentRefresh: (callback: (data: { id: string }) => void) => () => void
   onOpenPaths: (callback: (paths: string[]) => void) => () => void
+  onRevealFile: (callback: (filePath: string) => void) => () => void
   onAppRequestQuit: (callback: () => void) => () => void
   onReplaceProgress: (
     callback: (progress: { cancelToken: string; done: number; total: number }) => void,

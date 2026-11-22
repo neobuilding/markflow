@@ -1,8 +1,10 @@
 // App-level IPC handlers: get-initial-paths / show-in-folder / get-version.
 // Extracted from index.ts.
 import { ipcMain, shell, app, clipboard, nativeImage, ClipboardItem } from 'electron'
+import { scopedHandleFor } from '../model/ipcScope'
 import { resolveAppdocPath } from '../ipc/appdoc'
 import { pendingInitialPaths } from '../state'
+import { currentContext } from '../model/windowContext'
 import { nodeDiskIO, type DiskIO } from '../lib/disk-io'
 
 // Electron 44 removed `clipboard.writeImage` in favour of `clipboard.write([ClipboardItem])`.
@@ -45,13 +47,16 @@ function decodeDataUrl(src: string): Buffer | null {
 
 export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
   // After the renderer starts, proactively pull the pending open paths accumulated at launch (CLI args, etc.)
-  ipcMain.handle('app:get-initial-paths', () => {
-    const paths = pendingInitialPaths.splice(0, pendingInitialPaths.length)
-    return paths
+  scopedHandleFor(ipcMain, 'app:get-initial-paths', () => {
+    // A window created for a "new window" action carries its initial file in its own context.
+    // Other windows (and launch-time CLI / file-association paths) use the shared queue.
+    const ctx = currentContext()
+    if (ctx.pendingPaths.length) return ctx.pendingPaths.splice(0, ctx.pendingPaths.length)
+    return pendingInitialPaths.splice(0, pendingInitialPaths.length)
   })
 
   // Locate and highlight the given file in the system file manager
-  ipcMain.handle('app:show-in-folder', (_event, filePath: string) => {
+  scopedHandleFor(ipcMain, 'app:show-in-folder', (_event, filePath: string) => {
     try {
       shell.showItemInFolder(filePath)
     } catch {
@@ -60,12 +65,12 @@ export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
   })
 
   // Renderer's "About" dialog fetches the app version (in production this is the injected rolling version)
-  ipcMain.handle('app:get-version', () => app.getVersion())
+  scopedHandleFor(ipcMain, 'app:get-version', () => app.getVersion())
 
   // Write text to the system clipboard from the renderer.
   // Electron 44+: `writeText` is async (returns a Promise) and may reject, so we
   // await it; the try/catch swallows both synchronous throws and async rejections.
-  ipcMain.handle('clipboard:write-text', async (_event, text: string) => {
+  scopedHandleFor(ipcMain, 'clipboard:write-text', async (_event, text: string) => {
     try {
       await clipboard.writeText(text)
     } catch {
@@ -80,7 +85,7 @@ export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
   // image, and writes it via the W3C-style `clipboard.write([ClipboardItem])` API. Electron 44
   // removed `clipboard.writeImage`, so we encode the image as a PNG blob; failures are
   // swallowed so a bad path can't crash the handler.
-  ipcMain.handle('clipboard:write-image', async (_event, src: string) => {
+  scopedHandleFor(ipcMain, 'clipboard:write-image', async (_event, src: string) => {
     try {
       const buf = decodeImageSource(src, io)
       if (!buf || buf.length === 0) return
@@ -97,7 +102,7 @@ export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
   // editors receive true vector art, and a `text/html` wrapper (`<img src="data:…">`) so plain
   // HTML paste also lands the diagram. A single ClipboardItem carrying both MIME types keeps
   // the two formats together; failures are swallowed.
-  ipcMain.handle('clipboard:write-svg', async (_event, svg: string) => {
+  scopedHandleFor(ipcMain, 'clipboard:write-svg', async (_event, svg: string) => {
     try {
       const b64 = Buffer.from(svg).toString('base64')
       const svgBlob = new Blob([svg], { type: 'image/svg+xml' })
@@ -116,7 +121,7 @@ export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
   // context-menu items). shell.openExternal is fire-and-forget and may
   // reject on an invalid URL or if the OS declines; swallow the rejection so a bad
   // link can't crash the handler.
-  ipcMain.handle('app:open-external', (_event, url: string) => {
+  scopedHandleFor(ipcMain, 'app:open-external', (_event, url: string) => {
     try {
       // Swallow both a synchronous throw and an async rejection so a bad link
       // can never crash the handler.
@@ -132,7 +137,7 @@ export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
   // shell.openPath (not shell.openExternal(file://…)) is the correct API here: it takes a native
   // path, so percent escapes and platform-specific URL quirks cannot mangle the filename. The
   // renderer asks for confirmation first; a failure is reported as a string, never thrown.
-  ipcMain.handle('app:open-path', async (_event, filePath: string) => {
+  scopedHandleFor(ipcMain, 'app:open-path', async (_event, filePath: string) => {
     try {
       return await shell.openPath(filePath)
     } catch {
@@ -144,7 +149,7 @@ export function registerAppHandlers(io: DiskIO = nodeDiskIO): void {
   // "Save diagram as" menu items, / ). `src` may be a disk path or an
   // `appdoc://` URL; the same security layer from the protocol handler bounds the resolution.
   // Fails silently so a bad source never crashes the handler.
-  ipcMain.handle('app:copy-file', (_event, src: string, dest: string) => {
+  scopedHandleFor(ipcMain, 'app:copy-file', (_event, src: string, dest: string) => {
     try {
       const path = src.startsWith('appdoc://') ? resolveAppdocPath(src) : src
       if (!path) return

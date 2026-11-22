@@ -23,7 +23,7 @@ Decompose, preserving behavior:
 
 - **Main:** split into `lib/csp`, `ipc/appdoc`, `lib/app-paths`, `window`, `menu`, `handlers/*`
   (app/dialog/files/theme/window), `lifecycle`, and **`state`** — a zero-dependency base (`get/setMainWindow`,
-  `get/setIsQuiting`, `get/setReadyToQuit`, `pendingInitialPaths`) that breaks the `window ↔ lifecycle ↔
+  `get/setReadyToQuit`, `pendingInitialPaths`) that breaks the `window ↔ lifecycle ↔
 menu` three-way cycle. The entry keeps only module-level side effects and `whenReady` orchestration.
 - **Preload:** split by domain into `api/*.ts` (8 groups). Despite the multi-file source, the build still
   emits a single CJS `preload.js` (`vite-plugin-electron` hard-codes `codeSplitting: false`), so the load

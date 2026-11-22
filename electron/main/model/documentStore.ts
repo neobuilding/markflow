@@ -3,6 +3,7 @@
 // IPC handlers (documents.ts) which call into this store after reading/writing files.
 import { randomUUID } from 'node:crypto'
 import { isInFolder } from './folderMatch'
+import { currentStore } from './windowContext'
 
 export interface Document {
   id: string
@@ -42,14 +43,13 @@ export interface Document {
 export { isInFolder }
 
 // The single in-memory map. A module-level singleton seeded once at app start.
-const docs = new Map<string, Document>()
 
 export function createDocumentStore(): void {
   // The store starts empty and is populated by the IPC handlers as documents are
   // created/imported. From then on it is kept in sync with the filesystem by the
   // recursive folder watcher (model/folderWatcher.ts), which folds in files that
   // appear or disappear under the folders the user opened.
-  docs.clear()
+  currentStore().clear()
 }
 
 // List documents, optionally filtered to those inside `folderPath` (the renderer's
@@ -57,7 +57,7 @@ export function createDocumentStore(): void {
 // included regardless of folder, matching the old "return all + renderer filters"
 // behavior. Filtering uses isInFolder so sub-folders are included
 export function listDocuments(folderPath?: string): Document[] {
-  const all = [...docs.values()]
+  const all = [...currentStore().values()]
   const target = folderPath && folderPath !== '' ? folderPath : undefined
   const filtered = target
     ? all.filter((d) => d.memoryOnly === true || isInFolder(d.filePath, target))
@@ -66,15 +66,15 @@ export function listDocuments(folderPath?: string): Document[] {
 }
 
 export function getAllDocuments(): Document[] {
-  return [...docs.values()]
+  return [...currentStore().values()]
 }
 
 export function getDocumentById(id: string): Document | null {
-  return docs.get(id) ?? null
+  return currentStore().get(id) ?? null
 }
 
 export function getDocumentByFilePath(filePath: string): Document | null {
-  for (const d of docs.values()) {
+  for (const d of currentStore().values()) {
     if (d.filePath === filePath) return d
   }
   return null
@@ -82,38 +82,38 @@ export function getDocumentByFilePath(filePath: string): Document | null {
 
 // Insert or replace a document by id. Returns the stored document.
 export function upsertDocument(doc: Document): Document {
-  docs.set(doc.id, { ...doc })
-  return docs.get(doc.id) as Document
+  currentStore().set(doc.id, { ...doc })
+  return currentStore().get(doc.id) as Document
 }
 
 export function updateDocument(
   id: string,
   partial: Partial<Omit<Document, 'id'>>,
 ): Document | null {
-  const existing = docs.get(id)
+  const existing = currentStore().get(id)
   if (!existing) return null
   const next: Document = { ...existing, ...partial, id }
-  docs.set(id, next)
+  currentStore().set(id, next)
   return next
 }
 
 export function deleteDocument(id: string): boolean {
-  return docs.delete(id)
+  return currentStore().delete(id)
 }
 
 export function setEncoding(id: string, encoding: string, confidence: number): void {
-  const existing = docs.get(id)
+  const existing = currentStore().get(id)
   if (!existing) return
-  docs.set(id, { ...existing, encoding, encodingConfidence: confidence })
+  currentStore().set(id, { ...existing, encoding, encodingConfidence: confidence })
 }
 
 // Remove unsaved (memory-only) drafts those with an empty filePath and return
 // how many were purged. Mirrors the old `DELETE FROM documents WHERE file_path = ''`.
 export function purgeUnsavedDrafts(): number {
   let removed = 0
-  for (const [id, d] of docs) {
+  for (const [id, d] of currentStore()) {
     if (d.filePath === '' || d.filePath === null) {
-      docs.delete(id)
+      currentStore().delete(id)
       removed++
     }
   }

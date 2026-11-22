@@ -2,6 +2,7 @@
 // files, filter files by extension, and return de-duplicated directory and
 // Markdown file lists. Extracted from index.ts.
 import { ipcMain } from 'electron'
+import { scopedHandleFor } from '../model/ipcScope'
 import { resolve, dirname } from 'node:path'
 import { MD_EXTS, collectMarkdownFiles } from '../lib/md-files'
 import { nodeDiskIO, type DiskIO } from '../lib/disk-io'
@@ -12,7 +13,7 @@ export function registerFilesHandlers(io: DiskIO = nodeDiskIO): void {
   // The renderer uses this to import in one shot and set the "current folder".
   // All filesystem access flows through the injected `io` (the DiskIO port) so the
   // handler is testable against an in-memory fake; see docs/agents/testing.md.
-  ipcMain.handle('files:resolve-paths', (_event, paths: string[]) => {
+  scopedHandleFor(ipcMain, 'files:resolve-paths', (_event, paths: string[]) => {
     const directories: string[] = []
     const markdownFiles = new Set<string>()
     for (const p of paths) {

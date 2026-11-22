@@ -51,7 +51,7 @@ describe('preload documentsApi', () => {
 
   it('import invokes documents:import with the file path', () => {
     documentsApi.import('/a.md')
-    expect(invokes[0]).toEqual({ channel: 'documents:import', args: ['/a.md'] })
+    expect(invokes[0]).toEqual({ channel: 'documents:import', args: ['/a.md', undefined] })
   })
 
   it('importMany invokes documents:import-many with the path array', () => {

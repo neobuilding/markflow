@@ -102,4 +102,18 @@ describe('navigationHistory', () => {
     )
     expect(isHistoryRecordingSuspended()).toBe(false)
   })
+
+  it('uses a nesting counter so nested history moves keep recording suspended', async () => {
+    const { withoutHistoryRecording, isHistoryRecordingSuspended } =
+      await import('./navigationHistory')
+    await withoutHistoryRecording(async () => {
+      expect(isHistoryRecordingSuspended()).toBe(true)
+      await withoutHistoryRecording(async () => {
+        expect(isHistoryRecordingSuspended()).toBe(true)
+      })
+      // The inner scope ended, but the outer move is still activating its document.
+      expect(isHistoryRecordingSuspended()).toBe(true)
+    })
+    expect(isHistoryRecordingSuspended()).toBe(false)
+  })
 })

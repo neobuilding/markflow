@@ -1,16 +1,12 @@
 // createWindow: builds the main BrowserWindow. Extracted from index.ts.
-import { BrowserWindow, screen, shell, ipcMain } from 'electron'
+import { BrowserWindow, screen, shell } from 'electron'
 import { join, dirname } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { VITE_DEV_SERVER_URL, RENDERER_DIST } from './lib/app-paths'
-import {
-  setMainWindow,
-  getIsQuiting,
-  setIsQuiting,
-  setReadyToQuit,
-  getQuitPending,
-  setQuitPending,
-} from './state'
+import { setMainWindow, setReadyToQuit } from './state'
+import { registerWindow, unregisterWindow } from './model/windowContext'
+import { setWorkspaceRoot } from './model/workspaceRoot'
+import { stopFolderWatching } from './model/folderWatcher'
 
 // ESM shim for __dirname: under "type": "module" vite-plugin-electron no longer
 // injects __dirname via esmShim() (that path only runs for CJS output), so we
@@ -18,7 +14,14 @@ import {
 // working in both dev and bundled ESM main process.
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-export function createWindow(): void {
+export interface CreateWindowOptions {
+  /** Workspace root the new window should open (defaults to none). */
+  workspaceRoot?: string
+  /** Markdown file to open as the initial active document. */
+  filePath?: string
+}
+
+export function createWindow(options: CreateWindowOptions = {}): void {
   const isDev = !!VITE_DEV_SERVER_URL
 
   // Get screen work area (excludes taskbar)
@@ -66,9 +69,17 @@ export function createWindow(): void {
     },
   })
 
-  // Publish the window in shared state so other modules (menu, lifecycle, handlers)
-  // can reach it via getMainWindow().
+  // Register this window's private workspace context, then publish the window as active.
+  const ctx = registerWindow(win)
+  // The root goes to the NEW window, explicitly: createWindow() runs inside the IPC scope of the
+  // window that asked for it, so the implicit current context would be the CALLER's window.
+  if (options.workspaceRoot) setWorkspaceRoot(options.workspaceRoot, ctx)
+  ctx.pendingPaths = options.filePath ? [options.filePath] : []
   setMainWindow(win)
+  // App-level menu commands go through getMainWindow(). Keep it pointing at the window the user
+  // is actually interacting with, so menu actions target the focused window rather than whichever
+  // window happened to be created last (P3 multi-window).
+  win.on('focus', () => setMainWindow(win))
 
   win.on('ready-to-show', () => {
     // Ensure the window is NOT stuck "always on top" (a previous buggy focus path could leave it
@@ -110,60 +121,77 @@ export function createWindow(): void {
     win.webContents.setZoomLevel(0)
   })
 
-  // Intercept the *window* close (red X / traffic-light close) so it runs the SAME
-  // unsaved prompt as quitting never destroys a window with unsaved changes silently
-  // Only once the renderer replies with app:quit-allowed do we set isQuiting and let the
-  // close proceed. This guarantees the prompt always happens while the window is alive,
-  // eliminating the race where before-quit fires after the window is already destroyed.
+  // Intercept the *window* close (red X / traffic-light close, Cmd+W, or one of the
+  // windows Electron closes on macOS Dock Quit) so it runs the SAME unsaved prompt as
+  // closing a file / workspace never destroys a window with unsaved changes silently.
+  // This is the ONLY unsaved-changes guard in the app: there is no application-level
+  // quit handshake. Only once this renderer replies with app:quit-allowed does the
+  // close proceed. The prompt always happens while the window is alive.
   //
-  // Safety net mirrors lifecycle.ts's before-quit grace period: if the renderer never
-  // replies (crashed / detached / dev server gone in e2e), force the quit after 5s so
-  // the app can never get stuck un-exitable both app.quit (before-quit) and the
-  // window X (this handler) paths are now bounded. Without this, closing the window on
-  // a dead renderer left the main process waiting forever and the user could not even
-  // close the window by hand (every X re-armed the preventDefault).
+  // Safety net: if the renderer never replies (crashed / detached / dev server gone in
+  // e2e), force THIS window closed after 5s so it can never get stuck un-exitable.
+  // Without this, closing the window on a dead renderer left the main process waiting
+  // forever and the user could not even close the window by hand (every X re-armed the
+  // preventDefault). If this was the last window, window-all-closed then exits on
+  // Win/Linux; on macOS the process stays alive.
+  //
+  // The re-entrant close() from the safety net must pass through WITHOUT re-prompting.
+  // That uses THIS window's one-shot `closeAllowed` flag (the same one a confirmed
+  // app:quit-allowed reply sets), never a process-global "is quitting" flag: a global
+  // flag would let one window's dead-renderer timeout skip ANOTHER window's unsaved
+  // guard, silently discarding that window's edits.
   //
   // The safety net is DISARMED when the renderer sends app:quit-pending (it is actively
   // showing the unsaved-changes confirm box). Without that, a dirty workspace would
-  // force-quit 5s after the prompt opened, silently discarding the user's edits see
+  // force-close 5s after the prompt opened, silently discarding the user's edits see
   // the dirty-confirm regression. The renderer sends app:quit-pending synchronously
   // from tryCloseWorkspace() before opening the async dialog, so there's no race
   // between the prompt opening and the safety net firing.
-  let closeForceTimer: NodeJS.Timeout | null = null
-  ipcMain.on('app:quit-pending', () => {
-    // Renderer is showing the unsaved-changes confirm disarmed the safety net so
-    // the user has unlimited time to decide. Registered here (not in lifecycle.ts) so
-    // the close handler and the pending signal share the same closeForceTimer handle.
-    setQuitPending(true)
-    if (closeForceTimer) {
-      clearTimeout(closeForceTimer)
-      closeForceTimer = null
-    }
-  })
+  // `app:quit-pending` is registered ONCE in ./model/quitSignals (per sender → per-window
+  // ctx) instead of once per window here; the old duplicate registration made N windows
+  // disarm N safety nets.
   win.on('close', (event) => {
-    if (getIsQuiting()) return
-    // Every close attempt starts with the safety net ARMED. quitPending is a
-    // PER-ATTEMPT signal the renderer sends app:quit-pending only once it is
-    // actually showing the confirm box so a leftover `true` from a prompt the
-    // user dismissed must not carry over: it would disarm the net for every later
-    // attempt too. Then a renderer that died in the meantime (crashed tab, gone
-    // dev server) could never be force-closed an un-exitable app, which is the
-    // exact failure the net exists to prevent.
-    setQuitPending(false)
+    // A confirmed close of THIS window (from lifecycle's app:quit-allowed routing, or
+    // re-entry from this window's own force-close timer) passes through without
+    // re-prompting. Consume the one-shot flag so a later close is guarded again.
+    if (ctx.closeAllowed) {
+      ctx.closeAllowed = false
+      return
+    }
+    // Every close attempt starts with its safety net ARMED. This is a per-attempt signal:
+    // the ctx flag feeds THIS window's net only (no global mirror, no app-level vote).
+    ctx.quitPending = false
     event.preventDefault()
     win.webContents.send('app:request-quit')
-    if (closeForceTimer) clearTimeout(closeForceTimer)
-    closeForceTimer = setTimeout(() => {
-      // Renderer never replied within the grace period AND is not showing the
-      // unsaved-changes prompt (app:quit-pending would have cleared this timer).
-      // Only then force the quit so the window (and, via window-all-closed, the app)
-      // can actually exit. The quitPending check is belt-and-suspenders: if the
-      // timer was already cleared by app:quit-pending this callback won't run, but
-      // guard anyway in case of a late re-arm.
-      if (getIsQuiting() || getQuitPending()) return
-      setIsQuiting(true)
+    if (ctx.closeForceTimer) clearTimeout(ctx.closeForceTimer)
+    ctx.closeForceTimer = setTimeout(() => {
+      // Check the per-window flag so a dialog in another window cannot disarm this net.
+      if (ctx.quitPending) return
+      // Authorize only THIS window's re-entrant close. A process-global flag here would
+      // suppress the unsaved prompt of every other window still open.
+      ctx.closeAllowed = true
       setReadyToQuit(true)
       if (!win.isDestroyed()) win.close()
     }, 5000)
+  })
+
+  win.on('closed', () => {
+    // The window is gone: its safety-net timer has nothing left to guard, and leaving the
+    // handle behind would keep a pending timer alive for the rest of the process.
+    if (ctx.closeForceTimer) {
+      clearTimeout(ctx.closeForceTimer)
+      ctx.closeForceTimer = null
+    }
+    // ctx.id IS this window's webContents id (captured at registration time): the window is
+    // already DESTROYED when 'closed' fires, and touching `win.webContents` on a destroyed
+    // window throws "TypeError: Object has been destroyed". That uncaught exception inside an
+    // Electron event handler pops the native "A JavaScript error occurred in the main process"
+    // dialog, which blocks the main thread for good — the app could not quit at all.
+    unregisterWindow(ctx.id)
+    // STATIC import: this runs on the window-teardown path, which is also part of the app
+    // shutdown path. A dynamic import there would be bundled as its own chunk (a duplicate
+    // of the watcher module, with its own per-window state) and could leave the module load
+    // pending while the process is tearing down.
+    void stopFolderWatching(ctx)
   })
 }

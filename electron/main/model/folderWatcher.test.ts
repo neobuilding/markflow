@@ -7,12 +7,16 @@ import {
   markOwnWrite,
   startFolderWatching,
   stopFolderWatching,
+  stopAllFolderWatching,
+  watchExternalFile,
+  unwatchExternalFile,
   pauseFolderWatching,
   resumeFolderWatching,
   refreshFolderWatching,
   type FolderWatchHandlers,
 } from './folderWatcher'
 import { setWorkspaceRoot, getWorkspaceRoot } from './workspaceRoot'
+import { registerWindow, withContext, __resetWindowContextsForTests } from './windowContext'
 
 // chokidar is replaced wholesale: creating a real recursive watcher would make these
 // tests depend on OS event latency. The mock only has to satisfy the API surface
@@ -79,6 +83,10 @@ function openRoot(dir: string): void {
 
 // The watcher and the workspace root are module-level singletons; reset between tests.
 beforeEach(async () => {
+  // The registry first: stopFolderWatching() without an explicit context resolves the ACTIVE
+  // window, so a context left over from a previous case would be stopped instead of the
+  // headless fallback the rest of this file works in.
+  __resetWindowContextsForTests()
   await stopFolderWatching()
   setWorkspaceRoot(null)
   state.instances.length = 0
@@ -409,5 +417,138 @@ describe('folderWatcher — own-write suppression', () => {
       resumeFolderWatching()
       expect(state.instances.length).toBe(afterPause + 1)
     })
+  })
+})
+
+// ─── Per-window watchers (multi-window isolation) ────────────────────────────
+//
+// Each window owns its own watcher state, so switching the workspace in one window must not
+// tear down another window's watch, and the app shutdown path must release EVERY window's
+// handles (a chokidar handle owned by a gone window keeps the process alive).
+
+describe('folderWatcher — per-window watcher state', () => {
+  function fakeWin(id: number): never {
+    return { webContents: { id } } as never
+  }
+
+  it("stops one window's watches without touching another window's", async () => {
+    const ctxA = registerWindow(fakeWin(1))
+    const ctxB = registerWindow(fakeWin(2))
+    withContext(ctxA, () => {
+      setWorkspaceRoot(tmpDir('fw-win-a-'))
+      refreshFolderWatching()
+    })
+    withContext(ctxB, () => {
+      setWorkspaceRoot(tmpDir('fw-win-b-'))
+      refreshFolderWatching()
+    })
+    const instA = state.instances[0]
+    const instB = state.instances[1]
+
+    await stopFolderWatching(ctxA)
+
+    expect(instA.closed).toBe(true)
+    expect(instB.closed).toBe(false)
+  })
+
+  it("stops every window's watches on shutdown", async () => {
+    const ctxA = registerWindow(fakeWin(1))
+    const ctxB = registerWindow(fakeWin(2))
+    withContext(ctxA, () => {
+      setWorkspaceRoot(tmpDir('fw-all-a-'))
+      refreshFolderWatching()
+    })
+    withContext(ctxB, () => {
+      setWorkspaceRoot(tmpDir('fw-all-b-'))
+      refreshFolderWatching()
+    })
+    const instA = state.instances[0]
+    const instB = state.instances[1]
+
+    await stopAllFolderWatching()
+
+    expect(instA.closed).toBe(true)
+    expect(instB.closed).toBe(true)
+  })
+
+  it('is a no-op for a window that never had a watcher', async () => {
+    const ctx = registerWindow(fakeWin(3))
+    await expect(stopFolderWatching(ctx)).resolves.toBeUndefined()
+  })
+
+  it("delivers a window's watcher events even though the handlers were installed before that window existed", () => {
+    // Regression: the handler set is installed ONCE at startup — before any window exists
+    // (ipc/documents.ts registers the document handlers at boot) — while the watcher state
+    // is PER WINDOW. A window that opened its workspace later therefore used to get a state
+    // with NO handlers: every one of its watcher events was dropped, and its sidebar never
+    // refreshed (the folder-watch e2e went red).
+    install()
+    const ctx = registerWindow(fakeWin(4))
+    const root = tmpDir('fw-late-window-')
+    withContext(ctx, () => {
+      setWorkspaceRoot(root)
+      refreshFolderWatching()
+    })
+    const inst = state.instances[state.instances.length - 1]
+
+    // The REAL chokidar callback, not the test seam: it must reach the handler set.
+    inst.handlers['add']?.(`${root}/new.md`)
+
+    expect(seen.added).toEqual([`${root}/new.md`])
+  })
+})
+
+// ─── External document watches ───────────────────────────────────────────────
+//
+// A workspace-external Markdown file is watched on its own (it lives outside the recursive
+// workspace watch). The watch follows the document's lifetime: it is dropped when the file is
+// deleted and when the workspace is replaced.
+
+describe('folderWatcher — external document watches', () => {
+  it('watches an external file once and stops it on request', async () => {
+    watchExternalFile('/w/external.md')
+    expect(state.instances).toHaveLength(1)
+    // Idempotent: a second call must not open a second handle for the same path.
+    watchExternalFile('/w/external.md')
+    expect(state.instances).toHaveLength(1)
+
+    await unwatchExternalFile('/w/external.md')
+    expect(state.instances[0].closed).toBe(true)
+  })
+
+  it('ignores a request to stop watching a file that is not watched', async () => {
+    await expect(unwatchExternalFile('/w/unknown.md')).resolves.toBeUndefined()
+  })
+
+  it('drops the external watches when the workspace is replaced', () => {
+    install()
+    openRoot(tmpDir('fw-ext-'))
+    watchExternalFile('/w/external.md')
+    const ext = state.instances[state.instances.length - 1]
+
+    openRoot(tmpDir('fw-ext2-'))
+
+    expect(ext.closed).toBe(true)
+  })
+
+  it('reports an external file change through the installed handlers', () => {
+    install()
+    watchExternalFile('/w/external.md')
+    const ext = state.instances[state.instances.length - 1]
+    ext.handlers.change('/w/external.md')
+    expect(seen.changed).toEqual(['/w/external.md'])
+  })
+
+  it('reports a vanished external file as a removal and swallows a stray watch error', () => {
+    install()
+    watchExternalFile('/w/external.md')
+    const ext = state.instances[state.instances.length - 1]
+
+    // The file was deleted outside the app: the watch reports it like any other removal.
+    ext.handlers.unlink('/w/external.md')
+    expect(seen.removed).toEqual(['/w/external.md'])
+
+    // A stray watch error must never bubble into the event loop.
+    expect(() => ext.handlers.error('/w/external.md')).not.toThrow()
   })
 })

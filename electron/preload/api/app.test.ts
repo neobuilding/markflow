@@ -51,6 +51,11 @@ describe('preload appApi', () => {
     expect(invokes[0]).toEqual({ channel: 'app:open-path', args: ['C:/notes/photo.png'] })
   })
 
+  it('openInNewWindow invokes app:open-in-new-window with the Markdown path', () => {
+    appApi.openInNewWindow('C:/notes/other.md')
+    expect(invokes[0]).toEqual({ channel: 'app:open-in-new-window', args: ['C:/notes/other.md'] })
+  })
+
   it('copyFile invokes app:copy-file with src and dest', () => {
     appApi.copyFile('/a.png', '/b.png')
     expect(invokes[0]).toEqual({ channel: 'app:copy-file', args: ['/a.png', '/b.png'] })

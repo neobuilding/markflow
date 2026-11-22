@@ -23,9 +23,10 @@ violated the product rule "never create a file on disk before an explicit save."
   the doc in memory with no file written.
 - `watchDocument` / `documents:delete` / `documents:update` all guard on empty `file_path` (no watch,
   no `unlinkSync`, no `writeFileSync`), so a memory-only doc never touches the filesystem.
-- **Quitting = closing the workspace.** Window close / `before-quit` run the _same_ `tryCloseWorkspace()`
-  logic (with the unified `app.unsavedCloseWorkspace` prompt) and then `app.quit()`. Unsaved drafts are
-  purged (`purgeUnsavedDrafts`) **only after** the user confirms — never silently.
+- **Closing a window resolves unsaved drafts.** The window close path runs the same `tryCloseWorkspace()`
+  logic (with the unified `app.unsavedCloseWorkspace` prompt) and only then lets that window close;
+  there is no application-level quit path. Drafts are memory-only and are purged when the process exits
+  — the user is prompted at window close, never at system shutdown.
 - Memory-only drafts are **not** persisted across app restarts.
 
 ### At most one unsaved draft (amended 2026-11-12)

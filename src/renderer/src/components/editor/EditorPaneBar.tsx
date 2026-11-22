@@ -175,7 +175,7 @@ export function EditorPaneBar({ editable }: { editable: boolean }): React.ReactE
       label: editable ? t('editor.edit') : t('editor.readOnly'),
       menuLabel: editable ? t('editor.switchReadOnly') : t('editor.switchEdit'),
       disabled: fileLocked,
-      onClick: () => toggleEditable(),
+      onClick: () => void toggleEditable(),
       testId: 'editor-readonly-btn',
       pressed: editable,
     },

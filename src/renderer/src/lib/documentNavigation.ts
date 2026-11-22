@@ -1,12 +1,15 @@
 import { queryClient, DOCS_KEY } from './queryClient'
 import { sameFilePath } from './previewLinkNavigation'
 import { isInFolder } from '../../../../shared/fileUtils'
+import { dirName } from './utils'
 import { useUIStore, selectFileLocked } from '../store/ui'
 import {
   useNavigationHistory,
   withoutHistoryRecording,
   type OpenMode,
+  type NavigationEntry,
 } from '../store/navigationHistory'
+import { switchWorkspace } from './workspaceSwitch'
 
 // One service owns "navigate to a document by path" inside the CURRENT workspace. Workspace
 // switching is owned by switchWorkspace (double-click / ↑ / breadcrumb / external-link switch),
@@ -68,6 +71,26 @@ export async function navigateToPath(
   return true
 }
 
+/**
+ * Replay a history entry with the semantics it was opened with.
+ *
+ * An "external-switch" entry was created by moving the workspace to the file's folder, so
+ * replaying it must move the workspace back — navigating in place would fail, because the file
+ * lies outside the CURRENT root (ADR-0039 §3.4). "external-keep" stays an in-place navigation
+ * that imports the file as an external document. Neither replays the four-way dialog.
+ */
+async function replayEntry(entry: NavigationEntry): Promise<boolean> {
+  if (entry.openMode === 'external-switch') {
+    return switchWorkspace(dirName(entry.path), {
+      openMode: 'external-switch',
+      openPath: entry.path,
+      title: entry.title,
+      record: false,
+    })
+  }
+  return navigateToPath(entry.path, { record: false, openMode: entry.openMode })
+}
+
 /** Move Back (-1) or Forward (1), skipping and pruning entries whose files no longer exist. */
 export async function moveNavigationHistory(delta: -1 | 1): Promise<boolean> {
   if (selectFileLocked(useUIStore.getState())) return false
@@ -85,9 +108,7 @@ export async function moveNavigationHistory(delta: -1 | 1): Promise<boolean> {
       continue
     }
     // Replay with the entry's recorded openMode, WITHOUT appending a new entry.
-    const moved = await withoutHistoryRecording(() =>
-      navigateToPath(entry.path, { record: false, openMode: entry.openMode }),
-    )
+    const moved = await withoutHistoryRecording(() => replayEntry(entry))
     if (!moved) return false
     useNavigationHistory.getState().move(delta)
     return true
@@ -106,9 +127,7 @@ export async function moveToHistoryIndex(index: number): Promise<boolean> {
     history.prune(entry.path)
     return false
   }
-  const moved = await withoutHistoryRecording(() =>
-    navigateToPath(entry.path, { record: false, openMode: entry.openMode }),
-  )
+  const moved = await withoutHistoryRecording(() => replayEntry(entry))
   if (!moved) return false
   history.setCursor(index)
   return true

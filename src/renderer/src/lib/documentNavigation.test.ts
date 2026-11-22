@@ -14,9 +14,20 @@ const api = {
     import: vi.fn(async (path: string): Promise<{ id: string; filePath: string } | null> =>
       doc('imported', path),
     ),
+    importMany: vi.fn(
+      async (_paths: string[]): Promise<Array<{ id: string; filePath: string }>> => [],
+    ),
     getWorkspaceRoot: vi.fn(async (): Promise<string | null> => 'C:/notes'),
     setWorkspaceRoot: vi.fn(async () => undefined),
     delete: vi.fn(async () => undefined),
+  },
+  files: {
+    resolvePaths: vi.fn(
+      async (_paths: string[]): Promise<{ directories: string[]; markdownFiles: string[] }> => ({
+        directories: [],
+        markdownFiles: [],
+      }),
+    ),
   },
   dialog: { confirm: vi.fn(async (_opts: { message: string }) => true) },
 }
@@ -80,6 +91,12 @@ describe('documentNavigation', () => {
     expect(paths()).toEqual([])
   })
 
+  it('returns false when the document cannot be imported', async () => {
+    api.documents.import.mockResolvedValueOnce(null)
+    await expect(navigateToPath('C:/notes/a.md')).resolves.toBe(false)
+    expect(paths()).toEqual([])
+  })
+
   it('moves back without adding a new entry', async () => {
     const h = useNavigationHistory.getState()
     h.push('C:/notes/a.md')
@@ -127,6 +144,7 @@ describe('documentNavigation', () => {
     useUIStore.setState({ printing: true })
     await expect(navigateToPath('C:/notes/a.md')).resolves.toBe(false)
     await expect(moveNavigationHistory(-1)).resolves.toBe(false)
+    await expect(moveToHistoryIndex(0)).resolves.toBe(false)
   })
 
   it('uses the workspaceRoot mirror when present', async () => {
@@ -146,6 +164,32 @@ describe('documentNavigation', () => {
     expect(useNavigationHistory.getState().cursor).toBe(1)
   })
 
+  it('moveToHistoryIndex prunes a missing file and refuses the jump', async () => {
+    const h = useNavigationHistory.getState()
+    h.push('C:/notes/a.md')
+    h.push('C:/notes/gone.md')
+    api.documents.stat.mockImplementation(async (path) => ({
+      exists: path !== 'C:/notes/gone.md',
+      size: 1,
+      createdAt: 0,
+      updatedAt: 0,
+    }))
+    await expect(moveToHistoryIndex(1)).resolves.toBe(false)
+    expect(paths()).toEqual(['C:/notes/a.md'])
+  })
+
+  it('moveToHistoryIndex refuses an out-of-range index', async () => {
+    await expect(moveToHistoryIndex(0)).resolves.toBe(false)
+  })
+
+  it('moveToHistoryIndex cancels when the file guard says keep editing', async () => {
+    useNavigationHistory.getState().push('C:/notes/a.md')
+    useUIStore.setState({ dirty: true, activeDocumentTitle: 'a.md', activeDocumentId: 'old' })
+    api.dialog.confirm.mockResolvedValueOnce(false)
+    await expect(moveToHistoryIndex(0)).resolves.toBe(false)
+    expect(useNavigationHistory.getState().cursor).toBe(0)
+  })
+
   it('exhausts the history loop when every target is gone', async () => {
     const h = useNavigationHistory.getState()
     h.push('C:/notes/a.md')
@@ -159,5 +203,23 @@ describe('documentNavigation', () => {
     await expect(moveNavigationHistory(-1)).resolves.toBe(false)
     // Back only visits the previous side; the current entry is never pruned by a move.
     expect(paths()).toEqual(['C:/notes/b.md'])
+  })
+
+  it('replays an external-switch entry by moving the workspace to the file folder', async () => {
+    // An "external-switch" entry was created by switching the workspace, so replaying it must
+    // switch back — navigating in place would refuse the file (it is outside the current root).
+    useNavigationHistory.getState().push('D:/other/picked.md', { openMode: 'external-switch' })
+    await expect(moveToHistoryIndex(0)).resolves.toBe(true)
+    expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('D:/other')
+    expect(api.documents.import).toHaveBeenCalledWith('D:/other/picked.md')
+    // The replay moves the cursor; it never appends an entry.
+    expect(paths()).toEqual(['D:/other/picked.md'])
+  })
+
+  it('replays an external-keep entry in place, without switching the workspace', async () => {
+    useNavigationHistory.getState().push('D:/other/kept.md', { openMode: 'external-keep' })
+    await expect(moveToHistoryIndex(0)).resolves.toBe(true)
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
+    expect(api.documents.import).toHaveBeenCalledWith('D:/other/kept.md', { external: true })
   })
 })

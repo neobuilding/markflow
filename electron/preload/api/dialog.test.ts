@@ -55,4 +55,12 @@ describe('preload dialogApi', () => {
       args: ['file:///n/a.pdf'],
     })
   })
+
+  it('confirmWorkspaceExternal invokes dialog:confirm-workspace-external with the target', () => {
+    dialogApi.confirmWorkspaceExternal('C:/outside/note.md')
+    expect(invokes[0]).toEqual({
+      channel: 'dialog:confirm-workspace-external',
+      args: ['C:/outside/note.md'],
+    })
+  })
 })

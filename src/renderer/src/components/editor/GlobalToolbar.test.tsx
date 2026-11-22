@@ -13,7 +13,8 @@ const h = vi.hoisted(() => {
   // The "at most one draft" predicate the button's disabled state is derived from.
   const hasDraft = vi.fn(() => false)
   const moveNavigationHistory = vi.fn(async (_delta: -1 | 1) => true)
-  return { createDraft, hasDraft, moveNavigationHistory }
+  const moveToHistoryIndex = vi.fn(async (_index: number) => true)
+  return { createDraft, hasDraft, moveNavigationHistory, moveToHistoryIndex }
 })
 vi.mock('../../hooks/useDocuments', () => ({
   createDraft: () => h.createDraft(),
@@ -21,6 +22,7 @@ vi.mock('../../hooks/useDocuments', () => ({
 }))
 vi.mock('../../lib/documentNavigation', () => ({
   moveNavigationHistory: (delta: -1 | 1) => h.moveNavigationHistory(delta),
+  moveToHistoryIndex: (index: number) => h.moveToHistoryIndex(index),
 }))
 
 // The global toolbar was extracted from `EditorPane` into its own component (ADR-0030). This suite
@@ -42,6 +44,7 @@ describe('GlobalToolbar', () => {
     onReload.mockClear()
     onClose.mockClear()
     h.moveNavigationHistory.mockClear()
+    h.moveToHistoryIndex.mockClear()
     useNavigationHistory.getState().reset()
     useUIStore.setState({
       activeDocumentId: null,
@@ -121,6 +124,28 @@ describe('GlobalToolbar', () => {
       act(() => useNavigationHistory.getState().setCursor(0))
       fireEvent.click(screen.getByTestId('nav-forward-btn'))
       expect(h.moveNavigationHistory).toHaveBeenCalledWith(1)
+    })
+
+    it('opens a right-click menu whose items jump the cursor without pushing (P5)', async () => {
+      const hist = useNavigationHistory.getState()
+      hist.push('/a.md', { title: 'A' })
+      hist.push('/b.md', { title: 'B' })
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('nav-back-btn'))
+      const item = await screen.findByTestId('nav-back-item-0')
+      fireEvent.click(item)
+      expect(h.moveToHistoryIndex).toHaveBeenCalledWith(0)
+    })
+
+    it('caps the right-click menu at the ten most recent entries (ADR-0039 §3.5)', async () => {
+      const hist = useNavigationHistory.getState()
+      for (let i = 0; i < 12; i++) hist.push(`/doc-${i}.md`, { title: `Doc ${i}` })
+      mount()
+      fireEvent.contextMenu(screen.getByTestId('nav-back-btn'))
+      // cursor is at 11; the ten most recent earlier entries are indices 10..1.
+      expect(await screen.findByTestId('nav-back-item-10')).toBeInTheDocument()
+      expect(screen.queryByTestId('nav-back-item-1')).toBeInTheDocument()
+      expect(screen.queryByTestId('nav-back-item-0')).not.toBeInTheDocument()
     })
 
     it('disables both buttons while a file transaction is locked', () => {

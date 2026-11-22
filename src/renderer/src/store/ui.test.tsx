@@ -462,6 +462,117 @@ describe('useUIStore — guarded document switching (ADR-0023)', () => {
   })
 })
 
+// Switching edit -> read-only is a "discard" decision too: the user leaves the editing surface.
+// It must use the same two-state guard as a document switch, and a confirmed discard must REALLY
+// throw the draft away and reload the on-disk bytes (not silently keep the stale editor text).
+describe('useUIStore — guarded edit/read-only toggle', () => {
+  let confirm: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    confirm = vi.fn(async () => true)
+    const deleteDoc = vi.fn(async () => true)
+    ;(window as unknown as { api: unknown }).api = {
+      dialog: { confirm },
+      documents: { delete: deleteDoc },
+    }
+    const s = useUIStore.getState()
+    s.setLanguage('en')
+    s.setActiveDocumentId('a')
+    s.setActiveDocumentTitle('Alpha')
+    s.setEditable(true)
+    s.setDirty(false)
+    s.setIsNewUnsaved(false)
+    s.setPrinting(false)
+    s.setExporting(false)
+    s.setExportOpen(false)
+    s.requestFileAction(null)
+    for (const id of Object.keys(s.unsavedBuffers)) s.clearUnsavedBuffer(id)
+  })
+
+  it('toggles freely without prompting when nothing is dirty', async () => {
+    await useUIStore.getState().toggleEditable()
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(useUIStore.getState().pendingFileAction).toBeNull()
+  })
+
+  it('keeps edit mode and the draft when the user chooses Keep editing', async () => {
+    confirm.mockResolvedValueOnce(false)
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text')
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(confirm).toHaveBeenCalledTimes(1)
+    // The prompt must describe the mode switch, not say "switch files".
+    expect(confirm.mock.calls[0][0].message).toContain('read-only')
+    expect(ok).toBe(false)
+    expect(useUIStore.getState().editable).toBe(true)
+    expect(useUIStore.getState().dirty).toBe(true)
+    expect(useUIStore.getState().unsavedBuffers.a?.content).toBe('unsaved text')
+    expect(useUIStore.getState().pendingFileAction).toBeNull()
+  })
+
+  it('discards the draft and requests a disk reload when the user confirms', async () => {
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text')
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(true)
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(useUIStore.getState().dirty).toBe(false)
+    expect(useUIStore.getState().unsavedBuffers.a).toBeUndefined()
+    expect(useUIStore.getState().pendingFileAction).toEqual({ type: 'reload' })
+  })
+
+  it('guards a dirty document with no title and no id on the discard path', async () => {
+    const s = useUIStore.getState()
+    s.setActiveDocumentId(null)
+    s.setActiveDocumentTitle(null)
+    // setActiveDocumentId resets edit mode, so re-enter it to exercise the edit -> read-only guard.
+    s.setEditable(true)
+    s.setDirty(true)
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(true)
+    expect(confirm.mock.calls[0][0].message).toContain('read-only')
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(useUIStore.getState().dirty).toBe(false)
+    expect(useUIStore.getState().pendingFileAction).toEqual({ type: 'reload' })
+  })
+
+  it('never discards silently when no dialog bridge is available', async () => {
+    ;(window as unknown as { api?: unknown }).api = undefined
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text')
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(false)
+    expect(useUIStore.getState().editable).toBe(true)
+    expect(useUIStore.getState().dirty).toBe(true)
+    expect(useUIStore.getState().unsavedBuffers.a).toBeDefined()
+  })
+
+  it('does not prompt when switching from read-only back to edit', async () => {
+    useUIStore.getState().setEditable(false)
+    useUIStore.getState().setDirty(true)
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(useUIStore.getState().editable).toBe(true)
+    // Still dirty: entering edit mode must not throw the draft away.
+    expect(useUIStore.getState().dirty).toBe(true)
+  })
+
+  it('closes a memory-only draft on discard instead of requesting a reload', async () => {
+    useUIStore.getState().setIsNewUnsaved(true)
+    useUIStore.getState().setDirty(true)
+    const ok = await useUIStore.getState().toggleEditable()
+    expect(ok).toBe(true)
+    expect(window.api.documents.delete).toHaveBeenCalledWith('a')
+    expect(useUIStore.getState().activeDocumentId).toBeNull()
+    expect(useUIStore.getState().editable).toBe(false)
+    expect(useUIStore.getState().dirty).toBe(false)
+    expect(useUIStore.getState().isNewUnsaved).toBe(false)
+    expect(useUIStore.getState().pendingFileAction).toBeNull()
+  })
+})
+
 describe('useUIStore — search focus nonce', () => {
   it('requestSearchFocus bumps the focus nonce', () => {
     const before = useUIStore.getState().searchFocusNonce

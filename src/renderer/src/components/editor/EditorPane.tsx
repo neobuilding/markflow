@@ -356,6 +356,11 @@ export function EditorPane(): React.ReactElement {
       }
     } catch (e) {
       console.error('Reload failed', e)
+      // A discard-on-switch-to-read-only already dropped the in-memory edits, so a silent
+      // failure here would leave stale text on screen with dirty === false and no way for the
+      // user to notice. Native window.alert is OS-modal (not the ADR-0009 app-modal dialog,
+      // which is reserved for unsaved decisions); focus returns to the renderer on close.
+      window.alert(t('app.reloadFailed'))
     } finally {
       useUIStore.getState().setSaving(false)
     }
@@ -464,7 +469,7 @@ export function EditorPane(): React.ReactElement {
   // Consume a pending file action requested by another component (the sidebar's "Rename"
   // menu; the status bar's save/save-as/reload items). Each action is
   // dispatched to its handler once the active document is fully loaded; the request is cleared
-  // after dispatch (or immediately when the document is not editable / not yet ready).
+  // after dispatch (or immediately when the action is not allowed in the current mode / not ready).
   const pendingFileAction = useUIStore((s) => s.pendingFileAction)
   const requestFileAction = useUIStore((s) => s.requestFileAction)
   useEffect(() => {
@@ -482,12 +487,15 @@ export function EditorPane(): React.ReactElement {
     }
     // save / saveAs / reload: act on the currently active document.
     if (!doc || isLoading) return
-    if (!editable) {
+    // Reload stays available in read-only mode, just like the native menu and the toolbar:
+    // discarding on switch-to-read-only flips editable BEFORE requesting the reload. Save and
+    // Save As still need edit mode — read-only has no draft worth persisting.
+    if (!editable && pendingFileAction.type !== 'reload') {
       requestFileAction(null)
       return
     }
-    // After the rename branch above and the !editable early-return, the only remaining
-    // pendingFileAction types are save/saveAs/reload (rename is handled and returns).
+    // After the rename branch above and the mode gate, the only remaining pendingFileAction
+    // types are save/saveAs/reload (rename is handled and returns).
     switch (pendingFileAction.type) {
       case 'save':
         void handleSave()
@@ -583,6 +591,9 @@ export function EditorPane(): React.ReactElement {
     copyFileName: () => void handleCopyPath('name'),
     copyFullPath: () => void handleCopyPath('full'),
     showInFolder: () => revealInFolder(doc?.filePath as string),
+    openInNewWindow: () => {
+      if (doc?.filePath) void window.api.app.openInNewWindow(doc.filePath)
+    },
     save: () => void handleSave(),
     saveAs: () => void handleSaveAs(),
     reload: () => void handleReload(),
@@ -844,6 +855,15 @@ export function EditorPane(): React.ReactElement {
                     />
                   </ContextMenuContent>
                 </ContextMenu>
+                {doc?.external && (
+                  <span
+                    data-testid="external-doc-badge"
+                    className="text-2xs font-medium border border-accent/40 text-accent rounded px-1 py-px shrink-0"
+                    title={t('app.workspaceExternalTitle')}
+                  >
+                    {t('editor.externalBadge')}
+                  </span>
+                )}
                 {editable && (
                   <Tooltip>
                     <TooltipTrigger asChild>

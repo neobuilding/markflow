@@ -52,31 +52,53 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 ## Navigation & workspace
 
 - **Workspace** — the single opened root folder plus its loaded documents, tracked via **`workspaceRoot`**
-  (ADR-0023), which is also the **single** directory the file watcher covers.
-  Opening a folder **replaces** the workspace. **Close workspace** returns to an empty state; **Close file**
-  keeps the folder + sidebar.
-- **Active folder (当前文件夹)** — the folder whose file tree is shown in the sidebar; renderer-side UI
-  state in the Zustand `ui` store, set when you drill into a subfolder. It is **not** the workspace root and
-  **never affects search scope** — glob and relative paths are resolved against **`workspaceRoot`** (ADR-0023
-  decisions 2–3). It stays `null` only for an empty workspace. _Avoid_: conflating with **Opened root folder**
-  / `workspaceRoot`.
+  (ADR-0023), which is also the **single** directory the file watcher covers. The workspace is
+  **per window**: each `BrowserWindow` owns an independent root, document store, watcher and history
+  (ADR-0039). Opening a folder **replaces this window's workspace**; multi-root workspaces remain out
+  of scope, now per window rather than per app. **Close workspace** returns to an empty state;
+  **Close file** keeps the folder + sidebar.
 - **Sidebar** — collapsible nested folder tree listing Markdown files; file names include their extension
   and subfolders start collapsed.
-- **Document navigation (文档导航)** — any change of the active document, whatever the entry point
-  (sidebar, search, preview link, new document). A target outside the current workspace replaces the
-  workspace with its folder (ADR-0038 §3.2).
+- **Document navigation (文档导航)** — any change of the active document in a window, whatever the
+  entry point (sidebar, search, preview link, new document). A target **outside** the current
+  workspace does not silently replace it: it opens a **four-way external-file choice** (ADR-0039
+  §3.2) — open in a new window, keep this workspace and import as an **external document**, switch
+  this window's workspace to the file's folder, or cancel. Folder / multi-file drops never use that
+  choice: one root is resolved and replaces the workspace; several dropped folders — including the
+  parent folders of files dropped from different places — with no common ancestor are refused with
+  the candidates listed, and nothing is imported (ADR-0023 Consequences; ADR-0039 §3.2).
   _Avoid_: "link jump", "page navigation" (both name one entry point, not the concept)
-- **Navigation history (导航历史)** — the in-memory, app-session-lifetime list of document navigations,
-  with a cursor for Back/Forward. Entries are keyed by absolute file path so they survive workspace
-  replacement; a new navigation truncates the forward part and entries for missing files are skipped
-  and pruned.
+- **External document (工作区外文档)** — a Markdown file loaded into a window whose real `filePath`
+  lies outside that window's `workspaceRoot`, marked `external: true` (ADR-0039 §3.3). Created by the
+  "open here (keep workspace)" branch of the four-way choice. Shown in the editor with an
+  **Outside workspace** badge and in navigation history, but **not** in the sidebar tree or search /
+  replace. Watched by a single-file watcher owned by the window and cleared when its workspace
+  changes; session-only, like other in-memory state.
+- **Four-way external-file choice (工作区外文件四选一)** — the dialog shown when a single Markdown
+  path resolves outside the current workspace, from a preview link, drag-drop, file association, or
+  the Open File menu. Options: **open in new window** (default — reuse another window already
+  rooted there, never the requesting window itself, or create one), **open here (keep workspace)**
+  (import as external document), **open here & switch
+  workspace**, **cancel**. The unsaved-changes guard runs only at the actual document-close
+  execution point, so the new-window and cancel branches do not prompt. Non-Markdown local files and
+  URI schemes retain the earlier Open / Copy / Cancel dialog (ADR-0038 §3.1.3).
+- **Navigation history (导航历史)** — the in-memory, app-session-lifetime, **per-window** list of
+  document navigations, with a cursor for Back/Forward. Each entry is structured
+  `{ path, title?, openMode? }`; `openMode` replays how an external document was opened without
+  re-prompting. Entries are keyed by absolute file path so they survive workspace replacement; a new
+  navigation truncates the forward part and entries for missing files are skipped and pruned. A
+  history menu can jump directly to an entry via `moveToHistoryIndex`, which does not append.
   _Avoid_: "browser history" (this is not a URL history)
 - **Back / Forward (后退/前进)** — the two global-toolbar controls that move along **Navigation history**,
   with Chrome/Edge stack semantics and browser-style shortcuts (`Alt+←/→` on Windows/Linux,
-  `Cmd+[` / `Cmd+]` on macOS) only when focus is outside the editor. No history dropdown.
+  `Cmd+[` / `Cmd+]` on macOS) only when focus is outside the editor. A **right-click context menu**
+  on either button lists recent entries (nearest first); selecting one jumps to it without appending
+  (ADR-0039 §3.5). _Avoid_: "history dropdown" — it is a right-click menu, not a persistent dropdown.
 - **Reveal in sidebar (在侧栏中定位)** — after any document change, expand the active document's
-  ancestor folders, switch `activeFolder` to its folder if needed, and scroll its row into view. It is
-  driven by the active document, not by a specific navigation entry point.
+  ancestor folders and scroll its row into view. It is driven by the active document, not by a
+  specific navigation entry point. A **reveal file** event additionally lets a reused window focus
+  and navigate to a handed-off file without changing its workspace (ADR-0039 §3.4); an external
+  document has no sidebar row, so only the editor/history show it.
 - **File path breadcrumb** — current file path shown above the editor; folder icon reveals it in the system
   file manager.
 - **Open anywhere** — launch via CLI, drag-and-drop, or as the default app for `.md`. App starts fresh
@@ -254,9 +276,11 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   well as Latin. It belongs to the **Find widget** toggle set **and the Search view** (`ab`, both
   implemented — ADR-0023's 2026-10-17 revision). _Avoid_: assuming it is a no-op for CJK — on
   a full-ICU runtime `中文` matches inside `这是中文文本` while `文文` does not.
-- **Opened root folder (打开的根文件夹)** — the single folder the user opened; the only root of the
-  workspace. Distinct from the **active folder**: drilling into a subfolder in the sidebar changes the
-  active folder, **not** the root. Search **scope** patterns are always resolved against this root.
+- **Opened root folder (打开的根文件夹)** — the single folder the user opened **in a window**; the only
+  root of that window's workspace. It is replaced (never extended) when another folder is opened.
+  Search **scope** patterns are always resolved against this root, and each window resolves them
+  against its own root (ADR-0039). _Avoid_: conflating it with a subfolder shown in the sidebar —
+  drilling into a subfolder changes what is _displayed_, never the root.
 - **Search scope (搜索范围)** — the pair of visible, editable path patterns (`include` / `exclude`)
   that delimit a cross-document search; **empty means the whole opened root folder**. It is expressed
   as text, never as a mode toggle, so what is being searched is always on screen. An invalid pattern
@@ -295,8 +319,9 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   document happen **after** the prompt. It exists because MarkFlow keeps one active document whose
   unsaved buffer lives only in the editor, so a switch would otherwise destroy it — VS Code needs no
   such prompt because it keeps a dirty working copy per editor (ADR-0023 decision 9). The guard
-  governs **switching** only; unsaved text still participates in search (see **Dirty buffer snapshot**)
-  and its document is skipped by cross-file replace.
+  governs **switching** and, since ADR-0029 §5, leaving edit mode for read-only while dirty (a
+  confirmed discard also reloads the file from disk); unsaved text still participates in search
+  (see **Dirty buffer snapshot**) and its document is skipped by cross-file replace.
   _See also_: **Search view**, **Global toolbar**.
 - **Search entry points (搜索入口)** — every entry must **name its own range** in its visible label or
   tooltip, because no two of them search the same thing:
@@ -310,14 +335,17 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   `exclude`. _See also_: **Search scope**, **Search view**.
 - **Relative path (相对路径)** — a document's `filePath` as seen from the **`workspaceRoot`** (the opened
   root folder), forward-slash separated (`2026/notes.md`); this is what a search result row shows and what
-  **include / exclude** patterns are matched against. It is **not** relative to the **active folder** (that
-  is UI drill state only — ADR-0023). The "Copy File Path" menu item still copies the **absolute** path —
+  **include / exclude** patterns are matched against. It is **not** relative to a **drilled subfolder**
+  (that is UI drill state only — ADR-0023). The "Copy File Path" menu item still copies the **absolute** path —
   that is the form you can paste into a terminal or file manager.
   _Avoid_: rendering the absolute path in the UI.
 - **Link destination (链接目标)** — the href in a Markdown link, resolved for preview navigation by the
   rules in ADR-0038: relative paths against the containing document, `/…` against the **workspace root**,
   `C:\…` / `C:/…` and `file:///…` as filesystem absolute, and external schemes via a confirmation
-  dialog. Never resolved against the app shell URL. _See also_: **Document navigation**.
+  dialog. Never resolved against the app shell URL. When the resolved **Markdown** path lies outside
+  the current window's workspace it triggers the **four-way external-file choice** rather than
+  silently re-rooting (ADR-0039 §3.2). _See also_: **Document navigation**, **Four-way external-file
+  choice**.
 - **File name (文件名)** — `basename(filePath)`, **including** the extension (e.g. `notes.md`).
 - **Document title (`title`)** — the document's derived, **extension-less** file name (e.g. `notes`); what
   the sidebar shows. _Avoid_: using "file name" to mean `title`.
@@ -409,9 +437,14 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   yes/no questions. It is a `dialog:confirm` IPC backed by `dialog.showMessageBox` (an app-modal dialog that
   returns focus to the window on close). Native `window.confirm` is **forbidden** for these prompts: it fires
   a WIN-BLUR on Windows that leaves the editor untypeable (see `docs/adr/0009-app-modal-dialogs.md`).
-- **tryCloseWorkspace (unified quit path)** — closing a file, closing the workspace, and quitting the app all
-  run the same `tryCloseWorkspace()` logic (same unsaved-change prompt, same `app:quit-allowed` →
-  `before-quit` → `app.quit()` flow). New documents and existing unsaved edits are treated identically.
+- **tryCloseWorkspace (unified unsaved-close path)** — closing a file, closing the workspace, and closing a
+  window all run the same unsaved-change prompt. There is no application-level quit path: closing a window
+  prompts and closes **only that window** via the routed `app:request-quit` → `app:quit-pending` /
+  `app:quit-allowed` handshake. Closing the last window quits the process on Windows/Linux but keeps it
+  alive on macOS. When the OS terminates the app (macOS Dock Quit), Electron closes each window first,
+  so the same guard still runs; system shutdown is not intercepted. The unsaved guard itself lives at
+  the single document-close execution point, not at each entry point. New documents and existing unsaved
+  edits are treated identically.
 - **Context menu (right-click)** — right-click menus use `@radix-ui/react-context-menu` (pops at the cursor,
   native Shift+F10); button-triggered dropdowns use `@radix-ui/react-dropdown-menu`. Menu items stop event
   propagation to avoid firing ancestor handlers. See `docs/adr/0008-context-menu-architecture.md`.
@@ -442,9 +475,11 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
 
 ## Printing & windows
 
-- **Main window** — the MarkFlow editor window: the only window the user normally sees, containing the
-  editor, the **Preview pane**, the sidebar and the toolbars. _Avoid_: "preview window" — the preview is a
-  pane inside this window, not a separate window.
+- **Main window** — a MarkFlow editor window, containing the editor, the **Preview pane**, the sidebar
+  and the toolbars, each with its own workspace, document store and history (ADR-0039). More than one
+  may be open at once (menu commands target the focused window); closing one does not quit the app
+  until the last is closed. _Avoid_: "preview window" — the preview is a pane inside a Main window,
+  not a separate window. The **Print host window** is a different, hidden window.
 - **Print host window** — a hidden, never-visible window that holds the rendered document for a print
   job and is the owner of the **System print dialog**. It must be set to `opacity 0` **before**
   `show()`: showing it first paints one opaque frame even if `setOpacity(0)` runs immediately after

@@ -144,7 +144,11 @@ export interface FollowLinkDeps {
   listDocuments: () => Promise<Array<{ id: string; filePath: string }>>
   importDocument: (path: string) => Promise<{ id: string } | null>
   selectDocument: (id: string) => Promise<boolean>
-  /** ADR-0038 §3.2: replace the workspace when the target file lives in another folder. */
+  /**
+   * Navigate to a document by path inside the CURRENT workspace. ADR-0039 superseded the old
+   * "replace the workspace for an out-of-root link" rule: out-of-root files now go through the
+   * four-way dialog, and navigateToPath never swaps the root.
+   */
   navigateToDocument?: (path: string) => Promise<boolean>
   openExternal: (url: string) => void
   openLocalFile: (path: string) => void

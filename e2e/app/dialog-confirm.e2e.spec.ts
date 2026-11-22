@@ -16,9 +16,9 @@ import {
 // with the correct copy + buttons and (b) auto-answer it.
 //
 // This is the spy-upgrade of the old plain `ipcMain.handle('dialog:confirm', () => true)`
-// stub: it proves not just that the app quits, but that the confirm was *correct*
+// stub: it proves not just that the window closes, but that the confirm was *correct*
 // (right message, right buttons, right default/cancel). The production `dialog:confirm`
-// handler is left running, so the real dirty-quit flow is fully exercised; only the OS
+// handler is left running, so the real dirty-close flow is fully exercised; only the OS
 // button render is skipped (which Playwright cannot reach anyway).
 
 // Each test launches its own app instance because it asserts on process liveness/exit,
@@ -56,10 +56,11 @@ test.describe('native confirm dialog — copy & buttons', () => {
       await markDirty(page)
       await requestCloseWindow(handle)
 
-      // The Discard answer makes the app quit almost immediately, so the renderer/page can
-      // be gone before a fixed wait. Instead poll the MAIN-process global for the recorded
-      // confirm (the app quits only AFTER the confirm is answered, so the record is captured
-      // while the main process is still alive).
+      // The Discard answer closes the window almost immediately (and on Win/Linux exits the
+      // app, since this is the last window), so the renderer/page can be gone before a fixed
+      // wait. Instead poll the MAIN-process global for the recorded confirm: the window closes
+      // only AFTER the confirm is answered, so the record is captured while the main process
+      // is still alive.
       let box: ConfirmCall | undefined
       await expect
         .poll(
@@ -87,7 +88,8 @@ test.describe('native confirm dialog — copy & buttons', () => {
       // The spy auto-answered Discard.
       expect(box!.response).toBe(1)
 
-      // Because the answer was Discard, the app exits gracefully (well within the 5s net).
+      // Because the answer was Discard, the window closes (and the last-window app exits)
+      // gracefully, well within the 5s net.
       await expect
         .poll(
           async () => {

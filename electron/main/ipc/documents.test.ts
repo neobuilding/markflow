@@ -32,6 +32,12 @@ import { createMemoryDiskIO, type MemoryDiskIO } from '../lib/disk-io'
 // store's listDocuments matches production semantics exactly no drift between the
 // test double and documentStore.listDocuments.
 import { isInFolder } from '../model/folderMatch'
+import {
+  registerWindow,
+  unregisterWindow,
+  withContext,
+  __resetWindowContextsForTests,
+} from '../model/windowContext'
 
 // In-memory fake of the document store. documents.ts imports the named store
 // functions; we mock that module so the handlers run against a plain Map instead
@@ -657,6 +663,40 @@ describe('documents IPC — import / importMany', () => {
     expect(doc.content).toBe('# imported')
   })
 
+  it('refreshes an already-imported file instead of storing a second copy', async () => {
+    const dir = mkTestDir('mf-imp-refresh-')
+    const p = join(dir, 'a.md')
+    writeFileSync(p, '# first')
+    const first = await call('documents:import', p)
+    writeFileSync(p, '# second')
+    const second = await call('documents:import', p)
+    // The SAME document, refreshed from disk — not a second record for the same path.
+    expect(second.id).toBe(first.id)
+    expect(second.content).toBe('# second')
+  })
+
+  it('keeps a document external once it was imported as external', async () => {
+    const dir = mkTestDir('mf-imp-ext-')
+    const p = join(dir, 'ext.md')
+    writeFileSync(p, '# external')
+    // No workspace root is set here on purpose: an external import bypasses the root check,
+    // and setting a root would CLEAR the store (which the next import relies on).
+
+    const first = (await call('documents:import', p, { external: true })) as {
+      id: string
+      external?: boolean
+    }
+    expect(first.external).toBe(true)
+
+    // Re-importing the same path refreshes the record; the external marker must survive.
+    const second = (await call('documents:import', p, { external: true })) as {
+      id: string
+      external?: boolean
+    }
+    expect(second.id).toBe(first.id)
+    expect(second.external).toBe(true)
+  })
+
   it('batch-imports multiple files', async () => {
     const dir = mkTestDir('mf-imp-')
     const p1 = join(dir, 'b.md')
@@ -712,6 +752,64 @@ describe('documents — folder watching (chokidar-driven store sync)', () => {
     expect(doc.content).toContain('hello world')
     expect(doc.wordCount).toBe(3)
     expect(sentFolderChanged).toEqual([{ dirPath: dir }])
+  })
+
+  it('routes watcher notifications to the window that owns the watch', async () => {
+    // folderWatcher re-enters the owner's ALS scope before calling the handlers; the
+    // notification must follow that scope, not `getMainWindow()` (the focused window).
+    const sentA: Array<{ dirPath: string }> = []
+    const sentB: Array<{ dirPath: string }> = []
+    const winA = {
+      webContents: {
+        id: 201,
+        send: (channel: string, payload: { dirPath: string }) => {
+          if (channel === 'app:folder-changed') sentA.push(payload)
+        },
+      },
+      isDestroyed: () => false,
+    }
+    const winB = {
+      webContents: {
+        id: 202,
+        send: (channel: string, payload: { dirPath: string }) => {
+          if (channel === 'app:folder-changed') sentB.push(payload)
+        },
+      },
+      isDestroyed: () => false,
+    }
+    const ctxA = registerWindow(winA as never)
+    const ctxB = registerWindow(winB as never)
+    const dirA = tmpDir('mf-watch-win-a-')
+    const dirB = tmpDir('mf-watch-win-b-')
+    writeFileSync(join(dirA, 'a.md'), '# A\n', 'utf-8')
+    writeFileSync(join(dirB, 'b.md'), '# B\n', 'utf-8')
+    try {
+      withContext(ctxA, () => __emitFolderEvent('add', join(dirA, 'a.md')))
+      withContext(ctxB, () => __emitFolderEvent('add', join(dirB, 'b.md')))
+      __flushFolderChanged()
+
+      expect(sentA).toEqual([{ dirPath: dirA }])
+      expect(sentB).toEqual([{ dirPath: dirB }])
+
+      // A switching its workspace cancels only A's pending broadcast; B's still fires.
+      sentA.length = 0
+      sentB.length = 0
+      writeFileSync(join(dirA, 'a2.md'), '# A2\n', 'utf-8')
+      writeFileSync(join(dirB, 'b2.md'), '# B2\n', 'utf-8')
+      withContext(ctxA, () => __emitFolderEvent('add', join(dirA, 'a2.md')))
+      withContext(ctxB, () => __emitFolderEvent('add', join(dirB, 'b2.md')))
+      // The real handler re-enters scope from `event.sender`; a null event would fall back
+      // to the active window (B), so pass A's sender explicitly.
+      await handlers['documents:set-workspace-root']({ sender: { id: 201 } }, dirA)
+      __flushFolderChanged()
+
+      expect(sentA).toEqual([])
+      expect(sentB).toEqual([{ dirPath: dirB }])
+    } finally {
+      unregisterWindow(201)
+      unregisterWindow(202)
+      __resetWindowContextsForTests()
+    }
   })
 
   it('ignores an add for a file the store already tracks (own save must not duplicate)', async () => {
@@ -1281,6 +1379,29 @@ describe('documents IPC — single-root invariant backstop (D20)', () => {
     // ... but exist in the unscoped list so they can be activated / searched by id.
     const all = (await call('documents:list')) as Array<{ id: string }>
     expect(all.map((d) => d.id)).toContain(doc!.id)
+  })
+
+  it('releases the single-file watch of a deleted external document', async () => {
+    const dir = mkTestDir('mf-ext-del-')
+    const outsideFile = join(dir, 'ext.md')
+    writeFileSync(outsideFile, '# External', 'utf-8')
+
+    const doc = (await call('documents:import', outsideFile, { external: true })) as {
+      id: string
+    }
+    expect(doc.id).toBeTruthy()
+    const ext = chokidarState.instances.find((i: any) => i.paths.includes(outsideFile))
+    expect(
+      ext,
+      'an external document is watched on its own, outside the workspace tree',
+    ).toBeTruthy()
+    expect(ext!.closed).toBe(false)
+
+    await call('documents:delete', doc.id)
+
+    // The watch follows the document's lifetime: once the document is gone, the watch has
+    // nothing left to report and its handle must be released.
+    expect(ext!.closed).toBe(true)
   })
 
   it('refuses to create a document outside the workspace root', async () => {

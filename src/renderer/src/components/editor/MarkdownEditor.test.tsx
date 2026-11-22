@@ -13,7 +13,7 @@ beforeEach(() => {
   cleanup()
   // The editor rotates its editing session from a STORE subscription, so a leaked
   // activeDocumentId would make the next case's switch a no-op. No case may leak state.
-  useUIStore.setState({ activeDocumentId: null })
+  useUIStore.setState({ activeDocumentId: null, editable: false })
 })
 
 function getView(): EditorView {
@@ -73,6 +73,28 @@ describe('MarkdownEditor', () => {
     // ... and the user switches documents BEFORE it fires. The old editing session is aborted,
     // so its pending timer can no longer write A's text into B's draft (todo 1).
     rerender(<MarkdownEditor content="BBBB" docId="b" onChange={onChange} />)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('drops a pending preview echo when edit mode is left (ADR-0029 §5)', async () => {
+    const onChange = vi.fn()
+    const onImmediateChange = vi.fn()
+    act(() => useUIStore.setState({ activeDocumentId: 'd1', editable: true }))
+    render(
+      <MarkdownEditor
+        content="AAAA"
+        docId="d1"
+        onChange={onChange}
+        onImmediateChange={onImmediateChange}
+        editable
+      />,
+    )
+    getView().dispatch({ changes: { from: 4, insert: ' edited' } })
+    expect(onImmediateChange).toHaveBeenCalledWith('AAAA edited')
+    // Discarding on switch-to-read-only ends the editing session. The 400ms preview echo still
+    // queued from the draft must not land afterwards and re-dirty the freshly reloaded document.
+    act(() => useUIStore.getState().setEditable(false))
     await new Promise((resolve) => setTimeout(resolve, 500))
     expect(onChange).not.toHaveBeenCalled()
   })

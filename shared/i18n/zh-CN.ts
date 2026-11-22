@@ -72,9 +72,11 @@ export const zhCN: Record<TranslationKey, string> = {
   'editor.closeFile': '关闭文件',
   'editor.renameTitle': '重命名文件',
   'editor.fileDeleted': '文件已在磁盘上删除 —— 保存即可恢复',
+  'editor.externalBadge': '工作区外',
   'editor.goToFileShortcut': '转到文件… ({{shortcut}})',
   'nav.back': '后退',
   'nav.forward': '前进',
+  'nav.historyTitle': '最近的文档',
   'nav.backShortcut': '后退 ({{shortcut}})',
   'nav.forwardShortcut': '前进 ({{shortcut}})',
   'editor.switchReadOnly': '切换到只读模式',
@@ -264,6 +266,8 @@ export const zhCN: Record<TranslationKey, string> = {
   // ── App-level (native confirm / alert strings) ─────────────────────────
   // {{title}} 点名正在离开的文档：弹窗出现时用户第一个想知道的就是「哪篇没保存」。
   'app.unsavedSwitch': '「{{title}}」有未保存的更改。要丢弃并切换文件吗？',
+  // 编辑切只读同样离开编辑态；确认丢弃后会重新从磁盘加载。
+  'app.unsavedSwitchReadOnly': '「{{title}}」有未保存的更改。要丢弃并切换到只读模式吗？',
   // 打开文件夹/文件会替换整个工作区（计划 D14），未保存编辑会丢失。
   'app.unsavedOpenWorkspace': '「{{title}}」有未保存的更改。要丢弃并打开新工作区吗？',
   // 多个互不隶属的目录无法收敛成一个根（D15）：拒绝并列出候选。
@@ -286,6 +290,7 @@ export const zhCN: Record<TranslationKey, string> = {
   'app.workspaceExternalKeep': '在当前窗口打开（保留工作区）',
   'app.workspaceExternalSwitch': '在当前窗口打开并切换工作区',
   'app.saveFailed': '保存文件失败。',
+  'app.reloadFailed': '无法从磁盘重新加载文件。',
   'app.fileGone': '该文件在磁盘上已不存在。',
   'app.deleteConfirm': '确定要删除此文件吗？',
   'app.discardDraftConfirm': '确定要丢弃此草稿吗？此操作不可撤销。',
@@ -364,7 +369,6 @@ export const zhCN: Record<TranslationKey, string> = {
   'menu.toggleFullScreen': '切换全屏',
   'menu.minimize': '最小化',
   'menu.zoom': '缩放',
-  'menu.quit': '退出',
   'menu.closeWindow': '关闭窗口',
   'menu.dlgOpenFile': '打开 Markdown 文件',
   'menu.dlgOpenFolder': '打开文件夹（批量导入 .md 文件）',

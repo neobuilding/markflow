@@ -102,14 +102,18 @@ test.describe('markdown link navigation', () => {
     expect(ids.targetId).toBeTruthy()
 
     // Reveal follows the absolute path: the click may re-import the target under a new id when
-    // the workspace moves into the nested folder (ADR-0038 §3.2), so address rows by data-path.
-    const targetRow = page.locator(`[data-testid="doc-item"][data-path="${norm(targetFile)}"]`)
+    // the workspace moves into the nested folder (ADR-0038 §3.2), so address rows by path.
     await expect(page.locator(`[data-doc-id="${ids.indexId}"]`)).toBeVisible()
     // Folders start collapsed: the target row is absent until reveal expands its ancestors.
-    await expect(targetRow).toHaveCount(0)
+    await expect.poll(() => docRowIdByPath(page, targetFile)).toBeNull()
 
     await page.locator('article.markdown-preview a[href="nested/deep-target.md"]').click()
 
+    // The row exists once the reveal expanded its folder; it is addressed by the id the tree
+    // carries for that path (the id may differ from the one captured before the click).
+    await expect.poll(() => docRowIdByPath(page, targetFile)).not.toBeNull()
+    const targetDocId = await docRowIdByPath(page, targetFile)
+    const targetRow = page.locator(`[data-testid="doc-item"][data-doc-id="${targetDocId}"]`)
     await expect(targetRow).toBeVisible()
     await expect.poll(() => activeDocPath(page)).toBe(norm(targetFile))
     // Reveal is not just a DOM presence check: the row must be inside the scroll viewport.
@@ -346,6 +350,22 @@ async function activate(page: Page, id: string): Promise<void> {
 // The document store keeps forward slashes while node:path.join() uses the host separator, so
 // compare paths in one canonical shape (docs/agents/testing.md — never inherit the host path shape).
 const norm = (p: string | null): string | null => (p ? p.replace(/\\/g, '/') : p)
+
+// The tree row for a document, found by comparing NORMALIZED paths INSIDE the page.
+//
+// The row's `data-path` carries the path in whatever shape the store holds it — the host's
+// native separators on Windows, the canonical shape after a re-import — so a CSS selector
+// built from a canonical path never matches there. The row is therefore located by comparing
+// normalized values and addressed by its `data-doc-id` (a UUID, free of path characters).
+async function docRowIdByPath(page: Page, absPath: string): Promise<string | null> {
+  return page.evaluate((target) => {
+    const normInPage = (s: string): string => s.replace(/\\/g, '/')
+    const el = [...document.querySelectorAll<HTMLElement>('[data-testid="doc-item"]')].find(
+      (e) => normInPage(e.dataset.path ?? '') === target,
+    )
+    return el?.dataset.docId ?? null
+  }, norm(absPath))
+}
 
 // Path is the durable navigation key across a workspace replacement (ADR-0038 §3.2):
 // setWorkspaceRoot clears the store, so an id captured before a link click goes stale.

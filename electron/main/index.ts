@@ -21,16 +21,11 @@ import { registerThemeHandlers } from './handlers/theme'
 import { registerDialogHandlers } from './handlers/dialog'
 import { registerFilesHandlers } from './handlers/files'
 import { registerAppHandlers } from './handlers/app'
+import { registerNewWindowHandlers } from './ipc/newWindow'
 import { registerWindowHandlers } from './handlers/window'
 import { createDocumentStore } from './model/documentStore'
 import { initMenuI18n } from './i18n'
-import {
-  getMainWindow,
-  setIsQuiting,
-  setReadyToQuit,
-  setQuitPending,
-  pendingInitialPaths,
-} from './state'
+import { getMainWindow, setReadyToQuit, pendingInitialPaths } from './state'
 
 // NOTE: This module must not reference __dirname. Under "type": "module" the
 // main process is ESM, where __dirname is undefined; vite-plugin-electron's
@@ -183,6 +178,7 @@ if (!shouldStart) {
     registerDialogHandlers()
     registerFilesHandlers()
     registerAppHandlers()
+    registerNewWindowHandlers(ipcMain)
     registerWindowHandlers()
 
     // initMenuI18n() MUST run before setupMenu(): menuT() depends on the i18next
@@ -197,12 +193,10 @@ if (!shouldStart) {
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        // Defensive reset: if a future change makes closing the window keep the
-        // process alive (macOS-style), a rebuilt window must not inherit the stale
-        // quitting flags or it would skip the unsaved-changes prompt on next close.
-        setIsQuiting(false)
+        // Defensive reset: a rebuilt window must not inherit a stale readyToQuit from
+        // a previous session's purge. The unsaved guard itself is per window, so there
+        // is no process-global quit flag to clear here.
         setReadyToQuit(false)
-        setQuitPending(false)
         createWindow()
       }
     })

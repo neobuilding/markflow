@@ -9,27 +9,27 @@ import {
   AppHandle,
 } from '../helpers/launch'
 
-// Regression coverage for the "dirty-confirm force-quit" bug:
+// Regression coverage for the "dirty-confirm force-close" bug:
 //
 // Before the fix, the main process armed a 5s "renderer is dead" safety net whenever
-// it sent `app:request-quit`. When the workspace was dirty, the renderer opened the
-// unsaved-changes confirm box (an async dialog) and did NOT immediately reply with
-// `app:quit-allowed`. The safety net had no way to tell "user is deciding" from
-// "renderer is dead", so 5s after the prompt opened it force-quit the app silently
-// discarding the user's edits.
+// it requested a window close via `app:request-quit`. When the workspace was dirty, the
+// renderer opened the unsaved-changes confirm box (an async dialog) and did NOT
+// immediately reply with `app:quit-allowed`. The safety net had no way to tell
+// "user is deciding" from "renderer is dead", so 5s after the prompt opened it
+// force-closed the window, silently discarding the user's edits.
 //
 // The fix introduces `app:quit-pending`: the renderer sends it synchronously before
-// opening the confirm box, and the main process disarms the safety net on receipt.
-// These e2e specs verify the regression end-to-end: a dirty workspace must NOT be
-// force-quit while the user is "deciding", and a clean workspace must still exit
-// promptly (so the fix didn't break the normal exit path).
+// opening the confirm box, and the main process disarms that window's safety net on
+// receipt. These e2e specs verify the regression end-to-end: a dirty workspace must
+// NOT be force-closed while the user is "deciding", and a clean workspace must still
+// let the window close promptly (so the fix didn't break the normal close path).
 
 // Each test launches its own app instance because they assert on process
 // liveness/exit, which is incompatible with a shared beforeEach app instance.
-test.describe('quit flow — unsaved-changes regression', () => {
+test.describe('window close — unsaved-changes regression', () => {
   // Spy the native `dialog:confirm` so it records + auto-answers immediately (0 =
   // "keep editing") instead of showing an OS modal that would block the test, while
-  // leaving the production `dialog:confirm` handler running so the real dirty-quit flow
+  // leaving the production `dialog:confirm` handler running so the real dirty-close flow
   // is still exercised. (installConfirmSpy replaces electron.dialog.showMessageBox; the
   // production handler calls it and gets our canned answer.)
   //
@@ -95,7 +95,7 @@ test.describe('quit flow — unsaved-changes regression', () => {
         w.__uiStore?.getState().setDirty(true)
       })
 
-      // Trigger the quit flow through the real close handler (arms the 5s net).
+      // Trigger the window close through the real close handler (arms the 5s net).
       await requestCloseWindow(handle)
 
       // Give the renderer a moment to handle the request (send quit-pending + open confirm).
@@ -139,11 +139,12 @@ test.describe('quit flow — unsaved-changes regression', () => {
     }
   })
 
-  test('clean workspace: app still exits promptly when there is nothing unsaved', async () => {
+  test('clean workspace: last-window close still exits promptly when nothing is unsaved', async () => {
     // Regression guard for the fix: disarming the safety net on app:quit-pending
-    // must not break the normal (clean) exit path. With no dirty state, the
+    // must not break the normal (clean) close path. With no dirty state, the
     // renderer's tryCloseWorkspace() returns true and immediately calls
-    // allowQuit(), so no app:quit-pending is sent and app.quit() proceeds.
+    // allowQuit(), so no app:quit-pending is sent and the window closes (then the
+    // window-all-closed handler calls app.quit() on Win/Linux).
     const handle = await launchApp()
     try {
       const { page } = handle

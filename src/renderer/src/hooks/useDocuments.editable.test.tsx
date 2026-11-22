@@ -133,7 +133,9 @@ describe('editable mode — switching files always returns to read-only', () => 
     await act(async () => {
       await openPaths.mutateAsync(['/a.md'])
     })
-    act(() => useUIStore.getState().toggleEditable())
+    await act(async () => {
+      await useUIStore.getState().toggleEditable()
+    })
     expect(useUIStore.getState().editable).toBe(true)
 
     await act(async () => {

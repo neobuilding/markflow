@@ -459,6 +459,19 @@ describe('search:query — filename mode (Quick Open, D1/D9)', () => {
     expect(res.results[0].filePath).toBe(join(root, 'a.md'))
     expect(res.results[0].relPath).toBe('a.md')
   })
+
+  it('excludes external documents from Quick Open (ADR-0039 §3.3)', () => {
+    upsertDocument(
+      doc({
+        id: 'ext',
+        title: 'OutsideNote',
+        content: 'x',
+        filePath: join(root, '..', 'outside.md'),
+        external: true,
+      }),
+    )
+    expect(filename('OutsideNote').results).toHaveLength(0)
+  })
 })
 
 describe('search:query — IPC handler wiring (ADR-0023)', () => {

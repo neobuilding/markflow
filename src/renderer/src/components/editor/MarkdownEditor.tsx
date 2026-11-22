@@ -411,13 +411,22 @@ export function MarkdownEditor({
     // "store switched" and "effect cleanup ran" that a pending 400ms timer could otherwise fire in.
     // docId is used here ONLY as a switch signal, never as a write target or callback argument.
     sessionRef.current = createSession(emitPreview)
-    const unsubscribe = useUIStore.subscribe((state, prev) => {
-      if (state.activeDocumentId === prev.activeDocumentId) return
-      // A real document switch: the pending preview text belongs to the OLD document, drop it.
+    const rotateSession = () => {
       sessionRef.current?.abort()
-      // The fresh session owns NOTHING yet: the view still holds the old document's text until
-      // the sync effect writes the new one, so a keystroke in that window is not committed.
       sessionRef.current = createSession(emitPreview)
+    }
+    const unsubscribe = useUIStore.subscribe((state, prev) => {
+      if (state.activeDocumentId !== prev.activeDocumentId) {
+        // A real document switch: the pending preview text belongs to the OLD document, drop it.
+        // The fresh session owns NOTHING yet: the view still holds the old document's text until
+        // the sync effect writes the new one, so a keystroke in that window is not committed.
+        rotateSession()
+        return
+      }
+      // Leaving edit mode ends the editing session too. Discarding a draft on switch to
+      // read-only (ADR-0029 §5) clears dirty and reloads the disk bytes; a preview echo still
+      // queued from the discarded draft must not land afterwards and resurrect it.
+      if (prev.editable && !state.editable) rotateSession()
     })
 
     const startState = EditorState.create({

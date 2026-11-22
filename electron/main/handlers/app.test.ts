@@ -44,12 +44,14 @@ vi.mock('../ipc/appdoc', () => ({ resolveAppdocPath: vi.fn(() => null) }))
 
 import { registerAppHandlers } from './app'
 import { pendingInitialPaths } from '../state'
+import { currentContext } from '../model/windowContext'
 
 describe('app handlers', () => {
   let mem: MemoryDiskIO
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k]
     pendingInitialPaths.length = 0
+    currentContext().pendingPaths.length = 0
     mem = createMemoryDiskIO()
     registerAppHandlers(mem)
   })
@@ -60,6 +62,16 @@ describe('app handlers', () => {
     expect(out).toEqual(['/a.md', '/b.md'])
     // spliced empty
     expect(pendingInitialPaths.length).toBe(0)
+  })
+
+  it('drains a window context pending paths before the shared launch queue (P3)', () => {
+    currentContext().pendingPaths.push('/window-only.md')
+    pendingInitialPaths.push('/launch.md')
+    const out = handlers['app:get-initial-paths'](null) as string[]
+    expect(out).toEqual(['/window-only.md'])
+    // The window's own queue wins; the shared launch paths remain untouched for other windows.
+    expect(currentContext().pendingPaths).toEqual([])
+    expect(pendingInitialPaths).toEqual(['/launch.md'])
   })
 
   it('shows a file in the folder via the shell', () => {

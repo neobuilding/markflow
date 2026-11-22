@@ -21,6 +21,7 @@ import {
   PanelLeft,
   PanelLeftClose,
   Eye,
+  ExternalLink,
 } from 'lucide-react'
 import {
   cn,
@@ -1664,6 +1665,7 @@ interface DocItemMenuContentProps {
   Separator: React.ElementType
   doc: Document
   onOpen: () => void | Promise<boolean>
+  onOpenInNewWindow: () => void
   onStartFileRename: () => void
   onCopyPath: () => void
   onCopyFileName: () => void
@@ -1678,6 +1680,7 @@ function DocItemMenuContent({
   Separator,
   doc,
   onOpen,
+  onOpenInNewWindow,
   onStartFileRename,
   onCopyPath,
   onCopyFileName,
@@ -1699,6 +1702,16 @@ function DocItemMenuContent({
         }}
       >
         <FileText size={13} /> {t('ctx.openDocument')}
+      </Item>
+      <Item
+        data-testid="side-open-in-new-window"
+        disabled={isDraft}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation()
+          onOpenInNewWindow()
+        }}
+      >
+        <ExternalLink size={13} /> {t('app.workspaceExternalNewWindow')}
       </Item>
       <Item
         data-testid="side-copy-path"
@@ -1823,6 +1836,9 @@ function DocItem({
   const showInFolder = () => {
     void Promise.resolve(window.api.app.showInFolder(doc.filePath as string)).catch(() => {})
   }
+  const openInNewWindow = () => {
+    if (doc.filePath) void window.api.app.openInNewWindow(doc.filePath)
+  }
   const copyContent = () => void window.api.clipboard.writeText(doc.content)
   return (
     <ContextMenu>
@@ -1919,6 +1935,7 @@ function DocItem({
                 Separator={DropdownMenuSeparator}
                 doc={doc}
                 onOpen={onSelect}
+                onOpenInNewWindow={openInNewWindow}
                 onStartFileRename={onStartFileRename}
                 onCopyPath={copyPath}
                 onCopyFileName={copyFileName}
@@ -1938,6 +1955,7 @@ function DocItem({
           Separator={ContextMenuSeparator}
           doc={doc}
           onOpen={onSelect}
+          onOpenInNewWindow={openInNewWindow}
           onStartFileRename={onStartFileRename}
           onCopyPath={copyPath}
           onCopyFileName={copyFileName}

@@ -16,6 +16,7 @@ function docActions(): DocMenuActions {
     copyFileName: vi.fn(),
     copyFullPath: vi.fn(),
     showInFolder: vi.fn(),
+    openInNewWindow: vi.fn(),
     save: vi.fn(),
     saveAs: vi.fn(),
     reload: vi.fn(),
@@ -74,6 +75,7 @@ const ALL_TITLE_IDS = [
   'doc-save-as',
   'doc-reload',
   'doc-details',
+  'doc-open-in-new-window',
   'doc-export-html',
 ]
 
@@ -99,6 +101,7 @@ describe('FileMenuItems — title variant', () => {
     expect(a.saveAs).toHaveBeenCalled()
     expect(a.reload).toHaveBeenCalled()
     expect(a.details).toHaveBeenCalled()
+    expect(a.openInNewWindow).toHaveBeenCalled()
     expect(a.exportHtml).toHaveBeenCalled()
   })
 

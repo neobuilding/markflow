@@ -38,6 +38,10 @@ debounce to a pure UI refresh.**
    text belongs to the document being left), whereas unmounting the editor while the SAME document
    stays open — e.g. `view-preview` hides the editor — must FLUSH it first, or the preview renders
    the pre-edit text. This distinction is locked by a unit test and a real-browser e2e case.
+   A third trigger was added on 2026-11-22: when `editable` flips `true → false` the session is
+   also **aborted and rotated** (ADR-0029 §5). Leaving edit mode discards the draft or reloads the
+   saved bytes, so a pending echo from that draft must not land afterwards. It is an abort, not a
+   flush; the flush-on-unmount rule for view-mode changes stays exactly as above.
 2. **The session owns the WRITE, not just the timer.** Aborting the debounce was not enough: the
    keystroke-frame commit (`onImmediateChange`) does not go through the debounce, so a keystroke
    landing between "the store switched" and "the view was updated" still carried the PREVIOUS

@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ─── Shared fakes (hoisted so the electron mock factory can reference them) ───
 // We capture the `app.on(...)`, `ipcMain.on(...)` and `ipcMain.handle(...)` registrations
-// so the tests can invoke the real `before-quit` handler (and the `app:quit-allowed`
-// handler that flips the module-internal `readyToQuit` flag) after the module loads.
+// so the tests can invoke the real `before-quit`, `window-all-closed`, `will-quit` and
+// `app:quit-allowed` (single-window close confirmation) handlers after the module loads.
 const h = vi.hoisted(() => {
   const appHandlers: Record<string, (...a: unknown[]) => void> = {}
   const ipcOn: Record<string, (...a: unknown[]) => void> = {}
@@ -106,31 +106,20 @@ vi.mock('electron', () => {
   }
 })
 
-// Mock the shared state module so the test controls getMainWindow() (the window
-// instance lifecycle.ts reads in before-quit). The same mock instance is shared by
-// lifecycle.ts because it resolves to the same absolute path. The quit flags are
-// tracked for real so app:quit-allowed -> before-quit interactions behave correctly.
+// Mock the shared state module: the exit flags are tracked for real so
+// window-all-closed -> before-quit interactions behave correctly. The global
+// quitPending mirror no longer exists (the per-window flag lives on WindowContext).
 vi.mock('./state', () => {
   let mainWindow: unknown = null
-  let isQuiting = false
   let readyToQuit = false
-  let quitPending = false
   return {
     getMainWindow: () => mainWindow,
     setMainWindow: (w: unknown) => {
       mainWindow = w
     },
-    getIsQuiting: () => isQuiting,
-    setIsQuiting: (v: boolean) => {
-      isQuiting = v
-    },
     getReadyToQuit: () => readyToQuit,
     setReadyToQuit: (v: boolean) => {
       readyToQuit = v
-    },
-    getQuitPending: () => quitPending,
-    setQuitPending: (v: boolean) => {
-      quitPending = v
     },
     pendingInitialPaths: [] as string[],
   }
@@ -144,7 +133,7 @@ vi.mock('./model/documentStore', () => ({
 }))
 
 vi.mock('./model/folderWatcher', () => ({
-  stopFolderWatching: vi.fn(async () => {
+  stopAllFolderWatching: vi.fn(async () => {
     h.stopFolderWatchingCalled = true
   }),
 }))
@@ -177,16 +166,13 @@ beforeEach(async () => {
   h.stopFolderWatchingCalled = false
   h.fakeQuit.mockClear()
   h.fakeWebContentsSend.mockClear()
-  // Reset the state mock's closure-scoped flags. vi.resetModules() invalidates the
-  // module cache but the mock factory's closure variables (isQuiting / readyToQuit /
-  // quitPending) persist across re-imports within the same test file, so a flag set
-  // by a previous test would leak into the next one and change the before-quit /
-  // safety-net branch. Importing here returns the same singleton instance the
-  // production code will use, so resetting it zeroes the shared state for each test.
+  // Reset the state mock's closure-scoped flag. vi.resetModules() invalidates the
+  // module cache but the mock factory's closure variable (readyToQuit) persists
+  // across re-imports within the same test file, so a flag set by a previous test
+  // would leak into the next one. Importing here returns the same singleton
+  // instance the production code will use, so resetting it zeroes shared state.
   const state = await import('./state.js')
-  state.setIsQuiting(false)
   state.setReadyToQuit(false)
-  state.setQuitPending(false)
   state.setMainWindow(null)
 })
 
@@ -194,47 +180,24 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('main process — before-quit safety net', () => {
-  it('forces app.quit() after the 5s grace period when the renderer never replies', async () => {
+describe('main process — before-quit (no app-level handshake)', () => {
+  it('never prompts or defers an app quit: no preventDefault, no app:request-quit fan-out', async () => {
     h.fakeWindow.isDestroyed = () => false
-    const state = await import('./state.js')
-    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
+    const wc = await import('./model/windowContext.js')
+    wc.__resetWindowContextsForTests()
+    const a = fakeCtxWindow(7)
+    wc.registerWindow(a.win as never)
     await loadLifecycle()
 
     const evt = { preventDefault: vi.fn() }
     h.appHandlers['before-quit'](evt)
 
-    // The prompt was sent to the (alive) renderer and the quit was intercepted.
-    expect(h.fakeWebContentsSend).toHaveBeenCalledWith('app:request-quit')
-    expect(evt.preventDefault).toHaveBeenCalled()
-
-    h.fakeQuit.mockClear()
-    // Renderer never answers → the safety-net timer must force the quit so the
-    // app can never get stuck un-exitable.
+    expect(evt.preventDefault).not.toHaveBeenCalled()
+    expect(a.sent).not.toContain('app:request-quit')
+    expect(h.fakeWebContentsSend).not.toHaveBeenCalledWith('app:request-quit')
     vi.advanceTimersByTime(5000)
-    expect(h.fakeQuit).toHaveBeenCalledTimes(1)
-  })
-
-  it('does NOT force quit from the safety net when the renderer replies before the grace period', async () => {
-    h.fakeWindow.isDestroyed = () => false
-    const state = await import('./state.js')
-    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
-    await loadLifecycle()
-
-    // The before-quit prompt is sent and the safety-net timer is armed.
-    const evt = { preventDefault: vi.fn() }
-    h.appHandlers['before-quit'](evt)
-    expect(h.fakeWebContentsSend).toHaveBeenCalledWith('app:request-quit')
-    h.fakeQuit.mockClear()
-
-    // Before the 5s timer fires, the renderer confirms the unsaved-changes prompt,
-    // which flips `readyToQuit`. The safety net must then be a no-op.
-    h.ipcOn['app:quit-allowed']()
-    expect(h.fakeQuit).toHaveBeenCalledTimes(1) // app:quit-allowed itself calls app.quit()
-
-    vi.advanceTimersByTime(5000)
-    // Safety net skipped because `readyToQuit` is now true.
-    expect(h.fakeQuit).toHaveBeenCalledTimes(1)
+    // No per-window force-quit timer is armed by before-quit any more.
+    expect(h.fakeQuit).not.toHaveBeenCalled()
   })
 
   it('purges drafts and quits immediately when readyToQuit is already set', async () => {
@@ -255,22 +218,6 @@ describe('main process — before-quit safety net', () => {
     expect(h.fakeWebContentsSend).not.toHaveBeenCalledWith('app:request-quit')
     vi.advanceTimersByTime(5000)
     // No extra forced quits from a safety net (none was armed).
-    expect(h.fakeQuit).not.toHaveBeenCalled()
-  })
-
-  it('does nothing (no prompt, no forced quit) when the window is already destroyed', async () => {
-    h.fakeWindow.isDestroyed = () => true
-    const state = await import('./state.js')
-    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
-    await loadLifecycle()
-
-    const evt = { preventDefault: vi.fn() }
-    h.appHandlers['before-quit'](evt)
-
-    expect(evt.preventDefault).not.toHaveBeenCalled()
-    expect(h.fakeWebContentsSend).not.toHaveBeenCalledWith('app:request-quit')
-
-    vi.advanceTimersByTime(5000)
     expect(h.fakeQuit).not.toHaveBeenCalled()
   })
 
@@ -319,94 +266,6 @@ describe('main process — before-quit safety net', () => {
     expect(evt.preventDefault).not.toHaveBeenCalled()
     expect(docStore.purgeUnsavedDrafts).toHaveBeenCalled()
   })
-
-  it('does NOT force quit when the renderer reports an unsaved-changes prompt is open (app:quit-pending)', async () => {
-    // Regression: dirty workspace + close → renderer shows confirm box and sends
-    // app:quit-pending. The 5s safety net must be disarmed so the user has unlimited
-    // time to decide; otherwise the safety net would force-quit 5s after the prompt
-    // opened, silently discarding the user's edits.
-    h.fakeWindow.isDestroyed = () => false
-    const state = await import('./state.js')
-    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
-    await loadLifecycle()
-
-    const evt = { preventDefault: vi.fn() }
-    h.appHandlers['before-quit'](evt)
-    expect(h.fakeWebContentsSend).toHaveBeenCalledWith('app:request-quit')
-    h.fakeQuit.mockClear()
-
-    // Renderer opens the unsaved-changes confirm and immediately reports it.
-    h.ipcOn['app:quit-pending']()
-    expect(state.getQuitPending()).toBe(true)
-
-    // Even after the grace period elapses, the safety net must NOT force-quit because
-    // quitPending is true (the renderer is alive, just waiting on the user).
-    vi.advanceTimersByTime(5000)
-    expect(h.fakeQuit).not.toHaveBeenCalled()
-    expect(state.getQuitPending()).toBe(true)
-  })
-
-  it('still force-quits after the grace period when the renderer never replies AND never reports pending', async () => {
-    // The "renderer is dead" path: no app:quit-pending, no app:quit-allowed. The
-    // safety net must still fire so the app can never get stuck un-exitable.
-    // (This is the original safety-net behavior, preserved.)
-    h.fakeWindow.isDestroyed = () => false
-    const state = await import('./state.js')
-    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
-    await loadLifecycle()
-
-    const evt = { preventDefault: vi.fn() }
-    h.appHandlers['before-quit'](evt)
-    h.fakeQuit.mockClear()
-
-    // Renderer is silent (crashed / detached). quitPending stays false.
-    expect(state.getQuitPending()).toBe(false)
-    vi.advanceTimersByTime(5000)
-    expect(h.fakeQuit).toHaveBeenCalledTimes(1)
-  })
-
-  it('clears quitPending and proceeds when the renderer later confirms (app:quit-allowed)', async () => {
-    // User clicked "discard" in the unsaved-changes confirm: renderer sends
-    // app:quit-allowed. quitPending must be cleared so a subsequent quit attempt
-    // (e.g. user closes again after cancelling the first prompt) re-arms the
-    // safety net rather than treating the now-stale pending as still active.
-    h.fakeWindow.isDestroyed = () => false
-    const state = await import('./state.js')
-    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
-    await loadLifecycle()
-
-    const evt = { preventDefault: vi.fn() }
-    h.appHandlers['before-quit'](evt)
-    h.ipcOn['app:quit-pending']()
-    expect(state.getQuitPending()).toBe(true)
-
-    h.fakeQuit.mockClear()
-    h.ipcOn['app:quit-allowed']()
-    expect(state.getQuitPending()).toBe(false)
-    expect(state.getReadyToQuit()).toBe(true)
-    expect(h.fakeQuit).toHaveBeenCalledTimes(1)
-  })
-
-  it('clears a stale quitPending at the start of every before-quit attempt', async () => {
-    // Mirror of the window.ts close-handler guard. app:quit-allowed clears the flag
-    // when the user CONFIRMS, but a prompt the user DISMISSED never sends anything,
-    // so the flag stayed true for the rest of the process and this safety net was
-    // skipped on every later attempt as well. A renderer that died afterwards could
-    // then never be force-quit un-exitable, the exact failure the net exists to
-    // prevent. quitPending is per-attempt: re-arm it and let the renderer re-report.
-    h.fakeWindow.isDestroyed = () => false
-    const state = await import('./state.js')
-    state.setMainWindow(h.fakeWindow as unknown as Electron.BrowserWindow)
-    state.setQuitPending(true) // stale: left over from a dismissed prompt
-    await loadLifecycle()
-
-    const evt = { preventDefault: vi.fn() }
-    h.appHandlers['before-quit'](evt)
-    expect(state.getQuitPending()).toBe(false) // re-armed for this attempt
-    h.fakeQuit.mockClear()
-    vi.advanceTimersByTime(5000)
-    expect(h.fakeQuit).toHaveBeenCalledTimes(1) // dead renderer still forced out
-  })
 })
 
 describe('main process — will-quit watcher teardown', () => {
@@ -424,16 +283,16 @@ describe('main process — will-quit watcher teardown', () => {
       // Temp cleanup must run FIRST — synchronously, BEFORE the async folder-watcher
       // close. If it were gated behind the awaited close, a process that exits before
       // the await settles would silently skip %TEMP% cleanup and rot the temp dir.
-      expect(folderWatcher.stopFolderWatching).toHaveBeenCalled()
+      expect(folderWatcher.stopAllFolderWatching).toHaveBeenCalled()
       // `toHaveBeenCalledBefore` takes a MockInstance; the mocked module's static type is the real
       // `() => Promise<void>` signature, so narrow it the same way the rejection test below does.
       expect(tempCleanup.removeOwnTempDir).toHaveBeenCalledBefore(
-        folderWatcher.stopFolderWatching as ReturnType<typeof vi.fn>,
+        folderWatcher.stopAllFolderWatching as ReturnType<typeof vi.fn>,
       )
       // ADR-0036 §4 pins BOTH halves of "first and synchronously": moving just the
       // deferred-deleter scheduling behind the awaited close used to stay green.
       expect(tempCleanup.scheduleRemoveAfterExit).toHaveBeenCalledBefore(
-        folderWatcher.stopFolderWatching as ReturnType<typeof vi.fn>,
+        folderWatcher.stopAllFolderWatching as ReturnType<typeof vi.fn>,
       )
       expect(h.stopFolderWatchingCalled).toBe(true)
       expect(tempCleanup.removeOwnTempDir).toHaveBeenCalledWith('/fake/userData')
@@ -450,7 +309,7 @@ describe('main process — will-quit watcher teardown', () => {
     vi.useRealTimers()
     try {
       const folderWatcher = await import('./model/folderWatcher.js')
-      ;(folderWatcher.stopFolderWatching as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      ;(folderWatcher.stopAllFolderWatching as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
         new Error('watcher close failed'),
       )
       await loadLifecycle()
@@ -468,4 +327,119 @@ describe('main process — will-quit watcher teardown', () => {
   // `MARKFLOW_E2E` to cover a branch neither lifecycle.ts nor any other production module
   // reads any more. They therefore exercised the same code path twice (the stretch of the
   // e2e contract is pinned by the assertion above and by temp-cleanup.e2e.spec.ts).
+})
+
+// ─── Per-window quit negotiation (multi-window) ──────────────────────────────
+//
+// The quit handshake is per WINDOW: the main process asks every live window to run the same
+// unsaved-changes prompt, and the reply is attributed to the window that sent it. The intent
+// recorded before the prompt decides what an allowed reply means.
+
+interface FakeCtxWindow {
+  id: number
+  destroyed: boolean
+  closed: number
+  sent: string[]
+}
+
+function fakeCtxWindow(id: number): FakeCtxWindow & { win: unknown } {
+  const state = { id, destroyed: false, closed: 0, sent: [] as string[] }
+  const win = {
+    webContents: {
+      id,
+      send: (channel: string) => state.sent.push(channel),
+    },
+    isDestroyed: () => state.destroyed,
+    close: () => {
+      state.closed += 1
+    },
+  }
+  // Object.assign, not a spread: the fake MUTATES `state` (closed / sent), and the test must
+  // observe those mutations on the very object it holds.
+  return Object.assign(state, { win })
+}
+
+describe('main process — app:quit-allowed closes only its own window', () => {
+  beforeEach(async () => {
+    const wc = await import('./model/windowContext.js')
+    wc.__resetWindowContextsForTests()
+  })
+
+  it('closes only the requesting window; other windows and the process stay alive', async () => {
+    const wc = await import('./model/windowContext.js')
+    const a = fakeCtxWindow(7)
+    const b = fakeCtxWindow(8)
+    wc.registerWindow(a.win as never)
+    wc.registerWindow(b.win as never)
+    await loadLifecycle()
+    h.fakeQuit.mockClear()
+
+    h.ipcOn['app:quit-allowed']({ sender: { id: 7 } })
+
+    expect(a.closed).toBe(1)
+    expect(b.closed).toBe(0)
+    expect(h.fakeQuit).not.toHaveBeenCalled()
+  })
+
+  it("disarms only the confirming window's per-window pending flag", async () => {
+    // A prompt in window A must not change window B's safety-net state. There is no
+    // global mirror any more: each WindowContext.quitPending is independent.
+    const wc = await import('./model/windowContext.js')
+    const a = fakeCtxWindow(7)
+    const b = fakeCtxWindow(8)
+    const ctxA = wc.registerWindow(a.win as never)
+    const ctxB = wc.registerWindow(b.win as never)
+    ctxA.quitPending = true
+    ctxB.quitPending = true
+    await loadLifecycle()
+
+    h.ipcOn['app:quit-allowed']({ sender: { id: 7 } })
+
+    expect(ctxA.quitPending).toBe(false)
+    expect(ctxB.quitPending).toBe(true)
+  })
+
+  it('does not close a window that was already destroyed', async () => {
+    const wc = await import('./model/windowContext.js')
+    const a = fakeCtxWindow(7)
+    wc.registerWindow(a.win as never)
+    a.destroyed = true
+    await loadLifecycle()
+
+    h.ipcOn['app:quit-allowed']({ sender: { id: 7 } })
+
+    // The window is gone: closing it again would throw.
+    expect(a.closed).toBe(0)
+  })
+
+  it('keeps the process alive on macOS when the last window closes', async () => {
+    // D14: macOS keeps the process alive (the Dock icon remains; `activate` reopens a window).
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    try {
+      await loadLifecycle()
+      h.fakeQuit.mockClear()
+
+      h.appHandlers['window-all-closed']()
+
+      expect(h.fakeQuit).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original })
+    }
+  })
+
+  it('ignores a reply that cannot be attributed to a window', async () => {
+    const wc = await import('./model/windowContext.js')
+    const a = fakeCtxWindow(7)
+    wc.registerWindow(a.win as never)
+    await loadLifecycle()
+    h.fakeQuit.mockClear()
+
+    // An unknown sender must not be credited to the focused window: there is no
+    // active-window fallback and no headless app.quit() path any more.
+    h.ipcOn['app:quit-allowed']({ sender: { id: 999 } })
+
+    expect(a.closed).toBe(0)
+    expect(h.fakeQuit).not.toHaveBeenCalled()
+  })
 })

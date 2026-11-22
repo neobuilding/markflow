@@ -117,21 +117,26 @@ folderPath`, producing "title hit, no body hit" groups and inflating replace cou
    file's parent directory, keep the document, clear the old workspace; cancel or a failed save
    leaves the root and workspace untouched.
 
-4. **Content-only candidate set.** Search-view results are decided by literal body hits in the
-   `content` field only; `title` and `folderPath` no longer contribute (supersedes ADR-0013
-   §3.8's implication that they do). Quick Open owns name/path lookup. Search and replace
-   share one literal matcher (counts, UTF-16 code-unit offsets — never code-point offsets), so
-   statistics and replace plans agree. The matcher treats the **whole query string as one literal
-   phrase**: spaces belong to the query, there is no word splitting and no implicit AND/OR — the
-   same contract ripgrep gets via `--fixed-strings`
-   (`node/ripgrepTextSearchEngine.ts:498-501`). MiniSearch, if retained, may only _rank_ already-hit
-   files, never expand the candidate set. **Memory-only drafts participate only when scope is
-   empty**; when any include/exclude pattern is set they are excluded (they have no relative path
-   against the root). **Without a `workspaceRoot` there is no disk candidate set, so drafts are
-   still searched** (VS Code likewise searches dirty/untitled editors); only the scope controls
-   are disabled, and drafts never enter a disk replace. **The same premise applies to dirty disk
-   documents**: an open document with unsaved edits is searched from its **current buffer**, not
-   from the stale on-disk bytes, so what the user sees as searchable is what replace can act on.
+   > **Note (2026-11-21, ADR-0039):** "single-window app" above is superseded. There is still exactly
+   > **one `workspaceRoot` per window** and multi-root workspaces remain out of scope, but the app is
+   > now multi-window and each window owns an independent workspace, document store, watcher and
+   > history. "Workspace", "workspaceRoot" and the single-root invariant are therefore **per-window**
+   > notions; search and replace still resolve against the requesting window's root only.
+   4. **Content-only candidate set.** Search-view results are decided by literal body hits in the
+      `content` field only; `title` and `folderPath` no longer contribute (supersedes ADR-0013
+      §3.8's implication that they do). Quick Open owns name/path lookup. Search and replace
+      share one literal matcher (counts, UTF-16 code-unit offsets — never code-point offsets), so
+      statistics and replace plans agree. The matcher treats the **whole query string as one literal
+      phrase**: spaces belong to the query, there is no word splitting and no implicit AND/OR — the
+      same contract ripgrep gets via `--fixed-strings`
+      (`node/ripgrepTextSearchEngine.ts:498-501`). MiniSearch, if retained, may only _rank_ already-hit
+      files, never expand the candidate set. **Memory-only drafts participate only when scope is
+      empty**; when any include/exclude pattern is set they are excluded (they have no relative path
+      against the root). **Without a `workspaceRoot` there is no disk candidate set, so drafts are
+      still searched** (VS Code likewise searches dirty/untitled editors); only the scope controls
+      are disabled, and drafts never enter a disk replace. **The same premise applies to dirty disk
+      documents**: an open document with unsaved edits is searched from its **current buffer**, not
+      from the stale on-disk bytes, so what the user sees as searchable is what replace can act on.
 
 > **Note (2026-11-14):** the `_rank_` contingency in Decision 4 above was closed by ruling 8 (the later `relPath`-sort decision): current search sorts hits by `relPath` and never ranks them, so MiniSearch has no role at all. This Decision text is preserved for history; see `CONTEXT.md` for the live, accurate description.
 

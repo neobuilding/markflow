@@ -177,7 +177,11 @@ test.describe('pane toolbars', () => {
     await waitForAppReady(page)
     // Its own case: the toggle is inline only in the expanded bar (wide environment).
     await page.setViewportSize(VIEWPORTS.wide)
-    await createDocAndType(page, 'hello world')
+    // An EMPTY new draft opens in edit mode with no unsaved edits. Typing first would make it
+    // dirty and route this click through the ADR-0029 §5 discard guard (covered by
+    // readonly-discard-reload.e2e.spec.ts), not the presentation contract asserted here.
+    await page.getByTestId('new-document-btn').click()
+    await expect(page.locator('.cm-content')).toBeVisible()
     await page.getByTestId('view-split').click()
 
     const toggle = page.getByTestId('editor-readonly-btn')

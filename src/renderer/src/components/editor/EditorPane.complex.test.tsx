@@ -366,12 +366,17 @@ describe('EditorPane — file operations (save / save-as / reload)', () => {
       throw new Error('read error')
     })
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // A failed reload after a discard would otherwise leave stale text on screen with
+    // dirty === false, so the failure must be visible to the user, not only in the console.
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     mount()
     await openDoc()
 
     await user.click(screen.getByTestId('reload-btn'))
     await waitFor(() => expect(errorSpy).toHaveBeenCalled())
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled())
     errorSpy.mockRestore()
+    alertSpy.mockRestore()
   })
 
   it('external-change dialog "reload" refreshes content and clears the change', async () => {

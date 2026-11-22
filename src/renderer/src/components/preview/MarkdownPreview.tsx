@@ -17,6 +17,8 @@ import { safeEnhanceForPaste } from '../../lib/copyFidelity'
 import { extractFrontmatterLang } from '../../lib/lang'
 import { followPreviewLink, resolvePreviewLink } from '../../lib/previewLinkNavigation'
 import { navigateToPath } from '../../lib/documentNavigation'
+import { decideExternalFile } from '../../lib/workspaceExternalDecision'
+import { isInFolder } from '../../../../../shared/fileUtils'
 import type { Document, ThemeMode } from '../../types'
 // D-B (ADR-0018): the single source of truth for markdown styling is github-markdown-css
 // (the same sheet the exporter uses), injected as a string so we can toggle light/dark by
@@ -336,6 +338,13 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
         Array.from(nodes ?? [])
           .find((el) => el.id === target.id)
           ?.scrollIntoView()
+        return
+      }
+      // A Markdown target outside the current workspace goes through the shared four-way choice
+      // (new window / open here keeping workspace / open here & switch / cancel). Workspace-internal
+      // targets keep the existing in-place navigation + sidebar reveal.
+      if (target.kind === 'document' && workspaceRoot && !isInFolder(target.path, workspaceRoot)) {
+        await decideExternalFile(target.path)
         return
       }
       await followPreviewLink(target, {

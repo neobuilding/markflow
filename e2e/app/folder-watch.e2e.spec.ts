@@ -87,6 +87,27 @@ test.describe('folder-watch refresh (chokidar → sidebar)', () => {
     await expect(page.getByTestId('doc-item').filter({ hasText: 'appeared' })).toBeVisible()
   })
 
+  test('entering a subfolder lists that subfolder files in the sidebar', async () => {
+    const { page } = handle
+    await waitForAppReady(page)
+
+    const root = mkdirSync(join(scratch, 'root'), { recursive: true })!
+    const sub = join(root, 'sub')
+    mkdirSync(sub, { recursive: true })
+    writeFileSync(join(root, 'root-note.md'), '# Root\n', 'utf-8')
+    writeFileSync(join(sub, 'sub-note.md'), '# Sub\n', 'utf-8')
+    await openFolder(page, root, 1)
+
+    // Double-clicking a folder row calls switchWorkspace(), which clears the document store.
+    // The watcher uses ignoreInitial, so the new root's existing file must be imported back
+    // explicitly — otherwise the sidebar stays empty after the switch.
+    await page.getByTestId('folder-row').filter({ hasText: 'sub' }).dblclick()
+
+    await expect(page.getByTestId('current-folder-bar')).toContainText('sub')
+    await expect(page.getByTestId('doc-item').filter({ hasText: 'sub-note' })).toBeVisible()
+    await expect(page.getByTestId('doc-item').filter({ hasText: 'root-note' })).toHaveCount(0)
+  })
+
   test('a file created on disk in an unrelated folder does not add to the active sidebar', async () => {
     const { page } = handle
     await waitForAppReady(page)

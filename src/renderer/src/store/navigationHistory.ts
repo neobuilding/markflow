@@ -36,18 +36,22 @@ export interface NavigationHistoryState {
 // Back/Forward activation changes the active document too. Suppress the automatic
 // `setActiveDocumentId` recording while such a move is in flight, otherwise the cursor would be
 // truncated as if the user had navigated somewhere new.
-let recordingSuspended = false
+// A COUNTER, not a flag: the suppression nests (replaying an "external-switch" entry runs
+// `switchWorkspace`, which suppresses its own recording while the outer move still runs). A
+// boolean would be cleared by the inner block and re-enable recording for the rest of the
+// outer one.
+let recordingSuspended = 0
 
 export function isHistoryRecordingSuspended(): boolean {
-  return recordingSuspended
+  return recordingSuspended > 0
 }
 
 export async function withoutHistoryRecording<T>(action: () => Promise<T>): Promise<T> {
-  recordingSuspended = true
+  recordingSuspended += 1
   try {
     return await action()
   } finally {
-    recordingSuspended = false
+    recordingSuspended -= 1
   }
 }
 

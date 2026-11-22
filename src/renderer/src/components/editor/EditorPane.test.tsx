@@ -31,6 +31,13 @@ const h = vi.hoisted(() => ({
       missing: false,
     }),
   ),
+  reloadMutateAsync: vi.fn(async () => ({
+    id: 'a',
+    title: 'a',
+    filePath: '/a.md',
+    content: '# A',
+    missing: false,
+  })),
 }))
 
 // Breadcrumb / path-menu "open in sidebar" now switches the workspace through a service. The
@@ -58,13 +65,7 @@ vi.mock('../../hooks/useDocuments', () => ({
   }),
   useReloadDocument: () => ({
     mutate: vi.fn(),
-    mutateAsync: vi.fn(async () => ({
-      id: 'a',
-      title: 'a',
-      filePath: '/a.md',
-      content: '# A',
-      missing: false,
-    })),
+    mutateAsync: h.reloadMutateAsync,
     isPending: false,
   }),
   useHasMemoryOnlyDraft: () => h.hasDraft,
@@ -112,6 +113,7 @@ beforeEach(() => {
   h.createDraft.mockClear()
   h.hasDraft = false
   h.saveMutateAsync.mockClear()
+  h.reloadMutateAsync.mockClear()
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setEditable(true)
   useUIStore.getState().setPendingMatch(null)
@@ -340,6 +342,18 @@ describe('EditorPane pendingFileAction save / saveAs / reload', () => {
       useUIStore.getState().requestFileAction({ type: 'reload' })
     })
     await waitFor(() => expect(useUIStore.getState().pendingFileAction).toBeNull())
+  })
+
+  // The discard-on-read-only flow sets editable=false BEFORE requesting the reload, so the
+  // bridge must not drop 'reload' the way it drops 'save'/'saveAs' in read-only mode.
+  it('reloads in read-only mode when the discard-and-reload action arrives', async () => {
+    useUIStore.getState().setEditable(false)
+    mount()
+    act(() => {
+      useUIStore.getState().requestFileAction({ type: 'reload' })
+    })
+    await waitFor(() => expect(useUIStore.getState().pendingFileAction).toBeNull())
+    expect(h.reloadMutateAsync).toHaveBeenCalledWith('a')
   })
 
   it('clears a save request in read-only mode without saving', async () => {
