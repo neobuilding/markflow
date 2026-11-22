@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { moveNavigationHistory, moveToHistoryIndex, navigateToPath } from './documentNavigation'
 import { useUIStore } from '../store/ui'
 import { useNavigationHistory } from '../store/navigationHistory'
+import { useTabsStore } from '../store/tabs'
+import { __resetTabHistoriesForTests, getHistory, seedHistory } from '../store/tabHistory'
 import '../i18n'
 
 const doc = (id: string, filePath: string) => ({ id, filePath })
@@ -46,6 +48,8 @@ describe('documentNavigation', () => {
       printing: false,
     })
     useNavigationHistory.getState().reset()
+    __resetTabHistoriesForTests()
+    useTabsStore.getState().reset()
     api.documents.stat.mockResolvedValue({ exists: true, size: 1, createdAt: 0, updatedAt: 0 })
     api.documents.getWorkspaceRoot.mockResolvedValue('C:/notes')
     api.documents.import.mockImplementation(async (path) => doc('imported', path))
@@ -76,13 +80,13 @@ describe('documentNavigation', () => {
     expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
   })
 
-  it('asks the file guard before doing anything and cancels on Keep editing', async () => {
+  it('ADR-0040: navigation never prompts and never discards the outgoing draft', async () => {
+    useUIStore.getState().reportUnsavedBuffer('old', 'unsaved text', 'a.md')
     useUIStore.setState({ dirty: true, activeDocumentTitle: 'a.md', activeDocumentId: 'old' })
     api.dialog.confirm.mockResolvedValueOnce(false)
-    await expect(navigateToPath('C:/notes/b.md')).resolves.toBe(false)
-    expect(api.dialog.confirm).toHaveBeenCalledTimes(1)
-    expect(api.dialog.confirm.mock.calls[0][0].message).toContain('unsaved changes')
-    expect(useUIStore.getState().activeDocumentId).toBe('old')
+    await expect(navigateToPath('C:/notes/b.md')).resolves.toBe(true)
+    expect(api.dialog.confirm).not.toHaveBeenCalled()
+    expect(useUIStore.getState().unsavedBuffers.old?.content).toBe('unsaved text')
   })
 
   it('ignores missing files', async () => {
@@ -97,6 +101,15 @@ describe('documentNavigation', () => {
     expect(paths()).toEqual([])
   })
 
+  it('navigates within the active tab history when a tab is open (ADR-0040)', async () => {
+    const tabId = useTabsStore.getState().openTab('doc-a', { title: 'a.md', tabId: 'tab-a' })
+    seedHistory(tabId, [{ path: 'C:/notes/a.md' }, { path: 'C:/notes/b.md' }], 1)
+    api.documents.list.mockResolvedValue([doc('existing', 'C:/notes/a.md')])
+    await expect(moveNavigationHistory(-1)).resolves.toBe(true)
+    // The tab's own stack moved the cursor; the legacy default store is not the source of truth.
+    expect(getHistory(tabId)?.getState().cursor).toBe(0)
+  })
+
   it('moves back without adding a new entry', async () => {
     const h = useNavigationHistory.getState()
     h.push('C:/notes/a.md')
@@ -105,6 +118,15 @@ describe('documentNavigation', () => {
     expect(useNavigationHistory.getState().cursor).toBe(0)
     expect(paths()).toEqual(['C:/notes/a.md', 'C:/notes/b.md'])
     expect(useUIStore.getState().activeDocumentId).toBe('imported')
+  })
+
+  it('refuses a Back move when the replay target cannot be imported', async () => {
+    useNavigationHistory.getState().push('C:/notes/a.md')
+    useNavigationHistory.getState().push('C:/notes/b.md')
+    api.documents.list.mockResolvedValue([])
+    api.documents.import.mockResolvedValueOnce(null)
+    await expect(moveNavigationHistory(-1)).resolves.toBe(false)
+    expect(useNavigationHistory.getState().cursor).toBe(1)
   })
 
   it('moves forward and prunes entries that no longer exist', async () => {
@@ -134,6 +156,14 @@ describe('documentNavigation', () => {
     expect(paths()).toEqual(['C:/notes/a.md', 'C:/notes/b.md', 'C:/notes/c.md'])
   })
 
+  it('refuses a direct index jump when the replay target cannot be imported', async () => {
+    useNavigationHistory.getState().push('C:/notes/a.md')
+    api.documents.list.mockResolvedValue([])
+    api.documents.import.mockResolvedValueOnce(null)
+    await expect(moveToHistoryIndex(0)).resolves.toBe(false)
+    expect(useNavigationHistory.getState().cursor).toBe(0)
+  })
+
   it('does nothing at the ends of history', async () => {
     await expect(moveNavigationHistory(-1)).resolves.toBe(false)
     useNavigationHistory.getState().push('C:/notes/a.md')
@@ -154,14 +184,15 @@ describe('documentNavigation', () => {
     expect(api.documents.getWorkspaceRoot).not.toHaveBeenCalled()
   })
 
-  it('cancels a history move when the user keeps editing', async () => {
+  it('history moves are not blocked by dirty background tabs', async () => {
     const h = useNavigationHistory.getState()
     h.push('C:/notes/a.md')
     h.push('C:/notes/b.md')
     useUIStore.setState({ dirty: true, activeDocumentTitle: 'b.md', activeDocumentId: 'old' })
     api.dialog.confirm.mockResolvedValueOnce(false)
-    await expect(moveNavigationHistory(-1)).resolves.toBe(false)
-    expect(useNavigationHistory.getState().cursor).toBe(1)
+    await expect(moveNavigationHistory(-1)).resolves.toBe(true)
+    expect(api.dialog.confirm).not.toHaveBeenCalled()
+    expect(useNavigationHistory.getState().cursor).toBe(0)
   })
 
   it('moveToHistoryIndex prunes a missing file and refuses the jump', async () => {
@@ -182,11 +213,12 @@ describe('documentNavigation', () => {
     await expect(moveToHistoryIndex(0)).resolves.toBe(false)
   })
 
-  it('moveToHistoryIndex cancels when the file guard says keep editing', async () => {
+  it('moveToHistoryIndex applies a jump without a guard even when dirty', async () => {
     useNavigationHistory.getState().push('C:/notes/a.md')
     useUIStore.setState({ dirty: true, activeDocumentTitle: 'a.md', activeDocumentId: 'old' })
     api.dialog.confirm.mockResolvedValueOnce(false)
-    await expect(moveToHistoryIndex(0)).resolves.toBe(false)
+    await expect(moveToHistoryIndex(0)).resolves.toBe(true)
+    expect(api.dialog.confirm).not.toHaveBeenCalled()
     expect(useNavigationHistory.getState().cursor).toBe(0)
   })
 

@@ -49,6 +49,7 @@ import {
 import { splitMemoryOnlyDocs, memoryOnlyLeaf } from '../../lib/sidebarDrafts'
 import { useT } from '../../i18n'
 import { useUIStore, selectFileLocked } from '../../store/ui'
+import { useTabsStore } from '../../store/tabs'
 import {
   useDocuments,
   useDeleteDocument,
@@ -372,7 +373,6 @@ export function Sidebar(): React.ReactElement | null {
   // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
   const {
     toggleSidebar,
-    setActiveDocumentId,
     selectDocument,
     setSidebarView,
     closeWorkspace,
@@ -535,11 +535,17 @@ export function Sidebar(): React.ReactElement | null {
       if (!ok) return
       deleteMut.mutate(doc.id)
       if (activeDocumentId === doc.id) {
-        const next = allListedDocs.find((d) => d.id !== doc.id)
-        setActiveDocumentId(next?.id ?? null)
+        const tabs = useTabsStore.getState()
+        const tab = tabs.tabs.find((t) => t.documentId === doc.id)
+        if (tab) tabs.closeTab(tab.id)
+        else {
+          const next = allListedDocs.find((d) => d.id !== doc.id)
+          if (next) tabs.openTab(next.id, { title: next.title })
+          else tabs.reset()
+        }
       }
     },
-    [deleteMut, activeDocumentId, allListedDocs, setActiveDocumentId, t],
+    [deleteMut, activeDocumentId, allListedDocs, t],
   )
 
   const handleDetailsDoc = useCallback((doc: Document) => {
@@ -800,9 +806,12 @@ export function Sidebar(): React.ReactElement | null {
             memoryOnly: false,
           })
           setFileEdit(null)
-          setActiveDocumentId(doc.id)
-          useUIStore.getState().setEditable(true)
-          useUIStore.getState().setIsNewUnsaved(false)
+          const tabId = useTabsStore.getState().openTab(doc.id, {
+            title: doc.title,
+            editable: true,
+            isNewUnsaved: false,
+          })
+          useTabsStore.getState().activateTab(tabId)
         } else {
           // Rename: a direct on-disk move — no edit-mode switch and no save.
           const newPath = joinPath(dirName(fileEdit.filePath), fileName)
@@ -822,7 +831,7 @@ export function Sidebar(): React.ReactElement | null {
       }
       return undefined
     },
-    [fileEdit, createMut, renameFileMut, setActiveDocumentId, t],
+    [fileEdit, createMut, renameFileMut, t],
   )
 
   // Deleting a folder moves it to the OS trash ( semantics, ②), so the

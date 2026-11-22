@@ -14,6 +14,7 @@ import {
 import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
 import { switchWorkspace } from '../../lib/workspaceSwitch'
 import { useUIStore, selectFileLocked } from '../../store/ui'
+import { useTabsStore } from '../../store/tabs'
 import {
   useDocument,
   useUpdateDocument,
@@ -30,6 +31,7 @@ import { PreviewToolbar } from '../preview/PreviewToolbar'
 import { EditorPaneBar } from './EditorPaneBar'
 import { GlobalToolbar } from './GlobalToolbar'
 import { Button } from '../ui/button'
+import { TabBar } from '../ui/tab-bar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { useLocalDocument } from '../../hooks/useLocalDocument'
@@ -277,7 +279,14 @@ export function EditorPane(): React.ReactElement {
       if (updated) {
         markSaved(updated.content, displayTitle(updated))
         useUIStore.getState().setJustSaved(true)
-        useUIStore.getState().setIsNewUnsaved(false) // document now lives at the chosen path
+        // ADR-0040: edit state belongs to the active tab (document now lives at the chosen path).
+        const tabs = useTabsStore.getState()
+        if (tabs.activeTabId) {
+          tabs.updateTab(tabs.activeTabId, {
+            title: displayTitle(updated),
+            isNewUnsaved: false,
+          })
+        }
         // The re-root itself: setting the root clears the store, so the file is re-opened through
         // the normal open path (which re-imports it and activates it).
         if (currentRoot && !isDirInFolder(newFilePath, currentRoot)) {
@@ -366,9 +375,14 @@ export function EditorPane(): React.ReactElement {
     }
   }, [reloadMut, markSaved, t])
 
-  // Close button: confirm first if there are unsaved changes
+  // Close button: confirm first if the ACTIVE TAB has unsaved changes (ADR-0040).
   const handleClose = useCallback(async () => {
-    if (useUIStore.getState().dirty) {
+    const tabs = useTabsStore.getState()
+    const activeTab = tabs.tabs.find((tab) => tab.id === tabs.activeTabId)
+    const dirty = activeTab
+      ? useUIStore.getState().isTabDirty(activeTab.documentId)
+      : useUIStore.getState().dirty
+    if (dirty) {
       const ok = await window.api.dialog.confirm({
         message: t('app.unsavedClose'),
         okText: t('app.confirmDiscard'),
@@ -376,7 +390,13 @@ export function EditorPane(): React.ReactElement {
       })
       if (!ok) return
     }
-    closeDocument()
+    if (!activeTab) {
+      // Legacy/direct-setter flows (unit tests, pre-tab callers): close the doc as before.
+      closeDocument()
+      return
+    }
+    useUIStore.getState().closeTabDocument(activeTab.documentId, activeTab.isNewUnsaved)
+    tabs.closeTab(activeTab.id)
   }, [closeDocument, t])
 
   // Menu (Save / Save As / Reload): register the listeners with the current handler closures.
@@ -732,7 +752,17 @@ export function EditorPane(): React.ReactElement {
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem data-testid="ed-close-file" onClick={closeDocument}>
+          <ContextMenuItem
+            data-testid="ed-close-file"
+            onClick={() => {
+              const tabs = useTabsStore.getState()
+              const tab = tabs.tabs.find((t) => t.id === tabs.activeTabId)
+              if (tab) {
+                useUIStore.getState().closeTabDocument(tab.documentId, tab.isNewUnsaved)
+                tabs.closeTab(tab.id)
+              } else closeDocument()
+            }}
+          >
             <X size={13} /> {t('editor.closeFile')}
           </ContextMenuItem>
           <ContextMenuSeparator />
@@ -787,6 +817,8 @@ export function EditorPane(): React.ReactElement {
 
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-[var(--color-surface)]">
+      {/* ADR-0040: the tab strip sits above the global toolbar and is always mounted. */}
+      <TabBar />
       {/* Toolbar */}
       <div
         data-testid="global-bar"

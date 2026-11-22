@@ -5,6 +5,7 @@ import { resolveWorkspaceRoot } from '../lib/workspace-root'
 import { isDirInFolder } from '../../../../shared/fileUtils'
 import { t } from '../i18n/translate'
 import { useUIStore } from '../store/ui'
+import { useTabsStore } from '../store/tabs'
 import { DOCS_KEY, queryClient } from '../lib/queryClient'
 import { isMemoryOnly } from '../lib/sidebarDrafts'
 
@@ -144,9 +145,12 @@ export function createDraft(): Promise<void> {
       // edits away, its unsaved buffer has to go too — otherwise search & replace keeps matching
       // text the user explicitly discarded.
       if (ui.dirty) ui.clearUnsavedBuffer(ui.activeDocumentId ?? '')
-      ui.setActiveDocumentId(doc.id)
-      ui.setEditable(true)
-      ui.setIsNewUnsaved(true)
+      const tabId = useTabsStore.getState().openTab(doc.id, {
+        title: doc.title,
+        editable: true,
+        isNewUnsaved: true,
+      })
+      useTabsStore.getState().activateTab(tabId)
       await queryClient.invalidateQueries({ queryKey: DOCS_KEY })
       ui.bumpDocumentState()
     } catch (e) {
@@ -345,13 +349,16 @@ export function useOpenPaths() {
 
       const ui = useUIStore.getState()
       ui.setWorkspaceRoot(root)
-      ui.setActiveDocumentId(imported[0].id)
-      // NOTE: do NOT force `editable` to false here. `editable` is a workspace-wide mode that
-      // defaults to false only when there is no document open (store default + closeWorkspace/
-      // closeDocument reset it). Forcing it false on every open would clobber the user's current
-      // edit mode e.g. after switching to edit, opening/switching another file would silently
-      // revert to read-only and the editor could not be edited ("switch file -> can't edit" bug).
-      ui.setDirty(false) // opening/importing a file clears any stale dirty flag
+      // ADR-0040: open every imported file as a tab; the first becomes active.
+      const tabStore = useTabsStore
+      tabStore.getState().reset()
+      for (const doc of imported) {
+        tabStore.getState().openTab(doc.id, { title: doc.title, activate: false })
+      }
+      const first = tabStore.getState().tabs[0]
+      /* v8 ignore next -- imported.length > 0 guarantees a tab exists */
+      if (first) tabStore.getState().activateTab(first.id)
+      ui.setDirty(false) // opening/importing files clears any stale dirty flag
       ui.bumpDocumentState()
       return { folder: root, documentId: imported[0].id, note: resolution.note }
     },

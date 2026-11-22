@@ -21,8 +21,8 @@ import { ipcMain, app } from 'electron'
 import { getReadyToQuit, setReadyToQuit } from './state'
 import { purgeUnsavedDrafts as storePurgeUnsavedDrafts } from './model/documentStore'
 import { stopAllFolderWatching } from './model/folderWatcher'
-import { exactContextFor } from './model/windowContext'
-import { scopedOnFor } from './model/ipcScope'
+import { allContexts, exactContextFor } from './model/windowContext'
+import { runInContext, scopedOnFor } from './model/ipcScope'
 import './model/quitSignals' // registers the single app:quit-pending listener
 import { removeOwnTempDir, scheduleRemoveAfterExit } from './lib/temp-cleanup'
 
@@ -54,7 +54,14 @@ export function setupLifecycle(): void {
     // macOS Dock Quit. `readyToQuit` is set by window-all-closed (Win/Linux last window)
     // and by the per-window force-close timer. Purge in-memory drafts as a safety net so
     // they never survive a restart; the recursive watcher is torn down in 'will-quit'.
-    if (getReadyToQuit()) purgeUnsavedDrafts()
+    if (getReadyToQuit()) {
+      // ADR-0040: every window has its own document store; purge each in its ALS scope.
+      // With no registered windows (tests/headless) run once in the fallback scope so the
+      // safety-net purge still happens.
+      const contexts = allContexts()
+      if (contexts.length === 0) purgeUnsavedDrafts()
+      else for (const ctx of contexts) runInContext(ctx, purgeUnsavedDrafts)
+    }
   })
 
   app.on('will-quit', async (_event) => {

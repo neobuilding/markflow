@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useUIStore } from './ui'
+import { useTabsStore } from './tabs'
 // Initialises the i18next singleton so the store's guard prompts are translated rather than
 // returning raw keys.
 import '../i18n'
@@ -9,6 +10,7 @@ describe('useUIStore — all setters and toggles', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     // reset to defaults between tests via a fresh state snapshot is overkill; just set known values
+    useTabsStore.getState().reset()
     const s = useUIStore.getState()
     s.setSidebarOpen(true)
     s.setActiveDocumentId(null)
@@ -40,42 +42,15 @@ describe('useUIStore — all setters and toggles', () => {
     s.setActiveDocumentTitle(null)
   })
 
-  it('records path-keyed document switches through the preload bridge', async () => {
+  it('setActiveDocumentId is a pure mirror: no navigation recording (ADR-0040 T14)', async () => {
     const { useNavigationHistory } = await import('./navigationHistory')
     useNavigationHistory.getState().reset()
-    ;(window as unknown as { api: unknown }).api = {
-      documents: { get: vi.fn(async () => ({ id: 'doc-1', filePath: 'C:/n/a.md' })) },
-    }
-    useUIStore.getState().setActiveDocumentId('doc-1')
-    await vi.waitFor(() =>
-      expect(useNavigationHistory.getState().entries[0]?.path).toBe('C:/n/a.md'),
-    )
-  })
-
-  it('keeps history quiet without a bridge, for drafts, and for suppressed history moves', async () => {
-    const { useNavigationHistory, withoutHistoryRecording } = await import('./navigationHistory')
-    useNavigationHistory.getState().reset()
-    delete (window as unknown as { api?: unknown }).api
-    useUIStore.getState().setActiveDocumentId(null)
-    ;(window as unknown as { api: unknown }).api = {
-      documents: { get: vi.fn(async () => ({ id: 'draft', filePath: '' })) },
-    }
-    useUIStore.getState().setActiveDocumentId('draft')
-    await withoutHistoryRecording(async () => {
-      useUIStore.getState().setActiveDocumentId('doc-1')
-      await Promise.resolve()
-    })
-    expect(useNavigationHistory.getState().entries).toEqual([])
-  })
-
-  it('stays quiet when the bridge cannot resolve a document path', async () => {
-    const { useNavigationHistory } = await import('./navigationHistory')
-    useNavigationHistory.getState().reset()
-    ;(window as unknown as { api: unknown }).api = {
-      documents: { get: vi.fn(async () => Promise.reject(new Error('ipc down'))) },
-    }
+    const get = vi.fn(async () => ({ id: 'doc-1', filePath: 'C:/n/a.md' }))
+    ;(window as unknown as { api: unknown }).api = { documents: { get } }
     useUIStore.getState().setActiveDocumentId('doc-1')
     await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(useUIStore.getState().activeDocumentId).toBe('doc-1')
+    expect(get).not.toHaveBeenCalled()
     expect(useNavigationHistory.getState().entries).toEqual([])
   })
 
@@ -171,9 +146,10 @@ describe('useUIStore — all setters and toggles', () => {
     useUIStore.getState().setFileDetailsId('fd')
     expect(useUIStore.getState().fileDetailsId).toBe('fd')
 
-    // R5 plan A: opening the export dialog is refused while printing, so clear the flag that the
-    // earlier "printing" assertion left set before exercising this setter.
+    // ADR-0040: `saving` joins the file lock, so clear it (and printing) before exercising
+    // the export-dialog setter.
     useUIStore.getState().setPrinting(false)
+    useUIStore.getState().setSaving(false)
     useUIStore.getState().setExportOpen(true)
     useUIStore.getState().setExporting(true)
     expect(useUIStore.getState().exportOpen).toBe(true)
@@ -360,6 +336,7 @@ describe('useUIStore — guarded document switching (ADR-0023)', () => {
   beforeEach(() => {
     confirm = vi.fn(async () => true)
     ;(window as unknown as { api: unknown }).api = { dialog: { confirm } }
+    useTabsStore.getState().reset()
     const s = useUIStore.getState()
     s.setActiveDocumentId('a')
     s.setActiveDocumentTitle('Alpha')
@@ -381,51 +358,34 @@ describe('useUIStore — guarded document switching (ADR-0023)', () => {
     expect(confirm).not.toHaveBeenCalled()
   })
 
-  it('asks before discarding, and names the document being left', async () => {
+  it('ADR-0040: switching tabs NEVER prompts and NEVER discards the outgoing draft', async () => {
     useUIStore.getState().setDirty(true)
-    await useUIStore.getState().selectDocument('b')
-    expect(confirm).toHaveBeenCalledTimes(1)
-    expect(confirm.mock.calls[0][0].message).toContain('Alpha')
-  })
-
-  it('changes NOTHING when the user keeps their edits', async () => {
-    confirm.mockResolvedValueOnce(false)
-    useUIStore.getState().setDirty(true)
-    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text')
+    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text', 'Alpha*.md')
     const ok = await useUIStore.getState().selectDocument('b')
-    expect(ok).toBe(false)
-    expect(useUIStore.getState().activeDocumentId).toBe('a')
-    // The unsaved buffer must survive "keep editing".
-    expect(useUIStore.getState().unsavedBuffers.a).toBeDefined()
+    expect(ok).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(useUIStore.getState().unsavedBuffers.a).toEqual({
+      content: 'unsaved text',
+      title: 'Alpha*.md',
+      revision: 1,
+    })
+    expect(useTabsStore.getState().activeTabId).toBeTruthy()
   })
 
-  it('drops the unsaved buffer when the user discards', async () => {
-    useUIStore.getState().setDirty(true)
-    useUIStore.getState().reportUnsavedBuffer('a', 'unsaved text')
-    await useUIStore.getState().selectDocument('b')
-    expect(useUIStore.getState().unsavedBuffers.a).toBeUndefined()
-    expect(useUIStore.getState().activeDocumentId).toBe('b')
-  })
-
-  it('openDocumentAt only records the jump once the guard has passed', async () => {
-    confirm.mockResolvedValueOnce(false)
+  it('openDocumentAt jumps into the target tab without a guard', async () => {
     useUIStore.getState().setDirty(true)
     const ok = await useUIStore.getState().openDocumentAt('b', 10, 13)
-    expect(ok).toBe(false)
-    // No half-applied switch: the pending match must not be written for a document we never
-    // opened, or the editor would jump into the wrong file.
-    expect(useUIStore.getState().pendingMatch).toBeNull()
+    expect(ok).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(useUIStore.getState().pendingMatch).toEqual({ id: 'b', start: 10, end: 13 })
   })
 
-  it('confirmDiscard returns false when the dialog bridge is unavailable', async () => {
-    // No preload bridge (unit test / missing contextMenu): must never discard silently.
+  it('selectDocument works even without a dialog bridge (no guard needed)', async () => {
     ;(window as unknown as { api?: unknown }).api = undefined
-    const s = useUIStore.getState()
-    s.setActiveDocumentId('a')
-    s.setDirty(true)
+    useUIStore.getState().setDirty(true)
     const ok = await useUIStore.getState().selectDocument('b')
-    expect(ok).toBe(false)
-    expect(useUIStore.getState().activeDocumentId).toBe('a')
+    expect(ok).toBe(true)
+    expect(useTabsStore.getState().activeTabId).toBeTruthy()
   })
 
   it('selectDocument discards when leaving a null-id dirty document', async () => {
@@ -438,7 +398,7 @@ describe('useUIStore — guarded document switching (ADR-0023)', () => {
     expect(useUIStore.getState().activeDocumentId).toBe('b')
   })
 
-  it('openDocumentAt applies the jump after a confirmed discard', async () => {
+  it('openDocumentAt keeps the previous tab draft while jumping', async () => {
     const s = useUIStore.getState()
     s.setActiveDocumentId('a')
     s.setActiveDocumentTitle(null)
@@ -446,9 +406,8 @@ describe('useUIStore — guarded document switching (ADR-0023)', () => {
     s.reportUnsavedBuffer('a', 'x')
     const ok = await useUIStore.getState().openDocumentAt('b', 5, 9)
     expect(ok).toBe(true)
-    expect(useUIStore.getState().activeDocumentId).toBe('b')
     expect(useUIStore.getState().pendingMatch).toEqual({ id: 'b', start: 5, end: 9 })
-    expect(useUIStore.getState().unsavedBuffers.a).toBeUndefined()
+    expect(useUIStore.getState().unsavedBuffers.a).toBeDefined()
   })
 
   it('openDocumentAt discards when leaving a null-id dirty document', async () => {
@@ -595,7 +554,32 @@ describe('useUIStore — unsaved buffer registry (ADR-0023)', () => {
     expect(useUIStore.getState().documentStateRevision).toBe(before + 1)
     useUIStore.getState().reportUnsavedBuffer('a', 'two')
     expect(useUIStore.getState().documentStateRevision).toBe(before + 2)
-    expect(useUIStore.getState().unsavedBuffers.a).toEqual({ content: 'two', revision: 2 })
+    expect(useUIStore.getState().unsavedBuffers.a).toEqual({
+      content: 'two',
+      title: '',
+      revision: 2,
+    })
+  })
+
+  it('closeTabDocument deletes a memory-only draft and honours the explicit flag', () => {
+    const deleteDoc = vi.fn(async () => true)
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { delete: deleteDoc, setWorkspaceRoot: vi.fn() },
+    }
+    useUIStore.getState().reportUnsavedBuffer('draft-x', 'body')
+    useUIStore.getState().closeTabDocument('draft-x', true)
+    expect(deleteDoc).toHaveBeenCalledWith('draft-x')
+    expect(useUIStore.getState().unsavedBuffers['draft-x']).toBeUndefined()
+  })
+
+  it('isTabDirty ignores empty ids and closeTabDocument preserves a background dirty flag', () => {
+    expect(useUIStore.getState().isTabDirty('')).toBe(false)
+    useUIStore.getState().setActiveDocumentId('active')
+    useUIStore.getState().reportUnsavedBuffer('background', 'draft')
+    useUIStore.getState().setDirty(true)
+    useUIStore.getState().closeTabDocument('background')
+    expect(useUIStore.getState().unsavedBuffers.background).toBeUndefined()
+    expect(useUIStore.getState().dirty).toBe(true)
   })
 
   it('covers MORE than the active document', () => {

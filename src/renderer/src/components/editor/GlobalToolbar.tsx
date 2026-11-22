@@ -21,7 +21,7 @@ import {
 } from '../ui/context-menu'
 import { useT } from '../../i18n'
 import { useUIStore, selectFileLocked } from '../../store/ui'
-import { useNavigationHistory } from '../../store/navigationHistory'
+import { useActiveTabHistory } from '../../store/tabHistory'
 import { moveNavigationHistory, moveToHistoryIndex } from '../../lib/documentNavigation'
 import { baseName, formatShortcut, isMac } from '../../lib/utils'
 import { createDraft, useHasMemoryOnlyDraft } from '../../hooks/useDocuments'
@@ -66,8 +66,8 @@ export function GlobalToolbar({
   // the button is disabled. `createDraft` (keyboard) and the native File > New Draft item read the
   // same rule, so no entry point can disagree.
   const draftExists = useHasMemoryOnlyDraft()
-  const historyCursor = useNavigationHistory((s) => s.cursor)
-  const historyEntries = useNavigationHistory((s) => s.entries)
+  const historyCursor = useActiveTabHistory((s) => s.cursor)
+  const historyEntries = useActiveTabHistory((s) => s.entries)
   const historyLength = historyEntries.length
   const canGoBack = historyCursor > 0
   const canGoForward = historyCursor >= 0 && historyCursor < historyLength - 1

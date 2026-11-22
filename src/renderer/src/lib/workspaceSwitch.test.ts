@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { switchWorkspace } from './workspaceSwitch'
 import { useUIStore } from '../store/ui'
 import { useNavigationHistory } from '../store/navigationHistory'
+import { useTabsStore } from '../store/tabs'
+import { seedHistory } from '../store/tabHistory'
 import '../i18n'
 
 // The workspace switch is a TRANSACTION owned by one service: lock check → conditional unsaved
@@ -70,6 +72,7 @@ describe('switchWorkspace', () => {
       unsavedBuffers: {},
     })
     useNavigationHistory.getState().reset()
+    useTabsStore.getState().reset()
     // mockReset (not just clearAllMocks) so a queued one-shot value from a previous case cannot
     // leak into this one.
     api.documents.get.mockReset()
@@ -198,6 +201,37 @@ describe('switchWorkspace', () => {
     await expect(switchWorkspace('C:/notes')).resolves.toBe(true)
     expect(useUIStore.getState().unsavedBuffers.imported?.content).toBe('edited')
     expect(useUIStore.getState().dirty).toBe(true)
+  })
+
+  it('replay mode reuses a tab, prunes out-of-root history and migrates the title draft', async () => {
+    useTabsStore.getState().reset()
+    const tabId = useTabsStore.getState().openTab('a', { title: 'a.md', tabId: 'keep-tab' })
+    seedHistory(tabId, [{ path: 'C:/notes/sub/a.md' }, { path: 'D:/outside/b.md' }], 1)
+    useUIStore.setState({
+      activeDocumentId: 'a',
+      workspaceRoot: 'C:/notes/sub',
+      dirty: true,
+      unsavedBuffers: { a: { content: 'edited', title: 'a*.md', revision: 1 } },
+    })
+    await expect(
+      switchWorkspace('C:/notes', { replayTabId: tabId, openPath: 'C:/notes/picked.md' }),
+    ).resolves.toBe(true)
+    // The replay tab's document was replaced, not duplicated.
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
+    expect(useTabsStore.getState().tabs[0].documentId).toBe('imported')
+  })
+
+  it('replay without openPath reuses the initiating tab for the kept document', async () => {
+    useTabsStore.getState().reset()
+    const tabId = useTabsStore.getState().openTab('a', { title: 'a.md', tabId: 'keep-tab' })
+    useUIStore.setState({
+      activeDocumentId: 'a',
+      workspaceRoot: 'C:/notes/sub',
+      dirty: false,
+      unsavedBuffers: {},
+    })
+    await expect(switchWorkspace('C:/notes', { replayTabId: tabId })).resolves.toBe(true)
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
   })
 
   it('keeps an edit made while the document lookup is in flight', async () => {

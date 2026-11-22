@@ -56,20 +56,19 @@ test.describe('unsaved-switch guard chain (D23)', () => {
     }, scratch)
   }
 
-  test('keeps the unsaved edit and the focus when a Quick Open switch is declined', async () => {
+  test('ADR-0040: a Quick Open switch keeps the unsaved draft in its tab without a guard', async () => {
     const { page } = handle
     await waitForAppReady(page)
     await openWorkspace(page)
 
     const alpha = await importFile(page, 'alpha.md', '# Alpha\n\nbody alpha\n')
-    await importFile(page, 'beta.md', '# Beta\n\nbody beta\n')
+    const beta = await importFile(page, 'beta.md', '# Beta\n\nbody beta\n')
 
-    // Open Alpha in the editor, switch to edit mode, and type an unsaved edit — the real
-    // useLocalDocument path, not a store poke.
+    // Open Alpha as a tab, switch to edit mode, and type an unsaved edit.
     await page.evaluate((id) => {
       const w = window as any
-      w.__uiStore.getState().setActiveDocumentId(id)
-      w.__uiStore.getState().setEditable(true)
+      const tabId = w.__tabs.getState().openTab(id, { title: 'alpha.md', editable: true })
+      w.__tabs.getState().activateTab(tabId)
       w.__uiStore.getState().setViewMode('edit')
       w.__queryClient.invalidateQueries({ queryKey: ['documents'] })
     }, alpha)
@@ -78,36 +77,25 @@ test.describe('unsaved-switch guard chain (D23)', () => {
     await page.keyboard.type('unsaved tail')
     await page.waitForFunction(() => (window as any).__uiStore.getState().dirty === true)
 
-    // Answer the unsaved-changes confirm with "keep editing" (0) and record the calls.
     await installConfirmSpy(handle, { defaultResponse: 0 })
 
-    // Quick Open (Ctrl/Cmd+Shift+K) and pick the OTHER document — a plain document switch.
+    // Quick Open (Ctrl/Cmd+Shift+K) and pick the OTHER document — a plain tab switch.
     await page.keyboard.press('Control+Shift+k')
     const paletteInput = page.getByTestId('search-input')
     await expect(paletteInput).toBeVisible()
     await paletteInput.pressSequentially('beta')
     await page.getByTestId('search-result').filter({ hasText: 'Beta' }).first().click()
 
-    // The guard asked — through the production handler — naming the document being left
-    // (the stored title is the file stem, "alpha").
-    await page.waitForTimeout(500)
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__uiStore.getState().activeDocumentId))
+      .toBe(beta)
+    // No prompt, and the outgoing tab's draft is still registered.
     const calls = await getConfirmCalls(handle)
-    expect(calls.length).toBeGreaterThanOrEqual(1)
-    expect(calls[0].message?.toLowerCase()).toContain('alpha')
-
-    // "Keep editing" meant NO switch: same document, still dirty, typed text intact.
-    const state = await page.evaluate(() => {
-      const w = window as any
-      return {
-        active: w.__uiStore.getState().activeDocumentId,
-        dirty: w.__uiStore.getState().dirty,
-        focused: document.activeElement?.className ?? '',
-      }
-    })
-    expect(state.active).toBe(alpha)
-    expect(state.dirty).toBe(true)
-    // Focus returned to the editor pane, where the unsaved text lives (§5.9).
-    expect(state.focused).toContain('cm-content')
-    await expect(cm).toContainText('unsaved tail')
+    expect(calls.filter((c) => c.message?.includes('unsaved'))).toHaveLength(0)
+    const kept = await page.evaluate(
+      (id) => (window as any).__uiStore.getState().unsavedBuffers[id]?.content ?? '',
+      alpha,
+    )
+    expect(kept).toContain('unsaved tail')
   })
 })

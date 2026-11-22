@@ -1,6 +1,7 @@
 # ADR-0039: Per-window workspaces, external documents, and multi-window navigation
 
 - **Status:** Accepted
+- **Superseded in part by:** ADR-0040 §3.1 (per-tab history replaces the single per-window stack); ADR-0040 §3.4 (tabs share the per-window workspace).
 - **Decided:** 2026-11-21
 - **Supersedes:** ADR-0038 §3.1.3 (Open/Copy/Cancel as the only external path), §3.2 decision 5 (workspace always replaced by a link target's folder) and §3.4 decision 9 ("no history dropdown") — only in the four-way / new-window / history-menu parts.
 - **Amends:** `CONTEXT.md` (Workspace, Opened root folder, Document navigation, Navigation history, Back/Forward, Reveal in sidebar, Main window, Link destination); ADR-0023 decision 3 ("single-window app").

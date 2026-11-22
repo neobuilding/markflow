@@ -268,7 +268,7 @@ describe('SidebarSearch (Search view)', () => {
     expect(screen.getByTestId('search-multiline')).toBeTruthy()
   })
 
-  it('does not switch documents when the unsaved guard is declined', async () => {
+  it('ADR-0040: a search hit activates a tab without a guard even when dirty', async () => {
     const confirm = vi.fn(async () => false)
     ;(window as unknown as { api: unknown }).api = {
       clipboard: { writeText: vi.fn() },
@@ -280,11 +280,8 @@ describe('SidebarSearch (Search view)', () => {
     fireEvent.change(screen.getByTestId('resident-search-input'), { target: { value: 'the' } })
     const rows = await screen.findAllByTestId('search-match')
     fireEvent.click(rows[0])
-    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
-    expect(useUIStore.getState().activeDocumentId).toBe('zz')
-    // A declined jump must not write pendingMatch either: the editor would otherwise jump
-    // into a document that was never opened.
-    expect(useUIStore.getState().pendingMatch).toBeNull()
+    await waitFor(() => expect(useUIStore.getState().pendingMatch).not.toBeNull())
+    expect(confirm).not.toHaveBeenCalled()
   })
 
   // D19 / §5.2: a non-empty scope excludes memory drafts, and the result area must SAY so —

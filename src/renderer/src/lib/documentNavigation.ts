@@ -3,23 +3,31 @@ import { sameFilePath } from './previewLinkNavigation'
 import { isInFolder } from '../../../../shared/fileUtils'
 import { dirName } from './utils'
 import { useUIStore, selectFileLocked } from '../store/ui'
+import { useTabsStore } from '../store/tabs'
 import {
   useNavigationHistory,
   withoutHistoryRecording,
-  type OpenMode,
   type NavigationEntry,
+  type NavigationHistoryStore,
+  type OpenMode,
 } from '../store/navigationHistory'
+import { getHistory } from '../store/tabHistory'
 import { switchWorkspace } from './workspaceSwitch'
 
 // One service owns "navigate to a document by path" inside the CURRENT workspace. Workspace
 // switching is owned by switchWorkspace (double-click / ↑ / breadcrumb / external-link switch),
 // and workspace-external links are dispatched by MarkdownPreview's four-way dialog. This function
-// never replaces the workspace root.
+// never replaces the workspace root. ADR-0040: each tab has its own history; when no tab is open
+// (unit tests / startup) we fall back to the default store so legacy call sites still work.
 
 export interface NavigateOptions {
   /** Back/Forward already owns the cursor and must not append a new entry. */
   record?: boolean
   openMode?: OpenMode
+}
+
+function activeHistory(): NavigationHistoryStore {
+  return getHistory(useTabsStore.getState().activeTabId) ?? useNavigationHistory
 }
 
 /** Resolve and activate a file by absolute path WITHOUT changing the workspace. */
@@ -38,35 +46,44 @@ export async function navigateToPath(
   // imports the file as an external document. All other modes must stay inside the root.
   if (root && !isInFolder(filePath, root) && !external) return false
 
-  // File guard first: "Keep editing" cancels the whole navigation before anything is closed.
-  // This is the single guard point (Q30): every path that closes the current document guards here,
-  // regardless of which UI action triggered it.
-  if (!(await ui.guardUnsavedSwitch())) return false
-  useUIStore.getState().closeDocument()
-
+  // ADR-0040: no closeDocument() — navigating opens/activates a tab and keeps every
+  // other tab's draft intact. A navigation event is recorded in the target tab's own stack.
   const listed = await window.api.documents.list()
   const doc =
     listed.find((d) => sameFilePath(d.filePath, filePath)) ??
     (await window.api.documents.import(filePath, external ? { external: true } : undefined))
   if (!doc) return false
+  const activeDoc = doc
 
-  const navigate = async () => {
-    // Record BEFORE setActiveDocumentId: that setter fires an async recordNavigation() which
-    // pushes the same path without metadata. Pushing first makes its de-dup a no-op and preserves
-    // this entry's openMode. When recording is suppressed the whole block is wrapped by
-    // withoutHistoryRecording, so the setter's push is suppressed too.
-    if (options.record !== false) {
-      useNavigationHistory.getState().push(filePath, { openMode: options.openMode ?? 'in-place' })
+  const tabId = useTabsStore.getState().activeTabId
+  // Capture the document we are navigating FROM before the target tab is activated:
+  // when the source was opened via the legacy setter (no tab), its path must still seed
+  // the target tab's first history entry so Back can return to it (ADR-0040 §5.2).
+  const fromId = ui.activeDocumentId
+  const fromDoc = fromId && fromId !== activeDoc.id ? await window.api.documents.get(fromId) : null
+  if (options.record === false) {
+    await withoutHistoryRecording(() => activate(), tabId)
+  } else {
+    await activate()
+  }
+
+  async function activate(): Promise<void> {
+    const tabs = useTabsStore.getState()
+    const existingTab = tabs.tabs.find((tab) => tab.documentId === activeDoc.id)
+    const targetTabId =
+      existingTab?.id ?? tabs.openTab(activeDoc.id, { title: activeDoc.title, activate: false })
+    const history = getHistory(targetTabId) ?? useNavigationHistory
+    // A brand-new tab's first entry is the document it replaced, when known.
+    if (!existingTab && fromDoc?.filePath && history.getState().entries.length === 0) {
+      history.getState().push(fromDoc.filePath)
     }
-    useUIStore.getState().setActiveDocumentId(doc.id)
+    tabs.activateTab(targetTabId)
+    if (options.record !== false) {
+      history.getState().push(filePath, { openMode: options.openMode ?? 'in-place' })
+    }
     useUIStore.getState().setDirty(false)
     useUIStore.getState().bumpDocumentState()
     queryClient.invalidateQueries({ queryKey: DOCS_KEY })
-  }
-  if (options.record === false) {
-    await withoutHistoryRecording(navigate)
-  } else {
-    await navigate()
   }
   return true
 }
@@ -79,13 +96,14 @@ export async function navigateToPath(
  * lies outside the CURRENT root (ADR-0039 §3.4). "external-keep" stays an in-place navigation
  * that imports the file as an external document. Neither replays the four-way dialog.
  */
-async function replayEntry(entry: NavigationEntry): Promise<boolean> {
+export async function replayEntry(entry: NavigationEntry): Promise<boolean> {
   if (entry.openMode === 'external-switch') {
     return switchWorkspace(dirName(entry.path), {
       openMode: 'external-switch',
       openPath: entry.path,
       title: entry.title,
       record: false,
+      replayTabId: useTabsStore.getState().activeTabId,
     })
   }
   return navigateToPath(entry.path, { record: false, openMode: entry.openMode })
@@ -94,11 +112,12 @@ async function replayEntry(entry: NavigationEntry): Promise<boolean> {
 /** Move Back (-1) or Forward (1), skipping and pruning entries whose files no longer exist. */
 export async function moveNavigationHistory(delta: -1 | 1): Promise<boolean> {
   if (selectFileLocked(useUIStore.getState())) return false
-  const history = useNavigationHistory.getState()
-  for (let guard = 0; guard <= history.entries.length; guard += 1) {
+  const tabId = useTabsStore.getState().activeTabId
+  const history = activeHistory()
+  for (let guard = 0; guard <= history.getState().entries.length; guard += 1) {
     // Re-read the cursor every iteration: prune() can shift it, and a stale snapshot would keep
     // pruning the wrong (already-gone) index until the loop runs out.
-    const current = useNavigationHistory.getState()
+    const current = history.getState()
     const targetIndex = delta === -1 ? current.cursor - 1 : current.cursor + 1
     const entry = current.entryAt(targetIndex)
     if (!entry) return false
@@ -107,10 +126,9 @@ export async function moveNavigationHistory(delta: -1 | 1): Promise<boolean> {
       current.prune(entry.path)
       continue
     }
-    // Replay with the entry's recorded openMode, WITHOUT appending a new entry.
-    const moved = await withoutHistoryRecording(() => replayEntry(entry))
+    const moved = await withoutHistoryRecording(() => replayEntry(entry), tabId)
     if (!moved) return false
-    useNavigationHistory.getState().move(delta)
+    history.getState().move(delta)
     return true
   }
   return false
@@ -119,16 +137,17 @@ export async function moveNavigationHistory(delta: -1 | 1): Promise<boolean> {
 /** Jump directly to a history index (right-click menu): position the cursor, never push. */
 export async function moveToHistoryIndex(index: number): Promise<boolean> {
   if (selectFileLocked(useUIStore.getState())) return false
-  const history = useNavigationHistory.getState()
-  const entry = history.entryAt(index)
+  const tabId = useTabsStore.getState().activeTabId
+  const history = activeHistory()
+  const entry = history.getState().entryAt(index)
   if (!entry) return false
   const stat = await window.api.documents.stat(entry.path)
   if (!stat?.exists) {
-    history.prune(entry.path)
+    history.getState().prune(entry.path)
     return false
   }
-  const moved = await withoutHistoryRecording(() => replayEntry(entry))
+  const moved = await withoutHistoryRecording(() => replayEntry(entry), tabId)
   if (!moved) return false
-  history.setCursor(index)
+  history.getState().setCursor(index)
   return true
 }

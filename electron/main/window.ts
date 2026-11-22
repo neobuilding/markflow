@@ -7,6 +7,7 @@ import { setMainWindow, setReadyToQuit } from './state'
 import { registerWindow, unregisterWindow } from './model/windowContext'
 import { setWorkspaceRoot } from './model/workspaceRoot'
 import { stopFolderWatching } from './model/folderWatcher'
+import type { TabHandoff } from '../../shared/tabTypes'
 
 // ESM shim for __dirname: under "type": "module" vite-plugin-electron no longer
 // injects __dirname via esmShim() (that path only runs for CJS output), so we
@@ -19,6 +20,8 @@ export interface CreateWindowOptions {
   workspaceRoot?: string
   /** Markdown file to open as the initial active document. */
   filePath?: string
+  /** Detached tab state (with token) read by the new renderer via tabs:take-handoff. */
+  tabHandoff?: { token: string; handoff: TabHandoff }
 }
 
 export function createWindow(options: CreateWindowOptions = {}): void {
@@ -75,6 +78,7 @@ export function createWindow(options: CreateWindowOptions = {}): void {
   // window that asked for it, so the implicit current context would be the CALLER's window.
   if (options.workspaceRoot) setWorkspaceRoot(options.workspaceRoot, ctx)
   ctx.pendingPaths = options.filePath ? [options.filePath] : []
+  ctx.pendingTabHandoff = options.tabHandoff
   setMainWindow(win)
   // App-level menu commands go through getMainWindow(). Keep it pointing at the window the user
   // is actually interacting with, so menu actions target the focused window rather than whichever

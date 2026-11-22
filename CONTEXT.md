@@ -53,8 +53,8 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 
 - **Workspace** — the single opened root folder plus its loaded documents, tracked via **`workspaceRoot`**
   (ADR-0023), which is also the **single** directory the file watcher covers. The workspace is
-  **per window**: each `BrowserWindow` owns an independent root, document store, watcher and history
-  (ADR-0039). Opening a folder **replaces this window's workspace**; multi-root workspaces remain out
+  **per window**: each `BrowserWindow` owns an independent root, document store and watcher (ADR-0039);
+  navigation history is per tab (ADR-0040). Opening a folder **replaces this window's workspace**; multi-root workspaces remain out
   of scope, now per window rather than per app. **Close workspace** returns to an empty state;
   **Close file** keeps the folder + sidebar.
 - **Sidebar** — collapsible nested folder tree listing Markdown files; file names include their extension
@@ -82,8 +82,15 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   workspace**, **cancel**. The unsaved-changes guard runs only at the actual document-close
   execution point, so the new-window and cancel branches do not prompt. Non-Markdown local files and
   URI schemes retain the earlier Open / Copy / Cancel dialog (ADR-0038 §3.1.3).
-- **Navigation history (导航历史)** — the in-memory, app-session-lifetime, **per-window** list of
-  document navigations, with a cursor for Back/Forward. Each entry is structured
+- **Tab (标签页)** — one open document in a window's tab strip, keyed by a stable `id` that survives
+  workspace re-import and cross-window moves; it owns a draft (body + title) and a navigation history
+  (ADR-0040). All tabs in a window share the window's workspace root and document store.
+- **Tab handoff (标签页交接)** — the complete in-memory payload moved between windows on drag/drop:
+  tab id, file path, draft body and title, edit state, history entries and cursor (ADR-0040). A main
+  drag-session token is consumed exactly once; the source drops its tab only after the destination
+  acknowledges the handoff.
+- **Navigation history (导航历史)** — the in-memory, app-session-lifetime, **per-tab** list of
+  document navigations (ADR-0040; one stack per tab), with a cursor for Back/Forward. Each entry is structured
   `{ path, title?, openMode? }`; `openMode` replays how an external document was opened without
   re-prompting. Entries are keyed by absolute file path so they survive workspace replacement; a new
   navigation truncates the forward part and entries for missing files are skipped and pruned. A
@@ -168,7 +175,7 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   it was saved. This is a deliberate consequence of the single-active-document model, unlike VS
   Code's per-resource edit stacks. _Avoid_: "per-document undo stack", "undo history is preserved
   across switches". _See also_: **Unsaved-changes guard**, **Editing session**.
-- **Editing session (编辑会话)** — one session per open document, owning the editor's debounced
+- **Editing session (编辑会话)** — one active tab at a time (ADR-0040), owning the editor's debounced
   preview refresh and the **right to write**: it remembers the text it last wrote into the view, and
   a keystroke is committed only while it was applied to exactly that text. A switch aborts the
   previous session (cancelling its pending timer) and the new session owns nothing until the new
@@ -178,7 +185,7 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   debounce; the debounce only refreshes the preview. _See also_:
   `docs/adr/0033-editor-draft-session-isolation.md`.
 - **Unsaved buffer registry (未保存缓冲区登记表)** — the renderer's `Record<docId, { content,
-revision }>` of unsaved text. The main process only knows on-disk bytes, so content search and
+title, revision }>` of unsaved text (title added in ADR-0040 so it survives tab switches and handoff). The main process only knows on-disk bytes, so content search and
   cross-file replace need the renderer to report these buffers. The key is a **document id** used
   for addressing, never for deciding whether a callback is stale. _See also_:
   **Dirty buffer snapshot**, **Unsaved-changes guard**.
@@ -437,14 +444,14 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   yes/no questions. It is a `dialog:confirm` IPC backed by `dialog.showMessageBox` (an app-modal dialog that
   returns focus to the window on close). Native `window.confirm` is **forbidden** for these prompts: it fires
   a WIN-BLUR on Windows that leaves the editor untypeable (see `docs/adr/0009-app-modal-dialogs.md`).
-- **tryCloseWorkspace (unified unsaved-close path)** — closing a file, closing the workspace, and closing a
-  window all run the same unsaved-change prompt. There is no application-level quit path: closing a window
-  prompts and closes **only that window** via the routed `app:request-quit` → `app:quit-pending` /
-  `app:quit-allowed` handshake. Closing the last window quits the process on Windows/Linux but keeps it
-  alive on macOS. When the OS terminates the app (macOS Dock Quit), Electron closes each window first,
-  so the same guard still runs; system shutdown is not intercepted. The unsaved guard itself lives at
-  the single document-close execution point, not at each entry point. New documents and existing unsaved
-  edits are treated identically.
+- **tryCloseWorkspace (unified unsaved-close path)** — closing a single tab uses its own per-document
+  prompt; closing the workspace or window uses **one aggregate prompt listing every dirty tab**
+  (ADR-0040; Cancel vetoes the whole close, no Save All). There is no application-level quit path:
+  closing a window prompts and closes **only that window** via the routed `app:request-quit` →
+  `app:quit-pending` / `app:quit-allowed` handshake. Closing the last window quits the process on
+  Windows/Linux but keeps it alive on macOS. When the OS terminates the app (macOS Dock Quit),
+  Electron closes each window first, so the same guard still runs; system shutdown is not intercepted.
+  New documents and existing unsaved edits are treated identically.
 - **Context menu (right-click)** — right-click menus use `@radix-ui/react-context-menu` (pops at the cursor,
   native Shift+F10); button-triggered dropdowns use `@radix-ui/react-dropdown-menu`. Menu items stop event
   propagation to avoid firing ancestor handlers. See `docs/adr/0008-context-menu-architecture.md`.

@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useNavigationHistory } from './navigationHistory'
+import {
+  createNavigationHistory,
+  isHistoryRecordingSuspended,
+  useNavigationHistory,
+  withoutHistoryRecording,
+} from './navigationHistory'
 
 describe('navigationHistory', () => {
   beforeEach(() => useNavigationHistory.getState().reset())
@@ -104,16 +109,64 @@ describe('navigationHistory', () => {
   })
 
   it('uses a nesting counter so nested history moves keep recording suspended', async () => {
-    const { withoutHistoryRecording, isHistoryRecordingSuspended } =
-      await import('./navigationHistory')
     await withoutHistoryRecording(async () => {
       expect(isHistoryRecordingSuspended()).toBe(true)
       await withoutHistoryRecording(async () => {
         expect(isHistoryRecordingSuspended()).toBe(true)
       })
-      // The inner scope ended, but the outer move is still activating its document.
       expect(isHistoryRecordingSuspended()).toBe(true)
     })
     expect(isHistoryRecordingSuspended()).toBe(false)
+  })
+
+  it('creates isolated instances (ADR-0040)', () => {
+    const a = createNavigationHistory()
+    const b = createNavigationHistory()
+    a.getState().push('/a.md')
+    expect(a.getState().entries).toHaveLength(1)
+    expect(b.getState().entries).toHaveLength(0)
+    expect(useNavigationHistory.getState().entries).toHaveLength(0)
+  })
+
+  it('per-tab suppression does not silence other tabs', async () => {
+    expect(isHistoryRecordingSuspended('a')).toBe(false)
+    await withoutHistoryRecording(
+      async () => expect(isHistoryRecordingSuspended('a')).toBe(true),
+      'a',
+    )
+    expect(isHistoryRecordingSuspended('a')).toBe(false)
+    await withoutHistoryRecording(async () => {
+      expect(isHistoryRecordingSuspended('a')).toBe(true)
+      expect(isHistoryRecordingSuspended('b')).toBe(false)
+      expect(isHistoryRecordingSuspended()).toBe(false)
+    }, 'a')
+    // Nesting on the same tab keeps suppression until the outer scope ends.
+    await withoutHistoryRecording(
+      async () =>
+        withoutHistoryRecording(async () => {
+          expect(isHistoryRecordingSuspended('a')).toBe(true)
+        }, 'a'),
+      'a',
+    )
+    expect(isHistoryRecordingSuspended('a')).toBe(false)
+  })
+
+  it('pruneOutOfRoot removes in-place entries outside the root, keeps external modes', () => {
+    const h = createNavigationHistory()
+    h.getState().push('/root/a.md')
+    h.getState().push('/other/b.md', { openMode: 'external-keep' })
+    h.getState().push('/other/c.md', { openMode: 'external-switch' })
+    h.getState().push('/root/d.md')
+    h.getState().setCursor(3)
+    h.getState().pruneOutOfRoot('/root')
+    expect(h.getState().entries.map((e) => e.path)).toEqual([
+      '/root/a.md',
+      '/other/b.md',
+      '/other/c.md',
+      '/root/d.md',
+    ])
+    h.getState().pruneOutOfRoot('/root/sub')
+    expect(h.getState().entries.map((e) => e.path)).toEqual(['/other/b.md', '/other/c.md'])
+    expect(h.getState().cursor).toBe(1)
   })
 })

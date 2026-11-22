@@ -201,6 +201,18 @@ export function setupMenu(): void {
           click: () => getMainWindow()?.webContents.send('menu:reload'),
         },
         {
+          id: 'move-tab-to-window',
+          label: menuT('menu.moveTabToWindow'),
+          enabled: true,
+          click: () => getMainWindow()?.webContents.send('menu:move-tab-to-window'),
+        },
+        {
+          id: 'detach-tab-to-window',
+          label: menuT('menu.detachTabToWindow'),
+          enabled: true,
+          click: () => getMainWindow()?.webContents.send('menu:detach-tab-to-window'),
+        },
+        {
           id: 'file-details',
           label: menuT('menu.fileDetails'),
           // ⌘I belongs to the editor's ITALIC action since ADR-0032 (the mainstream

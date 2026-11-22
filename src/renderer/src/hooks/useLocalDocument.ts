@@ -64,27 +64,35 @@ export function useLocalDocument(doc: Document | null | undefined) {
     setDirtyState(false)
   }, [])
 
-  // Switching to a different document: always overwrite the local draft with the
-  // authoritative content (disk).
+  // Switching to a different document: ADR-0040 T4 restores the per-document draft
+  // (body + title) from the UI store BEFORE falling back to disk. `saved*Ref` stays
+  // the disk baseline so dirty is recomputed correctly against the restored draft.
   //
   // This runs as a LAYOUT effect, not a plain effect, so the new content is
-  // committed before the browser paints. This hook's state necessarily lags the
-  // query data by one commit; with useEffect the panes would paint a frame still
-  // holding the PREVIOUS document's text right after the loading overlay lifts.
-  // Keeping the switch here means EditorPane never renders new-id/old-content.
+  // committed before the browser paints; EditorPane never renders new-id/old-content.
   useLayoutEffect(() => {
     if (!doc) return
     if (doc.id === prevIdRef.current) return
     prevIdRef.current = doc.id
     appliedEncodingRef.current = doc.encoding
-    const title = displayTitle(doc)
+    const diskTitle = displayTitle(doc)
+    const draft = useUIStore.getState().unsavedBuffers[doc.id]
+    const content = draft?.content ?? doc.content
+    const title = draft?.title ?? diskTitle
     eolRef.current = doc.content.includes('\r\n') ? '\r\n' : '\n'
-    contentRef.current = doc.content
-    setLocalContent(doc.content)
+    contentRef.current = content
+    setLocalContent(content)
     setLocalTitle(title)
+    localTitleRef.current = title
     savedContentRef.current = doc.content
-    savedTitleRef.current = title
-    clearDirty()
+    savedTitleRef.current = diskTitle
+    const isDirty =
+      Boolean(draft) ||
+      computeDirty(content, doc.content) ||
+      stripMarkdownExt(title.trim()) !== stripMarkdownExt(diskTitle.trim())
+    dirtyRef.current = isDirty
+    setDirtyState(isDirty)
+    useUIStore.getState().setDirty(isDirty)
     justSwitchedRef.current = true
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.id])
@@ -158,7 +166,7 @@ export function useLocalDocument(doc: Document | null | undefined) {
     }
   }, [doc?.id, doc?.filePath])
 
-  const setDirty = useCallback((d: boolean, content: string) => {
+  const setDirty = useCallback((d: boolean, content: string, title?: string) => {
     // Keystrokes arrive far more often than the flag changes. Only the FIRST dirty keystroke
     // needs to flip React/store state; later ones just refresh the registry content (which the
     // main process reads at query call time). This keeps per-keystroke work O(1) and allocation-low.
@@ -179,7 +187,7 @@ export function useLocalDocument(doc: Document | null | undefined) {
       ui.clearUnsavedBuffer(id)
       return
     }
-    ui.reportUnsavedBuffer(id, content)
+    ui.reportUnsavedBuffer(id, content, title ?? localTitleRef.current)
   }, [])
 
   // Before saving, restore the editor-normalized LF back to the document's original line ending,
@@ -264,12 +272,17 @@ export function useLocalDocument(doc: Document | null | undefined) {
     if (!normalized) {
       // Blank name: fall back to the saved one. Only the title is reverted content
       // dirtiness is recomputed so an abandoned rename cannot hide unsaved edits.
-      setLocalTitle(savedTitleRef.current)
-      setDirty(computeDraftDirty(localContent, savedTitleRef.current), localContent)
+      const restored = savedTitleRef.current
+      setLocalTitle(restored)
+      localTitleRef.current = restored
+      setDirty(computeDraftDirty(localContent, restored), localContent, restored)
       return
     }
     setLocalTitle(normalized)
-    setDirty(computeDraftDirty(localContent, normalized), localContent)
+    // Pass the NEW title explicitly: localTitleRef is refreshed in an effect and would
+    // still hold the previous value on this synchronous keystroke.
+    localTitleRef.current = normalized
+    setDirty(computeDraftDirty(localContent, normalized), localContent, normalized)
   }, [localTitle, localContent, setDirty, computeDraftDirty, normalizeTitle])
 
   // Called after Save / Save As / Reload succeeds: update the "saved" baseline to the latest content/title.

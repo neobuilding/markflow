@@ -320,6 +320,17 @@ export const en = {
   'app.unsavedClose': 'You have unsaved changes. Discard them?',
   'app.confirmDiscard': 'Discard',
   'app.confirmKeep': 'Keep editing',
+  // ADR-0040: one aggregate close-window prompt listing all dirty tab titles.
+  'app.unsavedCloseTabs': 'You have unsaved changes in: {{titles}}. Discard them and close?',
+  // ── Document tabs (ADR-0040) ────────────────────────────────────────────
+  'tab.list': 'Open documents',
+  'tab.untitled': 'Untitled',
+  'tab.close': 'Close',
+  'tab.closeOthers': 'Close other tabs',
+  'tab.closeRight': 'Close tabs to the right',
+  'tab.moveToWindow': 'Move to another window…',
+  'tab.detach': 'Detach into new window',
+  'tab.unsaved': 'You have unsaved changes in "{{title}}". Discard them and close this tab?',
   // ADR-0038 §3.1.3: web links and local non-Markdown files need an explicit Open / Copy / Cancel.
   'app.openExternalTitle': 'Open this link outside MarkFlow?',
   'app.openExternalOpen': 'Open',
@@ -384,6 +395,8 @@ export const en = {
   'menu.save': 'Save',
   'menu.saveAs': 'Save As…',
   'menu.reload': 'Reload from Disk',
+  'menu.moveTabToWindow': 'Move Tab to Another Window…',
+  'menu.detachTabToWindow': 'Detach Tab into New Window',
   'menu.fileDetails': 'File Details…',
   'menu.exportHtml': 'Export as HTML…',
   'menu.print': 'Print…',

@@ -366,12 +366,9 @@ test.describe('document lifecycle', () => {
     await expect(page.getByTestId('view-split')).toHaveAttribute('aria-checked', 'true')
   })
 
-  test('switching inside the debounce window still prompts instead of discarding silently', async () => {
+  test('ADR-0040: switching inside the debounce window keeps the draft without a prompt', async () => {
     const { page } = handle
     await waitForAppReady(page)
-    // Two documents so the sidebar has a switch target: a real file on disk plus one draft. Only
-    // ONE unsaved draft may exist at a time (the New Draft control is disabled while one is
-    // open), so the pair cannot be two drafts.
     await openWorkspaceWithFile(page) // A (the file on disk)
     await createViaButton(page) // B (the draft — active, and the one that gets the unsaved edit)
     const activeId = await page.evaluate(
@@ -386,20 +383,22 @@ test.describe('document lifecycle', () => {
       )
     expect(otherId).toBeTruthy()
 
-    // Keep-editing answer (0) so the switch is declined and we can assert the guard was offered.
     await installConfirmSpy(handle, { defaultResponse: 0 })
     await page.locator('.cm-content').click()
     await page.keyboard.type('UNSAVED-IN-WINDOW')
     // Click the other row at once — well inside the old 400ms window.
     await page.locator(`[data-testid="doc-item"][data-doc-id="${otherId}"]`).click()
+    // No prompt under ADR-0040; the switch happens immediately.
     await expect
-      .poll(async () => (await getConfirmCalls(handle)).length, {
-        message: 'the unsaved-switch guard must be offered',
-      })
-      .toBeGreaterThan(0)
-    expect(
-      await page.evaluate(() => (window as any).__uiStore.getState().activeDocumentId as string),
-    ).toBe(activeId)
-    await expect(page.locator('.cm-content')).toContainText('UNSAVED-IN-WINDOW')
+      .poll(() => page.evaluate(() => (window as any).__uiStore.getState().activeDocumentId))
+      .toBe(otherId)
+    const calls = await getConfirmCalls(handle)
+    expect(calls.filter((c) => c.message?.includes('unsaved'))).toHaveLength(0)
+    // The draft is still registered under the outgoing tab's document.
+    const kept = await page.evaluate(
+      (id) => (window as any).__uiStore.getState().unsavedBuffers[id]?.content ?? '',
+      activeId,
+    )
+    expect(kept).toContain('UNSAVED-IN-WINDOW')
   })
 })

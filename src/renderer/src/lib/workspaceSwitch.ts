@@ -3,8 +3,13 @@ import { arePathsSame, isDirInFolder, isInFolder } from '../../../../shared/file
 import { pathCaseSensitive } from './utils'
 import { isMemoryOnly } from './sidebarDrafts'
 import { useUIStore, selectFileLocked } from '../store/ui'
-import { useNavigationHistory, withoutHistoryRecording } from '../store/navigationHistory'
-import type { OpenMode } from '../store/navigationHistory'
+import {
+  useNavigationHistory,
+  withoutHistoryRecording,
+  type OpenMode,
+} from '../store/navigationHistory'
+import { getHistory } from '../store/tabHistory'
+import { useTabsStore } from '../store/tabs'
 
 export interface SwitchWorkspaceOptions {
   /** How the resulting navigation was opened; replayed verbatim by Back/Forward. */
@@ -23,6 +28,8 @@ export interface SwitchWorkspaceOptions {
    * (Back/Forward move the cursor, they never append).
    */
   record?: boolean
+  /** Replaying an external-switch entry reuses this tab instead of opening a new one. */
+  replayTabId?: string | null
 }
 
 /**
@@ -73,10 +80,16 @@ export async function switchWorkspace(
   // branch the document survives — it is re-imported below — so nothing is closed here.
   if (!keepCurrent) useUIStore.getState().closeDocument()
   const pathToKeep = keepCurrent ? currentPath : null
+  const tabId: string | null = options.replayTabId ?? useTabsStore.getState().activeTabId
 
   const opened = await withoutHistoryRecording(async () => {
     await window.api.documents.setWorkspaceRoot(nextRoot)
     useUIStore.getState().setWorkspaceRoot(nextRoot)
+    // ADR-0040 §5.4: out-of-root in-place entries would make Back permanently fail
+    // (navigateToPath rejects them). Prune every tab's stack; external modes replay fine.
+    for (const tab of useTabsStore.getState().tabs) {
+      getHistory(tab.id)?.getState().pruneOutOfRoot(nextRoot)
+    }
 
     // The swap cleared the store and the watcher starts with ignoreInitial, so files already on
     // disk are never reported as additions. Back-fill them here: without a batch import the new
@@ -107,7 +120,10 @@ export async function switchWorkspace(
     if (targetPath) {
       const doc = await window.api.documents.import(targetPath)
       if (doc) {
-        useUIStore.getState().setActiveDocumentId(doc.id)
+        const tabs = useTabsStore.getState()
+        const activeId = tabs.activeTabId
+        if (activeId && options.replayTabId) tabs.replaceDocument(activeId, doc.id)
+        else tabs.openTab(doc.id, { title: doc.title })
         return { path: targetPath, title: doc.title }
       }
     }
@@ -115,9 +131,14 @@ export async function switchWorkspace(
     if (pathToKeep) {
       const doc = await window.api.documents.import(pathToKeep)
       if (doc) {
-        useUIStore.getState().setActiveDocumentId(doc.id)
+        const tabs = useTabsStore.getState()
+        const activeId = tabs.activeTabId
+        if (activeId && options.replayTabId) tabs.replaceDocument(activeId, doc.id)
+        else tabs.openTab(doc.id, { title: doc.title })
         if (buffer) {
-          useUIStore.getState().reportUnsavedBuffer(doc.id, buffer.content)
+          useUIStore
+            .getState()
+            .reportUnsavedBuffer(doc.id, buffer.content, buffer.title ?? doc.title)
           useUIStore.getState().setDirty(true)
         }
         return { path: pathToKeep, title: doc.title }
@@ -137,9 +158,11 @@ export async function switchWorkspace(
   queryClient.invalidateQueries({ queryKey: DOCS_KEY })
 
   if (opened && options.record !== false) {
-    useNavigationHistory
-      .getState()
-      .push(opened.path, { openMode: options.openMode ?? 'in-place', title: opened.title })
+    const history = getHistory(tabId) ?? useNavigationHistory
+    history.getState().push(opened.path, {
+      openMode: options.openMode ?? 'in-place',
+      title: opened.title,
+    })
   }
   return true
 }
