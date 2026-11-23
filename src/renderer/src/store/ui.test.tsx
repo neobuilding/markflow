@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { useUIStore } from './ui'
 import { useTabsStore } from './tabs'
+import { useNavigationHistory } from './navigationHistory'
 // Initialises the i18next singleton so the store's guard prompts are translated rather than
 // returning raw keys.
 import '../i18n'
@@ -162,6 +163,16 @@ describe('useUIStore — all setters and toggles', () => {
   it('setLanguage persists the choice', () => {
     useUIStore.getState().setLanguage('zh-CN')
     expect(useUIStore.getState().language).toBe('zh-CN')
+  })
+
+  it('closeWorkspace clears the global navigation history', () => {
+    useNavigationHistory.getState().push('C:/old/a.md', { tabId: 'a' })
+    useNavigationHistory.getState().push('C:/old/b.md', { tabId: 'a' })
+    useNavigationHistory.getState().push('C:/old/c.md', { tabId: 'a' })
+    useUIStore.getState().closeWorkspace()
+    const history = useNavigationHistory.getState()
+    expect(history.entries).toEqual([])
+    expect(history.cursor).toBe(-1)
   })
 
   it('closeWorkspace clears the active document and folder', () => {
@@ -380,12 +391,165 @@ describe('useUIStore — guarded document switching (ADR-0023)', () => {
     expect(useUIStore.getState().pendingMatch).toEqual({ id: 'b', start: 10, end: 13 })
   })
 
+  it('openDocumentAt reuses the preview tab and records the hit range in global history', async () => {
+    useNavigationHistory.getState().reset()
+    const get = vi.fn(async () => ({
+      id: 'hit-target',
+      filePath: 'C:/notes/hit-target.md',
+      title: 'Hit.md',
+    }))
+    ;(window as unknown as { api: unknown }).api = { documents: { get } }
+    const source = useTabsStore.getState().openTab('hit-source', {
+      tabId: 'hit-source',
+      preview: true,
+    })
+    await expect(
+      useUIStore.getState().openDocumentAt('hit-target', 4, 8, { preview: true }),
+    ).resolves.toBe(true)
+    const tabs = useTabsStore.getState()
+    expect(tabs.previewTabId).toBe(source)
+    expect(tabs.tabs).toHaveLength(1)
+    expect(tabs.tabs[0].documentId).toBe('hit-target')
+    await waitFor(() => {
+      const history = useNavigationHistory.getState()
+      expect(history.entryAt(history.cursor)).toMatchObject({
+        path: 'C:/notes/hit-target.md',
+        tabId: source,
+        position: { start: 4, end: 8 },
+      })
+    })
+  })
+
+  it('selectDocument preview reuse falls back to an empty title when the document has none', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { get: vi.fn(async () => ({ id: 'no-title', filePath: 'C:/notes/no-title.md' })) },
+    }
+    const source = useTabsStore.getState().openTab('no-title-source', {
+      tabId: 'no-title-source',
+      preview: true,
+    })
+    await expect(useUIStore.getState().selectDocument('no-title', { preview: true })).resolves.toBe(
+      true,
+    )
+    expect(useTabsStore.getState().previewTabId).toBe(source)
+    expect(useTabsStore.getState().tabs[0].title).toBe('')
+  })
+
+  it('openDocumentAt records no history entry for a memory-only document', async () => {
+    useNavigationHistory.getState().reset()
+    ;(window as unknown as { api: unknown }).api = {
+      documents: { get: vi.fn(async () => ({ id: 'mem-hit', filePath: '' })) },
+    }
+    await expect(
+      useUIStore.getState().openDocumentAt('mem-hit', 1, 2, { preview: true }),
+    ).resolves.toBe(true)
+    await waitFor(() => expect(useNavigationHistory.getState().entries).toHaveLength(0))
+  })
+
+  it('selectDocument names a newly opened tab from the document title', async () => {
+    const get = vi.fn(async () => ({ id: 'b', filePath: 'C:/notes/B.md', title: 'B.md' }))
+    ;(window as unknown as { api: unknown }).api = { documents: { get } }
+    await expect(useUIStore.getState().selectDocument('b')).resolves.toBe(true)
+    await waitFor(() => {
+      const tab = useTabsStore.getState().tabs.find((item) => item.documentId === 'b')
+      expect(tab?.title).toBe('B.md')
+    })
+    expect(useUIStore.getState().activeDocumentTitle).toBe('B.md')
+  })
+
+  it('selectDocument activates a tab that appeared while the document lookup was pending', async () => {
+    let resolveDoc!: (value: unknown) => void
+    const get = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveDoc = resolve
+        }),
+    )
+    ;(window as unknown as { api: unknown }).api = { documents: { get } }
+    const pending = useUIStore.getState().selectDocument('race')
+    const racedId = useTabsStore.getState().openTab('race', { title: 'Race.md' })
+    resolveDoc({ id: 'race', filePath: 'C:/notes/Race.md', title: 'Race.md' })
+    await expect(pending).resolves.toBe(true)
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
+    expect(useTabsStore.getState().tabs[0].id).toBe(racedId)
+    expect(useTabsStore.getState().activeTabId).toBe(racedId)
+  })
+
+  it('selectDocument pins an existing preview on an explicit pinned open', async () => {
+    const id = useTabsStore.getState().openTab('b', { tabId: 'b', preview: true })
+    await expect(useUIStore.getState().selectDocument('b', { preview: false })).resolves.toBe(true)
+    expect(useTabsStore.getState().previewTabId).toBeNull()
+    expect(useTabsStore.getState().activeTabId).toBe(id)
+  })
+
+  it('selectDocument preview reuses the current preview tab without pinning its source', async () => {
+    const get = vi.fn(async () => ({
+      id: 'target',
+      filePath: 'C:/notes/target.md',
+      title: 'target.md',
+    }))
+    ;(window as unknown as { api: unknown }).api = { documents: { get } }
+    const source = useTabsStore.getState().openTab('source', { tabId: 'source', preview: true })
+    await expect(useUIStore.getState().selectDocument('target', { preview: true })).resolves.toBe(
+      true,
+    )
+    const tabs = useTabsStore.getState()
+    expect(tabs.tabs).toHaveLength(1)
+    expect(tabs.tabs[0].documentId).toBe('target')
+    expect(tabs.previewTabId).toBe(source)
+    expect(tabs.tabs[0].id).toBe(source)
+    expect(tabs.activeTabId).toBe(tabs.previewTabId)
+  })
+
+  it('selectDocument preview activates an already-pinned target without moving the slot', async () => {
+    const source = useTabsStore.getState().openTab('source', { tabId: 'source', preview: true })
+    const target = useTabsStore.getState().openTab('target', { tabId: 'target', activate: false })
+    await expect(useUIStore.getState().selectDocument('target', { preview: true })).resolves.toBe(
+      true,
+    )
+    expect(useTabsStore.getState().activeTabId).toBe(target)
+    expect(useTabsStore.getState().previewTabId).toBe(source)
+  })
+
+  it('selectDocument pins a tab that raced in during a pinned lookup', async () => {
+    let resolveDoc!: (value: unknown) => void
+    const get = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveDoc = resolve
+        }),
+    )
+    ;(window as unknown as { api: unknown }).api = { documents: { get } }
+    const pending = useUIStore.getState().selectDocument('race', { preview: false })
+    const racedId = useTabsStore.getState().openTab('race', { tabId: 'race', preview: true })
+    resolveDoc({ id: 'race', filePath: 'C:/notes/Race.md', title: 'Race.md' })
+    await expect(pending).resolves.toBe(true)
+    expect(useTabsStore.getState().previewTabId).toBeNull()
+    expect(useTabsStore.getState().activeTabId).toBe(racedId)
+  })
+
   it('selectDocument works even without a dialog bridge (no guard needed)', async () => {
     ;(window as unknown as { api?: unknown }).api = undefined
     useUIStore.getState().setDirty(true)
     const ok = await useUIStore.getState().selectDocument('b')
     expect(ok).toBe(true)
     expect(useTabsStore.getState().activeTabId).toBeTruthy()
+  })
+
+  it('selectDocument seeds no history when the documents bridge lacks get()', async () => {
+    ;(window as unknown as { api: unknown }).api = { documents: {} }
+    await expect(useUIStore.getState().selectDocument('missing-get')).resolves.toBe(true)
+    expect(useTabsStore.getState().activeTabId).toBeTruthy()
+  })
+
+  it('selectDocument seeds no history for a memory-only draft', async () => {
+    const get = vi.fn(async () => ({ id: 'draft', filePath: '', title: 'draft', memoryOnly: true }))
+    ;(window as unknown as { api: unknown }).api = { documents: { get } }
+    const tabs = useTabsStore.getState()
+    const before = tabs.tabs.length
+    await expect(useUIStore.getState().selectDocument('draft')).resolves.toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(useTabsStore.getState().tabs.length).toBe(before + 1)
   })
 
   it('selectDocument discards when leaving a null-id dirty document', async () => {

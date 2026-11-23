@@ -10,6 +10,8 @@ import {
 } from '../store/navigationHistory'
 import { getHistory } from '../store/tabHistory'
 import { useTabsStore } from '../store/tabs'
+import { t } from '../i18n'
+import { showCloseAllTabsDialog } from './closeTabDialog'
 
 export interface SwitchWorkspaceOptions {
   /** How the resulting navigation was opened; replayed verbatim by Back/Forward. */
@@ -18,7 +20,7 @@ export interface SwitchWorkspaceOptions {
    * Open this file as the active document right after the swap. It is the "switch workspace"
    * exit of the four-way external-file dialog: the user picked a file OUTSIDE the current
    * workspace and asked for it to be opened HERE with the workspace moved to its folder.
-   * Without it the swap keeps (or closes) the CURRENT document, as a folder switch does.
+   * With tabs, an explicit `replayTabId` means this target replaces that tab's document.
    */
   openPath?: string
   /** Title stored in the history entry (shown in the history menu). */
@@ -30,18 +32,28 @@ export interface SwitchWorkspaceOptions {
   record?: boolean
   /** Replaying an external-switch entry reuses this tab instead of opening a new one. */
   replayTabId?: string | null
+  /** Root to restore when the resulting entry is replayed (ADR-0042 §3). */
+  replayRoot?: string
+}
+
+interface KeptTab {
+  tabId: string
+  documentId: string
+  path: string
+  title: string
+  buffer?: { content: string; title?: string; revision: number }
 }
 
 /**
  * Switch the entire workspace to `nextRoot` (double-click a subfolder, ↑, breadcrumb, or the
  * "switch workspace" choice of the external-link dialog). One service owns the whole transaction:
- * print/export lock, the conditional unsaved guard, the main store/watcher swap, keeping or closing
- * the active document, and a single history entry.
+ * capability lock, conditional unsaved guard, the store/watcher swap, keeping/closing EVERY tab,
+ * and one history entry for the resulting navigation.
  *
- * Keep semantics: when the current document is still inside `nextRoot`, it is re-imported (the store
- * is cleared by the swap, so the old id is gone) and its unsaved buffer is migrated to the new id —
- * the user sees the same file still open with its edits intact. Otherwise the document is closed
- * and NO default document is opened.
+ * ADR-0040 §5.4: when a tab's document is still inside `nextRoot` it is re-imported (the store is
+ * cleared by the swap) and its unsaved buffer is migrated to the new id. Out-of-root tabs are
+ * closed after ONE aggregate prompt if any of them is dirty. The legacy no-tab path keeps the
+ * existing single-document contract for older callers/tests.
  */
 export async function switchWorkspace(
   nextRoot: string,
@@ -50,118 +62,212 @@ export async function switchWorkspace(
   const ui = useUIStore.getState()
   if (selectFileLocked(ui)) return false
 
+  const tabs = useTabsStore.getState().tabs
   const activeId = ui.activeDocumentId
-  const current = activeId ? await window.api.documents.get(activeId) : null
-  const currentPath = current?.filePath && !isMemoryOnly(current) ? current.filePath : null
-  const willKeep = !!currentPath && isInFolder(currentPath, nextRoot)
-
-  // An explicit target REPLACES the current document: the user asked for THIS file in the new
-  // workspace, so the current one is closed even when it happens to live inside the new root.
   const targetPath = options.openPath ?? null
-  const keepCurrent = !targetPath && willKeep
+  const replayTabId = options.replayTabId ?? null
 
-  // The single close point owns the unsaved guard (ADR-0039 §3.2, ADR-0038 §3.2 decision 6):
-  // it names the document being left and restores editor focus on "Keep editing" (ADR-0023
-  // decision 9). The keep branch loses nothing — its buffer is migrated below — so it never
-  // prompts, and there is no second "open the new workspace?" prompt after the file guard.
-  if (!keepCurrent && !(await useUIStore.getState().guardUnsavedSwitch())) return false
+  // A no-tab renderer uses the pre-ADR-0040 single-document path; the new multi-tab path below
+  // only runs when the window actually has tabs, so legacy callers keep their exact semantics.
+  if (tabs.length === 0) {
+    const current = activeId ? await window.api.documents.get(activeId) : null
+    const currentPath = current?.filePath && !isMemoryOnly(current) ? current.filePath : null
+    const willKeep = !!currentPath && isInFolder(currentPath, nextRoot)
+    const keepCurrent = !targetPath && willKeep
+    if (!keepCurrent && !(await useUIStore.getState().guardUnsavedSwitch())) return false
+    const buffer =
+      keepCurrent && currentPath && activeId
+        ? useUIStore.getState().unsavedBuffers[activeId]
+        : undefined
+    if (!keepCurrent) useUIStore.getState().closeDocument()
+    const pathToKeep = keepCurrent ? currentPath : null
+    const tabId: string | null = useTabsStore.getState().activeTabId
+    // ADR-0042 §2: a workspace switch is a navigation point — capture where the editor was.
+    if (options.record !== false) {
+      useNavigationHistory.getState().updateCurrentPosition(useUIStore.getState().editorSelection)
+    }
+    // The tab that will DISPLAY the pushed entry (a fresh openTab here, since none existed).
+    let displayedTabId: string | null = null
+    const opened = await withoutHistoryRecording(async () => {
+      await window.api.documents.setWorkspaceRoot(nextRoot)
+      useUIStore.getState().setWorkspaceRoot(nextRoot)
+      const { markdownFiles } = await window.api.files.resolvePaths([nextRoot])
+      const caseSensitive = pathCaseSensitive()
+      const forwardSlashes = (path: string) => path.replace(/\\/g, '/')
+      const backfill = markdownFiles.filter((file) => {
+        if (!isDirInFolder(file, nextRoot)) return false
+        const normalized = forwardSlashes(file)
+        if (targetPath && arePathsSame(normalized, forwardSlashes(targetPath), caseSensitive)) {
+          return false
+        }
+        if (pathToKeep && arePathsSame(normalized, forwardSlashes(pathToKeep), caseSensitive)) {
+          return false
+        }
+        return true
+      })
+      await window.api.documents.importMany(backfill)
+      if (targetPath) {
+        const doc = await window.api.documents.import(targetPath)
+        if (doc) {
+          // No tab existed before the switch; opening the imported doc recreates the
+          // pre-ADR single-document state for legacy callers. Without an active document
+          // no tab is created (ADR-0040 §3.2) and the entry is recorded tab-less.
+          if (activeId)
+            displayedTabId = useTabsStore.getState().openTab(doc.id, {
+              title: doc.title,
+              preview: true,
+            })
+          return { path: targetPath, title: doc.title }
+        }
+      }
+      if (pathToKeep) {
+        const doc = await window.api.documents.import(pathToKeep)
+        if (doc) {
+          displayedTabId = useTabsStore
+            .getState()
+            .openTab(doc.id, { title: doc.title, preview: true })
+          if (buffer) {
+            useUIStore
+              .getState()
+              .reportUnsavedBuffer(doc.id, buffer.content, buffer.title ?? doc.title)
+            useUIStore.getState().setDirty(true)
+          }
+          return { path: pathToKeep, title: doc.title }
+        }
+        useUIStore.getState().closeDocument()
+      }
+      return null
+    })
+    useUIStore.getState().bumpDocumentState()
+    queryClient.invalidateQueries({ queryKey: DOCS_KEY })
+    if (opened && options.record !== false) {
+      const history = getHistory(tabId ?? '') ?? useNavigationHistory
+      history.getState().push(opened.path, {
+        openMode: options.openMode ?? 'in-place',
+        replayRoot:
+          options.replayRoot ?? (options.openMode === 'external-switch' ? nextRoot : undefined),
+        title: opened.title,
+        tabId: displayedTabId ?? tabId,
+      })
+    }
+    return true
+  }
 
-  // Capture the buffer BEFORE the swap clears the store's view of the current document.
-  // Re-read the store here instead of using the `ui` snapshot from line 43: both the document
-  // lookup and the unsaved guard are awaits, and every keystroke replaces `unsavedBuffers`
-  // wholesale (ui.ts reportUnsavedBuffer). A stale snapshot would silently drop edits made
-  // while those awaits were in flight when the buffer is migrated to the re-imported id.
-  const buffer =
-    keepCurrent && currentPath && activeId
-      ? useUIStore.getState().unsavedBuffers[activeId]
-      : undefined
-  // Closing the document MUST precede closing the workspace (ADR-0038 §3.2 decision 6): it
-  // deletes a memory-only draft and clears dirty/buffers before the store swap. In the keep
-  // branch the document survives — it is re-imported below — so nothing is closed here.
-  if (!keepCurrent) useUIStore.getState().closeDocument()
-  const pathToKeep = keepCurrent ? currentPath : null
-  const tabId: string | null = options.replayTabId ?? useTabsStore.getState().activeTabId
+  // Snapshot every tab's document and buffer BEFORE any await: each keystroke replaces
+  // `unsavedBuffers` wholesale, so a stale snapshot would silently drop late edits.
+  const snapshots = await Promise.all(
+    tabs.map(async (tab) => ({
+      tab,
+      doc: await window.api.documents.get(tab.documentId),
+      buffer: useUIStore.getState().unsavedBuffers[tab.documentId],
+    })),
+  )
+  const kept: KeptTab[] = []
+  const closing: typeof tabs = []
+  for (const { tab, doc, buffer } of snapshots) {
+    const path = doc?.filePath && !isMemoryOnly(doc) ? doc.filePath : null
+    const isReplayTarget = replayTabId === tab.id && !!targetPath
+    if (isReplayTarget) {
+      // The replay target is replaced by the explicit openPath below. Keep the stable tab id
+      // alive; closing it here would force a NEW tab and break Back/Forward replay.
+    } else if (path && isInFolder(path, nextRoot)) {
+      kept.push({ tabId: tab.id, documentId: tab.documentId, path, title: tab.title, buffer })
+    } else {
+      closing.push(tab)
+    }
+  }
+  const dirtyClosing = closing.filter((tab) => useUIStore.getState().isTabDirty(tab.documentId))
+  if (dirtyClosing.length > 0) {
+    if (
+      !(await showCloseAllTabsDialog(
+        dirtyClosing.map((tab) => tab.title),
+        t,
+      ))
+    )
+      return false
+  }
 
+  const activeTabId = useTabsStore.getState().activeTabId
+  for (const tab of closing) {
+    useUIStore.getState().closeTabDocument(tab.documentId, tab.isNewUnsaved)
+  }
+  useTabsStore.getState().removeTabs(closing.map((tab) => tab.id))
+
+  // ADR-0042 §2: a workspace switch is a navigation point — capture where the editor was.
+  if (options.record !== false) {
+    useNavigationHistory.getState().updateCurrentPosition(useUIStore.getState().editorSelection)
+  }
+  // ADR-0042: ONE global stack — prune once, not once per tab.
+  useNavigationHistory.getState().pruneOutOfRoot(nextRoot)
+  // The tab that will DISPLAY the pushed entry: the replay target, a fresh preview tab,
+  // or the kept active tab when no explicit target was named.
+  let displayedTabId: string | null = null
   const opened = await withoutHistoryRecording(async () => {
     await window.api.documents.setWorkspaceRoot(nextRoot)
     useUIStore.getState().setWorkspaceRoot(nextRoot)
-    // ADR-0040 §5.4: out-of-root in-place entries would make Back permanently fail
-    // (navigateToPath rejects them). Prune every tab's stack; external modes replay fine.
-    for (const tab of useTabsStore.getState().tabs) {
-      getHistory(tab.id)?.getState().pruneOutOfRoot(nextRoot)
-    }
 
-    // The swap cleared the store and the watcher starts with ignoreInitial, so files already on
-    // disk are never reported as additions. Back-fill them here: without a batch import the new
-    // root stays empty, so `documents:list` has no files and the sidebar hides every folder too
-    // (document-less branches are filtered out by default, ADR-0010). The target/kept file is
-    // imported separately below to migrate its id and unsaved buffer; importing it in both places
-    // would create two rows for one path (getDocumentByFilePath compares paths literally).
-    // resolvePaths returns node:path.join() results (backslashes on Windows) while a link or
-    // stored path may use forward slashes — fold separators before comparing so the same file is
-    // recognised as the one we are about to import below.
     const { markdownFiles } = await window.api.files.resolvePaths([nextRoot])
     const caseSensitive = pathCaseSensitive()
     const forwardSlashes = (path: string) => path.replace(/\\/g, '/')
+    const occupied = [...kept.map((tab) => tab.path), ...(targetPath ? [targetPath] : [])]
     const backfill = markdownFiles.filter((file) => {
       if (!isDirInFolder(file, nextRoot)) return false
       const normalized = forwardSlashes(file)
-      if (targetPath && arePathsSame(normalized, forwardSlashes(targetPath), caseSensitive)) {
-        return false
-      }
-      if (pathToKeep && arePathsSame(normalized, forwardSlashes(pathToKeep), caseSensitive)) {
-        return false
-      }
-      return true
+      return !occupied.some((path) => arePathsSame(normalized, forwardSlashes(path), caseSensitive))
     })
     await window.api.documents.importMany(backfill)
 
-    // The requested target first: it is the whole point of the "switch workspace" exit.
+    // Re-import kept tabs one by one so each document id is fresh in the swapped store.
+    for (const item of kept) {
+      const doc = await window.api.documents.import(item.path)
+      if (!doc) {
+        useUIStore.getState().clearUnsavedBuffer(item.documentId)
+        useTabsStore.getState().closeTab(item.tabId)
+        continue
+      }
+      const tabsStore = useTabsStore.getState()
+      tabsStore.replaceDocument(item.tabId, doc.id)
+      tabsStore.updateTab(item.tabId, { title: doc.title, external: false })
+      const buffer = useUIStore.getState().unsavedBuffers[item.documentId]
+      useUIStore.getState().clearUnsavedBuffer(item.documentId)
+      if (buffer) {
+        useUIStore
+          .getState()
+          .reportUnsavedBuffer(doc.id, buffer.content, buffer.title || item.title || doc.title)
+      }
+    }
+
     if (targetPath) {
       const doc = await window.api.documents.import(targetPath)
       if (doc) {
-        const tabs = useTabsStore.getState()
-        const activeId = tabs.activeTabId
-        if (activeId && options.replayTabId) tabs.replaceDocument(activeId, doc.id)
-        else tabs.openTab(doc.id, { title: doc.title })
+        const tabsStore = useTabsStore.getState()
+        if (replayTabId && tabsStore.tabs.some((tab) => tab.id === replayTabId)) {
+          tabsStore.replaceDocument(replayTabId, doc.id)
+          tabsStore.updateTab(replayTabId, { title: doc.title, external: false })
+          displayedTabId = replayTabId
+        } else {
+          displayedTabId = tabsStore.openTab(doc.id, { title: doc.title, preview: true })
+        }
         return { path: targetPath, title: doc.title }
       }
     }
 
-    if (pathToKeep) {
-      const doc = await window.api.documents.import(pathToKeep)
-      if (doc) {
-        const tabs = useTabsStore.getState()
-        const activeId = tabs.activeTabId
-        if (activeId && options.replayTabId) tabs.replaceDocument(activeId, doc.id)
-        else tabs.openTab(doc.id, { title: doc.title })
-        if (buffer) {
-          useUIStore
-            .getState()
-            .reportUnsavedBuffer(doc.id, buffer.content, buffer.title ?? doc.title)
-          useUIStore.getState().setDirty(true)
-        }
-        return { path: pathToKeep, title: doc.title }
-      }
-      // The swap wiped the old store entry. If re-import fails there is no document left to
-      // keep, so the stale id and its buffer must be closed here (the non-keep branch already
-      // closed before the swap).
-      useUIStore.getState().closeDocument()
-    }
-
-    // Outside the new root (or import failed): the current document was already closed above,
-    // so there is no default document to open and no dirty flag left to clear.
+    const active = useTabsStore.getState().tabs.find((tab) => tab.id === activeTabId)
+    const activeDoc = active ? await window.api.documents.get(active.documentId) : null
+    if (active && activeDoc?.filePath) return { path: activeDoc.filePath, title: active.title }
     return null
   })
 
   useUIStore.getState().bumpDocumentState()
   queryClient.invalidateQueries({ queryKey: DOCS_KEY })
-
   if (opened && options.record !== false) {
-    const history = getHistory(tabId) ?? useNavigationHistory
+    const history = getHistory(activeTabId ?? '') ?? useNavigationHistory
     history.getState().push(opened.path, {
       openMode: options.openMode ?? 'in-place',
+      replayRoot:
+        options.replayRoot ?? (options.openMode === 'external-switch' ? nextRoot : undefined),
       title: opened.title,
+      tabId: displayedTabId ?? activeTabId,
     })
   }
   return true

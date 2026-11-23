@@ -8,6 +8,8 @@ export interface Tab {
   title: string
   editable: boolean
   isNewUnsaved: boolean
+  /** Outside the window workspace root; badge shown by the tab strip. */
+  external: boolean
 }
 
 export interface OpenTabOptions {
@@ -17,6 +19,13 @@ export interface OpenTabOptions {
   title?: string
   editable?: boolean
   isNewUnsaved?: boolean
+  external?: boolean
+  /**
+   * ADR-0041: `true` asks for the window's single replaceable (unpinned) tab; `false` asks to
+   * make an existing unpinned tab permanent. Omitted means pinned — only explicit user
+   * preview actions opt into the slot.
+   */
+  preview?: boolean
 }
 
 let tabCounter = 0
@@ -58,6 +67,7 @@ export function openTabInList(
     title: options.title ?? '',
     editable: options.editable ?? false,
     isNewUnsaved: options.isNewUnsaved ?? false,
+    external: options.external ?? false,
   }
   return { tabs: [...tabs, tab], tabId: tab.id }
 }

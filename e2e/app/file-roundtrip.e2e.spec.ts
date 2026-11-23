@@ -1,5 +1,11 @@
 import { test, expect, type Page } from '@playwright/test'
-import { launchApp, waitForAppReady, closeApp, AppHandle } from '../helpers/launch'
+import {
+  launchApp,
+  waitForAppReady,
+  closeApp,
+  installConfirmSpy,
+  AppHandle,
+} from '../helpers/launch'
 import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { mkTempDir } from '../helpers/temp'
@@ -35,6 +41,9 @@ test.describe('file round-trip (open / edit / save / reopen)', () => {
   test('open, save, and export a real disk document', async () => {
     const { page } = handle
     await waitForAppReady(page)
+    // The global dialog lock (ADR-0040 §5.3) means every confirm in this long scenario must be
+    // answerable; install the Discard spy once so no native dialog is left holding the lock.
+    await installConfirmSpy(handle, { defaultResponse: 1 })
 
     await test.step('opening a disk markdown file loads it into the editor', async () => {
       // Write a real .md file to disk, then "open" it via the same import IPC

@@ -48,7 +48,7 @@ import {
 } from '../../lib/utils'
 import { splitMemoryOnlyDocs, memoryOnlyLeaf } from '../../lib/sidebarDrafts'
 import { useT } from '../../i18n'
-import { useUIStore, selectFileLocked } from '../../store/ui'
+import { useUIStore, selectFileLocked, confirmWithLock } from '../../store/ui'
 import { useTabsStore } from '../../store/tabs'
 import {
   useDocuments,
@@ -517,7 +517,9 @@ export function Sidebar(): React.ReactElement | null {
   // which left five other switch paths completely unprotected; keeping the boolean return is what
   // lets the "Rename" menu item abort when the user keeps their edits.
   const handleSelectDoc = useCallback(
-    async (doc: Document): Promise<boolean> => selectDocument(doc.id),
+    // ADR-0041: a normal row click is a preview; double click / middle click / Enter and the
+    // context-menu "Open" command are explicit pinned opens.
+    async (doc: Document, preview = true): Promise<boolean> => selectDocument(doc.id, { preview }),
     [selectDocument],
   )
 
@@ -527,7 +529,7 @@ export function Sidebar(): React.ReactElement | null {
   const handleDeleteDoc = useCallback(
     async (doc: Document) => {
       const isDraft = !doc.filePath
-      const ok = await window.api.dialog.confirm({
+      const ok = await confirmWithLock({
         message: t(isDraft ? 'app.discardDraftConfirm' : 'app.deleteConfirm'),
         okText: t(isDraft ? 'app.confirmDiscard' : 'app.deleteConfirmOk'),
         cancelText: t('app.cancel'),
@@ -556,7 +558,7 @@ export function Sidebar(): React.ReactElement | null {
   // toolbar X button and the current-folder bar's context menu
   const confirmCloseWorkspace = useCallback(async () => {
     if (useUIStore.getState().dirty) {
-      const ok = await window.api.dialog.confirm({
+      const ok = await confirmWithLock({
         message: t('app.unsavedCloseWorkspace'),
         okText: t('app.confirmDiscard'),
         cancelText: t('app.confirmKeep'),
@@ -790,7 +792,7 @@ export function Sidebar(): React.ReactElement | null {
           // on disk if the switch was then refused (ADR-0023).
           const ui = useUIStore.getState()
           if (ui.dirty) {
-            const discard = await window.api.dialog.confirm({
+            const discard = await confirmWithLock({
               message: t('app.unsavedSwitch', { title: ui.activeDocumentTitle ?? '' }),
               okText: t('app.confirmDiscard'),
               cancelText: t('app.confirmKeep'),
@@ -838,7 +840,7 @@ export function Sidebar(): React.ReactElement | null {
   // confirmation says so and a rejected move never falls back to a permanent delete
   const handleDeleteFolder = useCallback(
     async (folderPath: string) => {
-      const ok = await window.api.dialog.confirm({
+      const ok = await confirmWithLock({
         message: t('app.deleteFolderConfirm', { name: baseName(folderPath) }),
         okText: t('app.deleteConfirmOk'),
         cancelText: t('app.cancel'),
@@ -1645,7 +1647,7 @@ function EmptyState({
 interface DocItemProps {
   doc: Document
   isActive: boolean
-  onSelect: () => void
+  onSelect: (preview?: boolean) => void
   onDelete: () => void
   onDetails: () => void
   renaming?: boolean
@@ -1877,7 +1879,22 @@ function DocItem({
               : 'hover:bg-[var(--color-surface-overlay)] text-[var(--color-text-secondary)]',
           )}
           style={{ paddingLeft: depth * 12 + 12 }}
-          onClick={onSelect}
+          onClick={(e) => {
+            if (e.detail === 1) onSelect(true)
+          }}
+          onDoubleClick={() => onSelect(false)}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault()
+              onSelect(false)
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && e.target === e.currentTarget) {
+              e.preventDefault()
+              onSelect(false)
+            }
+          }}
         >
           <FileText
             size={13}
@@ -1943,7 +1960,7 @@ function DocItem({
                 Item={DropdownMenuItem}
                 Separator={DropdownMenuSeparator}
                 doc={doc}
-                onOpen={onSelect}
+                onOpen={() => onSelect(false)}
                 onOpenInNewWindow={openInNewWindow}
                 onStartFileRename={onStartFileRename}
                 onCopyPath={copyPath}
@@ -1963,7 +1980,7 @@ function DocItem({
           Item={ContextMenuItem}
           Separator={ContextMenuSeparator}
           doc={doc}
-          onOpen={onSelect}
+          onOpen={() => onSelect(false)}
           onOpenInNewWindow={openInNewWindow}
           onStartFileRename={onStartFileRename}
           onCopyPath={copyPath}
@@ -1982,7 +1999,7 @@ interface TreeRowProps {
   node: FileTreeNode
   depth: number
   activeId: string | null
-  onSelectDoc: (doc: Document) => void
+  onSelectDoc: (doc: Document, preview?: boolean) => void
   onDeleteDoc: (doc: Document) => void
   onDetailsDoc: (doc: Document) => void
   onEnterFolder?: (folder: string) => void
@@ -2530,7 +2547,7 @@ function TreeRow({
       onCancelRename={onCancelFileEdit}
       renameHint={fileNameHint}
       nameExists={nameExists}
-      onSelect={() => onSelectDoc(doc)}
+      onSelect={(preview) => onSelectDoc(doc, preview)}
       onDelete={() => void onDeleteDoc(doc)}
       onDetails={() => onDetailsDoc(doc)}
     />

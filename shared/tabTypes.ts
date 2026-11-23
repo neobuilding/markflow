@@ -9,6 +9,11 @@ export interface TabHistoryEntry {
   path: string
   title?: string
   openMode?: TabOpenMode
+  /** ADR-0042: workspace root to restore when replaying a cross-switch entry. */
+  replayRoot?: string
+  /** ADR-0042: tab that displayed the entry and the editor range at that point. */
+  tabId?: string
+  position?: { start: number; end: number }
 }
 
 /**

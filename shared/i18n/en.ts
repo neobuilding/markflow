@@ -325,10 +325,15 @@ export const en = {
   // ── Document tabs (ADR-0040) ────────────────────────────────────────────
   'tab.list': 'Open documents',
   'tab.untitled': 'Untitled',
+  // ADR-0041: the unpinned tab is shown in italics; these suffixes are for tooltip/ARIA only.
+  'tab.previewTooltip': ' (unpinned)',
+  'tab.previewAria': ', unpinned',
+  'tab.pin': 'Pin',
   'tab.close': 'Close',
   'tab.closeOthers': 'Close other tabs',
   'tab.closeRight': 'Close tabs to the right',
   'tab.moveToWindow': 'Move to another window…',
+  'tab.pickWindow': 'Choose the destination window.',
   'tab.detach': 'Detach into new window',
   'tab.unsaved': 'You have unsaved changes in "{{title}}". Discard them and close this tab?',
   // ADR-0038 §3.1.3: web links and local non-Markdown files need an explicit Open / Copy / Cancel.

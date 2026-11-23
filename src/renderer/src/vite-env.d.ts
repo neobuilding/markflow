@@ -170,7 +170,7 @@ export interface Api {
     setFileLocked: (locked: boolean) => void
   }
   tabs: {
-    beginDrag: (handoff: TabHandoff) => Promise<{ token: string }>
+    beginDrag: (handoff: TabHandoff, preferredToken?: string) => Promise<{ token: string }>
     drop: (token: string, index: number) => Promise<TabDragResult>
     detach: (token: string) => Promise<TabDragResult>
     cancelDrag: (token: string) => Promise<void>

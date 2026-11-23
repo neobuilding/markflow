@@ -51,21 +51,26 @@ function deliverHandoff(
   target.win.webContents.send('app:tab-accept', { token, handoff })
 }
 
-export function registerTabsHandlers(
-  ipcMain: IpcMain,
-  io: DiskIO = nodeDiskIO,
-  _registry: TabDragSessionRegistry = dragSessions,
-): void {
-  scopedHandleFor(ipcMain, 'tabs:begin-drag', (event, handoff: TabHandoff) => {
-    const ctx = exactContextFor(event?.sender)
-    const filePath = handoff.filePath
-    // A file-backed tab must still exist; a memory-only draft has an empty path.
-    if (filePath && (!isMarkdownFile(filePath) || !io.exists(filePath))) {
-      return { token: `invalid-${Date.now()}` }
-    }
-    const token = dragSessions.begin(handoff, ctx?.id ?? -1)
-    return { token }
-  })
+export function registerTabsHandlers(ipcMain: IpcMain, io: DiskIO = nodeDiskIO): void {
+  scopedHandleFor(
+    ipcMain,
+    'tabs:begin-drag',
+    (event, handoff: TabHandoff, preferredToken?: string) => {
+      const ctx = exactContextFor(event?.sender)
+      // A missing/unregistered sender must NOT be recorded as a fake source window: the
+      // session cannot resolve a safe source later, so refuse to create it at all.
+      if (!ctx) return { token: '' }
+      const filePath = handoff.filePath
+      // A file-backed tab must still exist; a memory-only draft has an empty path.
+      // An empty token is the single rejection signal, so renderers never invent a
+      // pseudo-token protocol for `invalid-*` strings.
+      if (filePath && (!isMarkdownFile(filePath) || !io.exists(filePath))) {
+        return { token: '' }
+      }
+      const token = dragSessions.begin(handoff, ctx.id, preferredToken)
+      return { token }
+    },
+  )
 
   scopedHandleFor(ipcMain, 'tabs:drop', (event, payload: { token: string; index: number }) => {
     const target = exactContextFor(event?.sender)
@@ -100,17 +105,20 @@ export function registerTabsHandlers(
     if (!pending) return null
     const handoff = dragSessions.takeHandoff(pending.token)
     ctx.pendingTabHandoff = undefined
-    // A pending handoff is always accompanied by a consumed session; the null branch
-    // is a defensive contract check with no reachable test path.
-    /* v8 ignore next */
+    // The null branch is defensive only: createWindow() always stores the handoff with a
+    // consumed session, and the unit suite cannot construct a live BrowserWindow with an
+    // inconsistent pending entry. It is also exercised by the real detach e2e path.
+    /* v8 ignore next -- see reason above; unreachable by unit tests, retained for IPC safety, validated by tab-drag-detach.e2e.spec.ts */
     return handoff ? { token: pending.token, handoff } : null
   })
 
   scopedHandleFor(ipcMain, 'tabs:accept-ack', (_event, payload: { token: string }) => {
     if (!dragSessions.acknowledge(payload.token)) return
     const session = dragSessions.get(payload.token)
-    // acknowledge() already proved the session exists.
-    /* v8 ignore next */
+    // acknowledge() already proved the session exists; this defensive guard cannot be driven
+    // by unit tests without corrupting the registry between the two calls. The ACK IPC is
+    // exercised by the cross-window e2e spec.
+    /* v8 ignore next -- see reason above; unreachable by unit tests, retained for IPC safety, validated by tab-drag-cross-window.e2e.spec.ts */
     const source = session ? exactContextFor({ id: session.sourceWindowId }) : undefined
     if (source && !source.win.isDestroyed()) {
       source.win.webContents.send('app:tab-remove', { tabId: session?.handoff.tabId })

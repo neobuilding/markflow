@@ -13,6 +13,9 @@ export async function buildTabHandoff(tabId: string): Promise<TabHandoff | null>
   if (!doc) return null
   const buffer = useUIStore.getState().unsavedBuffers[tab.documentId]
   const history = getHistory(tabId)?.getState()
+  // ADR-0042: the destination window starts its own global stack; transfer only the current
+  // entry of the moved tab, not the source window's entire history.
+  const entry = history?.entryAt(history.cursor)
   return {
     tabId,
     documentId: tab.documentId,
@@ -22,8 +25,8 @@ export async function buildTabHandoff(tabId: string): Promise<TabHandoff | null>
     external: !doc.filePath ? false : await isExternal(doc.filePath),
     isNewUnsaved: tab.isNewUnsaved,
     eol: doc.content.includes('\r\n') ? '\r\n' : '\n',
-    history: history?.entries ?? [],
-    cursor: history?.cursor ?? -1,
+    history: entry ? [entry] : [],
+    cursor: entry ? 0 : -1,
   }
 }
 

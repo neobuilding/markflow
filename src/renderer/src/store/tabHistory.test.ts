@@ -13,19 +13,19 @@ import {
 import { useNavigationHistory } from './navigationHistory'
 import { useTabsStore } from './tabs'
 
-describe('tabHistory — per-tab navigation stacks (ADR-0040)', () => {
+describe('tabHistory — one global navigation stack (ADR-0042)', () => {
   beforeEach(() => {
     __resetTabHistoriesForTests()
     useNavigationHistory.getState().reset()
     useTabsStore.getState().reset()
   })
 
-  it('creates one isolated history per tab id', () => {
+  it('resolves every tab id to the same global store', () => {
     const a = createHistory('a')
     const b = createHistory('b')
+    expect(b).toBe(a)
     a.getState().push('/a.md')
-    expect(a.getState().entries).toEqual([{ path: '/a.md', title: undefined, openMode: undefined }])
-    expect(b.getState().entries).toEqual([])
+    expect(useNavigationHistory.getState().entries[0]?.path).toBe('/a.md')
     expect(createHistory('a')).toBe(a)
   })
 
@@ -36,31 +36,36 @@ describe('tabHistory — per-tab navigation stacks (ADR-0040)', () => {
     expect(h.getState().entryAt(1)?.path).toBe('/b.md')
   })
 
-  it('disposes a tab history and reports the active tab stack', () => {
+  it('reports the global stack and treats disposeHistory as a no-op', () => {
     const h = createHistory('a')
-    useTabsStore.getState().reset()
-    expect(currentHistory()).toBeUndefined()
     useTabsStore.getState().openTab('doc-a', { tabId: 'a' })
     expect(currentHistory()).toBe(h)
     disposeHistory('a')
-    expect(getHistory('a')).toBeUndefined()
+    expect(getHistory('a')).toBe(h)
+    expect(useNavigationHistory.getState().entries).toEqual([])
   })
 
-  it('pushTabHistory targets a specific tab and ignores missing ids/paths', () => {
+  it('pushTabHistory records the tab id and ignores missing ids/paths', () => {
     pushTabHistory('a', '/a.md', { openMode: 'external-keep' })
-    expect(createHistory('a').getState().entries[0].openMode).toBe('external-keep')
+    expect(useNavigationHistory.getState().entries[0]).toMatchObject({
+      path: '/a.md',
+      openMode: 'external-keep',
+      tabId: 'a',
+    })
+    const before = useNavigationHistory.getState().entries.length
     pushTabHistory(null, '/x.md')
     pushTabHistory('b', null)
-    expect(getHistory('b')).toBeUndefined()
+    expect(useNavigationHistory.getState().entries).toHaveLength(before)
   })
 
-  it('useActiveTabHistory re-renders on tab switch and falls back to the default store', () => {
+  it('useActiveTabHistory reads the global store regardless of tab switch', () => {
     useNavigationHistory.getState().push('/legacy.md')
     const { result, rerender } = renderHook(() => useActiveTabHistory((s) => s.entries))
     expect(result.current[0].path).toBe('/legacy.md')
     useTabsStore.getState().openTab('doc-a', { tabId: 'a' })
-    createHistory('a').getState().push('/a.md')
+    useNavigationHistory.getState().push('/a.md')
     rerender()
-    expect(result.current[0].path).toBe('/a.md')
+    expect(result.current).toHaveLength(2)
+    expect(result.current[1].path).toBe('/a.md')
   })
 })

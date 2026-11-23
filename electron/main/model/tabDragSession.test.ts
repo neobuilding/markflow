@@ -80,7 +80,16 @@ describe('TabDragSessionRegistry (ADR-0040)', () => {
     expect(registry.get(token)?.acknowledged).toBe(false)
   })
 
-  it('expires only ACTIVE sessions after 5s, keeping consumed ones for duplicate detection', () => {
+  it('refuses a duplicate renderer-supplied token without overwriting the session', () => {
+    const registry = new TabDragSessionRegistry()
+    const first = registry.begin(handoff('first'), 1, 'fixed-token')
+    const second = registry.begin(handoff('second'), 2, 'fixed-token')
+    expect(first).toBe('fixed-token')
+    expect(second).toBe('')
+    expect(registry.get('fixed-token')?.handoff.tabId).toBe('first')
+  })
+
+  it('expires active and unacknowledged consumed sessions once the 5s TTL elapses', () => {
     let now = 0
     const registry = new TabDragSessionRegistry(() => now)
     const stale = registry.begin(handoff('stale'), 1)
@@ -88,10 +97,11 @@ describe('TabDragSessionRegistry (ADR-0040)', () => {
     expect(registry.pruneExpired()).toBe(0)
     const consumed = registry.begin(handoff('consumed'), 1)
     registry.consumeDetach(consumed)
-    now = 6_000
-    expect(registry.pruneExpired()).toBe(1)
+    expect(registry.pruneExpired()).toBe(0) // still inside the duplicate-detection window
+    now = 10_000
+    expect(registry.pruneExpired()).toBe(2)
     expect(registry.consumeDrop(stale, 2).result).toBe('no-session')
-    expect(registry.consumeDrop(consumed, 2).result).toBe('expired')
+    expect(registry.consumeDrop(consumed, 2).result).toBe('no-session')
   })
 
   it('returns no-session for a token that was never issued', () => {

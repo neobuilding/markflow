@@ -71,12 +71,16 @@ beforeEach(() => {
 })
 
 describe('tabs IPC (ADR-0040)', () => {
-  it('begin-drag reuses a session token and resolves source by exact sender', async () => {
+  it('begin-drag resolves the source by exact sender and refuses unknown senders', async () => {
     const { ctx } = fakeWin(11)
-    const first = await bus.get('tabs:begin-drag')({ sender: { id: ctx.id } }, handoff())
-    const second = await bus.get('tabs:begin-drag')({ sender: { id: 999 } }, handoff())
-    expect(first).toHaveProperty('token')
-    expect(second).toHaveProperty('token')
+    const first = (await bus.get('tabs:begin-drag')({ sender: { id: ctx.id } }, handoff())) as {
+      token: string
+    }
+    expect(first.token).toBeTruthy()
+    const unknown = (await bus.get('tabs:begin-drag')({ sender: { id: 999 } }, handoff())) as {
+      token: string
+    }
+    expect(unknown.token).toBe('')
   })
 
   it('begin-drag refuses a file-backed handoff whose file is missing or not Markdown', async () => {
@@ -85,12 +89,12 @@ describe('tabs IPC (ADR-0040)', () => {
       { sender: { id: ctx.id } },
       handoff({ filePath: 'C:/notes/gone.md' }),
     )) as { token: string }
-    expect(missing.token).toMatch(/^invalid-/)
+    expect(missing.token).toBe('')
     const wrongExt = (await bus.get('tabs:begin-drag')(
       { sender: { id: ctx.id } },
       handoff({ filePath: 'C:/notes/a.png' }),
     )) as { token: string }
-    expect(wrongExt.token).toMatch(/^invalid-/)
+    expect(wrongExt.token).toBe('')
   })
 
   it('same-window drop returns same-window without consuming the token', async () => {

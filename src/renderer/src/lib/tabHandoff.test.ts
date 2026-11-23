@@ -55,6 +55,25 @@ describe('buildTabHandoff (ADR-0040)', () => {
     })
   })
 
+  it("ADR-0042: carries only the moved tab's current entry from a multi-entry stack", async () => {
+    setupApi()
+    useTabsStore.getState().openTab('doc-a', { tabId: 'a', title: 'a.md' })
+    seedHistory(
+      'a',
+      [
+        { path: '/root/old.md', tabId: 'a' },
+        { path: '/root/a.md', tabId: 'a', position: { start: 2, end: 2 } },
+        { path: '/root/forward.md', tabId: 'a' },
+      ],
+      1,
+    )
+    const handoff = await buildTabHandoff('a')
+    expect(handoff?.history).toEqual([
+      { path: '/root/a.md', tabId: 'a', position: { start: 2, end: 2 } },
+    ])
+    expect(handoff?.cursor).toBe(0)
+  })
+
   it('marks a file outside the root external and handles a null root', async () => {
     setupApi({ root: '/other' })
     useTabsStore.getState().openTab('doc-a', { tabId: 'a', title: 'a.md' })

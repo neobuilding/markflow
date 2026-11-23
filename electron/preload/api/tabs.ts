@@ -6,8 +6,8 @@ import { onIpc } from './_shared'
 // Every channel is `tabs:*`; main resolves the owning window from event.sender's ALS scope.
 
 export const tabsApi = {
-  beginDrag: (handoff: TabHandoff): Promise<{ token: string }> =>
-    ipcRenderer.invoke('tabs:begin-drag', handoff),
+  beginDrag: (handoff: TabHandoff, preferredToken?: string): Promise<{ token: string }> =>
+    ipcRenderer.invoke('tabs:begin-drag', handoff, preferredToken),
   drop: (token: string, index: number): Promise<TabDragResult> =>
     ipcRenderer.invoke('tabs:drop', { token, index }),
   detach: (token: string): Promise<TabDragResult> => ipcRenderer.invoke('tabs:detach', { token }),

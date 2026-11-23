@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { cn, baseName, dirName, displayTitle, stripMarkdownExt } from '../../lib/utils'
 import { switchWorkspace } from '../../lib/workspaceSwitch'
-import { useUIStore, selectFileLocked } from '../../store/ui'
+import { useUIStore, selectFileLocked, confirmWithLock } from '../../store/ui'
 import { useTabsStore } from '../../store/tabs'
 import {
   useDocument,
@@ -256,7 +256,7 @@ export function EditorPane(): React.ReactElement {
     // refuses to acknowledge as open.
     const currentRoot = useUIStore.getState().workspaceRoot
     if (currentRoot && !isDirInFolder(newFilePath, currentRoot)) {
-      const ok = await window.api.dialog.confirm({
+      const ok = await confirmWithLock({
         message: t('app.saveAsReroot'),
         okText: t('app.confirmContinue'),
         cancelText: t('app.cancel'),
@@ -383,7 +383,7 @@ export function EditorPane(): React.ReactElement {
       ? useUIStore.getState().isTabDirty(activeTab.documentId)
       : useUIStore.getState().dirty
     if (dirty) {
-      const ok = await window.api.dialog.confirm({
+      const ok = await confirmWithLock({
         message: t('app.unsavedClose'),
         okText: t('app.confirmDiscard'),
         cancelText: t('app.confirmKeep'),

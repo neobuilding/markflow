@@ -33,8 +33,8 @@ describe('preload/api/tabs (ADR-0040)', () => {
   })
 
   it('invokes every channel with the documented payload', async () => {
-    await tabsApi.beginDrag(handoff)
-    expect(invoke).toHaveBeenCalledWith('tabs:begin-drag', handoff)
+    await tabsApi.beginDrag(handoff, 'sync-token')
+    expect(invoke).toHaveBeenCalledWith('tabs:begin-drag', handoff, 'sync-token')
     await tabsApi.drop('tok', 2)
     expect(invoke).toHaveBeenCalledWith('tabs:drop', { token: 'tok', index: 2 })
     await tabsApi.detach('tok')

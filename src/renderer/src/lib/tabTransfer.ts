@@ -1,7 +1,7 @@
 import type { TabHandoff } from '../../../../shared/tabTypes'
 import { useTabsStore } from '../store/tabs'
 import { useUIStore } from '../store/ui'
-import { seedHistory } from '../store/tabHistory'
+import { disposeHistory, seedHistory } from '../store/tabHistory'
 
 // ADR-0040 §5.5.2: seed a destination tab from a complete handoff. The destination
 // re-imports the file to get its own document id, but keeps the stable tab id and
@@ -28,7 +28,10 @@ export async function acceptTabHandoff(handoff: TabHandoff): Promise<void> {
     title: handoff.title,
     editable: false,
     isNewUnsaved: handoff.isNewUnsaved,
+    external: handoff.external,
     activate: true,
+    // ADR-0041: a transferred tab is explicit and must never remain replaceable in the target.
+    preview: false,
   })
   seedHistory(tabId, handoff.history, handoff.cursor)
   if (handoff.content !== null) {
@@ -42,6 +45,8 @@ export async function acceptTabHandoff(handoff: TabHandoff): Promise<void> {
 export function removeTransferredTab(tabId: string): void {
   const store = useTabsStore.getState()
   const tab = store.tabs.find((item) => item.id === tabId)
-  if (tab) useUIStore.getState().closeTabDocument(tab.documentId)
+  if (tab) useUIStore.getState().closeTabDocument(tab.documentId, tab.isNewUnsaved)
   store.closeTab(tabId)
+  // ADR-0040 §5.5.2: the destination has ACKed, so the source copy's history is safe to release.
+  disposeHistory(tabId)
 }

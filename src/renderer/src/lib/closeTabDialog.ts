@@ -1,4 +1,4 @@
-import { withDialogLock } from '../store/ui'
+import { confirmWithLock } from '../store/ui'
 import type { t } from '../i18n'
 
 /** The app's typed translator (narrow key union), imported from the i18n module. */
@@ -19,29 +19,15 @@ export function closeTabsDialogOptions(titles: string[], t: TFunction) {
 }
 
 /** Ask for a single-tab close. Returns true only when the user chose Discard. */
-export async function showCloseTabDialog(title: string, t: TFunction): Promise<boolean> {
-  return withDialogLock(async () => {
-    try {
-      return (
-        (await window.api.dialog.confirm({
-          message: t('tab.unsaved', { title }),
-          okText: t('app.confirmDiscard'),
-          cancelText: t('app.confirmKeep'),
-        })) === true
-      )
-    } catch {
-      return false
-    }
+export function showCloseTabDialog(title: string, t: TFunction): Promise<boolean> {
+  return confirmWithLock({
+    message: t('tab.unsaved', { title }),
+    okText: t('app.confirmDiscard'),
+    cancelText: t('app.confirmKeep'),
   })
 }
 
 /** Ask for the aggregate window-close prompt (Cancel vetoes the whole close). */
-export async function showCloseAllTabsDialog(titles: string[], t: TFunction): Promise<boolean> {
-  return withDialogLock(async () => {
-    try {
-      return (await window.api.dialog.confirm(closeTabsDialogOptions(titles, t))) === true
-    } catch {
-      return false
-    }
-  })
+export function showCloseAllTabsDialog(titles: string[], t: TFunction): Promise<boolean> {
+  return confirmWithLock(closeTabsDialogOptions(titles, t))
 }

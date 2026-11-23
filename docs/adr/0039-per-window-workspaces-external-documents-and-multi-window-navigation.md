@@ -137,10 +137,13 @@ swap cancels only that window's pending broadcasts.
 
 ### 3.5 Structured navigation history with a right-click menu
 
-- History entries are `{ path, title?, openMode? }`; `openMode` is replayed on Back/Forward so an
-  externally-opened document reopens in the same mode without re-prompting. Replaying an
-  `external-switch` entry moves the workspace to the file's folder; replaying an `external-keep`
-  entry opens the file in place as an external document.
+- History entries are `{ path, title?, openMode?, replayRoot? }` (ADR-0042 adds `tabId`/`position`).
+  `openMode` is replayed on Back/Forward so an externally-opened document reopens in the same mode
+  without re-prompting. Replaying an `external-switch` entry moves the workspace to `replayRoot`,
+  the exact root recorded when the switch happened; entries from before that field existed fall
+  back to the file's folder. Replaying an `external-keep` entry opens the file in place as an
+  external document. An external switch marks its source entry `external-switch` before the root
+  swap, so the source survives `pruneOutOfRoot` and Back returns to the link's origin.
 - Back/Forward buttons expose a right-click list of the recent N entries (nearest first). Choosing
   one positions the cursor via `moveToHistoryIndex`, which never appends a new entry.
 

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react'
-import { useUIStore, selectFileLocked } from './store/ui'
+import { useUIStore, selectFileLocked, confirmWithLock } from './store/ui'
 import { useOpenPaths, createDraft, useHasMemoryOnlyDraft } from './hooks/useDocuments'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { EditorPane } from './components/editor/EditorPane'
@@ -22,9 +22,11 @@ import { matchFormatShortcut } from './lib/format-shortcuts'
 import { t, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
 import { acceptTabHandoff, removeTransferredTab } from './lib/tabTransfer'
+import { detachTabToNewWindow, listOtherWindows, moveTabToWindow } from './lib/tabTransferActions'
 import { useTabsStore } from './store/tabs'
-import { buildTabHandoff } from './lib/tabHandoff'
 import { showCloseAllTabsDialog } from './lib/closeTabDialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog'
+import type { TabWindowInfo } from '../../../shared/tabTypes'
 
 export default function App(): React.ReactElement {
   // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
@@ -37,6 +39,10 @@ export default function App(): React.ReactElement {
   const draftExists = useHasMemoryOnlyDraft()
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
+  const [movePicker, setMovePicker] = React.useState<{
+    tabId: string
+    windows: TabWindowInfo[]
+  } | null>(null)
 
   // Single Markdown files opened from outside the workspace (drop / file association / menu) go
   // through the shared four-way choice; everything else keeps the normal useOpenPaths funnel.
@@ -56,6 +62,7 @@ export default function App(): React.ReactElement {
   //             allowQuit lets THAT window close; it does not quit the app or other windows.
   //   - false — the "Close Workspace" MENU action, which closes the workspace in THIS
   //             window only and leaves the window (and every other window) open.
+  const tryCloseRef = useRef<(quit: boolean) => boolean>(() => false)
   const tryCloseWorkspace = useCallback(
     (quit: boolean): boolean => {
       const st = useUIStore.getState()
@@ -64,6 +71,17 @@ export default function App(): React.ReactElement {
       // refusal, otherwise the renderer would be force-closed with dirty tabs.
       if (selectFileLocked(st)) {
         if (quit) window.api.app.notifyQuitPending()
+        return false
+      }
+      if (st.dialogOpen) {
+        // Do not stack a second native dialog. Disarm main's safety net, then retry once
+        // when the first dialog releases the lock (ADR-0040 §5.3).
+        if (quit) window.api.app.notifyQuitPending()
+        const unsubscribe = useUIStore.subscribe((next) => {
+          if (next.dialogOpen) return
+          unsubscribe()
+          tryCloseRef.current(quit)
+        })
         return false
       }
       // A dirty BACKGROUND tab must veto the whole close too — never trust the
@@ -91,6 +109,10 @@ export default function App(): React.ReactElement {
     },
     [closeWorkspace],
   )
+
+  useEffect(() => {
+    tryCloseRef.current = tryCloseWorkspace
+  }, [tryCloseWorkspace])
 
   useEffect(() => {
     // `window.matchMedia` is not guaranteed to exist outside a browser engine (jsdom does not
@@ -292,7 +314,7 @@ export default function App(): React.ReactElement {
         return
       }
       if (st.isTabDirty(activeTab.documentId)) {
-        const ok = await window.api.dialog.confirm({
+        const ok = await confirmWithLock({
           message: t('app.unsavedClose'),
           okText: t('app.confirmDiscard'),
           cancelText: t('app.confirmKeep'),
@@ -327,7 +349,7 @@ export default function App(): React.ReactElement {
     const removeRevealFile = window.api.onRevealFile
       ? window.api.onRevealFile((filePath) => {
           if (blocked()) return
-          void navigateToPath(filePath)
+          void navigateToPath(filePath, { preview: true })
         })
       : () => {}
     return () => {
@@ -483,22 +505,13 @@ export default function App(): React.ReactElement {
     const unsubs = [
       window.api.onMenuEvent('detach-tab-to-window', () => {
         const tabId = useTabsStore.getState().activeTabId
-        if (!tabId) return
-        void buildTabHandoff(tabId).then(async (handoff) => {
-          if (!handoff) return
-          const { token } = await window.api.tabs.beginDrag(handoff)
-          await window.api.tabs.detach(token)
-        })
+        if (tabId) void detachTabToNewWindow(tabId)
       }),
       window.api.onMenuEvent('move-tab-to-window', () => {
         const tabId = useTabsStore.getState().activeTabId
         if (!tabId) return
-        void buildTabHandoff(tabId).then(async (handoff) => {
-          if (!handoff) return
-          const windows = await window.api.tabs.listWindows()
-          if (windows.length === 0) return
-          const { token } = await window.api.tabs.beginDrag(handoff)
-          await window.api.tabs.moveToWindow(token, windows[0].id)
+        void listOtherWindows().then((windows) => {
+          if (windows.length > 0) setMovePicker({ tabId, windows })
         })
       }),
     ]
@@ -625,6 +638,29 @@ export default function App(): React.ReactElement {
         <FileDetailsDialog />
         <AboutDialog />
         <ExportDialog />
+        <Dialog open={movePicker !== null} onOpenChange={(open) => !open && setMovePicker(null)}>
+          <DialogContent data-testid="app-tab-window-picker">
+            <DialogHeader>
+              <DialogTitle>{t('tab.moveToWindow')}</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-[var(--color-text-secondary)]">{t('tab.pickWindow')}</p>
+            {movePicker?.windows.map((window) => (
+              <button
+                key={window.id}
+                type="button"
+                data-testid={`app-tab-window-${window.id}`}
+                className="mt-1 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-surface-overlay)] focus-ring"
+                onClick={() => {
+                  const current = movePicker
+                  setMovePicker(null)
+                  void moveTabToWindow(current.tabId, window.id)
+                }}
+              >
+                {window.title}
+              </button>
+            ))}
+          </DialogContent>
+        </Dialog>
         {/* R5 plan A: NO standalone print preview window and NO overlay. The main window's own
             preview pane is what the user looks at while printing, so it must stay scrollable and
             hit-testable. The "no editing / no switching or closing files" rule is a fine-grained

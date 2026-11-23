@@ -72,7 +72,7 @@ export function CommandPalette(): React.ReactElement | null {
   // Goes through the guarded entry point: picking a file here is a document switch like any other,
   // and unsaved edits must not be dropped by a palette click (ADR-0023).
   const handleSelect = (id: string) => {
-    void selectDocument(id).then((switched) => {
+    void selectDocument(id, { preview: false }).then((switched) => {
       if (switched) setSearchOpen(false)
     })
   }

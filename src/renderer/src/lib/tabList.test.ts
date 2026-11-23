@@ -20,6 +20,7 @@ const tab = (id: string, documentId = `doc-${id}`): Tab => ({
   title: id,
   editable: false,
   isNewUnsaved: false,
+  external: false,
 })
 
 describe('tabList pure operations (ADR-0040)', () => {
@@ -49,6 +50,7 @@ describe('tabList pure operations (ADR-0040)', () => {
       title: '',
       editable: false,
       isNewUnsaved: false,
+      external: false,
     })
     const supplied = openTabInList([], 'doc-b', {
       tabId: 'fixed',
@@ -62,6 +64,7 @@ describe('tabList pure operations (ADR-0040)', () => {
       title: 'B.md',
       editable: true,
       isNewUnsaved: true,
+      external: false,
     })
   })
 

@@ -1,73 +1,64 @@
 import {
-  createNavigationHistory,
   useNavigationHistory,
   type NavigationEntry,
   type NavigationHistoryState,
   type NavigationHistoryStore,
   type OpenMode,
 } from './navigationHistory'
-import { useTabsStore } from './tabs'
 
-// ADR-0040 T6': one navigation history per tab. The map is module-level (in-memory only,
-// never persisted) and keyed by the stable tab id, so detach/cross-window move can carry
-// the same stack to the destination via an explicit history payload.
+// ADR-0042: one global navigation stack per window. The tabId-keyed API is retained so existing
+// call sites keep their signatures, but every call resolves to the same store and records the tab
+// id in the entry. `createNavigationHistory()` remains available for isolated unit tests only.
 
-const histories = new Map<string, NavigationHistoryStore>()
-
-export function createHistory(tabId: string): NavigationHistoryStore {
-  let history = histories.get(tabId)
-  if (!history) {
-    history = createNavigationHistory()
-    histories.set(tabId, history)
-  }
-  return history
+export function createHistory(_tabId: string): NavigationHistoryStore {
+  return useNavigationHistory
 }
 
 export function getHistory(tabId: string | null): NavigationHistoryStore | undefined {
-  return tabId ? histories.get(tabId) : undefined
+  return tabId ? useNavigationHistory : undefined
 }
 
-/** Seed a destination tab's history from a handoff. Cursor is clamped by the store. */
+/** Seed the global stack from a handoff or a test. Cursor is clamped by the store. */
 export function seedHistory(
-  tabId: string,
+  _tabId: string,
   entries: NavigationEntry[],
   cursor: number,
 ): NavigationHistoryStore {
-  const history = createHistory(tabId)
-  history.setState({ entries, cursor })
-  return history
+  useNavigationHistory.setState({ entries, cursor })
+  return useNavigationHistory
 }
 
-export function disposeHistory(tabId: string): void {
-  histories.delete(tabId)
+/** ADR-0042: no per-tab stack to release; ordinary tab close never prunes global entries. */
+export function disposeHistory(_tabId: string): void {
+  // Intentionally empty: paths are durable and a replay of a stale entry opens a new tab.
 }
 
-/** History of the active tab; callers that need it across awaits capture the tabId first. */
-export function currentHistory(): NavigationHistoryStore | undefined {
-  return getHistory(useTabsStore.getState().activeTabId)
+/** The global history store (the tabId argument is kept for call-site compatibility). */
+export function currentHistory(): NavigationHistoryStore {
+  return useNavigationHistory
 }
 
-/** Push to a specific tab (used by navigation services that know the target tab). */
+/** Push to the global stack, recording which tab displayed the document. */
 export function pushTabHistory(
   tabId: string | null,
   path: string | null | undefined,
-  meta?: { title?: string; openMode?: OpenMode },
+  meta?: {
+    title?: string
+    openMode?: OpenMode
+    replayRoot?: string
+    position?: { start: number; end: number }
+  },
 ): void {
   if (!tabId || !path) return
-  createHistory(tabId).getState().push(path, meta)
+  useNavigationHistory.getState().push(path, { ...meta, tabId })
 }
 
-/**
- * Reactive selector over the active tab's history. `activeTabId` is subscribed so a
- * tab switch re-renders; when no tab is open (tests/startup) the default store is used.
- */
+/** Reactive selector over the global history stack. */
 export function useActiveTabHistory<T>(selector: (state: NavigationHistoryState) => T): T {
-  const activeTabId = useTabsStore((s) => s.activeTabId)
-  const store = (activeTabId ? histories.get(activeTabId) : undefined) ?? useNavigationHistory
-  return store(selector)
+  return useNavigationHistory(selector)
 }
 
-/** Test-only: drop all per-tab histories between suites. */
+/** Test-only: reset the global stack between suites. */
 export function __resetTabHistoriesForTests(): void {
-  histories.clear()
+  useNavigationHistory.getState().reset()
 }

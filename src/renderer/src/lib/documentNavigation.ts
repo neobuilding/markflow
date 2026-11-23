@@ -7,6 +7,7 @@ import { useTabsStore } from '../store/tabs'
 import {
   useNavigationHistory,
   withoutHistoryRecording,
+  type EditorPosition,
   type NavigationEntry,
   type NavigationHistoryStore,
   type OpenMode,
@@ -17,13 +18,22 @@ import { switchWorkspace } from './workspaceSwitch'
 // One service owns "navigate to a document by path" inside the CURRENT workspace. Workspace
 // switching is owned by switchWorkspace (double-click / ↑ / breadcrumb / external-link switch),
 // and workspace-external links are dispatched by MarkdownPreview's four-way dialog. This function
-// never replaces the workspace root. ADR-0040: each tab has its own history; when no tab is open
-// (unit tests / startup) we fall back to the default store so legacy call sites still work.
+// never replaces the workspace root. ADR-0042: one global history stack per window; each entry
+// records the tab that displayed the document and the editor range, so Back returns to a position.
 
 export interface NavigateOptions {
   /** Back/Forward already owns the cursor and must not append a new entry. */
   record?: boolean
   openMode?: OpenMode
+  /**
+   * ADR-0041: open the target in the window's replaceable preview slot. A rendered Markdown preview
+   * link does NOT pin the source: an unpinned source tab is reused, a pinned source is left alone.
+   */
+  preview?: boolean
+  /** ADR-0042: tab recorded in the pushed entry; replay activates it when it still exists. */
+  tabId?: string
+  /** ADR-0042: editor range stored on the entry / restored when replaying. */
+  position?: EditorPosition
 }
 
 function activeHistory(): NavigationHistoryStore {
@@ -47,7 +57,7 @@ export async function navigateToPath(
   if (root && !isInFolder(filePath, root) && !external) return false
 
   // ADR-0040: no closeDocument() — navigating opens/activates a tab and keeps every
-  // other tab's draft intact. A navigation event is recorded in the target tab's own stack.
+  // other tab's draft intact. ADR-0042: the navigation is recorded in the ONE global stack.
   const listed = await window.api.documents.list()
   const doc =
     listed.find((d) => sameFilePath(d.filePath, filePath)) ??
@@ -56,9 +66,11 @@ export async function navigateToPath(
   const activeDoc = doc
 
   const tabId = useTabsStore.getState().activeTabId
+  const history = getHistory(tabId) ?? useNavigationHistory
+  if (options.record !== false) history.getState().updateCurrentPosition(ui.editorSelection)
   // Capture the document we are navigating FROM before the target tab is activated:
   // when the source was opened via the legacy setter (no tab), its path must still seed
-  // the target tab's first history entry so Back can return to it (ADR-0040 §5.2).
+  // the first global entry so Back can return to it.
   const fromId = ui.activeDocumentId
   const fromDoc = fromId && fromId !== activeDoc.id ? await window.api.documents.get(fromId) : null
   if (options.record === false) {
@@ -70,16 +82,59 @@ export async function navigateToPath(
   async function activate(): Promise<void> {
     const tabs = useTabsStore.getState()
     const existingTab = tabs.tabs.find((tab) => tab.documentId === activeDoc.id)
-    const targetTabId =
-      existingTab?.id ?? tabs.openTab(activeDoc.id, { title: activeDoc.title, activate: false })
-    const history = getHistory(targetTabId) ?? useNavigationHistory
-    // A brand-new tab's first entry is the document it replaced, when known.
-    if (!existingTab && fromDoc?.filePath && history.getState().entries.length === 0) {
-      history.getState().push(fromDoc.filePath)
+    // ADR-0041/0042: a preview open from the current preview tab reuses that tab id, so the
+    // global stack and its cursor survive. A pinned source gets a new preview tab instead.
+    // A history replay similarly reuses the tab recorded in the entry, even when that tab now
+    // displays a different document — Back must return to the source in the same tab.
+    const recordedTab = options.tabId
+      ? tabs.tabs.find((item) => item.id === options.tabId)
+      : undefined
+    // Entries created before the workspace's first file was recorded have no tabId. When the
+    // active tab is the preview slot, replay must reuse it instead of silently adding a tab.
+    const previewTab =
+      options.record === false && !!tabId && tabs.previewTabId === tabId
+        ? tabs.tabs.find((item) => item.id === tabId)
+        : undefined
+    const replayTab = recordedTab ?? previewTab
+    const previewReuse = options.preview === true && !!tabId && tabs.previewTabId === tabId
+    const replayReuse = options.record === false && !!replayTab
+    let targetTabId: string
+    if (existingTab) {
+      targetTabId = existingTab.id
+    } else if (replayReuse && replayTab) {
+      tabs.replaceDocument(replayTab.id, activeDoc.id)
+      tabs.updateTab(replayTab.id, { title: activeDoc.title ?? '' })
+      targetTabId = replayTab.id
+    } else if (previewReuse && tabId) {
+      tabs.replaceDocument(tabId, activeDoc.id)
+      tabs.updateTab(tabId, { title: activeDoc.title ?? '' })
+      targetTabId = tabId
+    } else {
+      targetTabId = tabs.openTab(activeDoc.id, {
+        title: activeDoc.title,
+        activate: false,
+        preview: options.preview,
+      })
+    }
+    const history = getHistory(tabId) ?? useNavigationHistory
+    if (
+      !existingTab &&
+      !previewReuse &&
+      !replayReuse &&
+      fromDoc?.filePath &&
+      history.getState().entries.length === 0
+    ) {
+      history.getState().push(fromDoc.filePath, { tabId: tabId ?? undefined })
     }
     tabs.activateTab(targetTabId)
     if (options.record !== false) {
-      history.getState().push(filePath, { openMode: options.openMode ?? 'in-place' })
+      history.getState().push(filePath, {
+        openMode: options.openMode ?? 'in-place',
+        tabId: targetTabId,
+        position: options.position,
+      })
+    } else if (options.position) {
+      useUIStore.getState().setPendingMatch({ id: activeDoc.id, ...options.position })
     }
     useUIStore.getState().setDirty(false)
     useUIStore.getState().bumpDocumentState()
@@ -98,15 +153,22 @@ export async function navigateToPath(
  */
 export async function replayEntry(entry: NavigationEntry): Promise<boolean> {
   if (entry.openMode === 'external-switch') {
-    return switchWorkspace(dirName(entry.path), {
+    // ADR-0042 §3: restore the exact root recorded on the entry; older entries fall back to
+    // the file's parent directory, which was the pre-replayRoot convention.
+    return switchWorkspace(entry.replayRoot ?? dirName(entry.path), {
       openMode: 'external-switch',
       openPath: entry.path,
       title: entry.title,
       record: false,
-      replayTabId: useTabsStore.getState().activeTabId,
+      replayTabId: entry.tabId ?? useTabsStore.getState().activeTabId,
     })
   }
-  return navigateToPath(entry.path, { record: false, openMode: entry.openMode })
+  return navigateToPath(entry.path, {
+    record: false,
+    openMode: entry.openMode,
+    tabId: entry.tabId,
+    position: entry.position,
+  })
 }
 
 /** Move Back (-1) or Forward (1), skipping and pruning entries whose files no longer exist. */

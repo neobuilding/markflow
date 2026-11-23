@@ -3,6 +3,9 @@ import { VIEW_MODE_ORDER, type ViewMode, type ThemeMode } from '../types'
 import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/storage'
 import { t } from '../i18n/translate'
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
+import { isMemoryOnly } from '../lib/sidebarDrafts'
+import { getHistory, pushTabHistory } from './tabHistory'
+import { useNavigationHistory } from './navigationHistory'
 import { useTabsStore } from './tabs'
 
 // Cross-component bridge for file actions requested from a different component than the
@@ -48,19 +51,29 @@ export async function withDialogLock<T>(action: () => Promise<T>): Promise<T> {
   }
 }
 
-async function confirmDiscard(message: string): Promise<boolean> {
+type ConfirmOptions = Parameters<typeof window.api.dialog.confirm>[0]
+
+/**
+ * Every renderer native confirm goes through this helper. Keep the `try/finally` so a dismissed
+ * or failed dialog always releases the lock; otherwise a subsequent window-close request would
+ * be refused forever and the main process would still be holding the window open.
+ */
+export function confirmWithLock(options: ConfirmOptions): Promise<boolean> {
   return withDialogLock(async () => {
     try {
-      const ok = await window.api.dialog.confirm({
-        message,
-        okText: t('app.confirmDiscard'),
-        cancelText: t('app.confirmKeep'),
-      })
-      return ok === true
+      return (await window.api.dialog.confirm(options)) === true
     } catch {
       // No dialog available (unit test / preload missing): never discard silently.
       return false
     }
+  })
+}
+
+function confirmDiscard(message: string): Promise<boolean> {
+  return confirmWithLock({
+    message,
+    okText: t('app.confirmDiscard'),
+    cancelText: t('app.confirmKeep'),
   })
 }
 
@@ -137,9 +150,18 @@ interface UIState {
    * document; MarkFlow has no such buffer, so the guard has to live here — one place, covering
    * every entry point, rather than a wrapper each call site may forget.
    */
-  selectDocument: (id: string) => Promise<boolean>
+  /**
+   * @param options.preview ADR-0041: open in the window's replaceable preview slot. A rendered
+   * Markdown preview link opens preview without pinning the source tab.
+   */
+  selectDocument: (id: string, options?: { preview?: boolean }) => Promise<boolean>
   /** Switch and jump to a hit. Only writes `pendingMatch` once the guard has passed. */
-  openDocumentAt: (id: string, start: number, end: number) => Promise<boolean>
+  openDocumentAt: (
+    id: string,
+    start: number,
+    end: number,
+    options?: { preview?: boolean },
+  ) => Promise<boolean>
 
   // The workspace root — a local mirror of the main process's authoritative value. There is no
   // separate "active folder": the sidebar always shows this root. Written only after the IPC that
@@ -221,6 +243,11 @@ interface UIState {
   // then clears it.
   pendingMatch: { id: string; start: number; end: number } | null
   setPendingMatch: (m: { id: string; start: number; end: number } | null) => void
+
+  // ADR-0042: live editor selection, mirrored from CodeMirror on every cursor change so a new
+  // navigation can capture where the user was. Cursor moves alone never create history entries.
+  editorSelection: { start: number; end: number } | null
+  setEditorSelection: (range: { start: number; end: number } | null) => void
 
   // ─── Unsaved buffer registry (ADR-0023) ─────────────────────────────────────────────────
   //
@@ -372,25 +399,94 @@ export const useUIStore = create<UIState>((set, get) => ({
     return true
   },
 
-  selectDocument: async (id) => {
+  selectDocument: async (id, options) => {
     // ADR-0040 T4: switching tabs keeps drafts. There is no unsaved guard here — drafts are
     // discarded only on an explicit close. The file lock still protects print/save/export.
     if (selectFileLocked(get())) return false
     const tabs = useTabsStore.getState()
+    // ADR-0042: capture where the user was before this navigation; a cursor move alone never
+    // creates an entry, it only refreshes the current one's position.
+    ;(getHistory(tabs.activeTabId) ?? useNavigationHistory)
+      .getState()
+      .updateCurrentPosition(get().editorSelection)
+
+    // Fetch the document up front: an already-open target still needs a global history entry,
+    // whose path must come from the store (a memory-only draft has no path and records nothing).
+    const doc = await window.api?.documents?.get?.(id)
     const existing = tabs.tabs.find((tab) => tab.documentId === id)
-    if (existing) tabs.activateTab(existing.id)
-    else tabs.openTab(id)
+    const record = (tabId: string) => {
+      if (doc?.filePath && !isMemoryOnly(doc)) {
+        pushTabHistory(tabId, doc.filePath, { title: doc.title })
+      }
+    }
+    if (existing) {
+      // ADR-0041: an explicit pinned open (double click / Enter / command palette) makes a
+      // current preview permanent. ADR-0042: activating an open target is still a navigation.
+      if (options?.preview === false) tabs.pinTab(existing.id)
+      tabs.activateTab(existing.id)
+      record(existing.id)
+      return true
+    }
+
+    const current = useTabsStore.getState()
+    const raced = current.tabs.find((tab) => tab.documentId === id)
+    if (raced) {
+      if (options?.preview === false) current.pinTab(raced.id)
+      current.activateTab(raced.id)
+      record(raced.id)
+      return true
+    }
+    // A preview open from the current preview tab reuses that tab id; the global stack survives.
+    const reuse =
+      options?.preview === true &&
+      !!current.activeTabId &&
+      current.previewTabId === current.activeTabId
+    let tabId: string
+    if (reuse && current.activeTabId) {
+      current.replaceDocument(current.activeTabId, id)
+      current.updateTab(current.activeTabId, { title: doc?.title ?? '' })
+      tabId = current.activeTabId
+    } else {
+      tabId = current.openTab(id, { title: doc?.title ?? '', preview: options?.preview })
+    }
+    record(tabId)
     return true
   },
 
-  openDocumentAt: async (id, start, end) => {
+  openDocumentAt: async (id, start, end, options) => {
     // A search hit jumps to an already-open tab (or opens a new one); it never discards a draft.
     if (selectFileLocked(get())) return false
-    const tabs = useTabsStore.getState()
-    const existing = tabs.tabs.find((tab) => tab.documentId === id)
-    if (existing) tabs.activateTab(existing.id)
-    else tabs.openTab(id)
+    // Publish the jump target synchronously: the editor consumes it as soon as content loads,
+    // without waiting for the async document lookup used for the history entry.
     set({ pendingMatch: { id, start, end } })
+    const tabs = useTabsStore.getState()
+    ;(getHistory(tabs.activeTabId) ?? useNavigationHistory)
+      .getState()
+      .updateCurrentPosition(get().editorSelection)
+    const existing = tabs.tabs.find((tab) => tab.documentId === id)
+    let tabId: string
+    if (existing) {
+      if (options?.preview === false) tabs.pinTab(existing.id)
+      tabs.activateTab(existing.id)
+      tabId = existing.id
+    } else {
+      const reuse =
+        options?.preview === true && !!tabs.activeTabId && tabs.previewTabId === tabs.activeTabId
+      if (reuse && tabs.activeTabId) {
+        tabs.replaceDocument(tabs.activeTabId, id)
+        tabs.updateTab(tabs.activeTabId, { title: '' })
+        tabId = tabs.activeTabId
+      } else {
+        tabId = tabs.openTab(id, { preview: options?.preview })
+      }
+    }
+    // ADR-0042: the hit's range is part of the navigation entry, so Back returns to it too.
+    // The lookup is fire-and-forget so the jump and tab activation stay synchronous.
+    void window.api?.documents?.get?.(id)?.then((doc) => {
+      if (doc?.filePath && !isMemoryOnly(doc)) {
+        pushTabHistory(tabId, doc.filePath, { title: doc.title, position: { start, end } })
+      }
+    })
     return true
   },
 
@@ -471,6 +567,10 @@ export const useUIStore = create<UIState>((set, get) => ({
     // ADR-0040: closing the workspace discards every tab's draft, not just the active one.
     for (const bufferId of Object.keys(get().unsavedBuffers)) get().clearUnsavedBuffer(bufferId)
     useTabsStore.getState().reset()
+    // ADR-0042: the global stack belongs to the workspace session. Closing it must clear every
+    // entry (including external-mode ones that pruneOutOfRoot deliberately keeps on a switch),
+    // otherwise Back/Forward revives documents from a workspace that no longer exists.
+    useNavigationHistory.getState().reset()
     clearWorkspaceRoot()
     set((s) => ({
       activeDocumentId: null,
@@ -526,9 +626,15 @@ export const useUIStore = create<UIState>((set, get) => ({
   pendingMatch: null,
   setPendingMatch: (m) => set({ pendingMatch: m }),
 
+  editorSelection: null,
+  setEditorSelection: (range) => set({ editorSelection: range }),
+
   unsavedBuffers: {},
   documentStateRevision: 0,
-  reportUnsavedBuffer: (id, content, title) =>
+  reportUnsavedBuffer: (id, content, title) => {
+    // ADR-0041: the first dirty transition makes a preview permanent. Pinning by DOCUMENT id
+    // covers both the active editor and background reports made while the user switches tabs.
+    useTabsStore.getState().pinTabByDocumentId(id)
     set((s) => {
       const previous = s.unsavedBuffers[id]
       const revision = (previous?.revision ?? 0) + 1
@@ -539,7 +645,8 @@ export const useUIStore = create<UIState>((set, get) => ({
         },
         documentStateRevision: s.documentStateRevision + 1,
       }
-    }),
+    })
+  },
   clearUnsavedBuffer: (id) =>
     set((s) => {
       if (!id || !(id in s.unsavedBuffers)) return {}
@@ -573,7 +680,15 @@ export const useUIStore = create<UIState>((set, get) => ({
   setAboutOpen: (open) => set({ aboutOpen: open }),
 
   dirty: false,
-  setDirty: (dirty) => set({ dirty }),
+  setDirty: (dirty) => {
+    // ADR-0041: any dirty transition — including paths that only flip the flag — pins the active
+    // preview. `reportUnsavedBuffer` additionally covers background documents by document id.
+    if (dirty) {
+      const id = get().activeDocumentId
+      if (id) useTabsStore.getState().pinTabByDocumentId(id)
+    }
+    set({ dirty })
+  },
 
   saving: false,
   setSaving: (saving) => set({ saving }),

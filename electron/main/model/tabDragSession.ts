@@ -32,9 +32,14 @@ export class TabDragSessionRegistry {
     private readonly makeToken: () => string = () => `drag-${Math.random().toString(36).slice(2)}`,
   ) {}
 
-  begin(handoff: TabHandoff, sourceWindowId: number): string {
+  /**
+   * Begin a session. The renderer supplies the token synchronously from `dragstart` so it can
+   * put it in DataTransfer before the browser ends that event; main still mints one for callers
+   * that do not supply it (menu paths). A duplicate token is refused, never overwritten.
+   */
+  begin(handoff: TabHandoff, sourceWindowId: number, token = this.makeToken()): string {
     this.pruneExpired()
-    const token = this.makeToken()
+    if (this.sessions.has(token)) return ''
     this.sessions.set(token, {
       token,
       handoff,
@@ -103,11 +108,15 @@ export class TabDragSessionRegistry {
     return session.handoff
   }
 
-  /** Expire ACTIVE sessions older than the TTL; keep consumed ones for duplicate detection. */
+  /**
+   * Expire sessions older than the TTL. A consumed-but-unacknowledged session must not live
+   * forever: ADR-0040 §5.5.2 gives the destination 5s to seed and ACK, after which main abandons
+   * it and the source keeps its tab. Within the TTL it is retained for duplicate detection.
+   */
   pruneExpired(now = this.now()): number {
     let removed = 0
     for (const [token, session] of this.sessions) {
-      if (session.state === 'active' && now - session.createdAt >= SESSION_TTL_MS) {
+      if (now - session.createdAt >= SESSION_TTL_MS) {
         this.sessions.delete(token)
         removed += 1
       }

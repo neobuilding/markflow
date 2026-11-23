@@ -14,6 +14,10 @@ export interface TabProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'on
   external?: boolean
   closable?: boolean
   closeLabel?: string
+  /** ADR-0041: unpinned/preview state. Text stays unchanged; only the style and helpers differ. */
+  preview?: boolean
+  previewTooltip?: string
+  previewAriaSuffix?: string
   onClose?: () => void
   /** Forwarded to the tab strip's keyboard handler (arrow keys). */
   onActivate?: () => void
@@ -30,6 +34,9 @@ export const Tab = React.forwardRef<HTMLDivElement, TabProps>(
       external = false,
       closable = true,
       closeLabel = 'Close tab',
+      preview = false,
+      previewTooltip,
+      previewAriaSuffix,
       onClose,
       onActivate,
       className,
@@ -47,6 +54,8 @@ export const Tab = React.forwardRef<HTMLDivElement, TabProps>(
       draggable
       data-active={active || undefined}
       data-dirty={dirty || undefined}
+      data-preview={preview || undefined}
+      aria-label={preview ? `${label}${previewAriaSuffix ?? ''}` : undefined}
       className={cn(
         'group relative flex h-full min-w-0 max-w-[200px] items-center gap-1.5 px-2.5 text-sm select-none',
         'border-r border-[var(--color-border)] outline-none transition-colors cursor-pointer',
@@ -75,7 +84,10 @@ export const Tab = React.forwardRef<HTMLDivElement, TabProps>(
           className="size-1.5 shrink-0 rounded-full bg-[var(--color-accent)] text-accent"
         />
       ) : null}
-      <span className="min-w-0 flex-1 truncate" title={label}>
+      <span
+        className={cn('min-w-0 flex-1 truncate', preview && 'italic')}
+        title={preview && previewTooltip ? `${label}${previewTooltip}` : label}
+      >
         {label}
         {external ? <span className="ml-1 text-[10px] opacity-60">↗</span> : null}
       </span>

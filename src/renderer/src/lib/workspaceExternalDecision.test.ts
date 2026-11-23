@@ -3,6 +3,9 @@ import { decideExternalFile, maybeDecideExternalPaths } from './workspaceExterna
 import { navigateToPath } from './documentNavigation'
 import { switchWorkspace } from './workspaceSwitch'
 import { useUIStore } from '../store/ui'
+import { useNavigationHistory } from '../store/navigationHistory'
+import { useTabsStore } from '../store/tabs'
+import { seedHistory } from '../store/tabHistory'
 import type { WorkspaceExternalChoice } from '../../../../shared/linkTypes'
 
 vi.mock('./documentNavigation', () => ({
@@ -47,7 +50,10 @@ describe('workspaceExternalDecision', () => {
   it('keeps the workspace for the keep-workspace choice', async () => {
     api.dialog.confirmWorkspaceExternal.mockResolvedValue('keep-workspace')
     await expect(decideExternalFile('D:/other/a.md')).resolves.toBe('keep-workspace')
-    expect(navigateToPath).toHaveBeenCalledWith('D:/other/a.md', { openMode: 'external-keep' })
+    expect(navigateToPath).toHaveBeenCalledWith('D:/other/a.md', {
+      openMode: 'external-keep',
+      preview: true,
+    })
     expect(api.app.openInNewWindow).not.toHaveBeenCalled()
   })
 
@@ -60,6 +66,34 @@ describe('workspaceExternalDecision', () => {
       openMode: 'external-switch',
       openPath: 'D:/other/a.md',
       title: 'a.md',
+    })
+  })
+
+  it('switches workspace without a stored root mirror by asking main for it', async () => {
+    useUIStore.setState({ workspaceRoot: null })
+    api.documents.getWorkspaceRoot.mockResolvedValueOnce(null)
+    api.dialog.confirmWorkspaceExternal.mockResolvedValue('switch-workspace')
+    await expect(decideExternalFile('D:/other/a.md')).resolves.toBe('switch-workspace')
+    expect(api.documents.getWorkspaceRoot).toHaveBeenCalled()
+    expect(switchWorkspace).toHaveBeenCalledWith('D:/other', {
+      openMode: 'external-switch',
+      openPath: 'D:/other/a.md',
+      title: 'a.md',
+    })
+  })
+
+  it('ADR-0042: marks the source entry replayable before an external-switch', async () => {
+    useNavigationHistory.getState().reset()
+    seedHistory('tab-a', [{ path: 'C:/notes/sub/source.md', tabId: 'tab-a' }], 0)
+    useTabsStore.getState().openTab('source', { tabId: 'tab-a' })
+    api.dialog.confirmWorkspaceExternal.mockResolvedValue('switch-workspace')
+    await decideExternalFile('D:/other/a.md')
+    const entry = useNavigationHistory.getState().entryAt(0)
+    expect(entry).toMatchObject({
+      path: 'C:/notes/sub/source.md',
+      openMode: 'external-switch',
+      replayRoot: 'C:/notes',
+      tabId: 'tab-a',
     })
   })
 

@@ -350,8 +350,8 @@ export function MarkdownPreview({ content, doc }: MarkdownPreviewProps): React.R
       await followPreviewLink(target, {
         listDocuments: () => window.api.documents.list(),
         importDocument: async (path) => window.api.documents.import(path),
-        selectDocument: (id) => useUIStore.getState().selectDocument(id),
-        navigateToDocument: (path) => navigateToPath(path),
+        selectDocument: (id) => useUIStore.getState().selectDocument(id, { preview: true }),
+        navigateToDocument: (path) => navigateToPath(path, { preview: true }),
         openExternal: (url) => void window.api.app.openExternal(url),
         openLocalFile: (path) => void window.api.app.openPath(path),
         copyTarget: (text) => void window.api.clipboard.writeText(text),
