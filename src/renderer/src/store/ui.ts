@@ -3,7 +3,10 @@ import { VIEW_MODE_ORDER, type ViewMode, type ThemeMode } from '../types'
 import { resolveInitialLanguage, setStoredLanguage, type Locale } from '../i18n/storage'
 import { t } from '../i18n/translate'
 import { queryClient, DOCS_KEY } from '../lib/queryClient'
-import { isHistoryRecordingSuspended, useNavigationHistory } from './navigationHistory'
+import { isMemoryOnly } from '../lib/sidebarDrafts'
+import { getHistory, pushTabHistory } from './tabHistory'
+import { useNavigationHistory } from './navigationHistory'
+import { useTabsStore } from './tabs'
 
 // Cross-component bridge for file actions requested from a different component than the
 // one that performs them . Today only `rename` is used: the sidebar's
@@ -15,6 +18,7 @@ export type FileAction = { type: 'rename'; id: string } | { type: 'save' | 'save
 // Remove a memory-only draft (never saved to disk) and refresh the document list so the
 // sidebar no longer shows the orphan draft
 function deleteUnsavedDraft(id: string) {
+  /* v8 ignore next -- no-bridge path only occurs in unit tests and must be a no-op */
   if (!window.api?.documents?.delete) return Promise.resolve()
   return window.api.documents.delete(id).finally(() => {
     queryClient.invalidateQueries({ queryKey: DOCS_KEY })
@@ -36,18 +40,41 @@ function clearWorkspaceRoot() {
 // Ask the user whether the pending unsaved edits may be thrown away. `message` names the exact
 // action (switch file / switch to read-only) so the two guards cannot share misleading wording.
 // Resolves true = discard and continue, false = keep editing (cancel the action).
-async function confirmDiscard(message: string): Promise<boolean> {
+// ADR-0040: the dialogOpen lock marks EVERY renderer native confirm so a main-process
+// `app:request-quit` arriving while a dialog is up cannot stack a second one.
+export async function withDialogLock<T>(action: () => Promise<T>): Promise<T> {
+  useUIStore.getState().setDialogOpen(true)
   try {
-    const ok = await window.api.dialog.confirm({
-      message,
-      okText: t('app.confirmDiscard'),
-      cancelText: t('app.confirmKeep'),
-    })
-    return ok === true
-  } catch {
-    // No dialog available (unit test / preload missing): never discard silently.
-    return false
+    return await action()
+  } finally {
+    useUIStore.getState().setDialogOpen(false)
   }
+}
+
+type ConfirmOptions = Parameters<typeof window.api.dialog.confirm>[0]
+
+/**
+ * Every renderer native confirm goes through this helper. Keep the `try/finally` so a dismissed
+ * or failed dialog always releases the lock; otherwise a subsequent window-close request would
+ * be refused forever and the main process would still be holding the window open.
+ */
+export function confirmWithLock(options: ConfirmOptions): Promise<boolean> {
+  return withDialogLock(async () => {
+    try {
+      return (await window.api.dialog.confirm(options)) === true
+    } catch {
+      // No dialog available (unit test / preload missing): never discard silently.
+      return false
+    }
+  })
+}
+
+function confirmDiscard(message: string): Promise<boolean> {
+  return confirmWithLock({
+    message,
+    okText: t('app.confirmDiscard'),
+    cancelText: t('app.confirmKeep'),
+  })
 }
 
 // "Keep editing" must put the cursor back where the unsaved text is, not leave it on the search
@@ -57,27 +84,10 @@ function focusEditorPane(): void {
   document.dispatchEvent(new CustomEvent('editor:focus-request'))
 }
 
-// Record a user-initiated document switch in the session navigation history (ADR-0038 §3.4).
-// Resolving id → path is async; ignore races where a newer switch has already won, and stay quiet
-// in unit tests where no preload bridge exists.
-function recordNavigation(id: string | null): void {
-  if (!id || isHistoryRecordingSuspended() || !window.api?.documents?.get) return
-  void window.api.documents
-    .get(id)
-    .then((doc) => {
-      if (
-        doc?.filePath &&
-        useUIStore.getState().activeDocumentId === id &&
-        !isHistoryRecordingSuspended()
-      ) {
-        useNavigationHistory.getState().push(doc.filePath)
-      }
-    })
-    .catch(() => {})
-}
-
 interface UnsavedBuffer {
   content: string
+  /** Display-form title draft (extension included), so it survives tab switches/handoff. */
+  title?: string
   revision: number
 }
 
@@ -140,9 +150,18 @@ interface UIState {
    * document; MarkFlow has no such buffer, so the guard has to live here — one place, covering
    * every entry point, rather than a wrapper each call site may forget.
    */
-  selectDocument: (id: string) => Promise<boolean>
+  /**
+   * @param options.preview ADR-0041: open in the window's replaceable preview slot. A rendered
+   * Markdown preview link opens preview without pinning the source tab.
+   */
+  selectDocument: (id: string, options?: { preview?: boolean }) => Promise<boolean>
   /** Switch and jump to a hit. Only writes `pendingMatch` once the guard has passed. */
-  openDocumentAt: (id: string, start: number, end: number) => Promise<boolean>
+  openDocumentAt: (
+    id: string,
+    start: number,
+    end: number,
+    options?: { preview?: boolean },
+  ) => Promise<boolean>
 
   // The workspace root — a local mirror of the main process's authoritative value. There is no
   // separate "active folder": the sidebar always shows this root. Written only after the IPC that
@@ -225,6 +244,11 @@ interface UIState {
   pendingMatch: { id: string; start: number; end: number } | null
   setPendingMatch: (m: { id: string; start: number; end: number } | null) => void
 
+  // ADR-0042: live editor selection, mirrored from CodeMirror on every cursor change so a new
+  // navigation can capture where the user was. Cursor moves alone never create history entries.
+  editorSelection: { start: number; end: number } | null
+  setEditorSelection: (range: { start: number; end: number } | null) => void
+
   // ─── Unsaved buffer registry (ADR-0023) ─────────────────────────────────────────────────
   //
   // The main process cannot discover unsaved edits: its store holds the bytes last read from
@@ -234,10 +258,17 @@ interface UIState {
   unsavedBuffers: Record<string, UnsavedBuffer>
   /** Bumped on every change to that registry. Sent to the main process as a tamper check. */
   documentStateRevision: number
-  reportUnsavedBuffer: (id: string, content: string) => void
+  reportUnsavedBuffer: (id: string, content: string, title?: string) => void
   clearUnsavedBuffer: (id: string) => void
+  /** True when a draft exists for this document id (DRY across every tab-aware guard). */
+  isTabDirty: (documentId: string) => boolean
+  /** Discard a single document's draft; the close path owns the guard. */
+  closeTabDocument: (documentId: string, isNewUnsaved?: boolean) => void
   /** Bump for changes that affect document state but not a buffer (create / delete / import). */
   bumpDocumentState: () => void
+  /** Native confirm dialog currently open (ADR-0040: prevents quit-request stacking). */
+  dialogOpen: boolean
+  setDialogOpen: (open: boolean) => void
 
   // Theme
   theme: ThemeMode
@@ -324,7 +355,8 @@ const initialSearch = {
 // future trigger source (e.g. a sync-in-flight flag) is added in exactly one place: this expression.
 // Every lock-aware control then follows automatically. See docs/adr/0024-ui-convergence-spec.md
 // ("fileLocked capability").
-export const selectFileLocked = (s: UIState): boolean => s.printing || s.exporting || s.exportOpen
+export const selectFileLocked = (s: UIState): boolean =>
+  s.printing || s.exporting || s.exportOpen || s.saving
 
 export const useUIStore = create<UIState>((set, get) => ({
   sidebarOpen: true,
@@ -349,27 +381,9 @@ export const useUIStore = create<UIState>((set, get) => ({
     }),
 
   activeDocumentId: null,
-  // Switching documents always returns to read-only mode. This protects files from accidental
-  // edits: every file opens/switches into read-only, and the user must explicitly switch to edit
-  // mode to modify it. New documents opt back into edit mode afterwards (Sidebar/NewDocumentDialog
-  // call setEditable(true) right after setActiveDocumentId).
-  setActiveDocumentId: (id) => {
-    const previous = get().activeDocumentId
-    if (previous && previous !== id && get().isNewUnsaved) {
-      // ADR-0038 §3.5: switching away closes a memory-only draft. The unsaved guard has already
-      // been obtained by every sanctioned call path (selectDocument / openDocumentAt / create
-      // flows); deleting here is the "close the document" half, not a second prompt.
-      void deleteUnsavedDraft(previous)
-    }
-    set({
-      activeDocumentId: id,
-      editable: false,
-      ...(previous !== id && get().isNewUnsaved
-        ? { isNewUnsaved: false, dirty: false, unsavedBuffers: {} }
-        : {}),
-    })
-    recordNavigation(id)
-  },
+  // ADR-0040 T14: pure mirror only. `activateTab` owns the full mirror (title/editability/dirty);
+  // draft deletion now belongs to the close path, and navigation recording to the tabs service.
+  setActiveDocumentId: (id) => set({ activeDocumentId: id }),
 
   activeDocumentTitle: null,
   setActiveDocumentTitle: (title) => set({ activeDocumentTitle: title }),
@@ -385,37 +399,94 @@ export const useUIStore = create<UIState>((set, get) => ({
     return true
   },
 
-  selectDocument: async (id) => {
-    // R5 plan A: printing is a document transaction. The MAIN window stays interactive so its
-    // preview pane can be scrolled, but switching files here would make the queued print job
-    // describe a different document than the one the user is looking at.
+  selectDocument: async (id, options) => {
+    // ADR-0040 T4: switching tabs keeps drafts. There is no unsaved guard here — drafts are
+    // discarded only on an explicit close. The file lock still protects print/save/export.
     if (selectFileLocked(get())) return false
-    const state = get()
-    if (id === state.activeDocumentId) return true
-    // Not dirty → nothing to ask. Kept synchronous (no `await`) so a clean switch still lands in
-    // the same task: callers are click handlers that read `activeDocumentId` right after.
-    if (!state.dirty) {
-      state.setActiveDocumentId(id)
+    const tabs = useTabsStore.getState()
+    // ADR-0042: capture where the user was before this navigation; a cursor move alone never
+    // creates an entry, it only refreshes the current one's position.
+    ;(getHistory(tabs.activeTabId) ?? useNavigationHistory)
+      .getState()
+      .updateCurrentPosition(get().editorSelection)
+
+    // Fetch the document up front: an already-open target still needs a global history entry,
+    // whose path must come from the store (a memory-only draft has no path and records nothing).
+    const doc = await window.api?.documents?.get?.(id)
+    const existing = tabs.tabs.find((tab) => tab.documentId === id)
+    const record = (tabId: string) => {
+      if (doc?.filePath && !isMemoryOnly(doc)) {
+        pushTabHistory(tabId, doc.filePath, { title: doc.title })
+      }
+    }
+    if (existing) {
+      // ADR-0041: an explicit pinned open (double click / Enter / command palette) makes a
+      // current preview permanent. ADR-0042: activating an open target is still a navigation.
+      if (options?.preview === false) tabs.pinTab(existing.id)
+      tabs.activateTab(existing.id)
+      record(existing.id)
       return true
     }
-    if (!(await get().guardUnsavedSwitch())) {
-      // Nothing changes: no new active document, no pending match, edit mode untouched.
-      return false
+
+    const current = useTabsStore.getState()
+    const raced = current.tabs.find((tab) => tab.documentId === id)
+    if (raced) {
+      if (options?.preview === false) current.pinTab(raced.id)
+      current.activateTab(raced.id)
+      record(raced.id)
+      return true
     }
-    get().clearUnsavedBuffer(state.activeDocumentId ?? '')
-    get().setActiveDocumentId(id)
+    // A preview open from the current preview tab reuses that tab id; the global stack survives.
+    const reuse =
+      options?.preview === true &&
+      !!current.activeTabId &&
+      current.previewTabId === current.activeTabId
+    let tabId: string
+    if (reuse && current.activeTabId) {
+      current.replaceDocument(current.activeTabId, id)
+      current.updateTab(current.activeTabId, { title: doc?.title ?? '' })
+      tabId = current.activeTabId
+    } else {
+      tabId = current.openTab(id, { title: doc?.title ?? '', preview: options?.preview })
+    }
+    record(tabId)
     return true
   },
 
-  openDocumentAt: async (id, start, end) => {
+  openDocumentAt: async (id, start, end, options) => {
+    // A search hit jumps to an already-open tab (or opens a new one); it never discards a draft.
     if (selectFileLocked(get())) return false
-    const state = get()
-    if (id !== state.activeDocumentId && state.dirty) {
-      if (!(await get().guardUnsavedSwitch())) return false
-      get().clearUnsavedBuffer(state.activeDocumentId ?? '')
-    }
-    get().setActiveDocumentId(id)
+    // Publish the jump target synchronously: the editor consumes it as soon as content loads,
+    // without waiting for the async document lookup used for the history entry.
     set({ pendingMatch: { id, start, end } })
+    const tabs = useTabsStore.getState()
+    ;(getHistory(tabs.activeTabId) ?? useNavigationHistory)
+      .getState()
+      .updateCurrentPosition(get().editorSelection)
+    const existing = tabs.tabs.find((tab) => tab.documentId === id)
+    let tabId: string
+    if (existing) {
+      if (options?.preview === false) tabs.pinTab(existing.id)
+      tabs.activateTab(existing.id)
+      tabId = existing.id
+    } else {
+      const reuse =
+        options?.preview === true && !!tabs.activeTabId && tabs.previewTabId === tabs.activeTabId
+      if (reuse && tabs.activeTabId) {
+        tabs.replaceDocument(tabs.activeTabId, id)
+        tabs.updateTab(tabs.activeTabId, { title: '' })
+        tabId = tabs.activeTabId
+      } else {
+        tabId = tabs.openTab(id, { preview: options?.preview })
+      }
+    }
+    // ADR-0042: the hit's range is part of the navigation entry, so Back returns to it too.
+    // The lookup is fire-and-forget so the jump and tab activation stay synchronous.
+    void window.api?.documents?.get?.(id)?.then((doc) => {
+      if (doc?.filePath && !isMemoryOnly(doc)) {
+        pushTabHistory(tabId, doc.filePath, { title: doc.title, position: { start, end } })
+      }
+    })
     return true
   },
 
@@ -493,6 +564,13 @@ export const useUIStore = create<UIState>((set, get) => ({
     if (id && get().isNewUnsaved) {
       void deleteUnsavedDraft(id)
     }
+    // ADR-0040: closing the workspace discards every tab's draft, not just the active one.
+    for (const bufferId of Object.keys(get().unsavedBuffers)) get().clearUnsavedBuffer(bufferId)
+    useTabsStore.getState().reset()
+    // ADR-0042: the global stack belongs to the workspace session. Closing it must clear every
+    // entry (including external-mode ones that pruneOutOfRoot deliberately keeps on a switch),
+    // otherwise Back/Forward revives documents from a workspace that no longer exists.
+    useNavigationHistory.getState().reset()
     clearWorkspaceRoot()
     set((s) => ({
       activeDocumentId: null,
@@ -548,17 +626,27 @@ export const useUIStore = create<UIState>((set, get) => ({
   pendingMatch: null,
   setPendingMatch: (m) => set({ pendingMatch: m }),
 
+  editorSelection: null,
+  setEditorSelection: (range) => set({ editorSelection: range }),
+
   unsavedBuffers: {},
   documentStateRevision: 0,
-  reportUnsavedBuffer: (id, content) =>
+  reportUnsavedBuffer: (id, content, title) => {
+    // ADR-0041: the first dirty transition makes a preview permanent. Pinning by DOCUMENT id
+    // covers both the active editor and background reports made while the user switches tabs.
+    useTabsStore.getState().pinTabByDocumentId(id)
     set((s) => {
       const previous = s.unsavedBuffers[id]
       const revision = (previous?.revision ?? 0) + 1
       return {
-        unsavedBuffers: { ...s.unsavedBuffers, [id]: { content, revision } },
+        unsavedBuffers: {
+          ...s.unsavedBuffers,
+          [id]: { content, title: title ?? previous?.title ?? '', revision },
+        },
         documentStateRevision: s.documentStateRevision + 1,
       }
-    }),
+    })
+  },
   clearUnsavedBuffer: (id) =>
     set((s) => {
       if (!id || !(id in s.unsavedBuffers)) return {}
@@ -566,6 +654,14 @@ export const useUIStore = create<UIState>((set, get) => ({
       delete next[id]
       return { unsavedBuffers: next, documentStateRevision: s.documentStateRevision + 1 }
     }),
+  isTabDirty: (documentId) => Boolean(documentId && get().unsavedBuffers[documentId]),
+  closeTabDocument: (documentId, isNewUnsaved) => {
+    // A memory-only draft has no disk row; closing its tab must delete the store entry
+    // (the old closeDocument() did this), otherwise the at-most-one-draft rule stays latched.
+    if (isNewUnsaved ?? get().isNewUnsaved) void deleteUnsavedDraft(documentId)
+    get().clearUnsavedBuffer(documentId)
+    set((s) => ({ dirty: s.activeDocumentId === documentId ? false : s.dirty }))
+  },
   bumpDocumentState: () => set((s) => ({ documentStateRevision: s.documentStateRevision + 1 })),
 
   theme: 'system',
@@ -584,7 +680,15 @@ export const useUIStore = create<UIState>((set, get) => ({
   setAboutOpen: (open) => set({ aboutOpen: open }),
 
   dirty: false,
-  setDirty: (dirty) => set({ dirty }),
+  setDirty: (dirty) => {
+    // ADR-0041: any dirty transition — including paths that only flip the flag — pins the active
+    // preview. `reportUnsavedBuffer` additionally covers background documents by document id.
+    if (dirty) {
+      const id = get().activeDocumentId
+      if (id) useTabsStore.getState().pinTabByDocumentId(id)
+    }
+    set({ dirty })
+  },
 
   saving: false,
   setSaving: (saving) => set({ saving }),
@@ -620,6 +724,9 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   pendingFileAction: null,
   requestFileAction: (a) => set({ pendingFileAction: a }),
+
+  dialogOpen: false,
+  setDialogOpen: (dialogOpen) => set({ dialogOpen }),
 
   isNewUnsaved: false,
   setIsNewUnsaved: (v) => set({ isNewUnsaved: v }),

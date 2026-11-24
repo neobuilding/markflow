@@ -1,6 +1,7 @@
 # ADR-0039: Per-window workspaces, external documents, and multi-window navigation
 
 - **Status:** Accepted
+- **Superseded in part by:** ADR-0040 §3.1 (per-tab history replaces the single per-window stack); ADR-0040 §3.4 (tabs share the per-window workspace).
 - **Decided:** 2026-11-21
 - **Supersedes:** ADR-0038 §3.1.3 (Open/Copy/Cancel as the only external path), §3.2 decision 5 (workspace always replaced by a link target's folder) and §3.4 decision 9 ("no history dropdown") — only in the four-way / new-window / history-menu parts.
 - **Amends:** `CONTEXT.md` (Workspace, Opened root folder, Document navigation, Navigation history, Back/Forward, Reveal in sidebar, Main window, Link destination); ADR-0023 decision 3 ("single-window app").
@@ -136,10 +137,13 @@ swap cancels only that window's pending broadcasts.
 
 ### 3.5 Structured navigation history with a right-click menu
 
-- History entries are `{ path, title?, openMode? }`; `openMode` is replayed on Back/Forward so an
-  externally-opened document reopens in the same mode without re-prompting. Replaying an
-  `external-switch` entry moves the workspace to the file's folder; replaying an `external-keep`
-  entry opens the file in place as an external document.
+- History entries are `{ path, title?, openMode?, replayRoot? }` (ADR-0042 adds `tabId`/`position`).
+  `openMode` is replayed on Back/Forward so an externally-opened document reopens in the same mode
+  without re-prompting. Replaying an `external-switch` entry moves the workspace to `replayRoot`,
+  the exact root recorded when the switch happened; entries from before that field existed fall
+  back to the file's folder. Replaying an `external-keep` entry opens the file in place as an
+  external document. An external switch marks its source entry `external-switch` before the root
+  swap, so the source survives `pruneOutOfRoot` and Back returns to the link's origin.
 - Back/Forward buttons expose a right-click list of the recent N entries (nearest first). Choosing
   one positions the cursor via `moveToHistoryIndex`, which never appends a new entry.
 

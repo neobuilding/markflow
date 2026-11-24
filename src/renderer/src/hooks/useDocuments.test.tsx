@@ -21,6 +21,8 @@ import {
   createDraft,
 } from './useDocuments'
 import { useUIStore } from '../store/ui'
+import { useTabsStore } from '../store/tabs'
+import { useNavigationHistory } from '../store/navigationHistory'
 
 // Initialise i18next: without it `t()` (used by the open-path dialogs) returns undefined.
 import '../i18n'
@@ -82,6 +84,7 @@ beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = api
   useUIStore.getState().setWorkspaceRoot(null)
   useUIStore.getState().setActiveDocumentId(null)
+  useTabsStore.getState().reset()
 })
 
 describe('useDocuments — list query', () => {
@@ -375,6 +378,47 @@ describe('useOpenPaths', () => {
     expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
     expect(api.documents.importMany).not.toHaveBeenCalled()
     useUIStore.getState().setDirty(false)
+  })
+
+  it('opens only the first imported file as a tab when a workspace is opened', async () => {
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: ['/opened'],
+      markdownFiles: ['/opened/a.md', '/opened/b.md', '/opened/c.md'],
+    })
+    api.documents.importMany.mockResolvedValueOnce([
+      { ...doc('/opened/a.md'), title: 'a.md' },
+      { ...doc('/opened/b.md'), title: 'b.md' },
+      { ...doc('/opened/c.md'), title: 'c.md' },
+    ])
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    await act(async () => {
+      await result.current.mutateAsync(['/opened'])
+    })
+    // The sidebar lists every file; opening a workspace must not turn every file into an editor tab.
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
+    expect(useTabsStore.getState().tabs[0]).toMatchObject({
+      documentId: '/opened/a.md',
+      title: 'a.md',
+    })
+  })
+
+  it('ADR-0042: records the first workspace document as the initial history entry', async () => {
+    useNavigationHistory.getState().reset()
+    api.documents.importMany.mockResolvedValueOnce([
+      { ...doc('/opened/first.md'), title: 'first.md' },
+    ])
+    const { result } = renderHook(() => useOpenPaths(), { wrapper: wrapper() })
+    await act(async () => {
+      await result.current.mutateAsync(['/opened'])
+    })
+    const history = useNavigationHistory.getState()
+    expect(history.entries).toHaveLength(1)
+    expect(history.entries[0]).toMatchObject({
+      path: '/docs//opened/first.md.md',
+      title: 'first.md',
+    })
+    expect(history.entries[0].tabId).toBe(useTabsStore.getState().tabs[0].id)
+    expect(history.cursor).toBe(0)
   })
 
   it('imports the files, sets the active folder to the opened directory and activates the first doc', async () => {

@@ -13,6 +13,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { BrowserWindow, WebContents } from 'electron'
 import type { Document } from './documentStore'
+import type { TabHandoff } from '../../../shared/tabTypes'
 
 export interface WindowContext {
   /** webContents.id of the owning renderer — the stable key used by IPC event.sender. */
@@ -32,6 +33,8 @@ export interface WindowContext {
   closeAllowed: boolean
   /** Paths queued before this window's renderer was ready. */
   pendingPaths: string[]
+  /** Tab handoff (with token) queued for a detached-tab window (ADR-0040). */
+  pendingTabHandoff?: { token: string; handoff: TabHandoff }
 }
 
 const contexts = new Map<number, WindowContext>()

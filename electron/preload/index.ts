@@ -10,6 +10,7 @@ import { filesApi } from './api/files'
 import { dialogApi } from './api/dialog'
 import { windowApi } from './api/window'
 import { menuApi } from './api/menu'
+import { tabsApi, onTabAccept, onTabRemove } from './api/tabs'
 import {
   onMenuEvent,
   onFileChanged,
@@ -33,7 +34,10 @@ const api = {
   dialog: dialogApi,
   window: windowApi,
   menu: menuApi,
+  tabs: tabsApi,
   // Event subscriptions are spread to the top level (window.api.onMenuEvent, ...)
+  onTabAccept,
+  onTabRemove,
   onMenuEvent,
   onFileChanged,
   onFolderChanged,

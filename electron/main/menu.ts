@@ -43,6 +43,8 @@ let hasFolderState = false
 // follow, or the menu becomes the one control that still invites a second draft.
 let hasDraftState = false
 let fileLockedState = false
+// Mirrored by the renderer: "Move Tab to Another Window" is meaningless without a destination.
+let hasOtherWindowsState = false
 
 // The three theme choices the app supports. Mirrors the renderer's `ThemeMode`
 // (src/renderer/src/types) — the main process cannot import renderer types, so the domain concept
@@ -102,6 +104,9 @@ function applyMenuStates(): void {
   if (printItem) printItem.enabled = hasDocumentState && active
   if (closeFileItem) closeFileItem.enabled = hasDocumentState && active
   if (closeWorkspaceItem) closeWorkspaceItem.enabled = active
+  // A drag/move needs a destination window; the native item must agree with the tab context menu.
+  const moveTabItem = appMenu.getMenuItemById('move-tab-to-window')
+  if (moveTabItem) moveTabItem.enabled = hasOtherWindowsState && active
   Menu.setApplicationMenu(appMenu)
 }
 
@@ -199,6 +204,18 @@ export function setupMenu(): void {
           accelerator: 'CmdOrCtrl+Shift+R',
           enabled: false, // Disabled when no file is open; enabled by the renderer's synced state
           click: () => getMainWindow()?.webContents.send('menu:reload'),
+        },
+        {
+          id: 'move-tab-to-window',
+          label: menuT('menu.moveTabToWindow'),
+          enabled: true,
+          click: () => getMainWindow()?.webContents.send('menu:move-tab-to-window'),
+        },
+        {
+          id: 'detach-tab-to-window',
+          label: menuT('menu.detachTabToWindow'),
+          enabled: true,
+          click: () => getMainWindow()?.webContents.send('menu:detach-tab-to-window'),
         },
         {
           id: 'file-details',
@@ -419,6 +436,13 @@ export function registerMenuHandlers(): void {
   // active; adding a future trigger source is a store-side change only.
   ipcMain.on('menu:set-file-locked', (_event, locked: boolean) => {
     fileLockedState = locked
+    applyMenuStates()
+  })
+
+  // The renderer is the only layer that can answer "is there another MarkFlow window?" via
+  // tabs:list-windows. Mirror that boolean so the native File > Move Tab item greys out too.
+  ipcMain.on('menu:set-has-other-windows', (_event, has: boolean) => {
+    hasOtherWindowsState = has
     applyMenuStates()
   })
 

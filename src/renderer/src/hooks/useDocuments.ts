@@ -4,7 +4,9 @@ import { normalizePathSegments } from '../lib/utils'
 import { resolveWorkspaceRoot } from '../lib/workspace-root'
 import { isDirInFolder } from '../../../../shared/fileUtils'
 import { t } from '../i18n/translate'
-import { useUIStore } from '../store/ui'
+import { useUIStore, confirmWithLock } from '../store/ui'
+import { useTabsStore } from '../store/tabs'
+import { pushTabHistory } from '../store/tabHistory'
 import { DOCS_KEY, queryClient } from '../lib/queryClient'
 import { isMemoryOnly } from '../lib/sidebarDrafts'
 
@@ -144,9 +146,12 @@ export function createDraft(): Promise<void> {
       // edits away, its unsaved buffer has to go too — otherwise search & replace keeps matching
       // text the user explicitly discarded.
       if (ui.dirty) ui.clearUnsavedBuffer(ui.activeDocumentId ?? '')
-      ui.setActiveDocumentId(doc.id)
-      ui.setEditable(true)
-      ui.setIsNewUnsaved(true)
+      const tabId = useTabsStore.getState().openTab(doc.id, {
+        title: doc.title,
+        editable: true,
+        isNewUnsaved: true,
+      })
+      useTabsStore.getState().activateTab(tabId)
       await queryClient.invalidateQueries({ queryKey: DOCS_KEY })
       ui.bumpDocumentState()
     } catch (e) {
@@ -302,7 +307,7 @@ export function useOpenPaths() {
         // `markdownFiles` is non-empty here, so the only failure reason is `multiple-roots`.
         /* v8 ignore next */
         if (resolution.reason === 'multiple-roots') {
-          await window.api.dialog.confirm({
+          await confirmWithLock({
             message: t('app.multipleRootsRefused'),
             detail: resolution.candidates.join('\n'),
             okText: t('app.ok'),
@@ -316,7 +321,7 @@ export function useOpenPaths() {
       // (the old store is cleared), so name the new root instead of switching silently (D15 — the
       // refusal sibling of this case already lists its candidates).
       if (resolution.note === 'common-ancestor') {
-        await window.api.dialog.confirm({
+        await confirmWithLock({
           message: t('app.commonAncestorRoot', { root }),
           okText: t('app.ok'),
         })
@@ -326,7 +331,7 @@ export function useOpenPaths() {
       // lost, so ask first (ADR-0023 — never discard silently).
       const ui0 = useUIStore.getState()
       if (ui0.dirty) {
-        const discard = await window.api.dialog.confirm({
+        const discard = await confirmWithLock({
           message: t('app.unsavedOpenWorkspace', { title: ui0.activeDocumentTitle ?? '' }),
           okText: t('app.confirmDiscard'),
           cancelText: t('app.confirmKeep'),
@@ -345,13 +350,18 @@ export function useOpenPaths() {
 
       const ui = useUIStore.getState()
       ui.setWorkspaceRoot(root)
-      ui.setActiveDocumentId(imported[0].id)
-      // NOTE: do NOT force `editable` to false here. `editable` is a workspace-wide mode that
-      // defaults to false only when there is no document open (store default + closeWorkspace/
-      // closeDocument reset it). Forcing it false on every open would clobber the user's current
-      // edit mode e.g. after switching to edit, opening/switching another file would silently
-      // revert to read-only and the editor could not be edited ("switch file -> can't edit" bug).
-      ui.setDirty(false) // opening/importing a file clears any stale dirty flag
+      // ADR-0040: opening a workspace replaces the tab set. Only the first imported document
+      // becomes an editor tab; the rest remain listed in the sidebar. Opening every Markdown file
+      // here would flood the tab bar and was a regression from the single-document workflow.
+      const tabStore = useTabsStore
+      tabStore.getState().reset()
+      const firstTabId = tabStore
+        .getState()
+        .openTab(imported[0].id, { title: imported[0].title, preview: true })
+      // ADR-0042: the first document is a navigation too. Without this entry Back/Forward has no
+      // source to return to, and later replayed entries carry a stale or missing tab id.
+      pushTabHistory(firstTabId, imported[0].filePath, { title: imported[0].title })
+      ui.setDirty(false) // opening/importing files clears any stale dirty flag
       ui.bumpDocumentState()
       return { folder: root, documentId: imported[0].id, note: resolution.note }
     },

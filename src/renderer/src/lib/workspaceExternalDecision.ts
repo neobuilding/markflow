@@ -3,6 +3,8 @@ import { baseName, dirName, markdownExtOf } from './utils'
 import { navigateToPath } from './documentNavigation'
 import { switchWorkspace } from './workspaceSwitch'
 import { useUIStore } from '../store/ui'
+import { useNavigationHistory } from '../store/navigationHistory'
+import { useTabsStore } from '../store/tabs'
 import type { WorkspaceExternalChoice } from '../../../../shared/linkTypes'
 
 /**
@@ -22,9 +24,20 @@ export async function decideExternalFile(filePath: string): Promise<WorkspaceExt
       await window.api.app.openInNewWindow(filePath)
       break
     case 'keep-workspace':
-      await navigateToPath(filePath, { openMode: 'external-keep' })
+      await navigateToPath(filePath, { openMode: 'external-keep', preview: true })
       break
     case 'switch-workspace':
+      // ADR-0042 §3: keep the source entry replayable across the root swap. Without this mark,
+      // pruneOutOfRoot deletes the source and Back can never return to where the link was clicked.
+      {
+        const ui = useUIStore.getState()
+        const root = ui.workspaceRoot ?? (await window.api.documents.getWorkspaceRoot())
+        if (root) {
+          useNavigationHistory
+            .getState()
+            .markCurrentEntryForSwitch(root, useTabsStore.getState().activeTabId)
+        }
+      }
       // "Open it here and move the workspace to its folder": the workspace swap AND the file
       // itself. `openPath` is what makes the chosen file the active document — without it the
       // swap would keep (or close) the PREVIOUS document and never open what the user picked.

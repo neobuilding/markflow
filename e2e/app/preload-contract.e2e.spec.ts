@@ -45,7 +45,10 @@ test.describe('preload bridge contract (api/* split)', () => {
         window: collect(a.window),
         menu: collect(a.menu),
         clipboard: collect(a.clipboard),
+        tabs: collect(a.tabs),
         events: {
+          onTabAccept: typeof a.onTabAccept,
+          onTabRemove: typeof a.onTabRemove,
           onMenuEvent: typeof a.onMenuEvent,
           onFileChanged: typeof a.onFileChanged,
           onOpenPaths: typeof a.onOpenPaths,
@@ -158,8 +161,24 @@ test.describe('preload bridge contract (api/* split)', () => {
         writeSvg: 'function',
       }),
     )
-    // 5 event subscriptions events.ts — `onReplaceProgress` joined in the replace plan.
+    // ADR-0040: all eight tab channels + the two tab events.
+    expect(surface.tabs).toEqual(
+      expect.objectContaining({
+        beginDrag: 'function',
+        drop: 'function',
+        detach: 'function',
+        cancelDrag: 'function',
+        takeHandoff: 'function',
+        acceptAck: 'function',
+        moveToWindow: 'function',
+        listWindows: 'function',
+      }),
+    )
+    // 7 event subscriptions events.ts — `onReplaceProgress` joined in the replace plan,
+    // `onTabAccept` / `onTabRemove` in the tab-transfer plan (ADR-0040).
     expect(surface.events).toEqual({
+      onTabAccept: 'function',
+      onTabRemove: 'function',
       onMenuEvent: 'function',
       onFileChanged: 'function',
       onOpenPaths: 'function',

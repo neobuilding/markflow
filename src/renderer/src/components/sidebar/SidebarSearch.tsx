@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Search, X, ChevronDown, ChevronRight, Replace, Undo2 } from 'lucide-react'
-import { useUIStore } from '../../store/ui'
+import { useUIStore, confirmWithLock } from '../../store/ui'
 import { useSearchView } from '../../hooks/useSearch'
 import { useT, type TranslationKey } from '../../i18n'
 import { InputContextMenu } from '../ui/input-context-menu'
@@ -152,9 +152,9 @@ export function SidebarSearch(): React.ReactElement {
       const item = navItems[selectedIndex]
       if (!item) return
       if (item.start !== undefined && item.end !== undefined) {
-        void openDocumentAt(item.id, item.start, item.end)
+        void openDocumentAt(item.id, item.start, item.end, { preview: false })
       } else {
-        void selectDocument(item.id)
+        void selectDocument(item.id, { preview: false })
       }
     }
   }
@@ -228,7 +228,7 @@ export function SidebarSearch(): React.ReactElement {
   }
 
   const applyPlan = async (planned: PlanState) => {
-    const ok = await window.api.dialog.confirm({
+    const ok = await confirmWithLock({
       message: t('search.replaceAllConfirm', {
         count: planned.matchCount,
         files: planned.fileCount,
@@ -601,8 +601,10 @@ export function SidebarSearch(): React.ReactElement {
             results={results}
             selectedIndex={selectedIndex}
             onSelectIndex={setSelectedIndex}
-            onSelect={(id) => void selectDocument(id)}
-            onSelectMatch={(id, start, end) => void openDocumentAt(id, start, end)}
+            onSelect={(id) => void selectDocument(id, { preview: true })}
+            onSelectMatch={(id, start, end) =>
+              void openDocumentAt(id, start, end, { preview: true })
+            }
             onShowDetails={setFileDetailsId}
           />
         )}

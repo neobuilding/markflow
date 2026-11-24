@@ -40,4 +40,9 @@ describe('preload menuApi', () => {
     menuApi.setFileLocked(true)
     expect(sends[0]).toEqual({ channel: 'menu:set-file-locked', args: [true] })
   })
+
+  it('setHasOtherWindows sends menu:set-has-other-windows with the boolean', () => {
+    menuApi.setHasOtherWindows(true)
+    expect(sends[0]).toEqual({ channel: 'menu:set-has-other-windows', args: [true] })
+  })
 })

@@ -1,18 +1,29 @@
-import { create } from 'zustand'
+import { create, type StoreApi, type UseBoundStore } from 'zustand'
 import { sameFilePath } from '../lib/previewLinkNavigation'
 
-// ADR-0038 §3.4: document navigations are keyed by ABSOLUTE FILE PATH (document ids are invalid
-// after a workspace replacement). Entries live only for the app session. Browser semantics:
-// pushing a new entry truncates the forward part; Back/Forward move a cursor without mutating
-// entries. Missing files are pruned lazily by the navigation service when a move reaches them.
+// ADR-0042: ONE global navigation stack per window (not one per tab). Entries are keyed by ABSOLUTE
+// FILE PATH (document ids are invalid after a workspace replacement) and also record the tab that
+// displayed the document and the editor character range at that point. Cursor moves update the
+// current entry's position in place; a real navigation pushes a new entry and truncates the forward
+// part. Missing files are pruned lazily by the navigation service when a move reaches them.
 
 /** How the document at a history entry was opened; replayed by Back/Forward without re-prompting. */
 export type OpenMode = 'in-place' | 'external-keep' | 'external-switch'
+
+/** Editor character range restored by Back/Forward via `pendingMatch` (ADR-0042 §2). */
+export interface EditorPosition {
+  start: number
+  end: number
+}
 
 export interface NavigationEntry {
   path: string
   title?: string
   openMode?: OpenMode
+  /** ADR-0042: workspace root to restore when replaying a cross-switch entry. */
+  replayRoot?: string
+  tabId?: string
+  position?: EditorPosition
 }
 
 export interface NavigationHistoryState {
@@ -20,8 +31,18 @@ export interface NavigationHistoryState {
   cursor: number
   push: (
     filePath: string | null | undefined,
-    meta?: { title?: string; openMode?: OpenMode },
+    meta?: {
+      title?: string
+      openMode?: OpenMode
+      replayRoot?: string
+      tabId?: string | null
+      position?: EditorPosition
+    },
   ) => void
+  /** A cursor move updates the current entry only; it never creates a history entry. */
+  updateCurrentPosition: (position: EditorPosition | null) => void
+  /** ADR-0042: make the current entry replayable across a workspace switch. */
+  markCurrentEntryForSwitch: (root: string, tabId?: string | null) => void
   previous: () => string | null
   next: () => string | null
   entryAt: (index: number) => NavigationEntry | null
@@ -30,85 +51,141 @@ export interface NavigationHistoryState {
   setCursor: (index: number) => void
   /** Remove the entry at `path` (used when a file no longer exists). */
   prune: (path: string) => void
+  /** Remove out-of-root `in-place` entries after a workspace switch (ADR-0040 §5.4). */
+  pruneOutOfRoot: (root: string) => void
   reset: () => void
 }
 
-// Back/Forward activation changes the active document too. Suppress the automatic
-// `setActiveDocumentId` recording while such a move is in flight, otherwise the cursor would be
-// truncated as if the user had navigated somewhere new.
-// A COUNTER, not a flag: the suppression nests (replaying an "external-switch" entry runs
-// `switchWorkspace`, which suppresses its own recording while the outer move still runs). A
-// boolean would be cleared by the inner block and re-enable recording for the rest of the
-// outer one.
-let recordingSuspended = 0
+export type NavigationHistoryStore = UseBoundStore<StoreApi<NavigationHistoryState>>
 
-export function isHistoryRecordingSuspended(): boolean {
-  return recordingSuspended > 0
+// A COUNTER, not a flag: suppression nests (replaying an "external-switch" entry runs
+// `switchWorkspace`, which suppresses its own recording while the outer move still runs).
+// ADR-0042: there is one global stack, so suppression is global. The tabId argument is kept
+// for call-site compatibility; it has no effect on the single global stack.
+const globalSuspended = { depth: 0 }
+
+export function isHistoryRecordingSuspended(_tabId?: string | null): boolean {
+  return globalSuspended.depth > 0
 }
 
-export async function withoutHistoryRecording<T>(action: () => Promise<T>): Promise<T> {
-  recordingSuspended += 1
+export async function withoutHistoryRecording<T>(
+  action: () => Promise<T>,
+  _tabId?: string | null,
+): Promise<T> {
+  globalSuspended.depth += 1
   try {
     return await action()
   } finally {
-    recordingSuspended -= 1
+    globalSuspended.depth -= 1
   }
 }
 
-export const useNavigationHistory = create<NavigationHistoryState>((set, get) => ({
-  entries: [],
-  cursor: -1,
+/** Create an isolated navigation-history store (production uses the single default instance). */
+export function createNavigationHistory(): NavigationHistoryStore {
+  return create<NavigationHistoryState>((set, get) => ({
+    entries: [],
+    cursor: -1,
 
-  push: (filePath, meta) => {
-    if (!filePath) return
-    const { entries, cursor } = get()
-    // The same file re-opened (sidebar click on the active doc, repeated link, Back landing
-    // on its target) is NOT a new navigation.
-    if (entries[cursor] && sameFilePath(entries[cursor].path, filePath)) return
-    // Chrome records a new entry even when the target appeared earlier in the stack; only a
-    // forward truncation happens here. A Back/Forward move uses the cursor, never push().
-    const kept = entries.slice(0, cursor + 1)
-    set({
-      entries: [...kept, { path: filePath, title: meta?.title, openMode: meta?.openMode }],
-      cursor: kept.length,
-    })
-  },
+    push: (filePath, meta) => {
+      if (!filePath) return
+      const { entries, cursor } = get()
+      // The same file re-opened (sidebar click on the active doc, repeated link, Back landing
+      // on its target) is NOT a new navigation.
+      if (entries[cursor] && sameFilePath(entries[cursor].path, filePath)) return
+      const kept = entries.slice(0, cursor + 1)
+      set({
+        entries: [
+          ...kept,
+          {
+            path: filePath,
+            title: meta?.title,
+            openMode: meta?.openMode,
+            replayRoot: meta?.replayRoot,
+            tabId: meta?.tabId ?? undefined,
+            position: meta?.position,
+          },
+        ],
+        cursor: kept.length,
+      })
+    },
 
-  previous: () => {
-    const { entries, cursor } = get()
-    return cursor > 0 ? (entries[cursor - 1]?.path ?? null) : null
-  },
+    updateCurrentPosition: (position) =>
+      set((s) => {
+        const entry = s.entries[s.cursor]
+        if (!entry) return s
+        const entries = [...s.entries]
+        entries[s.cursor] = { ...entry, position: position ?? undefined }
+        return { entries }
+      }),
 
-  next: () => {
-    const { entries, cursor } = get()
-    return cursor >= 0 && cursor < entries.length - 1 ? (entries[cursor + 1]?.path ?? null) : null
-  },
+    markCurrentEntryForSwitch: (root, tabId) =>
+      set((s) => {
+        const entry = s.entries[s.cursor]
+        if (!entry) return s
+        const entries = [...s.entries]
+        entries[s.cursor] = {
+          ...entry,
+          openMode: 'external-switch',
+          replayRoot: root,
+          tabId: entry.tabId ?? tabId ?? undefined,
+        }
+        return { entries }
+      }),
 
-  entryAt: (index) => {
-    const { entries } = get()
-    return entries[index] ?? null
-  },
+    previous: () => {
+      const { entries, cursor } = get()
+      return cursor > 0 ? (entries[cursor - 1]?.path ?? null) : null
+    },
 
-  move: (delta) =>
-    set((s) => ({ cursor: Math.max(0, Math.min(s.entries.length - 1, s.cursor + delta)) })),
+    next: () => {
+      const { entries, cursor } = get()
+      return cursor >= 0 && cursor < entries.length - 1 ? (entries[cursor + 1]?.path ?? null) : null
+    },
 
-  setCursor: (index) =>
-    set((s) => ({ cursor: Math.max(0, Math.min(s.entries.length - 1, index)) })),
+    entryAt: (index) => get().entries[index] ?? null,
 
-  prune: (path) =>
-    set((s) => {
-      const kept = s.entries.filter((entry) => !sameFilePath(entry.path, path))
-      if (kept.length === s.entries.length) return s
-      return { entries: kept, cursor: Math.min(s.cursor, kept.length - 1) }
-    }),
+    move: (delta) =>
+      set((s) => ({ cursor: Math.max(0, Math.min(s.entries.length - 1, s.cursor + delta)) })),
 
-  reset: () => set({ entries: [], cursor: -1 }),
-}))
+    setCursor: (index) =>
+      set((s) => ({ cursor: Math.max(0, Math.min(s.entries.length - 1, index)) })),
+
+    prune: (path) =>
+      set((s) => {
+        const kept = s.entries.filter((entry) => !sameFilePath(entry.path, path))
+        if (kept.length === s.entries.length) return s
+        return { entries: kept, cursor: Math.min(s.cursor, kept.length - 1) }
+      }),
+
+    pruneOutOfRoot: (root) =>
+      set((s) => {
+        // Only in-place entries become unreplayable after a root swap; external-keep and
+        // external-switch entries carry their own open mode and can be replayed verbatim.
+        const kept = s.entries.filter(
+          (entry) =>
+            (entry.openMode !== undefined && entry.openMode !== 'in-place') ||
+            isInRoot(entry.path, root),
+        )
+        if (kept.length === s.entries.length) return s
+        return { entries: kept, cursor: Math.min(s.cursor, kept.length - 1) }
+      }),
+
+    reset: () => set({ entries: [], cursor: -1 }),
+  }))
+}
+
+/** Cheap root containment check, mirroring `isInFolder`'s separator folding. */
+function isInRoot(filePath: string, root: string): boolean {
+  const normalize = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const file = normalize(filePath)
+  const folder = normalize(root)
+  return file.startsWith(folder + '/')
+}
+
+/** The single global navigation stack for a window (ADR-0042). */
+export const useNavigationHistory = createNavigationHistory()
 
 // e2e test hook: expose the real history store (dev only, tree-shaken from production).
-// The `false` branch (production builds) is unreachable under unit tests because
-// `import.meta.env.DEV` is inlined to `true` there; it is exercised by the production
-// build instead. See the same pattern in store/ui.ts.
 /* v8 ignore next 3 */
 if (import.meta.env.DEV) {
   ;(window as unknown as { __navHistory?: typeof useNavigationHistory }).__navHistory =

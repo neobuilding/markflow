@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { EditorView } from '@codemirror/view'
 import { TooltipProvider } from '../ui/tooltip'
 import { useUIStore } from '../../store/ui'
+import { useTabsStore } from '../../store/tabs'
 import { EditorPane } from './EditorPane'
 import '../../i18n'
 
@@ -151,6 +152,12 @@ beforeEach(() => {
   useUIStore.getState().setExportOpen(false)
   useUIStore.getState().setFileDetailsId(null)
   useUIStore.getState().setDirty(false)
+  useTabsStore.getState().reset()
+  // ADR-0040: the editor restores drafts from unsavedBuffers on doc switch — clear
+  // leftovers from the previous case so each test starts from pristine disk content.
+  for (const id of Object.keys(useUIStore.getState().unsavedBuffers)) {
+    useUIStore.getState().clearUnsavedBuffer(id)
+  }
 })
 
 function mount() {

@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react'
 import { FileText } from 'lucide-react'
 import { useUIStore } from '../../store/ui'
+import { useTabsStore } from '../../store/tabs'
 import { useCreateDocument } from '../../hooks/useDocuments'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Input } from '../ui/input'
@@ -33,7 +34,7 @@ export function NewDocumentDialog(): React.ReactElement {
   const workspaceRoot = useUIStore((s) => s.workspaceRoot)
   // Actions are stable references created once by the store initializer, so reading them via
   // getState() avoids an unnecessary subscription (Vercel rerender-defer-reads).
-  const { setNewDocOpen, setActiveDocumentId, setEditable, setIsNewUnsaved } = useUIStore.getState()
+  const { setNewDocOpen } = useUIStore.getState()
   const [title, setTitle] = useState('')
   // Ref for the right-click edit menu
   const titleRef = useRef<HTMLInputElement>(null)
@@ -93,11 +94,14 @@ export function NewDocumentDialog(): React.ReactElement {
         folderPath: workspaceRoot,
         memoryOnly: false,
       })
-      // Raw setter is correct here: the guard has already been obtained (same as Sidebar's inline
-      // create row), and the new document is empty so there is nothing to discard.
-      setActiveDocumentId(doc.id)
-      setEditable(true) // new documents are editable by default
-      setIsNewUnsaved(false) // the file already exists on disk; Save must not ask for a path
+      // ADR-0040: open as a tab carrying its own edit state (new files are editable;
+      // Save must not prompt for a path because the file already exists on disk).
+      const tabId = useTabsStore.getState().openTab(doc.id, {
+        title: doc.title,
+        editable: true,
+        isNewUnsaved: false,
+      })
+      useTabsStore.getState().activateTab(tabId)
       setTitle('')
       setNewDocOpen(false)
     } catch (e) {

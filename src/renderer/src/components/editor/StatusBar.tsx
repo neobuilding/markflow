@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Copy, Save, SaveAll, RotateCcw } from 'lucide-react'
-import { useUIStore } from '../../store/ui'
+import { useUIStore, confirmWithLock } from '../../store/ui'
 import { useDocument, useSetEncoding, useSetEol, useReloadDocument } from '../../hooks/useDocuments'
 import { useT } from '../../i18n'
 import { baseName } from '../../lib/utils'
@@ -144,7 +144,7 @@ export function StatusBar(): React.ReactElement {
       return
     }
     setEolOpen(false)
-    const ok = await window.api.dialog.confirm({
+    const ok = await confirmWithLock({
       message: t('app.switchEolConfirm', { eol: next === '\r\n' ? 'CRLF' : 'LF' }),
       detail: t('app.switchEolDetail'),
       okText: t('app.switchEolOk'),

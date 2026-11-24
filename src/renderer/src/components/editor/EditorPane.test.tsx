@@ -5,6 +5,7 @@ import { FileInput, Search } from 'lucide-react'
 import { TooltipProvider } from '../ui/tooltip'
 import { EditorPane } from './EditorPane'
 import { useUIStore } from '../../store/ui'
+import { useTabsStore } from '../../store/tabs'
 import '../../i18n'
 
 // Share a few refs between the mocked hooks and the assertions (vi.hoisted so the
@@ -114,6 +115,7 @@ beforeEach(() => {
   h.hasDraft = false
   h.saveMutateAsync.mockClear()
   h.reloadMutateAsync.mockClear()
+  useTabsStore.getState().reset()
   useUIStore.getState().setActiveDocumentId('a')
   useUIStore.getState().setEditable(true)
   useUIStore.getState().setPendingMatch(null)

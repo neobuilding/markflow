@@ -22,6 +22,7 @@ import { registerDialogHandlers } from './handlers/dialog'
 import { registerFilesHandlers } from './handlers/files'
 import { registerAppHandlers } from './handlers/app'
 import { registerNewWindowHandlers } from './ipc/newWindow'
+import { registerTabsHandlers } from './ipc/tabs'
 import { registerWindowHandlers } from './handlers/window'
 import { createDocumentStore } from './model/documentStore'
 import { initMenuI18n } from './i18n'
@@ -179,6 +180,7 @@ if (!shouldStart) {
     registerFilesHandlers()
     registerAppHandlers()
     registerNewWindowHandlers(ipcMain)
+    registerTabsHandlers(ipcMain)
     registerWindowHandlers()
 
     // initMenuI18n() MUST run before setupMenu(): menuT() depends on the i18next

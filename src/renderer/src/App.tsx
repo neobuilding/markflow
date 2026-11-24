@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react'
-import { useUIStore } from './store/ui'
+import { useUIStore, selectFileLocked, confirmWithLock } from './store/ui'
 import { useOpenPaths, createDraft, useHasMemoryOnlyDraft } from './hooks/useDocuments'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { EditorPane } from './components/editor/EditorPane'
@@ -21,6 +21,12 @@ import { maybeDecideExternalPaths } from './lib/workspaceExternalDecision'
 import { matchFormatShortcut } from './lib/format-shortcuts'
 import { t, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
+import { acceptTabHandoff, consumePendingTabHandoff, removeTransferredTab } from './lib/tabTransfer'
+import { detachTabToNewWindow, listOtherWindows, moveTabToWindow } from './lib/tabTransferActions'
+import { useTabsStore } from './store/tabs'
+import { showCloseAllTabsDialog } from './lib/closeTabDialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog'
+import type { TabWindowInfo } from '../../../shared/tabTypes'
 
 export default function App(): React.ReactElement {
   // Field-scoped selectors: an identity selector re-renders on every keystroke (ADR-0033).
@@ -33,6 +39,10 @@ export default function App(): React.ReactElement {
   const draftExists = useHasMemoryOnlyDraft()
   const openPathsMut = useOpenPaths()
   const openPathsMutRef = useRef(openPathsMut)
+  const [movePicker, setMovePicker] = React.useState<{
+    tabId: string
+    windows: TabWindowInfo[]
+  } | null>(null)
 
   // Single Markdown files opened from outside the workspace (drop / file association / menu) go
   // through the shared four-way choice; everything else keeps the normal useOpenPaths funnel.
@@ -52,47 +62,57 @@ export default function App(): React.ReactElement {
   //             allowQuit lets THAT window close; it does not quit the app or other windows.
   //   - false — the "Close Workspace" MENU action, which closes the workspace in THIS
   //             window only and leaves the window (and every other window) open.
+  const tryCloseRef = useRef<(quit: boolean) => boolean>(() => false)
   const tryCloseWorkspace = useCallback(
     (quit: boolean): boolean => {
       const st = useUIStore.getState()
-      // R5 plan A: refuse closing the workspace (and its "discard changes?" prompt) while the
-      // system print dialog is up — otherwise the print job loses its source document.
-      if (st.printing) return false
-      if (st.exportOpen) {
-        st.setExportOpen(false)
+      // ADR-0040 §5.6: the capability lock (now including `saving`) and a stacked
+      // native dialog both refuse the close. Disarm main's 5s safety net on EVERY
+      // refusal, otherwise the renderer would be force-closed with dirty tabs.
+      if (selectFileLocked(st)) {
+        if (quit) window.api.app.notifyQuitPending()
         return false
       }
-      if (st.exporting) return false
-      if (!st.dirty) {
+      if (st.dialogOpen) {
+        // Do not stack a second native dialog. Disarm main's safety net, then retry once
+        // when the first dialog releases the lock (ADR-0040 §5.3).
+        if (quit) window.api.app.notifyQuitPending()
+        const unsubscribe = useUIStore.subscribe((next) => {
+          if (next.dialogOpen) return
+          unsubscribe()
+          tryCloseRef.current(quit)
+        })
+        return false
+      }
+      // A dirty BACKGROUND tab must veto the whole close too — never trust the
+      // global `dirty` mirror alone.
+      const dirtyTabs = useTabsStore.getState().tabs.filter((tab) => st.isTabDirty(tab.documentId))
+      // When no tab is open but the global dirty mirror is set (legacy/direct setter flows),
+      // the active document's own draft still has to veto the close.
+      const hasDirty = dirtyTabs.length > 0 || st.dirty
+      if (!hasDirty) {
         closeWorkspace()
         return true
       }
-      // Dirty: keep this synchronous contract (the window-close handler needs an immediate
-      // boolean) by returning false and firing an async app-modal confirm instead of blocking.
-      // If the user accepts, close the workspace and — for a main-process window close — tell
-      // the main process it may close that window. Replaces the old window.confirm, whose
-      // OS-modal close triggered a window blur that broke typing.
-      //
-      // BEFORE opening the async confirm, tell the main process we're about to prompt the
-      // user. This disarms THIS window's 5s "renderer is dead" safety net so the user has
-      // unlimited time to decide; without it, the net would force-close this window 5s after
-      // the prompt opened, silently discarding the user's edits (the dirty-confirm regression).
+      // Keep the synchronous boolean contract: notify main, open one aggregate dialog,
+      // return false immediately; on Discard, clear all buffers and allow the close.
       if (quit) window.api.app.notifyQuitPending()
-      void window.api.dialog
-        .confirm({
-          message: t('app.unsavedCloseWorkspace'),
-          okText: t('app.confirmDiscard'),
-          cancelText: t('app.confirmKeep'),
-        })
-        .then((ok: boolean) => {
-          if (!ok) return
-          closeWorkspace()
-          if (quit) window.api.app.allowQuit()
-        })
+      const titles = dirtyTabs.map((tab) => tab.title).filter(Boolean)
+      void showCloseAllTabsDialog(titles, t).then((ok) => {
+        if (!ok) return
+        const current = useUIStore.getState()
+        for (const tab of dirtyTabs) current.closeTabDocument(tab.documentId)
+        closeWorkspace()
+        if (quit) window.api.app.allowQuit()
+      })
       return false
     },
     [closeWorkspace],
   )
+
+  useEffect(() => {
+    tryCloseRef.current = tryCloseWorkspace
+  }, [tryCloseWorkspace])
 
   useEffect(() => {
     // `window.matchMedia` is not guaranteed to exist outside a browser engine (jsdom does not
@@ -286,15 +306,24 @@ export default function App(): React.ReactElement {
       }
       // While writing a file, fully ignore the close-file request so no path loses the workspace.
       if (st.exporting) return
-      if (st.dirty) {
-        const ok = await window.api.dialog.confirm({
+      const tabs = useTabsStore.getState()
+      const activeTabId = tabs.activeTabId
+      const activeTab = tabs.tabs.find((tab) => tab.id === activeTabId)
+      if (!activeTab) {
+        st.closeDocument()
+        return
+      }
+      if (st.isTabDirty(activeTab.documentId)) {
+        const ok = await confirmWithLock({
           message: t('app.unsavedClose'),
           okText: t('app.confirmDiscard'),
           cancelText: t('app.confirmKeep'),
         })
         if (!ok) return
       }
-      st.closeDocument()
+      // ADR-0040: close just the active tab, preserving every other tab's draft.
+      useUIStore.getState().closeTabDocument(activeTab.documentId, activeTab.isNewUnsaved)
+      useTabsStore.getState().closeTab(activeTab.id)
     })
     const removeFileDetails = window.api.onMenuEvent('file-details', () => {
       const id = useUIStore.getState().activeDocumentId
@@ -320,7 +349,7 @@ export default function App(): React.ReactElement {
     const removeRevealFile = window.api.onRevealFile
       ? window.api.onRevealFile((filePath) => {
           if (blocked()) return
-          void navigateToPath(filePath)
+          void navigateToPath(filePath, { preview: true })
         })
       : () => {}
     return () => {
@@ -439,6 +468,49 @@ export default function App(): React.ReactElement {
     if (!window.api?.menu?.setHasDraft) return
     window.api.menu.setHasDraft(draftExists)
   }, [draftExists])
+
+  // ADR-0040: a cross-window drop / detached tab arrives here. Seed the tab with its
+  // draft and history, then ACK so the source releases its own copy. A new window reads
+  // the handoff from main directly (tabs:take-handoff) instead of this event.
+  useEffect(() => {
+    if (!window.api?.onTabAccept || !window.api?.tabs) return
+    const remove = window.api.onTabAccept(({ token, handoff }) => {
+      void acceptTabHandoff(handoff).then(() => window.api.tabs.acceptAck(token))
+    })
+    return () => remove()
+  }, [])
+
+  useEffect(() => {
+    if (!window.api?.onTabRemove) return
+    const remove = window.api.onTabRemove(({ tabId }) => removeTransferredTab(tabId))
+    return () => remove()
+  }, [])
+
+  // A new window created by detach consumes its pending handoff once at startup. This MUST NOT
+  // be cancellable: takeHandoff() is one-shot, so StrictMode's first effect invocation is the
+  // only one that can see the pending entry. consumePendingTabHandoff() is idempotent via main.
+  useEffect(() => {
+    void consumePendingTabHandoff()
+  }, [])
+
+  // Native menu / keyboard alternatives to dragging a tab.
+  useEffect(() => {
+    if (!window.api?.onMenuEvent) return
+    const unsubs = [
+      window.api.onMenuEvent('detach-tab-to-window', () => {
+        const tabId = useTabsStore.getState().activeTabId
+        if (tabId) void detachTabToNewWindow(tabId)
+      }),
+      window.api.onMenuEvent('move-tab-to-window', () => {
+        const tabId = useTabsStore.getState().activeTabId
+        if (!tabId) return
+        void listOtherWindows().then((windows) => {
+          if (windows.length > 0) setMovePicker({ tabId, windows })
+        })
+      }),
+    ]
+    return () => unsubs.forEach((unsub) => unsub())
+  }, [])
 
   // When the main process requests THIS window to close, run the exact same "close workspace"
   // flow (with its unified unsaved-changes prompt). If the user confirms (or there's nothing to
@@ -560,6 +632,29 @@ export default function App(): React.ReactElement {
         <FileDetailsDialog />
         <AboutDialog />
         <ExportDialog />
+        <Dialog open={movePicker !== null} onOpenChange={(open) => !open && setMovePicker(null)}>
+          <DialogContent data-testid="app-tab-window-picker">
+            <DialogHeader>
+              <DialogTitle>{t('tab.moveToWindow')}</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-[var(--color-text-secondary)]">{t('tab.pickWindow')}</p>
+            {movePicker?.windows.map((window) => (
+              <button
+                key={window.id}
+                type="button"
+                data-testid={`app-tab-window-${window.id}`}
+                className="mt-1 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-surface-overlay)] focus-ring"
+                onClick={() => {
+                  const current = movePicker
+                  setMovePicker(null)
+                  void moveTabToWindow(current.tabId, window.id)
+                }}
+              >
+                {window.title}
+              </button>
+            ))}
+          </DialogContent>
+        </Dialog>
         {/* R5 plan A: NO standalone print preview window and NO overlay. The main window's own
             preview pane is what the user looks at while printing, so it must stay scrollable and
             hit-testable. The "no editing / no switching or closing files" rule is a fine-grained

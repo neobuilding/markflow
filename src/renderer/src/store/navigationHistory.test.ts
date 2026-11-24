@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useNavigationHistory } from './navigationHistory'
+import {
+  createNavigationHistory,
+  isHistoryRecordingSuspended,
+  useNavigationHistory,
+  withoutHistoryRecording,
+} from './navigationHistory'
 
 describe('navigationHistory', () => {
   beforeEach(() => useNavigationHistory.getState().reset())
@@ -104,16 +109,106 @@ describe('navigationHistory', () => {
   })
 
   it('uses a nesting counter so nested history moves keep recording suspended', async () => {
-    const { withoutHistoryRecording, isHistoryRecordingSuspended } =
-      await import('./navigationHistory')
     await withoutHistoryRecording(async () => {
       expect(isHistoryRecordingSuspended()).toBe(true)
       await withoutHistoryRecording(async () => {
         expect(isHistoryRecordingSuspended()).toBe(true)
       })
-      // The inner scope ended, but the outer move is still activating its document.
       expect(isHistoryRecordingSuspended()).toBe(true)
     })
     expect(isHistoryRecordingSuspended()).toBe(false)
+  })
+
+  it('creates isolated instances (ADR-0040)', () => {
+    const a = createNavigationHistory()
+    const b = createNavigationHistory()
+    a.getState().push('/a.md')
+    expect(a.getState().entries).toHaveLength(1)
+    expect(b.getState().entries).toHaveLength(0)
+    expect(useNavigationHistory.getState().entries).toHaveLength(0)
+  })
+
+  it('ADR-0042: the tabId argument is compatibility-only — suppression is always global', async () => {
+    expect(isHistoryRecordingSuspended('a')).toBe(false)
+    await withoutHistoryRecording(
+      async () => expect(isHistoryRecordingSuspended('a')).toBe(true),
+      'a',
+    )
+    expect(isHistoryRecordingSuspended('a')).toBe(false)
+    await withoutHistoryRecording(async () => {
+      expect(isHistoryRecordingSuspended('a')).toBe(true)
+      expect(isHistoryRecordingSuspended('b')).toBe(true)
+      expect(isHistoryRecordingSuspended()).toBe(true)
+    }, 'a')
+    // Nesting keeps suppression until the outer scope ends.
+    await withoutHistoryRecording(
+      async () =>
+        withoutHistoryRecording(async () => {
+          expect(isHistoryRecordingSuspended('a')).toBe(true)
+        }, 'a'),
+      'a',
+    )
+    expect(isHistoryRecordingSuspended('a')).toBe(false)
+  })
+
+  it('ADR-0042: marks the current entry replayable across a workspace switch', () => {
+    const h = createNavigationHistory()
+    h.getState().push('/old/sub/a.md', { tabId: 'tab-a' })
+    h.getState().markCurrentEntryForSwitch('/old', 'tab-b')
+    expect(h.getState().entryAt(0)).toMatchObject({
+      path: '/old/sub/a.md',
+      openMode: 'external-switch',
+      replayRoot: '/old',
+      tabId: 'tab-a',
+    })
+    // A cross-switch entry survives pruning by the new root, unlike an in-place one.
+    h.getState().pruneOutOfRoot('/new')
+    expect(h.getState().entries).toHaveLength(1)
+  })
+
+  it('ADR-0042: marking keeps an existing tabId and tolerates missing ones', () => {
+    const h = createNavigationHistory()
+    h.getState().push('/old/a.md')
+    h.getState().markCurrentEntryForSwitch('/old')
+    expect(h.getState().entryAt(0)?.tabId).toBeUndefined()
+    h.getState().push('/old/b.md', { tabId: 'tab-a' })
+    h.getState().markCurrentEntryForSwitch('/old', 'tab-b')
+    expect(h.getState().entryAt(1)?.tabId).toBe('tab-a')
+  })
+
+  it('ADR-0042: records tabId and editor position, and updates the current entry in place', () => {
+    const h = createNavigationHistory()
+    h.getState().push('/a.md', { tabId: 'tab-a', position: { start: 4, end: 9 } })
+    h.getState().push('/b.md', { tabId: 'tab-b' })
+    expect(h.getState().entryAt(0)).toMatchObject({
+      path: '/a.md',
+      tabId: 'tab-a',
+      position: { start: 4, end: 9 },
+    })
+    h.getState().updateCurrentPosition({ start: 12, end: 12 })
+    expect(h.getState().entryAt(0)?.position).toEqual({ start: 4, end: 9 })
+    expect(h.getState().entryAt(1)?.position).toEqual({ start: 12, end: 12 })
+    expect(h.getState().entries).toHaveLength(2)
+    h.getState().updateCurrentPosition(null)
+    expect(h.getState().entryAt(1)?.position).toBeUndefined()
+  })
+
+  it('pruneOutOfRoot removes in-place entries outside the root, keeps external modes', () => {
+    const h = createNavigationHistory()
+    h.getState().push('/root/a.md')
+    h.getState().push('/other/b.md', { openMode: 'external-keep' })
+    h.getState().push('/other/c.md', { openMode: 'external-switch' })
+    h.getState().push('/root/d.md')
+    h.getState().setCursor(3)
+    h.getState().pruneOutOfRoot('/root')
+    expect(h.getState().entries.map((e) => e.path)).toEqual([
+      '/root/a.md',
+      '/other/b.md',
+      '/other/c.md',
+      '/root/d.md',
+    ])
+    h.getState().pruneOutOfRoot('/root/sub')
+    expect(h.getState().entries.map((e) => e.path)).toEqual(['/other/b.md', '/other/c.md'])
+    expect(h.getState().cursor).toBe(1)
   })
 })

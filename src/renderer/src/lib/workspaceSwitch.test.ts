@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { switchWorkspace } from './workspaceSwitch'
 import { useUIStore } from '../store/ui'
 import { useNavigationHistory } from '../store/navigationHistory'
+import { useTabsStore } from '../store/tabs'
+import { getHistory, seedHistory } from '../store/tabHistory'
 import '../i18n'
 
 // The workspace switch is a TRANSACTION owned by one service: lock check → conditional unsaved
@@ -70,6 +72,7 @@ describe('switchWorkspace', () => {
       unsavedBuffers: {},
     })
     useNavigationHistory.getState().reset()
+    useTabsStore.getState().reset()
     // mockReset (not just clearAllMocks) so a queued one-shot value from a previous case cannot
     // leak into this one.
     api.documents.get.mockReset()
@@ -200,6 +203,37 @@ describe('switchWorkspace', () => {
     expect(useUIStore.getState().dirty).toBe(true)
   })
 
+  it('replay mode reuses a tab, prunes out-of-root history and migrates the title draft', async () => {
+    useTabsStore.getState().reset()
+    const tabId = useTabsStore.getState().openTab('a', { title: 'a.md', tabId: 'keep-tab' })
+    seedHistory(tabId, [{ path: 'C:/notes/sub/a.md' }, { path: 'D:/outside/b.md' }], 1)
+    useUIStore.setState({
+      activeDocumentId: 'a',
+      workspaceRoot: 'C:/notes/sub',
+      dirty: true,
+      unsavedBuffers: { a: { content: 'edited', title: 'a*.md', revision: 1 } },
+    })
+    await expect(
+      switchWorkspace('C:/notes', { replayTabId: tabId, openPath: 'C:/notes/picked.md' }),
+    ).resolves.toBe(true)
+    // The replay tab's document was replaced, not duplicated.
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
+    expect(useTabsStore.getState().tabs[0].documentId).toBe('imported')
+  })
+
+  it('replay without openPath reuses the initiating tab for the kept document', async () => {
+    useTabsStore.getState().reset()
+    const tabId = useTabsStore.getState().openTab('a', { title: 'a.md', tabId: 'keep-tab' })
+    useUIStore.setState({
+      activeDocumentId: 'a',
+      workspaceRoot: 'C:/notes/sub',
+      dirty: false,
+      unsavedBuffers: {},
+    })
+    await expect(switchWorkspace('C:/notes', { replayTabId: tabId })).resolves.toBe(true)
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
+  })
+
   it('keeps an edit made while the document lookup is in flight', async () => {
     // reportUnsavedBuffer replaces the whole `unsavedBuffers` object, so a snapshot taken
     // before the first await would migrate the pre-keystroke content and lose the last edit.
@@ -277,6 +311,28 @@ describe('switchWorkspace', () => {
     // The history records the file the user picked, with the mode that replays it.
     expect(paths()).toEqual(['D:/other/picked.md'])
     expect(history()[0].openMode).toBe('external-switch')
+    expect(history()[0].replayRoot).toBe('D:/other')
+  })
+
+  it('defaults the tab-path replayRoot to the new root for an external switch', async () => {
+    useUIStore.setState({ activeDocumentId: 'a', workspaceRoot: 'C:/notes' })
+    useTabsStore.getState().openTab('a', { tabId: 'a', title: 'a' })
+    await expect(
+      switchWorkspace('D:/other', { openMode: 'external-switch', openPath: 'D:/other/picked.md' }),
+    ).resolves.toBe(true)
+    expect(history()[0]).toMatchObject({ openMode: 'external-switch', replayRoot: 'D:/other' })
+  })
+
+  it('records an explicit replayRoot when the caller supplies one', async () => {
+    useUIStore.setState({ activeDocumentId: 'a', workspaceRoot: 'C:/notes' })
+    await expect(
+      switchWorkspace('D:/other', {
+        openMode: 'external-switch',
+        openPath: 'D:/other/picked.md',
+        replayRoot: 'D:/custom',
+      }),
+    ).resolves.toBe(true)
+    expect(history()[0].replayRoot).toBe('D:/custom')
   })
 
   it('closes the previous document when a target file is named', async () => {
@@ -340,5 +396,207 @@ describe('switchWorkspace', () => {
     await expect(switchWorkspace('D:/other')).resolves.toBe(true)
     expect(api.documents.setWorkspaceRoot).toHaveBeenCalledWith('D:/other')
     expect(useUIStore.getState().activeDocumentId).toBeNull()
+  })
+
+  it('ADR-0040: migrates every kept tab, closes out-of-root tabs after ONE aggregate prompt', async () => {
+    api.documents.get.mockImplementation(async (id: string) =>
+      doc(id, id === 'c' ? 'D:/outside/c.md' : `C:/notes/${id}.md`, id),
+    )
+    api.documents.import.mockImplementation(async (path: string) => ({
+      id: `new-${path}`,
+      filePath: path,
+      title: path,
+      memoryOnly: false,
+    }))
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: [],
+      markdownFiles: ['C:/notes/a.md', 'C:/notes/b.md', 'C:/notes/other.md'],
+    })
+    const tabs = useTabsStore.getState()
+    const a = tabs.openTab('a', { tabId: 'a', title: 'a' })
+    tabs.openTab('b', { tabId: 'b', title: 'b', activate: false })
+    tabs.openTab('c', { tabId: 'c', title: 'c', activate: false })
+    useUIStore.getState().reportUnsavedBuffer('a', 'draft-a', 'A edited')
+    useUIStore.getState().reportUnsavedBuffer('c', 'draft-c', 'C edited')
+    seedHistory(a, [{ path: 'C:/notes/a.md' }, { path: 'D:/outside/old.md' }], 1)
+
+    await expect(switchWorkspace('C:/notes', { record: false })).resolves.toBe(true)
+
+    expect(api.dialog.confirm).toHaveBeenCalledTimes(1)
+    expect(useUIStore.getState().unsavedBuffers['new-C:/notes/a.md']?.content).toBe('draft-a')
+    expect(useUIStore.getState().unsavedBuffers['new-C:/notes/a.md']?.title).toBe('A edited')
+    expect(useTabsStore.getState().tabs.map((tab) => tab.id)).toEqual(['a', 'b'])
+    expect(useTabsStore.getState().tabs[0].documentId).toBe('new-C:/notes/a.md')
+    expect(useTabsStore.getState().tabs[0].title).toBe('C:/notes/a.md')
+    // The out-of-root in-place entry was pruned from the surviving tab's stack.
+    expect(
+      getHistory('a')
+        ?.getState()
+        .entries.map((e: { path: string }) => e.path),
+    ).toEqual(['C:/notes/a.md'])
+    expect(api.documents.importMany).toHaveBeenCalledWith(['C:/notes/other.md'])
+  })
+
+  it('records an ordinary root switch as in-place without a replayRoot', async () => {
+    useUIStore.setState({ activeDocumentId: 'a', workspaceRoot: 'C:/notes' })
+    useTabsStore.getState().openTab('a', { tabId: 'a', title: 'a' })
+    await expect(
+      switchWorkspace('C:/notes/sub', { openPath: 'C:/notes/sub/picked.md' }),
+    ).resolves.toBe(true)
+    expect(history()[0]).toMatchObject({ openMode: 'in-place', path: 'C:/notes/sub/picked.md' })
+    expect(history()[0].replayRoot).toBeUndefined()
+  })
+
+  it('ADR-0040: vetoing the aggregate prompt leaves every tab and draft intact', async () => {
+    api.documents.get.mockImplementation(async (id: string) => doc(id, `C:/notes/${id}.md`, id))
+    api.dialog.confirm.mockResolvedValueOnce(false)
+    const tabs = useTabsStore.getState()
+    tabs.openTab('a', { tabId: 'a' })
+    tabs.openTab('b', { tabId: 'b', activate: false, title: 'B' })
+    useUIStore.getState().reportUnsavedBuffer('b', 'draft-b')
+
+    await expect(switchWorkspace('D:/other')).resolves.toBe(false)
+    expect(useTabsStore.getState().tabs).toHaveLength(2)
+    expect(useUIStore.getState().unsavedBuffers['b']?.content).toBe('draft-b')
+    expect(api.documents.setWorkspaceRoot).not.toHaveBeenCalled()
+  })
+
+  it('ADR-0040: a kept tab whose re-import fails is closed with its buffer', async () => {
+    api.documents.get.mockImplementation(async (id: string) => doc(id, 'C:/notes/a.md', id))
+    api.documents.import.mockResolvedValueOnce(null)
+    useTabsStore.getState().openTab('a', { tabId: 'a' })
+    useUIStore.getState().reportUnsavedBuffer('a', 'draft')
+
+    await expect(switchWorkspace('C:/notes')).resolves.toBe(true)
+    expect(useTabsStore.getState().tabs).toHaveLength(0)
+    expect(useUIStore.getState().unsavedBuffers['a']).toBeUndefined()
+  })
+
+  it('ADR-0040/0042: replay target replaces its tab; a failed target import keeps the tab as anchor', async () => {
+    api.documents.get.mockImplementation(async (id: string) => doc(id, 'C:/notes/a.md', id))
+    api.documents.import.mockResolvedValueOnce(null)
+    useTabsStore.getState().openTab('a', { tabId: 'a' })
+
+    await expect(
+      switchWorkspace('D:/other', { openPath: 'D:/other/picked.md', replayTabId: 'a' }),
+    ).resolves.toBe(true)
+    // The replay tab remains as the Back/Forward anchor even when the target import fails.
+    expect(useTabsStore.getState().tabs.map((tab) => tab.id)).toEqual(['a'])
+    // ADR-0042: the global stack records the still-open anchor document.
+    expect(paths()).toEqual(['C:/notes/a.md'])
+  })
+
+  it('ADR-0040: memory-only tabs close, out-of-root backfill is skipped, and record:false suppresses history', async () => {
+    api.documents.get.mockImplementation(async (id: string) =>
+      id === 'draft'
+        ? { id, filePath: '', title: 'draft', memoryOnly: true }
+        : doc(id, 'C:/notes/a.md', id),
+    )
+    api.documents.import.mockImplementation(async (path: string) => ({
+      id: `new-${path}`,
+      filePath: path,
+      title: path,
+      memoryOnly: false,
+    }))
+    api.files.resolvePaths.mockResolvedValueOnce({
+      directories: [],
+      markdownFiles: ['C:/notes/a.md', 'D:/outside/extra.md'],
+    })
+    const tabs = useTabsStore.getState()
+    tabs.openTab('draft', { tabId: 'draft', title: 'draft' })
+    tabs.openTab('a', { tabId: 'a', title: 'a', activate: false })
+    useUIStore.getState().reportUnsavedBuffer('a', 'draft-a')
+
+    await expect(
+      switchWorkspace('C:/notes', { openPath: 'C:/notes/target.md', record: false }),
+    ).resolves.toBe(true)
+
+    expect(api.documents.importMany).toHaveBeenCalledWith([])
+    expect(useTabsStore.getState().tabs.map((tab) => tab.id)).toEqual(['a', expect.any(String)])
+    expect(paths()).toEqual([])
+  })
+
+  it('ADR-0040: replay target reuses its existing tab', async () => {
+    api.documents.get.mockImplementation(async (id: string) => doc(id, 'C:/notes/a.md', id))
+    api.documents.import.mockImplementation(async (path: string) => ({
+      id: `new-${path}`,
+      filePath: path,
+      title: path,
+      memoryOnly: false,
+    }))
+    useTabsStore.getState().openTab('a', { tabId: 'a' })
+    seedHistory('a', [{ path: 'C:/notes/a.md', tabId: 'a' }], 0)
+    // The link-driven decision marks the source entry before the swap (workspaceExternalDecision);
+    // mirror that here so the source survives pruneOutOfRoot like it does in production.
+    useNavigationHistory.getState().markCurrentEntryForSwitch('C:/notes', 'a')
+    useUIStore.setState({ editorSelection: { start: 4, end: 9 } })
+
+    await expect(
+      switchWorkspace('D:/other', {
+        openMode: 'external-switch',
+        openPath: 'D:/other/picked.md',
+        replayTabId: 'a',
+      }),
+    ).resolves.toBe(true)
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
+    expect(useTabsStore.getState().tabs[0].id).toBe('a')
+    expect(useTabsStore.getState().tabs[0].documentId).toBe('new-D:/other/picked.md')
+    // ADR-0042 §2/§5: the switch captured the editor position into the SOURCE entry, and the
+    // target entry names the tab that DISPLAYS it — the replay target, not the pre-swap snapshot.
+    expect(history()[0]).toMatchObject({
+      path: 'C:/notes/a.md',
+      position: { start: 4, end: 9 },
+    })
+    expect(history()[1]).toMatchObject({
+      path: 'D:/other/picked.md',
+      replayRoot: 'D:/other',
+      tabId: 'a',
+    })
+  })
+
+  it('ADR-0040: a buffer without a title falls back to the tab title, then the imported title', async () => {
+    api.documents.get.mockImplementation(async (id: string) => doc(id, 'C:/notes/a.md', id))
+    api.documents.import.mockImplementation(async (path: string) => ({
+      id: `new-${path}`,
+      filePath: path,
+      title: path,
+      memoryOnly: false,
+    }))
+    useTabsStore.getState().openTab('a', { tabId: 'a', title: '' })
+    useUIStore.getState().reportUnsavedBuffer('a', 'draft')
+
+    await expect(switchWorkspace('C:/notes', { record: false })).resolves.toBe(true)
+    expect(useUIStore.getState().unsavedBuffers['new-C:/notes/a.md']?.title).toBe('C:/notes/a.md')
+  })
+
+  it('ADR-0040: legacy no-document target import needs no tab', async () => {
+    api.documents.import.mockImplementation(async (path: string) => doc('imported', path))
+    await expect(switchWorkspace('D:/other', { openPath: 'D:/other/picked.md' })).resolves.toBe(
+      true,
+    )
+    expect(useTabsStore.getState().tabs).toHaveLength(0)
+    expect(paths()).toEqual(['D:/other/picked.md'])
+    // ADR-0040 §3.2: no active document ⇒ no tab; the entry is recorded without a tabId.
+    expect(history()[0].tabId).toBeUndefined()
+  })
+
+  it('ADR-0040: target navigation with no active tab uses the default history stack', async () => {
+    api.documents.get.mockImplementation(async (id: string) => doc(id, 'D:/outside/a.md', id))
+    api.documents.import.mockImplementation(async (path: string) => doc('imported-target', path))
+    useTabsStore.getState().openTab('a', { tabId: 'a', activate: false })
+
+    await expect(switchWorkspace('D:/outside', { openPath: 'D:/outside/picked.md' })).resolves.toBe(
+      true,
+    )
+    expect(paths()).toEqual(['D:/outside/picked.md'])
+    expect(useNavigationHistory.getState().entries).toHaveLength(1)
+  })
+
+  it('ADR-0040: no active tab after migration produces no history entry', async () => {
+    api.documents.get.mockImplementation(async (id: string) => doc(id, 'D:/outside/a.md', id))
+    useTabsStore.getState().openTab('a', { tabId: 'a' })
+
+    await expect(switchWorkspace('C:/notes', { openMode: 'external-switch' })).resolves.toBe(true)
+    expect(paths()).toEqual([])
   })
 })

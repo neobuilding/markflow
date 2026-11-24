@@ -15,6 +15,11 @@ import type {
   ExternalOpenChoice,
   WorkspaceExternalChoice,
 } from '../../../shared/linkTypes'
+import type {
+  TabDragResult,
+  TabHandoff,
+  TabWindowInfo,
+} from '../../../shared/tabTypes'
 
 // Status information of a file on disk (size / creation time / modification time)
 export interface FileStat {
@@ -44,6 +49,8 @@ export type MenuEvent =
   | 'language'
   | 'select-all'
   | 'set-theme'
+  | 'move-tab-to-window'
+  | 'detach-tab-to-window'
 
 // Electron preload bridge exposed on window.api
 export interface Api {
@@ -161,12 +168,25 @@ export interface Api {
     setHasFolder: (has: boolean) => void
     setHasDraft: (has: boolean) => void
     setFileLocked: (locked: boolean) => void
+    setHasOtherWindows: (has: boolean) => void
+  }
+  tabs: {
+    beginDrag: (handoff: TabHandoff, preferredToken?: string) => Promise<{ token: string }>
+    drop: (token: string, index: number) => Promise<TabDragResult>
+    detach: (token: string) => Promise<TabDragResult>
+    cancelDrag: (token: string) => Promise<void>
+    takeHandoff: () => Promise<{ token: string; handoff: TabHandoff } | null>
+    acceptAck: (token: string) => Promise<void>
+    moveToWindow: (token: string, targetWindowId: number, index?: number) => Promise<TabDragResult>
+    listWindows: () => Promise<TabWindowInfo[]>
   }
   clipboard: {
     writeText: (text: string) => Promise<void>
     writeImage: (src: string) => Promise<void>
     writeSvg: (svg: string) => Promise<void>
   }
+  onTabAccept: (callback: (payload: { token: string; handoff: TabHandoff }) => void) => () => void
+  onTabRemove: (callback: (payload: { tabId: string }) => void) => () => void
   onMenuEvent: (event: MenuEvent, callback: (data?: string | string[]) => void) => () => void
   onFileChanged: (callback: (data: { id: string; filePath: string }) => void) => () => void
   onFolderChanged: (callback: (data: { dirPath: string }) => void) => () => void

@@ -261,9 +261,9 @@ describe('CommandPalette', () => {
     expect(await screen.findByText('Go to file…')).toBeInTheDocument()
   })
 
-  // ADR-0023: a palette click is a document switch like any other — the unsaved guard must
-  // fire here too, and "keep editing" must leave the palette open on the same document.
-  it('does not switch when the unsaved guard is declined', async () => {
+  // ADR-0040: a palette click activates/opens a tab without discarding drafts — no guard,
+  // and the palette closes after a successful switch as the "Go to file" flow expects.
+  it('switches tabs through the palette without an unsaved guard', async () => {
     const confirm: ReturnType<typeof vi.fn> = vi.fn(async () => false)
     ;(window as unknown as { api: unknown }).api = { dialog: { confirm } }
     useUIStore.getState().setActiveDocumentId('a')
@@ -273,11 +273,8 @@ describe('CommandPalette', () => {
     useUIStore.getState().setSearchQuery('a')
     render(<CommandPalette />)
     fireEvent.click(await screen.findByText('Banana'))
-    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1))
-    expect(confirm.mock.calls[0][0].message).toContain('Apple')
-    expect(useUIStore.getState().activeDocumentId).toBe('a')
-    // Nothing switched, so there is nothing to close over: the palette stays open.
-    expect(useUIStore.getState().searchOpen).toBe(true)
+    await waitFor(() => expect(useUIStore.getState().searchOpen).toBe(false))
+    expect(confirm).not.toHaveBeenCalled()
   })
 })
 describe('CommandPalette — result row context menu', () => {

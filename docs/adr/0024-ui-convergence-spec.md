@@ -461,7 +461,7 @@ advertises it.
 
 **Before adding any input, toggle, button, or menu, look in `src/renderer/src/components/ui/`.**
 Available primitives: `Button`, `SearchInput`, `IconToggleGroup`, `InputContextMenu`, `Tooltip`,
-`ContextMenu`, `Dialog`, `MatchCounter`.
+`ContextMenu`, `Dialog`, `MatchCounter`, `Tab`, `TabBar`.
 
 If no primitive fits, add it to `components/ui/` first — do not hand-roll an equivalent inside a
 feature component. Historical counter-example, now fixed: `SidebarSearch` had its own

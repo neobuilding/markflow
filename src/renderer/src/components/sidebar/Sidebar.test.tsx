@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from '../ui/tooltip'
 import { Sidebar } from './Sidebar'
 import { useUIStore } from '../../store/ui'
+import { useTabsStore } from '../../store/tabs'
 import type { Document } from '../../types'
 
 import { t } from '../../i18n'
@@ -118,6 +119,9 @@ beforeEach(() => {
   useUIStore.getState().setWorkspaceRoot(null)
   useUIStore.getState().setActiveDocumentId(null)
   useUIStore.getState().setDirty(false)
+  useUIStore.getState().setEditable(false)
+  useUIStore.getState().setIsNewUnsaved(false)
+  useTabsStore.getState().reset()
   // "Show All Folders" and the just-created-folder pins are session state on the same
   // store, so they have to be cleared per test like the rest of the workspace.
   useUIStore.getState().setShowAllFolders(false)
@@ -421,17 +425,19 @@ describe('Sidebar — interactions', () => {
     await waitFor(() => expect(useUIStore.getState().activeDocumentId).toBe('a'))
   })
 
-  it('does not switch documents when unsaved changes are kept', async () => {
+  it('ADR-0040: sidebar click switches tabs without a guard, keeping the draft', async () => {
     useUIStore.getState().setActiveDocumentId('b')
     useUIStore.getState().setDirty(true)
+    useUIStore.getState().reportUnsavedBuffer('b', 'unsaved text', 'b.md')
     const api = {
       dialog: { openFiles: vi.fn(), openFolderPath: vi.fn(), confirm: vi.fn(async () => false) },
     }
     ;(window as unknown as { api: unknown }).api = api
     mount()
     await userEvent.click(screen.getByText('a.md'))
-    await waitFor(() => expect(api.dialog.confirm).toHaveBeenCalled())
-    expect(useUIStore.getState().activeDocumentId).toBe('b')
+    await waitFor(() => expect(useUIStore.getState().activeDocumentId).toBe('a'))
+    expect(api.dialog.confirm).not.toHaveBeenCalled()
+    expect(useUIStore.getState().unsavedBuffers.b?.content).toBe('unsaved text')
   })
 
   it('switches documents after confirming unsaved discard', async () => {
@@ -948,6 +954,7 @@ describe('Sidebar document item context menu', () => {
   it('renames any file, not just the open one, and moves it on disk immediately', async () => {
     // The active document is the draft; renaming the saved file a.md must not switch to it.
     useUIStore.getState().setActiveDocumentId('draft')
+    const editableBefore = useUIStore.getState().editable
     mount()
     fireEvent.contextMenu(await docItem('a.md'))
     fireEvent.click(await screen.findByTestId('side-rename'))
@@ -962,7 +969,7 @@ describe('Sidebar document item context menu', () => {
     )
     // The rename never touched the open document or edit mode.
     expect(useUIStore.getState().activeDocumentId).toBe('draft')
-    expect(useUIStore.getState().editable).toBe(false)
+    expect(useUIStore.getState().editable).toBe(editableBefore)
   })
 
   it('honours a typed Markdown extension instead of forcing .md', async () => {

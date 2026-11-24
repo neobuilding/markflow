@@ -249,6 +249,22 @@ describe('main process — before-quit (no app-level handshake)', () => {
     expect(docStore.purgeUnsavedDrafts).toHaveBeenCalled()
   })
 
+  it('purges every registered window store on before-quit (ADR-0040)', async () => {
+    h.fakeWindow.isDestroyed = () => false
+    const state = await import('./state.js')
+    const docStore = await import('./model/documentStore.js')
+    const contexts = await import('./model/windowContext.js')
+    contexts.__resetWindowContextsForTests()
+    const fakeWindow = h.fakeWindow as unknown as Electron.BrowserWindow
+    Object.defineProperty(fakeWindow.webContents, 'id', { value: 4242, configurable: true })
+    contexts.registerWindow(fakeWindow)
+    await loadLifecycle()
+    state.setReadyToQuit(true)
+    h.appHandlers['before-quit']({ preventDefault: vi.fn() })
+    expect(docStore.purgeUnsavedDrafts).toHaveBeenCalled()
+    contexts.__resetWindowContextsForTests()
+  })
+
   it('still quits when purging unsaved drafts throws', async () => {
     h.fakeWindow.isDestroyed = () => false
     const state = await import('./state.js')

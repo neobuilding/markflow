@@ -24,7 +24,8 @@
     "shared/i18n/zh-CN.ts",
     "shared/fileUtils.ts",
     "shared/searchTypes.ts",
-    "shared/linkTypes.ts"
+    "shared/linkTypes.ts",
+    "shared/tabTypes.ts"
   ],
   "exclude": ["electron/main/**/__tests__/**", "electron/preload/**/*.test.ts"]
 }

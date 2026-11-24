@@ -15,7 +15,7 @@ vi.mock('electron', () => ({
 }))
 
 // The exact set of keys index.ts must compose onto window.api. Keep this in
-// lock-step with electron/preload/index.ts: 10 domain APIs + 7 event
+// lock-step with electron/preload/index.ts: 11 domain APIs + 9 event
 // subscriptions spread to the top level.
 const EXPECTED_API_KEYS = [
   'documents',
@@ -28,6 +28,9 @@ const EXPECTED_API_KEYS = [
   'dialog',
   'window',
   'menu',
+  'tabs',
+  'onTabAccept',
+  'onTabRemove',
   'onMenuEvent',
   'onFileChanged',
   'onFolderChanged',

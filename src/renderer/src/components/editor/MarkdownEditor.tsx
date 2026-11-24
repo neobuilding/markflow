@@ -497,7 +497,14 @@ export function MarkdownEditor({
             }
           }
           // Refresh the find panel's k/n counter when the cursor moves between matches.
-          if (update.selectionSet) panelUpdateRef.current?.(view)
+          if (update.selectionSet) {
+            panelUpdateRef.current?.(view)
+            // ADR-0042: mirror the live selection so navigation can capture the exact position.
+            useUIStore.getState().setEditorSelection({
+              start: view.state.selection.main.from,
+              end: view.state.selection.main.to,
+            })
+          }
           // Publish live undo/redo availability so the editor pane bar's buttons track it in real
           // time (ADR-0024 §10 trade-off 47). Only doc changes alter history depth, so gate there.
           if (update.docChanged) {

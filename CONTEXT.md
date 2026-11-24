@@ -53,8 +53,8 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
 
 - **Workspace** — the single opened root folder plus its loaded documents, tracked via **`workspaceRoot`**
   (ADR-0023), which is also the **single** directory the file watcher covers. The workspace is
-  **per window**: each `BrowserWindow` owns an independent root, document store, watcher and history
-  (ADR-0039). Opening a folder **replaces this window's workspace**; multi-root workspaces remain out
+  **per window**: each `BrowserWindow` owns an independent root, document store and watcher (ADR-0039);
+  navigation history is one global stack per window (ADR-0042). Opening a folder **replaces this window's workspace**; multi-root workspaces remain out
   of scope, now per window rather than per app. **Close workspace** returns to an empty state;
   **Close file** keeps the folder + sidebar.
 - **Sidebar** — collapsible nested folder tree listing Markdown files; file names include their extension
@@ -82,18 +82,41 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   workspace**, **cancel**. The unsaved-changes guard runs only at the actual document-close
   execution point, so the new-window and cancel branches do not prompt. Non-Markdown local files and
   URI schemes retain the earlier Open / Copy / Cancel dialog (ADR-0038 §3.1.3).
-- **Navigation history (导航历史)** — the in-memory, app-session-lifetime, **per-window** list of
-  document navigations, with a cursor for Back/Forward. Each entry is structured
-  `{ path, title?, openMode? }`; `openMode` replays how an external document was opened without
-  re-prompting. Entries are keyed by absolute file path so they survive workspace replacement; a new
-  navigation truncates the forward part and entries for missing files are skipped and pruned. A
-  history menu can jump directly to an entry via `moveToHistoryIndex`, which does not append.
-  _Avoid_: "browser history" (this is not a URL history)
-- **Back / Forward (后退/前进)** — the two global-toolbar controls that move along **Navigation history**,
-  with Chrome/Edge stack semantics and browser-style shortcuts (`Alt+←/→` on Windows/Linux,
-  `Cmd+[` / `Cmd+]` on macOS) only when focus is outside the editor. A **right-click context menu**
-  on either button lists recent entries (nearest first); selecting one jumps to it without appending
-  (ADR-0039 §3.5). _Avoid_: "history dropdown" — it is a right-click menu, not a persistent dropdown.
+- **Tab (标签页)** — one open document in a window's tab strip, keyed by a stable `id` that survives
+  workspace re-import and cross-window moves; it owns a draft (body + title). All tabs in a window
+  share the window's workspace root, document store, and global navigation history (ADR-0040/0042).
+- **Preview tab (未固定标签页)** — the single replaceable tab in a window's tab strip (ADR-0041). A
+  new preview closes the previous one; editing it, double-clicking it, pinning it, or moving it makes
+  it non-preview. Rendered Markdown links open in this slot without pinning their source: an
+  unpinned source is replaced, a pinned source stays open and gains a new preview tab (ADR-0041).
+  _Avoid_: “临时标签页”, “预览标签页” (conflicts with the Markdown preview pane),
+  “unlocked tab”, “temporary tab”
+- **Pinned tab / non-preview tab (固定标签页)** — any tab that is not the window's preview slot; it
+  stays open until explicitly closed or moved. `Pin / 固定` here means only “make non-preview” and
+  is unrelated to VS Code's separate sticky / UI Pin feature. _Avoid_: “locked tab”
+- **Preview slot (预览槽位)** — the per-window identity of the current preview tab. Pinned state is
+  derived from this slot, never stored independently on each tab (ADR-0041).
+- **Tab handoff (标签页交接)** — the complete in-memory payload moved between windows on drag/drop:
+  tab id, file path, draft body and title, edit state, and the moved tab's current history entry
+  as the destination window's first global entry (ADR-0040/0042). A main drag-session token is
+  consumed exactly once; the source drops its tab only after the destination acknowledges the handoff.
+- **Navigation history (导航历史)** — the in-memory, app-session-lifetime, **one global stack per window**
+  of document navigations (ADR-0042; supersedes ADR-0040's per-tab stacks), with a single cursor for
+  Back/Forward. Each entry is `{ path, title?, openMode?, replayRoot?, tabId?, position? }`: `path` is
+  the absolute file path (durable across workspace replacement), `tabId` identifies the tab that
+  displayed it, `position` is the editor character range `{ start, end }`, and `openMode` replays an
+  external document without re-prompting. `replayRoot` is the workspace root an `external-switch`
+  entry restores, so Back can return to the exact root where the link was clicked. A new navigation
+  truncates the forward part; missing files are skipped and
+  pruned; replay activates the recorded tab (or opens one) and restores the position. Cursor moves
+  update the current entry in place, never creating entries. A history menu can jump directly via
+  `moveToHistoryIndex` without appending. _Avoid_: "browser history" (this is not a URL history).
+- **Back / Forward (后退/前进)** — the two global-toolbar controls that move along the global
+  **Navigation history**, returning to the previous document _and editor position_, possibly switching
+  tabs (ADR-0042; VS Code position-navigation semantics). Browser-style shortcuts (`Alt+←/→` on
+  Windows/Linux, `Cmd+[` / `Cmd+]` on macOS) apply only when focus is outside the editor. A
+  **right-click context menu** on either button lists recent entries (nearest first); selecting one
+  jumps without appending (ADR-0039 §3.5). _Avoid_: "history dropdown" — it is a right-click menu.
 - **Reveal in sidebar (在侧栏中定位)** — after any document change, expand the active document's
   ancestor folders and scroll its row into view. It is driven by the active document, not by a
   specific navigation entry point. A **reveal file** event additionally lets a reused window focus
@@ -168,7 +191,7 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   it was saved. This is a deliberate consequence of the single-active-document model, unlike VS
   Code's per-resource edit stacks. _Avoid_: "per-document undo stack", "undo history is preserved
   across switches". _See also_: **Unsaved-changes guard**, **Editing session**.
-- **Editing session (编辑会话)** — one session per open document, owning the editor's debounced
+- **Editing session (编辑会话)** — one active tab at a time (ADR-0040), owning the editor's debounced
   preview refresh and the **right to write**: it remembers the text it last wrote into the view, and
   a keystroke is committed only while it was applied to exactly that text. A switch aborts the
   previous session (cancelling its pending timer) and the new session owns nothing until the new
@@ -178,7 +201,7 @@ React 19 + TypeScript 7 (strict) + Tailwind CSS 4, packaged via electron-builder
   debounce; the debounce only refreshes the preview. _See also_:
   `docs/adr/0033-editor-draft-session-isolation.md`.
 - **Unsaved buffer registry (未保存缓冲区登记表)** — the renderer's `Record<docId, { content,
-revision }>` of unsaved text. The main process only knows on-disk bytes, so content search and
+title, revision }>` of unsaved text (title added in ADR-0040 so it survives tab switches and handoff). The main process only knows on-disk bytes, so content search and
   cross-file replace need the renderer to report these buffers. The key is a **document id** used
   for addressing, never for deciding whether a callback is stale. _See also_:
   **Dirty buffer snapshot**, **Unsaved-changes guard**.
@@ -437,14 +460,14 @@ revision }>` of unsaved text. The main process only knows on-disk bytes, so cont
   yes/no questions. It is a `dialog:confirm` IPC backed by `dialog.showMessageBox` (an app-modal dialog that
   returns focus to the window on close). Native `window.confirm` is **forbidden** for these prompts: it fires
   a WIN-BLUR on Windows that leaves the editor untypeable (see `docs/adr/0009-app-modal-dialogs.md`).
-- **tryCloseWorkspace (unified unsaved-close path)** — closing a file, closing the workspace, and closing a
-  window all run the same unsaved-change prompt. There is no application-level quit path: closing a window
-  prompts and closes **only that window** via the routed `app:request-quit` → `app:quit-pending` /
-  `app:quit-allowed` handshake. Closing the last window quits the process on Windows/Linux but keeps it
-  alive on macOS. When the OS terminates the app (macOS Dock Quit), Electron closes each window first,
-  so the same guard still runs; system shutdown is not intercepted. The unsaved guard itself lives at
-  the single document-close execution point, not at each entry point. New documents and existing unsaved
-  edits are treated identically.
+- **tryCloseWorkspace (unified unsaved-close path)** — closing a single tab uses its own per-document
+  prompt; closing the workspace or window uses **one aggregate prompt listing every dirty tab**
+  (ADR-0040; Cancel vetoes the whole close, no Save All). There is no application-level quit path:
+  closing a window prompts and closes **only that window** via the routed `app:request-quit` →
+  `app:quit-pending` / `app:quit-allowed` handshake. Closing the last window quits the process on
+  Windows/Linux but keeps it alive on macOS. When the OS terminates the app (macOS Dock Quit),
+  Electron closes each window first, so the same guard still runs; system shutdown is not intercepted.
+  New documents and existing unsaved edits are treated identically.
 - **Context menu (right-click)** — right-click menus use `@radix-ui/react-context-menu` (pops at the cursor,
   native Shift+F10); button-triggered dropdowns use `@radix-ui/react-dropdown-menu`. Menu items stop event
   propagation to avoid firing ancestor handlers. See `docs/adr/0008-context-menu-architecture.md`.

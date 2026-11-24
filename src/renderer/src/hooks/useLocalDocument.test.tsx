@@ -9,6 +9,14 @@ import { useUIStore } from '../store/ui'
 
 beforeEach(() => {
   vi.resetAllMocks()
+  // ADR-0040: draft restore reads from the UI buffer registry; clear it so tests
+  // never inherit a previous case's draft when they reuse the same document id.
+  act(() => {
+    for (const id of Object.keys(useUIStore.getState().unsavedBuffers)) {
+      useUIStore.getState().clearUnsavedBuffer(id)
+    }
+    useUIStore.getState().setDirty(false)
+  })
   ;(window as unknown as { api: unknown }).api = {
     documents: {
       eol: vi.fn().mockResolvedValue('\n'),
@@ -127,6 +135,7 @@ describe('useLocalDocument — unsaved buffer registry (D28)', () => {
     act(() => result.current.handleContentChange('# Hello\nMore text\n'))
     expect(useUIStore.getState().unsavedBuffers['doc-1']).toEqual({
       content: '# Hello\nMore text\n',
+      title: 'hi.md',
       revision: 1,
     })
     unmount()

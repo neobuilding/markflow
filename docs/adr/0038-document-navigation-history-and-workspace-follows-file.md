@@ -3,7 +3,8 @@
 - **Status:** Accepted
 - **Superseded in part by:** ADR-0039 §3.2 (four-way external-file choice replaces §3.1.3 /
   §3.2 decision 5 for workspace-external Markdown files) and §3.5 (right-click history menu
-  replaces §3.4 decision 9's "no history dropdown").
+  replaces §3.4 decision 9's "no history dropdown"); ADR-0040 (per-tab history, tab drafts,
+  multi-tab windows).
 - **Decided:** 2026-11-20
 - **Supersedes:** ADR-0006's "Unsaved drafts" sidebar group and switch-back-to-draft behavior (§3.5;
   its no-disk-write-before-save rule is unaffected either way)
