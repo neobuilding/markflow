@@ -7,6 +7,7 @@ const handoff = (tabId = 'tab-1'): TabHandoff => ({
   tabId,
   documentId: 'doc-1',
   filePath: 'C:\\work\\a.md',
+  workspaceRoot: 'C:\\work',
   content: null,
   title: 'a.md',
   external: false,

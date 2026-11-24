@@ -38,6 +38,7 @@ describe('TabBar (ADR-0040)', () => {
   beforeEach(() => {
     ;(window as unknown as { api: unknown }).api = {
       dialog: { confirm: vi.fn(async () => true) },
+      menu: { setHasOtherWindows: vi.fn() },
       tabs: tabsApi,
       documents: {
         get: vi.fn(async (id: string) => ({
@@ -54,6 +55,8 @@ describe('TabBar (ADR-0040)', () => {
       useUIStore.getState().clearUnsavedBuffer(id)
     }
     vi.clearAllMocks()
+    tabsApi.listWindows.mockReset()
+    tabsApi.listWindows.mockResolvedValue([{ id: 7, title: 'Other' }])
   })
 
   it('renders a role=tablist with a tab per document', () => {
@@ -166,6 +169,19 @@ describe('TabBar (ADR-0040)', () => {
     expect(useTabsStore.getState().previewTabId).toBeNull()
     fireEvent.contextMenu(screen.getAllByRole('tab')[1])
     expect(screen.queryByTestId('tab-menu-pin')).toBeNull()
+  })
+
+  it('disables Move to another window when no other window exists', async () => {
+    tabsApi.listWindows.mockResolvedValueOnce([])
+    useTabsStore.getState().openTab('doc-a', { title: 'A.md', tabId: 'a' })
+    mount()
+    fireEvent.contextMenu(screen.getByRole('tab'))
+    const move = screen.getByTestId('tab-menu-move')
+    await vi.waitFor(() => expect(move.getAttribute('aria-disabled')).toBe('true'))
+    fireEvent.click(move)
+    expect(screen.queryByTestId('tab-window-picker')).toBeNull()
+    expect(tabsApi.moveToWindow).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(window.api.menu.setHasOtherWindows).toHaveBeenCalledWith(false))
   })
 
   it('exposes and wires the tab action menu entries', async () => {

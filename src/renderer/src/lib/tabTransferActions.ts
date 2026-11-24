@@ -27,7 +27,9 @@ export async function detachTabToNewWindow(tabId: string): Promise<boolean> {
 }
 
 export async function listOtherWindows(): Promise<TabWindowInfo[]> {
-  return window.api.tabs.listWindows()
+  // The tab bar also renders in component tests and before the bridge is installed; "no
+  // destination" is the safe answer there, not an unhandled rejection from the mount effect.
+  return window.api?.tabs?.listWindows?.() ?? []
 }
 
 export async function moveTabToWindow(

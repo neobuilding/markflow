@@ -56,6 +56,27 @@ export function TabBar(): React.ReactElement {
   const moveTab = useTabsStore((s) => s.moveTab)
   const [dropIndex, setDropIndex] = React.useState<number | null>(null)
   const [picker, setPicker] = React.useState<WindowPicker | null>(null)
+  const [otherWindows, setOtherWindows] = React.useState<WindowPicker['windows']>([])
+
+  // ADR-0040: both the tab context menu and the native File menu must agree that moving a tab
+  // requires a destination window. Refresh on mount and on focus (windows can open/close while
+  // this window is unfocused) and mirror the boolean to main for the native menu.
+  React.useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      void listOtherWindows().then((windows) => {
+        if (!alive) return
+        setOtherWindows(windows)
+        window.api?.menu?.setHasOtherWindows?.(windows.length > 0)
+      })
+    }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      alive = false
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
 
   const close = React.useCallback(
     async (tab: TabModel) => {
@@ -102,6 +123,7 @@ export function TabBar(): React.ReactElement {
 
   const openMovePicker = React.useCallback(async (tabId: string) => {
     const windows = await listOtherWindows()
+    setOtherWindows(windows)
     if (windows.length === 0) return
     setPicker({ tabId, windows })
   }, [])
@@ -233,6 +255,7 @@ export function TabBar(): React.ReactElement {
               </ContextMenuItem>
               <ContextMenuItem
                 data-testid="tab-menu-move"
+                disabled={otherWindows.length === 0}
                 onSelect={() => void openMovePicker(tab.id)}
               >
                 {t('tab.moveToWindow')}

@@ -155,6 +155,7 @@ describe('native menu', () => {
     expect(typeof ipcHandlers['menu:set-has-folder']).toBe('function')
     expect(typeof ipcHandlers['menu:set-has-draft']).toBe('function')
     expect(typeof ipcHandlers['menu:set-file-locked']).toBe('function')
+    expect(typeof ipcHandlers['menu:set-has-other-windows']).toBe('function')
     expect(typeof ipcHandlers['app:set-language']).toBe('function')
   })
 
@@ -190,6 +191,16 @@ describe('native menu', () => {
   // At most one unsaved draft: the renderer reports draft presence so the native File > New Draft
   // item greys out with the toolbar button. A disabled item also stops its ⌘N accelerator, so the
   // menu can no longer invite a second draft.
+  it('disables Move Tab to Another Window until another window exists', () => {
+    menu.setupMenu()
+    menu.registerMenuHandlers()
+    expect(menuItems['move-tab-to-window']?.enabled).toBe(false)
+    ipcHandlers['menu:set-has-other-windows'](null, true)
+    expect(menuItems['move-tab-to-window']?.enabled).toBe(true)
+    ipcHandlers['menu:set-has-other-windows'](null, false)
+    expect(menuItems['move-tab-to-window']?.enabled).toBe(false)
+  })
+
   it('disables New Draft while the renderer reports an existing draft', () => {
     menu.setupMenu()
     menu.registerMenuHandlers()

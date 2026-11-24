@@ -16,13 +16,17 @@ export async function buildTabHandoff(tabId: string): Promise<TabHandoff | null>
   // ADR-0042: the destination window starts its own global stack; transfer only the current
   // entry of the moved tab, not the source window's entire history.
   const entry = history?.entryAt(history.cursor)
+  // ADR-0040: ask MAIN for the root, not the UI mirror — a file can be opened from a link
+  // before the mirror catches up, and the main process is the owner of the workspace.
+  const workspaceRoot = (await window.api.documents.getWorkspaceRoot()) ?? ''
   return {
     tabId,
     documentId: tab.documentId,
     filePath: doc.filePath,
+    workspaceRoot,
     content: buffer ? buffer.content : null,
     title: buffer?.title ?? tab.title,
-    external: !doc.filePath ? false : await isExternal(doc.filePath),
+    external: !doc.filePath ? false : isExternal(doc.filePath, workspaceRoot),
     isNewUnsaved: tab.isNewUnsaved,
     eol: doc.content.includes('\r\n') ? '\r\n' : '\n',
     history: entry ? [entry] : [],
@@ -30,8 +34,7 @@ export async function buildTabHandoff(tabId: string): Promise<TabHandoff | null>
   }
 }
 
-async function isExternal(filePath: string): Promise<boolean> {
-  const root = await window.api.documents.getWorkspaceRoot()
+function isExternal(filePath: string, root: string): boolean {
   if (!root) return false
   const normalize = (p: string) => p.replace(/\\/g, '/').toLowerCase()
   return !normalize(filePath).startsWith(normalize(root).replace(/\/+$/, '') + '/')

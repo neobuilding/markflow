@@ -168,6 +168,7 @@ export interface Api {
     setHasFolder: (has: boolean) => void
     setHasDraft: (has: boolean) => void
     setFileLocked: (locked: boolean) => void
+    setHasOtherWindows: (has: boolean) => void
   }
   tabs: {
     beginDrag: (handoff: TabHandoff, preferredToken?: string) => Promise<{ token: string }>

@@ -45,6 +45,7 @@ describe('buildTabHandoff (ADR-0040)', () => {
       tabId: 'a',
       documentId: 'doc-a',
       filePath: '/root/a.md',
+      workspaceRoot: '/root',
       content: 'draft',
       title: 'a*.md',
       external: false,
@@ -72,6 +73,18 @@ describe('buildTabHandoff (ADR-0040)', () => {
       { path: '/root/a.md', tabId: 'a', position: { start: 2, end: 2 } },
     ])
     expect(handoff?.cursor).toBe(0)
+  })
+
+  it('reads the source root from main, not from the possibly stale UI mirror', async () => {
+    setupApi({
+      root: '/source',
+      doc: { id: 'doc-a', filePath: '/source/sub/a.md', content: '' },
+    })
+    useUIStore.getState().setWorkspaceRoot('/stale')
+    useTabsStore.getState().openTab('doc-a', { tabId: 'a', title: 'a.md' })
+    const handoff = await buildTabHandoff('a')
+    expect(handoff?.workspaceRoot).toBe('/source')
+    expect(handoff?.external).toBe(false)
   })
 
   it('marks a file outside the root external and handles a null root', async () => {

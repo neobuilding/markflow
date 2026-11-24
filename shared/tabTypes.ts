@@ -28,6 +28,8 @@ export interface TabHandoff {
   documentId: string
   /** Absolute path; empty string for a memory-only draft. */
   filePath: string
+  /** Source window's workspace root; empty when no workspace is open. A detached window reopens it. */
+  workspaceRoot: string
   /** Draft body when dirty, `null` when clean (destination reads from disk). */
   content: string | null
   /** Draft title in display form (extension included), not the on-disk file name. */

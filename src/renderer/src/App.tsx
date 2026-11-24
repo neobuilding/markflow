@@ -21,7 +21,7 @@ import { maybeDecideExternalPaths } from './lib/workspaceExternalDecision'
 import { matchFormatShortcut } from './lib/format-shortcuts'
 import { t, changeLanguage } from './i18n'
 import type { Locale } from './i18n'
-import { acceptTabHandoff, removeTransferredTab } from './lib/tabTransfer'
+import { acceptTabHandoff, consumePendingTabHandoff, removeTransferredTab } from './lib/tabTransfer'
 import { detachTabToNewWindow, listOtherWindows, moveTabToWindow } from './lib/tabTransferActions'
 import { useTabsStore } from './store/tabs'
 import { showCloseAllTabsDialog } from './lib/closeTabDialog'
@@ -486,17 +486,11 @@ export default function App(): React.ReactElement {
     return () => remove()
   }, [])
 
-  // A new window created by detach consumes its pending handoff once at startup.
+  // A new window created by detach consumes its pending handoff once at startup. This MUST NOT
+  // be cancellable: takeHandoff() is one-shot, so StrictMode's first effect invocation is the
+  // only one that can see the pending entry. consumePendingTabHandoff() is idempotent via main.
   useEffect(() => {
-    let cancelled = false
-    void window.api?.tabs?.takeHandoff?.().then(async (pending) => {
-      if (cancelled || !pending) return
-      await acceptTabHandoff(pending.handoff)
-      await window.api.tabs.acceptAck(pending.token)
-    })
-    return () => {
-      cancelled = true
-    }
+    void consumePendingTabHandoff()
   }, [])
 
   // Native menu / keyboard alternatives to dragging a tab.

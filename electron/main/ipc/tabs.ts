@@ -86,10 +86,13 @@ export function registerTabsHandlers(ipcMain: IpcMain, io: DiskIO = nodeDiskIO):
     const lookup = dragSessions.consumeDetach(payload.token)
     if (!lookup.session || lookup.result !== 'consumed') return lookup.result
     const handoff = lookup.session.handoff
-    // A file-backed detach needs the source workspace root; never set pendingPaths,
-    // because the cold-start openPaths pipeline would clear the restored draft.
+    // A detached window must reopen the SOURCE workspace, not merely the handed-off file's
+    // parent folder: a tab in `root/sub/a.md` should leave the whole `root` tree visible.
+    // The dirname fallback only applies when the source had no workspace (single-file open).
+    // Never set pendingPaths, because the cold-start openPaths pipeline would clear the draft.
     createWindow({
-      workspaceRoot: handoff.filePath ? dirname(handoff.filePath) : undefined,
+      workspaceRoot:
+        handoff.workspaceRoot || (handoff.filePath ? dirname(handoff.filePath) : undefined),
       tabHandoff: { token: payload.token, handoff },
     })
     return 'consumed' as TabDragResult

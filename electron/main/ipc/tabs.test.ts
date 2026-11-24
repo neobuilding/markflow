@@ -46,6 +46,7 @@ const handoff = (overrides: Partial<TabHandoff> = {}): TabHandoff => ({
   tabId: 'tab-1',
   documentId: 'doc-1',
   filePath: 'C:/notes/a.md',
+  workspaceRoot: 'C:/notes',
   content: null,
   title: 'a.md',
   external: false,
@@ -161,11 +162,32 @@ describe('tabs IPC (ADR-0040)', () => {
     expect(h.createWindow.mock.calls[0][0]).not.toHaveProperty('filePath')
   })
 
+  it('detach reopens the source root even when the file lives in a subfolder', async () => {
+    io.seed('C:/notes/sub/a.md', '# A')
+    const { ctx } = fakeWin(52)
+    const { token } = (await bus.get('tabs:begin-drag')(
+      { sender: { id: ctx.id } },
+      handoff({ filePath: 'C:/notes/sub/a.md', workspaceRoot: 'C:/notes' }),
+    )) as { token: string }
+    await bus.get('tabs:detach')({ sender: { id: ctx.id } }, { token })
+    expect(h.createWindow.mock.calls[0][0].workspaceRoot).toBe('C:/notes')
+  })
+
+  it('detach of a file without a source workspace falls back to its folder', async () => {
+    const { ctx } = fakeWin(53)
+    const { token } = (await bus.get('tabs:begin-drag')(
+      { sender: { id: ctx.id } },
+      handoff({ workspaceRoot: '' }),
+    )) as { token: string }
+    await bus.get('tabs:detach')({ sender: { id: ctx.id } }, { token })
+    expect(h.createWindow.mock.calls[0][0].workspaceRoot).toBe('C:/notes')
+  })
+
   it('detach of a memory-only draft omits workspaceRoot', async () => {
     const { ctx } = fakeWin(55)
     const { token } = (await bus.get('tabs:begin-drag')(
       { sender: { id: ctx.id } },
-      handoff({ filePath: '' }),
+      handoff({ filePath: '', workspaceRoot: '' }),
     )) as { token: string }
     await bus.get('tabs:detach')({ sender: { id: ctx.id } }, { token })
     expect(h.createWindow.mock.calls[0][0].workspaceRoot).toBeUndefined()

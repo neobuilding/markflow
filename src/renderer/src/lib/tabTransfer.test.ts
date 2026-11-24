@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { acceptTabHandoff, removeTransferredTab } from './tabTransfer'
+import { acceptTabHandoff, consumePendingTabHandoff, removeTransferredTab } from './tabTransfer'
 import { useTabsStore } from '../store/tabs'
 import { useUIStore } from '../store/ui'
 import { getHistory } from '../store/tabHistory'
 import type { TabHandoff } from '../../../../shared/tabTypes'
+import { DOCS_KEY, queryClient } from '../lib/queryClient'
 
 const handoff = (overrides: Partial<TabHandoff> = {}): TabHandoff => ({
   tabId: 'remote-tab',
   documentId: 'remote-doc',
   filePath: '/remote/a.md',
+  workspaceRoot: '/remote',
   content: 'draft body',
   title: 'a*.md',
   external: false,
@@ -26,7 +28,15 @@ function setupApi(opts: { importResult?: unknown; createResult?: unknown } = {})
   ;(window as unknown as { api: unknown }).api = {
     documents: {
       import: vi.fn(async () => importResult),
+      importMany: vi.fn(async () => []),
       create: vi.fn(async () => createResult),
+      getWorkspaceRoot: vi.fn(async () => null),
+    },
+    files: {
+      resolvePaths: vi.fn(async () => ({
+        directories: ['/dest/root'],
+        markdownFiles: ['/dest/root/a.md', '/dest/root/sub/b.md'],
+      })),
     },
   }
 }
@@ -34,7 +44,75 @@ function setupApi(opts: { importResult?: unknown; createResult?: unknown } = {})
 describe('tabTransfer (ADR-0040)', () => {
   beforeEach(() => {
     useTabsStore.getState().reset()
-    useUIStore.setState({ unsavedBuffers: {}, dirty: false })
+    useUIStore.setState({ unsavedBuffers: {}, dirty: false, workspaceRoot: null })
+  })
+
+  it('ADR-0040: accepting a handoff mirrors the destination workspace root', async () => {
+    setupApi()
+    ;(window.api.documents.getWorkspaceRoot as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      '/dest/root',
+    )
+    await acceptTabHandoff(handoff())
+    expect(useUIStore.getState().workspaceRoot).toBe('/dest/root')
+  })
+
+  it('imports the whole source workspace so the destination sidebar is not empty', async () => {
+    setupApi()
+    ;(window.api.documents.getWorkspaceRoot as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      '/dest/root',
+    )
+    await acceptTabHandoff(handoff())
+    expect(window.api.files.resolvePaths).toHaveBeenCalledWith(['/dest/root'])
+    expect(window.api.documents.importMany).toHaveBeenCalledWith([
+      '/dest/root/a.md',
+      '/dest/root/sub/b.md',
+    ])
+  })
+
+  it('skips the bulk import when the mirrored root has no Markdown files', async () => {
+    setupApi()
+    ;(window.api.documents.getWorkspaceRoot as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      '/dest/root',
+    )
+    ;(window.api.files.resolvePaths as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      directories: ['/dest/root'],
+      markdownFiles: [],
+    })
+    await acceptTabHandoff(handoff())
+    expect(window.api.files.resolvePaths).toHaveBeenCalledWith(['/dest/root'])
+    expect(window.api.documents.importMany).not.toHaveBeenCalled()
+    expect(useTabsStore.getState().tabs[0].documentId).toBe('new-doc')
+  })
+
+  it('refreshes the sidebar list after the handoff import under the mirrored root', async () => {
+    setupApi()
+    ;(window.api.documents.getWorkspaceRoot as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      '/dest/root',
+    )
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+    try {
+      await acceptTabHandoff(handoff())
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: DOCS_KEY })
+    } finally {
+      invalidate.mockRestore()
+    }
+  })
+
+  it('ADR-0040: StrictMode double startup consumes the one-shot handoff only once', async () => {
+    setupApi()
+    const takeHandoff = vi
+      .fn()
+      .mockResolvedValueOnce({ token: 'tok', handoff: handoff() })
+      .mockResolvedValueOnce(null)
+    const acceptAck = vi.fn(async () => {})
+    ;(window.api as unknown as { tabs: unknown }).tabs = { takeHandoff, acceptAck }
+
+    // Both effect invocations run; the first one owns the pending handoff and must not be
+    // cancelled. The second sees null and is a no-op.
+    await Promise.all([consumePendingTabHandoff(), consumePendingTabHandoff()])
+
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
+    expect(acceptAck).toHaveBeenCalledTimes(1)
   })
 
   it('seeds a file-backed tab with same id, history and draft', async () => {

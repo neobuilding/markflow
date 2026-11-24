@@ -76,6 +76,7 @@ test.describe('tab drag cross-window', () => {
           tabId: tab.id,
           documentId: doc.id,
           filePath: doc.filePath,
+          workspaceRoot: (await window.api.documents.getWorkspaceRoot()) ?? '',
           content: null,
           title: doc.title,
           external: false,

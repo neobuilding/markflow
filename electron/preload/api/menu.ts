@@ -8,4 +8,5 @@ export const menuApi = {
   setHasFolder: (has: boolean) => ipcRenderer.send('menu:set-has-folder', has),
   setHasDraft: (has: boolean) => ipcRenderer.send('menu:set-has-draft', has),
   setFileLocked: (locked: boolean) => ipcRenderer.send('menu:set-file-locked', locked),
+  setHasOtherWindows: (has: boolean) => ipcRenderer.send('menu:set-has-other-windows', has),
 }

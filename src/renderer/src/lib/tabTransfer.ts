@@ -2,12 +2,25 @@ import type { TabHandoff } from '../../../../shared/tabTypes'
 import { useTabsStore } from '../store/tabs'
 import { useUIStore } from '../store/ui'
 import { disposeHistory, seedHistory } from '../store/tabHistory'
+import { DOCS_KEY, queryClient } from '../lib/queryClient'
 
 // ADR-0040 §5.5.2: seed a destination tab from a complete handoff. The destination
 // re-imports the file to get its own document id, but keeps the stable tab id and
 // the whole history/draft so a cross-window move is a move, not a copy.
 
 export async function acceptTabHandoff(handoff: TabHandoff): Promise<void> {
+  // A detached window's main-process context already has the root (set by createWindow), but the
+  // renderer store starts empty and only learns a root from an explicit folder-open. Mirror it
+  // here so the destination shows the workspace, not just the tab (ADR-0040 §5.5.2).
+  const root = await window.api?.documents?.getWorkspaceRoot?.()
+  if (root) {
+    useUIStore.getState().setWorkspaceRoot(root)
+    // createWindow() set the root but imported no files. Hydrate the sidebar from that root
+    // WITHOUT going through useOpenPaths, which would reset tabs/history and clear the draft
+    // this handoff is carrying (ADR-0040 §5.5.2).
+    const { markdownFiles } = await window.api.files.resolvePaths([root])
+    if (markdownFiles.length > 0) await window.api.documents.importMany(markdownFiles)
+  }
   let documentId: string
   if (handoff.filePath) {
     const doc = await window.api.documents.import(handoff.filePath, {
@@ -38,7 +51,24 @@ export async function acceptTabHandoff(handoff: TabHandoff): Promise<void> {
     useUIStore.getState().reportUnsavedBuffer(documentId, handoff.content, handoff.title)
     useUIStore.getState().setDirty(true)
   }
+  // Mirroring the root switches the sidebar's query key, so a fetch for that key can start
+  // BEFORE this import lands and cache an empty tree. Refresh once the document is in the
+  // store; otherwise the window shows the folder bar but no files (ADR-0040 §5.5.2).
+  await queryClient.invalidateQueries({ queryKey: DOCS_KEY })
   useUIStore.getState().bumpDocumentState()
+}
+
+/**
+ * ADR-0040: consume the one-shot handoff at startup. There is deliberately NO cancellation
+ * guard here: React StrictMode double-invokes effects, and `tabs:take-handoff` consumes the
+ * pending entry on the FIRST call. Cancelling that call would throw the handoff away and leave
+ * the new window blank; the second call simply sees null and is a no-op.
+ */
+export async function consumePendingTabHandoff(): Promise<void> {
+  const pending = await window.api?.tabs?.takeHandoff?.()
+  if (!pending) return
+  await acceptTabHandoff(pending.handoff)
+  await window.api.tabs.acceptAck(pending.token)
 }
 
 /** Remove a tab after the source received the destination ACK (main → renderer). */

@@ -74,6 +74,11 @@ describe('tabTransferActions (ADR-0040)', () => {
     await expect(listOtherWindows()).resolves.toEqual([{ id: 2, title: 'B' }])
   })
 
+  it('treats a missing tabs bridge as "no other window"', async () => {
+    ;(window as unknown as { api: unknown }).api = {}
+    await expect(listOtherWindows()).resolves.toEqual([])
+  })
+
   it('does not detach or move when the session cannot be registered', async () => {
     useUIStore.setState({ printing: true })
     await expect(detachTabToNewWindow('a')).resolves.toBe(false)

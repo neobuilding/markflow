@@ -17,6 +17,7 @@ const handoff: TabHandoff = {
   tabId: 't',
   documentId: 'd',
   filePath: '/a.md',
+  workspaceRoot: '',
   content: null,
   title: 'a.md',
   external: false,
